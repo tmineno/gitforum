@@ -5,7 +5,7 @@
 
 ## Finish line
 
-- [ ] 空の Git repository で `git forum init` が動く
+- [x] 空の Git repository で `git forum init` が動く
 - [ ] `issue` / `rfc` / `decision` を作成できる
 - [ ] 型付き発言を追加できる
 - [ ] AI run provenance を保存できる
@@ -16,22 +16,22 @@
 - [ ] `git forum reindex` で index を再構築できる
 - [ ] branch で分岐した thread を最小限 merge できる
 - [ ] `git forum tui` で一覧・詳細・基本フィルタを操作できる
-- [ ] Rust stable toolchain で build / test できる
+- [x] Rust stable toolchain で build / test できる
 
 ## Test harness baseline
 
 全マイルストーンを通して、次の testing strategy を維持する。
 
-- [ ] unit tests は replay / state machine / policy / guard / merge / index / search を pure Rust で検証する
-- [ ] integration tests は毎回 temporary Git repo を作り、global/system Git config に依存しない
+- [x] unit tests は replay / state machine / policy / guard / merge / index / search を pure Rust で検証する
+- [x] integration tests は毎回 temporary Git repo を作り、global/system Git config に依存しない
 - [ ] AI integration は mock / fake provider で検証できる
-- [ ] clock と ID generator は差し替え可能にする
+- [x] clock と ID generator は差し替え可能にする
 - [ ] snapshot 比較は `show` / `verify` / export / TUI render のような安定した出力面に限定する
-- [ ] CI の最低ラインは `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test`
+- [x] CI の最低ラインは `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test`
 
 Initial layout:
 
-- [ ] `tests/support/` に一時 repo、環境隔離、Git helper、clock/id stub、CLI helper を置く
+- [x] `tests/support/` に一時 repo、環境隔離、Git helper、clock/id stub、CLI helper を置く
 - [ ] `tests/fixtures/` に import/export や replay 用の固定入力を置く
 - [ ] `tests/snapshots/` に stable output の snapshot を置く
 
@@ -42,12 +42,12 @@ Rust で継続実装できる最小の土台を作る。
 
 Done when:
 
-- [ ] `Cargo.toml` と `src/` の最小構成がある
-- [ ] `git-forum` 単一バイナリの entrypoint がある
-- [ ] `cargo fmt --check` / `cargo clippy -- -D warnings` / `cargo test` が通る
-- [ ] エラー型、設定読込、CLI entrypoint の基本骨格がある
-- [ ] `tests/support/` の骨格を作る
-- [ ] test 用の clock / ID generator 差し替えポイントを設計する
+- [x] `Cargo.toml` と `src/` の最小構成がある
+- [x] `git-forum` 単一バイナリの entrypoint がある
+- [x] `cargo fmt --check` / `cargo clippy -- -D warnings` / `cargo test` が通る
+- [x] エラー型、設定読込、CLI entrypoint の基本骨格がある
+- [x] `tests/support/` の骨格を作る
+- [x] test 用の clock / ID generator 差し替えポイントを設計する
 
 Verification:
 
@@ -65,22 +65,22 @@ Git repository の中に forum データを保存し、event replay で状態を
 
 Includes:
 
-- [ ] `.forum/` と `.git/forum/` の初期化
-- [ ] `git forum init`
-- [ ] thread / run / actor / index の ref namespace
-- [ ] event を Git commit として保存する処理
-- [ ] event replay による thread 状態再構成
-- [ ] `git forum doctor`
-- [ ] `git forum reindex` の骨格
-- [ ] isolated temporary Git repo を作る integration test helper
-- [ ] Git config を隔離する test helper
+- [x] `.forum/` と `.git/forum/` の初期化
+- [x] `git forum init`
+- [x] thread / run / actor / index の ref namespace
+- [x] event を Git commit として保存する処理
+- [x] event replay による thread 状態再構成
+- [x] `git forum doctor`
+- [x] `git forum reindex` の骨格
+- [x] isolated temporary Git repo を作る integration test helper
+- [x] Git config を隔離する test helper
 
 Exit criteria:
 
-- [ ] 空 repo で `git forum init` が成功する
-- [ ] thread の最新状態を ref から再構成できる
-- [ ] local index を壊しても再構築できる前提が成立している
-- [ ] integration test が global/system Git config に依存せず通る
+- [x] 空 repo で `git forum init` が成功する
+- [x] thread の最新状態を ref から再構成できる
+- [x] local index を壊しても再構築できる前提が成立している
+- [x] integration test が global/system Git config に依存せず通る
 
 Verification:
 

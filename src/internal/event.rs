@@ -1,0 +1,229 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+use super::error::ForumResult;
+use super::git_ops::GitOps;
+use super::refs;
+
+/// Thread kinds supported by git-forum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThreadKind {
+    Issue,
+    Rfc,
+    Decision,
+}
+
+impl ThreadKind {
+    /// Initial state for a new thread of this kind.
+    pub fn initial_status(self) -> &'static str {
+        match self {
+            Self::Issue => "open",
+            Self::Rfc => "draft",
+            Self::Decision => "proposed",
+        }
+    }
+
+    /// Display ID prefix (e.g. "ISSUE", "RFC", "DEC").
+    pub fn id_prefix(self) -> &'static str {
+        match self {
+            Self::Issue => "ISSUE",
+            Self::Rfc => "RFC",
+            Self::Decision => "DEC",
+        }
+    }
+}
+
+impl std::fmt::Display for ThreadKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Issue => write!(f, "issue"),
+            Self::Rfc => write!(f, "rfc"),
+            Self::Decision => write!(f, "decision"),
+        }
+    }
+}
+
+/// Event types as defined in the spec.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EventType {
+    Create,
+    Edit,
+    Retract,
+    Say,
+    Link,
+    Unlink,
+    State,
+    Assign,
+    Decision,
+    Resolve,
+    Reopen,
+    Spawn,
+    Result,
+    Verify,
+    Merge,
+    Close,
+}
+
+impl std::fmt::Display for EventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Create => "create",
+            Self::Edit => "edit",
+            Self::Retract => "retract",
+            Self::Say => "say",
+            Self::Link => "link",
+            Self::Unlink => "unlink",
+            Self::State => "state",
+            Self::Assign => "assign",
+            Self::Decision => "decision",
+            Self::Resolve => "resolve",
+            Self::Reopen => "reopen",
+            Self::Spawn => "spawn",
+            Self::Result => "result",
+            Self::Verify => "verify",
+            Self::Merge => "merge",
+            Self::Close => "close",
+        };
+        f.write_str(s)
+    }
+}
+
+/// Node types for structured discussion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeType {
+    Claim,
+    Question,
+    Objection,
+    Alternative,
+    Evidence,
+    Summary,
+    Decision,
+    Action,
+    Risk,
+    Assumption,
+}
+
+/// An immutable event in a thread's history.
+///
+/// Stored as `event.json` inside each Git commit's tree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Event {
+    pub event_id: String,
+    pub thread_id: String,
+    pub event_type: EventType,
+    pub created_at: DateTime<Utc>,
+    pub actor: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_rev: Option<String>,
+    #[serde(default)]
+    pub parents: Vec<String>,
+    // -- Conditional fields (presence depends on event_type) --
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ThreadKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_type: Option<NodeType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_node_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_state: Option<String>,
+}
+
+/// Write an event as a Git commit and update the thread ref.
+///
+/// Returns the new commit SHA.
+pub fn write_event(git: &GitOps, event: &Event) -> ForumResult<String> {
+    let json = serde_json::to_string_pretty(event)?;
+
+    // Create blob → tree → commit
+    let blob_sha = git.hash_object(json.as_bytes())?;
+    let tree_sha = git.mktree_single("event.json", &blob_sha)?;
+
+    // Find parent from existing thread ref
+    let ref_name = refs::thread_ref(&event.thread_id);
+    let parent_sha = git.resolve_ref(&ref_name)?;
+    let parents: Vec<&str> = parent_sha.iter().map(|s| s.as_str()).collect();
+
+    let message = format!("[git-forum] {} {}", event.event_type, event.thread_id);
+    let commit_sha = git.commit_tree(&tree_sha, &parents, &message)?;
+
+    git.update_ref(&ref_name, &commit_sha)?;
+    Ok(commit_sha)
+}
+
+/// Read an event from a commit SHA.
+pub fn read_event(git: &GitOps, commit_sha: &str) -> ForumResult<Event> {
+    let json = git.show_file(commit_sha, "event.json")?;
+    let event: Event = serde_json::from_str(&json)?;
+    Ok(event)
+}
+
+/// Load all events for a thread in chronological order (oldest first).
+pub fn load_thread_events(git: &GitOps, thread_id: &str) -> ForumResult<Vec<Event>> {
+    let ref_name = refs::thread_ref(thread_id);
+    let shas = git.rev_list(&ref_name)?; // newest first
+    let mut events = Vec::with_capacity(shas.len());
+    for sha in &shas {
+        events.push(read_event(git, sha)?);
+    }
+    events.reverse(); // chronological order
+    Ok(events)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn sample_create_event() -> Event {
+        Event {
+            event_id: "evt-0001".into(),
+            thread_id: "RFC-0001".into(),
+            event_type: EventType::Create,
+            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            actor: "human/alice".into(),
+            base_rev: None,
+            parents: vec![],
+            title: Some("Test RFC".into()),
+            kind: Some(ThreadKind::Rfc),
+            body: None,
+            node_type: None,
+            target_node_id: None,
+            new_state: None,
+        }
+    }
+
+    #[test]
+    fn event_serialize_roundtrip() {
+        let event = sample_create_event();
+        let json = serde_json::to_string_pretty(&event).unwrap();
+        let parsed: Event = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.event_id, "evt-0001");
+        assert_eq!(parsed.event_type, EventType::Create);
+        assert_eq!(parsed.kind, Some(ThreadKind::Rfc));
+        assert_eq!(parsed.title.as_deref(), Some("Test RFC"));
+    }
+
+    #[test]
+    fn event_json_omits_none_fields() {
+        let event = sample_create_event();
+        let json = serde_json::to_string_pretty(&event).unwrap();
+        assert!(!json.contains("body"));
+        assert!(!json.contains("node_type"));
+        assert!(!json.contains("target_node_id"));
+        assert!(!json.contains("new_state"));
+    }
+
+    #[test]
+    fn thread_kind_initial_status() {
+        assert_eq!(ThreadKind::Issue.initial_status(), "open");
+        assert_eq!(ThreadKind::Rfc.initial_status(), "draft");
+        assert_eq!(ThreadKind::Decision.initial_status(), "proposed");
+    }
+}
