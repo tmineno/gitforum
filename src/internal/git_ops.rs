@@ -111,6 +111,13 @@ impl GitOps {
         }
     }
 
+    /// Resolve a revision expression to a canonical commit OID.
+    pub fn resolve_commit(&self, rev: &str) -> ForumResult<String> {
+        let revspec = format!("{rev}^{{commit}}");
+        self.run(&["rev-parse", "--verify", &revspec])
+            .map_err(|_| ForumError::Repo(format!("revision '{rev}' does not resolve to a commit")))
+    }
+
     /// List all ref names under a given prefix.
     pub fn list_refs(&self, prefix: &str) -> ForumResult<Vec<String>> {
         match self.run(&["for-each-ref", "--format=%(refname)", prefix]) {

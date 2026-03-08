@@ -533,6 +533,7 @@ git forum policy check <THREAD_ID> --transition <TRANSITION>
 - prefix 解決の最小長は 8 文字とする。
 - prefix が曖昧な場合は候補 full ID 一覧を表示して失敗する。
 - 現在の body と状態を表示すること。
+- 親 thread に thread link がある場合は、その link 先と relation を表示してよい。
 - その node に関係する `say` / `edit` / `resolve` / `retract` / `reopen` の履歴を表示すること。
 
 ### 13.7 `git forum state`
@@ -554,6 +555,8 @@ MVP では以下をチェックする。
 ### 13.9 `git forum evidence add|link`
 
 - `evidence add` は対象 thread に evidence object を追加する。
+- `evidence add --kind commit --ref <REV>` は `<REV>` を commit object に解決し、canonical commit OID を保存する。
+- commit に解決できない revision は reject する。
 - `link` は thread 間、thread と evidence 間、または decision と issue 間の relation を記録する。
 - relation は timeline と detail view から辿れること。
 

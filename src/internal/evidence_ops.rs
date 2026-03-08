@@ -19,6 +19,7 @@ pub fn add_evidence(
     actor: &str,
     clock: &dyn Clock,
 ) -> ForumResult<String> {
+    let ref_target = canonicalize_evidence_ref(git, &kind, ref_target)?;
     let ev = Event {
         event_id: String::new(),
         thread_id: thread_id.to_string(),
@@ -37,7 +38,7 @@ pub fn add_evidence(
         evidence: Some(Evidence {
             evidence_id: String::new(),
             kind,
-            ref_target: ref_target.to_string(),
+            ref_target,
             locator,
         }),
         link_rel: None,
@@ -45,6 +46,17 @@ pub fn add_evidence(
         branch: None,
     };
     super::event::write_event(git, &ev)
+}
+
+fn canonicalize_evidence_ref(
+    git: &GitOps,
+    kind: &EvidenceKind,
+    ref_target: &str,
+) -> ForumResult<String> {
+    match kind {
+        EvidenceKind::Commit => git.resolve_commit(ref_target),
+        _ => Ok(ref_target.to_string()),
+    }
 }
 
 /// Add a link between two threads via a Link event.

@@ -45,6 +45,7 @@ pub struct NodeLookup {
     pub thread_title: String,
     pub thread_kind: ThreadKind,
     pub node: Node,
+    pub links: Vec<ThreadLink>,
     pub events: Vec<Event>,
 }
 
@@ -320,6 +321,7 @@ fn build_node_lookup(state: &ThreadState, node: &Node) -> NodeLookup {
         thread_title: state.title.clone(),
         thread_kind: state.kind,
         node: node.clone(),
+        links: state.links.clone(),
         events,
     }
 }

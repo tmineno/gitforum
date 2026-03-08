@@ -124,6 +124,14 @@ pub fn render_node_show(lookup: &NodeLookup) -> String {
     }
     lines.push(String::new());
 
+    if !lookup.links.is_empty() {
+        lines.push(format!("thread links: {}", lookup.links.len()));
+        for link in &lookup.links {
+            lines.push(format!("  - {}  {}", link.target_thread_id, link.rel));
+        }
+        lines.push(String::new());
+    }
+
     lines.push("history:".into());
     let widths = timeline_widths(&lookup.events);
     lines.push(format_timeline_header(&widths));
@@ -460,6 +468,10 @@ mod tests {
                 resolved: false,
                 retracted: false,
             },
+            links: vec![crate::internal::thread::ThreadLink {
+                target_thread_id: "ISSUE-0001".into(),
+                rel: "implements".into(),
+            }],
             events: vec![Event {
                 event_id: "evt-0002".into(),
                 thread_id: "RFC-0001".into(),
@@ -488,6 +500,8 @@ mod tests {
         assert!(out.contains("status:   open"));
         assert!(out.contains("body:"));
         assert!(out.contains("What is this?"));
+        assert!(out.contains("thread links: 1"));
+        assert!(out.contains("ISSUE-0001  implements"));
         assert!(out.contains("history:"));
         assert!(out.contains("question"));
         assert!(out.contains("date"));

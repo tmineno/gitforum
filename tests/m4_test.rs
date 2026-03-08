@@ -1,14 +1,17 @@
 mod support;
 
+use std::fs;
+
 use chrono::{TimeZone, Utc};
 use git_forum::internal::clock::FixedClock;
 use git_forum::internal::create;
-use git_forum::internal::event::ThreadKind;
+use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id::SequentialIdGenerator;
 use git_forum::internal::run_ops;
+use git_forum::internal::say;
 use git_forum::internal::show;
 use git_forum::internal::thread;
 
@@ -35,6 +38,14 @@ fn make_thread(git: &GitOps) -> String {
         &SequentialIdGenerator::new("t"),
     )
     .unwrap()
+}
+
+fn make_real_commit(git: &GitOps) -> String {
+    let path = git.root().join("fixture.txt");
+    fs::write(&path, "fixture\n").unwrap();
+    git.run(&["add", "fixture.txt"]).unwrap();
+    git.run(&["commit", "-m", "fixture commit"]).unwrap();
+    git.run(&["rev-parse", "--verify", "HEAD"]).unwrap()
 }
 
 // ---- Evidence tests ----
@@ -66,12 +77,13 @@ fn add_evidence_appears_in_thread_state() {
 fn evidence_id_is_populated_from_commit_sha() {
     let (_repo, git) = setup();
     let thread_id = make_thread(&git);
+    let revision = make_real_commit(&git);
 
     let commit_sha = evidence_ops::add_evidence(
         &git,
         &thread_id,
         EvidenceKind::Commit,
-        "abc123",
+        &revision[..12],
         None,
         "human/alice",
         &fixed_clock(),
@@ -80,6 +92,28 @@ fn evidence_id_is_populated_from_commit_sha() {
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(state.evidence_items[0].evidence_id, commit_sha);
+    assert_eq!(state.evidence_items[0].ref_target, revision);
+}
+
+#[test]
+fn commit_evidence_rejects_invalid_revision() {
+    let (_repo, git) = setup();
+    let thread_id = make_thread(&git);
+
+    let err = evidence_ops::add_evidence(
+        &git,
+        &thread_id,
+        EvidenceKind::Commit,
+        "not-a-real-rev",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap_err();
+
+    assert!(err
+        .to_string()
+        .contains("revision 'not-a-real-rev' does not resolve to a commit"));
 }
 
 #[test]
@@ -147,6 +181,40 @@ fn show_includes_links_section() {
     let out = show::render_show(&state);
     assert!(out.contains("links: 1"));
     assert!(out.contains("ISSUE-0001"));
+    assert!(out.contains("implements"));
+}
+
+#[test]
+fn node_show_includes_parent_thread_links() {
+    let (_repo, git) = setup();
+    let thread_id = make_thread(&git);
+    let ids = SequentialIdGenerator::new("linknode");
+
+    let node_id = say::say_node(
+        &git,
+        &thread_id,
+        NodeType::Question,
+        "How is this tracked?",
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+    )
+    .unwrap();
+
+    evidence_ops::add_thread_link(
+        &git,
+        &thread_id,
+        "RFC-0001",
+        "implements",
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
+    let lookup = thread::find_node(&git, &node_id).unwrap();
+    let out = show::render_node_show(&lookup);
+    assert!(out.contains("thread links: 1"));
+    assert!(out.contains("RFC-0001"));
     assert!(out.contains("implements"));
 }
 

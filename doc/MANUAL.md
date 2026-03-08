@@ -223,6 +223,7 @@ git forum node show 6f1d2c3b
 - created_at
 - actor
 - current body
+- thread links, if the parent thread is linked to other threads
 - the history related to that node
 
 If a prefix is ambiguous, the command fails and prints candidate full IDs.
@@ -233,11 +234,16 @@ If a prefix is ambiguous, the command fails and prints candidate full IDs.
 
 ```bash
 git forum evidence add RFC-0001 --kind benchmark --ref bench/result.csv
+git forum evidence add RFC-0001 --kind commit --ref HEAD~1
 git forum evidence add RFC-0001 --kind commit --ref abc123def456
 git forum evidence add RFC-0001 --kind file --ref src/lib.rs
 ```
 
 Valid evidence kinds: `commit`, `file`, `hunk`, `test`, `benchmark`, `doc`, `thread`, `external`.
+
+For `--kind commit`, `--ref` may be a full SHA, short SHA, branch, tag, or other Git revision
+expression. `git-forum` resolves it to a commit and stores the canonical commit OID. If the revision
+does not resolve to a commit object, the command fails.
 
 On success, the command prints the first 8 characters of the evidence ID (the Git commit SHA of the Link event):
 
