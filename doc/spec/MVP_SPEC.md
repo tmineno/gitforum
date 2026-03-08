@@ -126,6 +126,7 @@ proposed -> accepted
 
 任意フィールド:
 
+- `body`
 - `labels[]`
 - `assignees[]`
 - `scope.repo`
@@ -140,6 +141,7 @@ JSON 例:
   "id": "RFC-0012",
   "kind": "rfc",
   "title": "Trait-based solver backend",
+  "body": "Needed to make plugin ABI stability explicit in the solver boundary.",
   "status": "under-review",
   "created_at": "2026-03-08T10:12:00Z",
   "created_by": "human/alice",
@@ -170,7 +172,7 @@ JSON 例:
 条件付き必須:
 
 - `node_type` (`event_type = say` の場合)
-- `body` (`say`, `edit`, `decision` 等)
+- `body` (`create`, `say`, `edit`, `decision` 等)
 - `target_node_id` (`edit`, `retract`, `resolve`, `reopen` の場合)
 - `provenance` (AI actor の場合)
 - `approvals[]` (`state`, `decision` で guard が要求する場合)
@@ -406,9 +408,9 @@ git forum reindex
 ### Thread creation
 
 ```bash
-git forum issue new <title>
-git forum rfc new <title>
-git forum decision new <title>
+git forum issue new <title> [--body <TEXT> | --body-file <PATH>]
+git forum rfc new <title> [--body <TEXT> | --body-file <PATH>]
+git forum decision new <title> [--body <TEXT> | --body-file <PATH>]
 ```
 
 ### Listing / display
@@ -419,6 +421,7 @@ git forum issue ls
 git forum rfc ls
 git forum decision ls
 git forum show <THREAD_ID>
+git forum node show <NODE_ID>
 ```
 
 ### TUI
@@ -481,6 +484,7 @@ git forum policy check <THREAD_ID> --transition <TRANSITION>
 ### 13.2 `git forum issue|rfc|decision new`
 
 - create event を作る。
+- `--body` または `--body-file` で初期 thread body を与えられる。
 - thread id を採番する。
 - initial state を設定する。
 - 対応する ref を作成する。
@@ -503,26 +507,39 @@ git forum policy check <THREAD_ID> --transition <TRANSITION>
 - `retract` は対象 node を参照する `retract` event を append する。
 - `resolve` / `reopen` は `objection` または `action` にのみ適用できる。
 - `resolve` 済み node は open objection / open action 集計から除外する。
+- `NODE_ID` は full ID を受け付けること。
+- exact match がない場合は、同一 thread 内で一意な prefix を受け付けてよい。
+- prefix 解決の最小長は 8 文字とする。
+- prefix が曖昧な場合は候補 full ID 一覧を表示して失敗する。
 
 ### 13.5 `git forum show`
 
 最低限、次を表示する。
 
-1. title / kind / state
+1. title / body / kind / state
 2. labels / assignees / scope
 3. open objections
 4. open actions
 5. latest summary
 6. timeline
 
-### 13.6 `git forum state`
+### 13.6 `git forum node show`
+
+- node id から単一 node を引けること。
+- full ID に加えて、global に一意な prefix を受け付けてよい。
+- prefix 解決の最小長は 8 文字とする。
+- prefix が曖昧な場合は候補 full ID 一覧を表示して失敗する。
+- 現在の body と状態を表示すること。
+- その node に関係する `say` / `edit` / `resolve` / `retract` / `reopen` の履歴を表示すること。
+
+### 13.7 `git forum state`
 
 - 現在 state から遷移可能か検証する。
 - guard を評価する。
 - approval が必要なら `--sign <ACTOR_ID>` で渡された actor から `approvals[]` を構成する。
 - state event を append する。
 
-### 13.7 `git forum verify`
+### 13.8 `git forum verify`
 
 MVP では以下をチェックする。
 
@@ -531,24 +548,24 @@ MVP では以下をチェックする。
 - open objection が残っていないか
 - required evidence が満たされているか
 
-### 13.8 `git forum evidence add|link`
+### 13.9 `git forum evidence add|link`
 
 - `evidence add` は対象 thread に evidence object を追加する。
 - `link` は thread 間、thread と evidence 間、または decision と issue 間の relation を記録する。
 - relation は timeline と detail view から辿れること。
 
-### 13.9 `git forum run spawn|ls|show`
+### 13.10 `git forum run spawn|ls|show`
 
 - `run spawn` は run record を生成し、対象 actor / thread / context を紐づける。
 - run が thread に書き込む場合は policy と provenance 要件を満たさなければならない。
 - `run show` は model / context_refs / tool_calls / result を表示する。
 
-### 13.10 `git forum policy lint|check`
+### 13.11 `git forum policy lint|check`
 
 - `policy lint` は `.forum/policy.toml` の構文と参照整合を検証する。
 - `policy check` は指定 transition に対して guard 評価結果を dry-run で返す。
 
-### 13.11 `git forum tui`
+### 13.12 `git forum tui`
 
 MVP の TUI は read-first とし、最低限次を提供する。
 

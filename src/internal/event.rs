@@ -233,7 +233,7 @@ mod tests {
             parents: vec![],
             title: Some("Test RFC".into()),
             kind: Some(ThreadKind::Rfc),
-            body: None,
+            body: Some("Thread body".into()),
             node_type: None,
             target_node_id: None,
             new_state: None,
@@ -250,11 +250,13 @@ mod tests {
         assert_eq!(parsed.event_type, EventType::Create);
         assert_eq!(parsed.kind, Some(ThreadKind::Rfc));
         assert_eq!(parsed.title.as_deref(), Some("Test RFC"));
+        assert_eq!(parsed.body.as_deref(), Some("Thread body"));
     }
 
     #[test]
     fn event_json_omits_none_fields() {
-        let event = sample_create_event();
+        let mut event = sample_create_event();
+        event.body = None;
         let json = serde_json::to_string_pretty(&event).unwrap();
         assert!(!json.contains("body"));
         assert!(!json.contains("node_type"));

@@ -1,3 +1,6 @@
+use std::fs;
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 use git_forum::internal::actor;
 use git_forum::internal::clock::SystemClock;
@@ -50,6 +53,11 @@ enum Commands {
     Ls,
     /// Show thread details
     Show { thread_id: String },
+    /// Node sub-commands
+    Node {
+        #[command(subcommand)]
+        cmd: NodeCmd,
+    },
     /// Add a typed discussion node to a thread
     Say {
         thread_id: String,
@@ -63,6 +71,10 @@ enum Commands {
     /// Revise the body of an existing node
     Revise {
         thread_id: String,
+        #[arg(
+            value_name = "NODE_ID",
+            help = "Full node ID or unique prefix within the thread (8+ chars unless exact match)"
+        )]
         node_id: String,
         #[arg(long)]
         body: String,
@@ -72,6 +84,10 @@ enum Commands {
     /// Retract a node (soft-delete)
     Retract {
         thread_id: String,
+        #[arg(
+            value_name = "NODE_ID",
+            help = "Full node ID or unique prefix within the thread (8+ chars unless exact match)"
+        )]
         node_id: String,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
@@ -79,6 +95,10 @@ enum Commands {
     /// Resolve a node (mark as addressed)
     Resolve {
         thread_id: String,
+        #[arg(
+            value_name = "NODE_ID",
+            help = "Full node ID or unique prefix within the thread (8+ chars unless exact match)"
+        )]
         node_id: String,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
@@ -86,6 +106,10 @@ enum Commands {
     /// Reopen a resolved or retracted node
     Reopen {
         thread_id: String,
+        #[arg(
+            value_name = "NODE_ID",
+            help = "Full node ID or unique prefix within the thread (8+ chars unless exact match)"
+        )]
         node_id: String,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
@@ -100,7 +124,10 @@ enum Commands {
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
-    /// Verify a thread against policy guards
+    #[command(
+        about = "Verify whether the thread currently satisfies guard conditions for its next forward transition",
+        long_about = "Verify whether the thread currently satisfies policy guard conditions for its next forward transition.\n\nCurrent behavior:\n- RFC in `under-review` is checked as if it were moving to `accepted`\n- Decision in `proposed` is checked as if it were moving to `accepted`\n- Other thread kinds or states currently return `ok` because no forward verify target is defined\n\nThis command is read-only. It does not change thread state or attach approvals."
+    )]
     Verify { thread_id: String },
     /// Policy sub-commands
     Policy {
@@ -122,10 +149,28 @@ enum PolicyCmd {
 }
 
 #[derive(Subcommand)]
+enum NodeCmd {
+    /// Show a single node by ID
+    Show {
+        #[arg(
+            value_name = "NODE_ID",
+            help = "Full node ID or globally unique prefix (8+ chars unless exact match)"
+        )]
+        node_id: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum ThreadCmd {
     /// Create a new thread
     New {
         title: String,
+        /// Initial thread body
+        #[arg(long, conflicts_with = "body_file")]
+        body: Option<String>,
+        /// Read initial thread body from a file
+        #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
+        body_file: Option<PathBuf>,
         /// Override actor ID (default: from git config)
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
@@ -205,6 +250,14 @@ fn main() -> Result<(), ForumError> {
             print!("{}", show::render_show(&state));
         }
 
+        Commands::Node { cmd } => match cmd {
+            NodeCmd::Show { node_id } => {
+                let git = GitOps::discover()?;
+                let lookup = thread::find_node(&git, &node_id)?;
+                print!("{}", show::render_node_show(&lookup));
+            }
+        },
+
         Commands::Say {
             thread_id,
             node_type,
@@ -225,8 +278,9 @@ fn main() -> Result<(), ForumError> {
         } => {
             let git = GitOps::discover()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
-            say::revise_node(&git, &thread_id, &node_id, &body, &actor, &clock, &ids)?;
-            println!("Revised {node_id}");
+            let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
+            say::revise_node(&git, &thread_id, &resolved, &body, &actor, &clock, &ids)?;
+            println!("Revised {resolved}");
         }
 
         Commands::Retract {
@@ -236,8 +290,9 @@ fn main() -> Result<(), ForumError> {
         } => {
             let git = GitOps::discover()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
-            say::retract_node(&git, &thread_id, &node_id, &actor, &clock, &ids)?;
-            println!("Retracted {node_id}");
+            let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
+            say::retract_node(&git, &thread_id, &resolved, &actor, &clock, &ids)?;
+            println!("Retracted {resolved}");
         }
 
         Commands::Resolve {
@@ -247,8 +302,9 @@ fn main() -> Result<(), ForumError> {
         } => {
             let git = GitOps::discover()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
-            say::resolve_node(&git, &thread_id, &node_id, &actor, &clock, &ids)?;
-            println!("Resolved {node_id}");
+            let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
+            say::resolve_node(&git, &thread_id, &resolved, &actor, &clock, &ids)?;
+            println!("Resolved {resolved}");
         }
 
         Commands::Reopen {
@@ -258,8 +314,9 @@ fn main() -> Result<(), ForumError> {
         } => {
             let git = GitOps::discover()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
-            say::reopen_node(&git, &thread_id, &node_id, &actor, &clock, &ids)?;
-            println!("Reopened {node_id}");
+            let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
+            say::reopen_node(&git, &thread_id, &resolved, &actor, &clock, &ids)?;
+            println!("Reopened {resolved}");
         }
 
         Commands::State {
@@ -349,10 +406,17 @@ fn run_thread_cmd(
     ids: &dyn git_forum::internal::id::IdGenerator,
 ) -> Result<(), ForumError> {
     match cmd {
-        ThreadCmd::New { title, as_actor } => {
+        ThreadCmd::New {
+            title,
+            body,
+            body_file,
+            as_actor,
+        } => {
             let git = GitOps::discover()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
-            let thread_id = create::create_thread(&git, kind, &title, &actor, clock, ids)?;
+            let body = resolve_thread_body(body, body_file)?;
+            let thread_id =
+                create::create_thread(&git, kind, &title, body.as_deref(), &actor, clock, ids)?;
             println!("Created {thread_id}");
         }
         ThreadCmd::Ls => {
@@ -370,4 +434,16 @@ fn run_thread_cmd(
         }
     }
     Ok(())
+}
+
+fn resolve_thread_body(
+    body: Option<String>,
+    body_file: Option<PathBuf>,
+) -> Result<Option<String>, ForumError> {
+    match (body, body_file) {
+        (Some(body), None) => Ok(Some(body)),
+        (None, Some(path)) => Ok(Some(fs::read_to_string(path)?)),
+        (None, None) => Ok(None),
+        (Some(_), Some(_)) => unreachable!("clap enforces body/body-file conflicts"),
+    }
 }

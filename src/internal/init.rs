@@ -4,7 +4,7 @@ use super::config::RepoPaths;
 use super::error::ForumResult;
 
 const DEFAULT_POLICY: &str = r#"# git-forum default policy
-# See docs/spec/MVP_SPEC.md for details.
+# See doc/spec/MVP_SPEC.md for details.
 
 [roles.reviewer]
 can_say = ["objection", "evidence", "summary", "risk"]

@@ -46,6 +46,7 @@ fn alloc_second_rfc_id() {
         &git,
         ThreadKind::Rfc,
         "First",
+        None,
         "human/alice",
         &fixed_clock(),
         &seq_ids("e"),
@@ -62,6 +63,7 @@ fn alloc_ids_per_kind_are_independent() {
         &git,
         ThreadKind::Issue,
         "Bug",
+        None,
         "human/alice",
         &fixed_clock(),
         &seq_ids("e"),
@@ -81,6 +83,7 @@ fn create_issue_returns_id() {
         &git,
         ThreadKind::Issue,
         "First issue",
+        None,
         "human/alice",
         &fixed_clock(),
         &seq_ids("e"),
@@ -96,6 +99,7 @@ fn create_rfc_initial_status_is_draft() {
         &git,
         ThreadKind::Rfc,
         "First RFC",
+        None,
         "human/alice",
         &fixed_clock(),
         &seq_ids("e"),
@@ -114,6 +118,7 @@ fn create_decision_initial_status_is_proposed() {
         &git,
         ThreadKind::Decision,
         "Choose algo",
+        None,
         "human/alice",
         &fixed_clock(),
         &seq_ids("e"),
@@ -131,6 +136,7 @@ fn create_multiple_threads_of_same_kind() {
         &git,
         ThreadKind::Rfc,
         "RFC A",
+        None,
         "human/alice",
         &fixed_clock(),
         &ids,
@@ -140,6 +146,7 @@ fn create_multiple_threads_of_same_kind() {
         &git,
         ThreadKind::Rfc,
         "RFC B",
+        None,
         "human/alice",
         &fixed_clock(),
         &ids,
@@ -149,6 +156,7 @@ fn create_multiple_threads_of_same_kind() {
         &git,
         ThreadKind::Rfc,
         "RFC C",
+        None,
         "human/alice",
         &fixed_clock(),
         &ids,
@@ -168,6 +176,7 @@ fn ls_shows_all_kinds() {
         &git,
         ThreadKind::Issue,
         "Bug",
+        None,
         "human/alice",
         &fixed_clock(),
         &ids,
@@ -177,6 +186,7 @@ fn ls_shows_all_kinds() {
         &git,
         ThreadKind::Rfc,
         "Proposal",
+        None,
         "human/alice",
         &fixed_clock(),
         &ids,
@@ -203,6 +213,7 @@ fn ls_filtered_by_kind() {
         &git,
         ThreadKind::Issue,
         "Bug",
+        None,
         "human/alice",
         &fixed_clock(),
         &ids,
@@ -212,6 +223,7 @@ fn ls_filtered_by_kind() {
         &git,
         ThreadKind::Rfc,
         "Proposal",
+        None,
         "human/alice",
         &fixed_clock(),
         &ids,
@@ -240,6 +252,7 @@ fn show_contains_all_required_fields() {
         &git,
         ThreadKind::Rfc,
         "Test RFC",
+        Some("Initial thread body.\nSecond line."),
         "human/alice",
         &fixed_clock(),
         &seq_ids("e"),
@@ -253,9 +266,23 @@ fn show_contains_all_required_fields() {
     assert!(out.contains("rfc"), "missing kind");
     assert!(out.contains("draft"), "missing status");
     assert!(out.contains("human/alice"), "missing actor");
+    assert!(out.contains("body:"), "missing body section");
+    assert!(out.contains("Initial thread body."), "missing body content");
+    assert!(
+        out.contains("Second line."),
+        "missing multiline body content"
+    );
     assert!(out.contains("2026-01-01T00:00:00Z"), "missing timestamp");
     assert!(out.contains("timeline:"), "missing timeline section");
-    assert!(out.contains("create"), "missing create event in timeline");
+    assert!(out.contains("date"), "missing timeline header");
+    assert!(
+        out.contains("e-0001"),
+        "missing create event id in timeline"
+    );
+    assert!(
+        out.contains("create"),
+        "missing create event type in timeline"
+    );
 }
 
 #[test]
@@ -266,6 +293,7 @@ fn show_replay_consistency() {
         &git,
         ThreadKind::Rfc,
         "Test RFC",
+        None,
         "human/alice",
         &fixed_clock(),
         &seq_ids("e"),
@@ -284,6 +312,7 @@ fn show_snapshot_stable() {
         &git,
         ThreadKind::Rfc,
         "Test RFC",
+        Some("Initial thread body."),
         "human/alice",
         &fixed_clock(),
         &seq_ids("e"),
@@ -298,9 +327,32 @@ kind:     rfc
 status:   draft
 created:  2026-01-01T00:00:00Z
 by:       human/alice
+body:
+  Initial thread body.
 
 timeline:
-  2026-01-01T00:00:00Z  create      by human/alice  -- \"Test RFC\"
+  date                  id                  author              type        body
+  2026-01-01T00:00:00Z  e-0001              human/alice         create      Test RFC
 ";
     assert_eq!(out, expected);
+}
+
+#[test]
+fn create_thread_body_roundtrips_in_replay() {
+    let (_repo, git, _paths) = setup();
+    create::create_thread(
+        &git,
+        ThreadKind::Rfc,
+        "Test RFC",
+        Some("Problem statement and context."),
+        "human/alice",
+        &fixed_clock(),
+        &seq_ids("e"),
+    )
+    .unwrap();
+    let state = thread::replay_thread(&git, "RFC-0001").unwrap();
+    assert_eq!(
+        state.body.as_deref(),
+        Some("Problem statement and context.")
+    );
 }

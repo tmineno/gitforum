@@ -1,6 +1,6 @@
 # MVP TODO
 
-この文書は [docs/spec/MVP_SPEC.md](./spec/MVP_SPEC.md) を、MVP 完了までのマイルストーンに再編したものです。
+この文書は [doc/spec/MVP_SPEC.md](./spec/MVP_SPEC.md) を、MVP 完了までのマイルストーンに再編したものです。
 仕様の解釈が分かれた場合は spec を優先します。
 
 ## Finish line
@@ -103,6 +103,7 @@ Includes:
 - [x] `git forum issue new`
 - [x] `git forum rfc new`
 - [x] `git forum decision new`
+- [x] thread の初期 body を保存できる
 - [x] `git forum ls` と kind 別 `ls`
 - [x] `git forum show`
 - [x] `show` 出力の snapshot 方針を固める
@@ -110,15 +111,15 @@ Includes:
 Exit criteria:
 
 - [x] `issue` / `rfc` / `decision` を作成できる
-- [x] `git forum show` で title / kind / state / timeline を表示できる
+- [x] `git forum show` で title / body / kind / state / timeline を表示できる
 - [x] `show` の表示が replay 結果と一致する
 - [x] `show` の snapshot が不安定値なしで比較できる
 
 Verification:
 
 ```bash
-cargo run -- forum issue new "First issue"
-cargo run -- forum rfc new "First RFC"
+cargo run -- forum issue new "First issue" --body "Problem statement"
+cargo run -- forum rfc new "First RFC" --body-file ./tmp/rfc-body.md
 cargo run -- forum decision new "First decision"
 cargo run -- forum ls
 cargo run -- forum show RFC-0001

@@ -6,18 +6,31 @@ use super::git_ops::GitOps;
 use super::node::Node;
 use super::refs;
 
+pub const MIN_NODE_ID_PREFIX_LEN: usize = 8;
+
 /// Materialized state of a thread, derived from event replay.
 #[derive(Debug, Clone)]
 pub struct ThreadState {
     pub id: String,
     pub kind: ThreadKind,
     pub title: String,
+    pub body: Option<String>,
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub created_by: String,
     pub events: Vec<Event>,
     /// All discussion nodes (say/edit/retract/resolve/reopen applied).
     pub nodes: Vec<Node>,
+}
+
+/// Resolved view of a single node inside a thread.
+#[derive(Debug, Clone)]
+pub struct NodeLookup {
+    pub thread_id: String,
+    pub thread_title: String,
+    pub thread_kind: ThreadKind,
+    pub node: Node,
+    pub events: Vec<Event>,
 }
 
 impl ThreadState {
@@ -72,6 +85,7 @@ pub fn replay(events: &[Event]) -> ForumResult<ThreadState> {
         id: first.thread_id.clone(),
         kind,
         title,
+        body: first.body.clone(),
         status: kind.initial_status().to_string(),
         created_at: first.created_at,
         created_by: first.actor.clone(),
@@ -148,6 +162,73 @@ pub fn replay_thread(git: &GitOps, thread_id: &str) -> ForumResult<ThreadState> 
     replay(&events)
 }
 
+/// Resolve a node reference across all threads.
+///
+/// Exact matches are preferred. If there is no exact match, a unique prefix
+/// of at least [`MIN_NODE_ID_PREFIX_LEN`] characters is accepted.
+pub fn resolve_node_id_global(git: &GitOps, node_ref: &str) -> ForumResult<String> {
+    let lookups = all_node_lookups(git)?;
+    resolve_node_id_global_from_lookups(&lookups, node_ref)
+}
+
+/// Resolve a node reference inside a single thread.
+///
+/// Exact matches are preferred. If there is no exact match, a unique prefix
+/// of at least [`MIN_NODE_ID_PREFIX_LEN`] characters is accepted.
+pub fn resolve_node_id_in_thread(
+    git: &GitOps,
+    thread_id: &str,
+    node_ref: &str,
+) -> ForumResult<String> {
+    let state = replay_thread(git, thread_id)?;
+
+    let exact_matches: Vec<&Node> = state
+        .nodes
+        .iter()
+        .filter(|node| node.node_id == node_ref)
+        .collect();
+    match exact_matches.len() {
+        1 => return Ok(exact_matches[0].node_id.clone()),
+        2.. => {
+            return Err(ForumError::Repo(format!(
+                "node '{node_ref}' is ambiguous in thread '{thread_id}'"
+            )));
+        }
+        0 => {}
+    }
+
+    if node_ref.len() < MIN_NODE_ID_PREFIX_LEN {
+        return Err(ForumError::Repo(format!(
+            "node id prefix '{node_ref}' is too short; use at least {MIN_NODE_ID_PREFIX_LEN} characters"
+        )));
+    }
+
+    let matches: Vec<&Node> = state
+        .nodes
+        .iter()
+        .filter(|node| node.node_id.starts_with(node_ref))
+        .collect();
+    match matches.len() {
+        0 => Err(ForumError::Repo(format!(
+            "node '{node_ref}' not found in thread '{thread_id}'"
+        ))),
+        1 => Ok(matches[0].node_id.clone()),
+        _ => Err(ForumError::Repo(format_thread_ambiguity(
+            thread_id, node_ref, &matches,
+        ))),
+    }
+}
+
+/// Find a node by ID across all threads.
+pub fn find_node(git: &GitOps, node_ref: &str) -> ForumResult<NodeLookup> {
+    let resolved = resolve_node_id_global(git, node_ref)?;
+    let lookups = all_node_lookups(git)?;
+    lookups
+        .into_iter()
+        .find(|lookup| lookup.node.node_id == resolved)
+        .ok_or_else(|| ForumError::Repo(format!("node '{resolved}' not found")))
+}
+
 /// List all thread IDs from Git refs.
 pub fn list_thread_ids(git: &GitOps) -> ForumResult<Vec<String>> {
     let ref_names = git.list_refs(refs::THREADS_PREFIX)?;
@@ -157,6 +238,91 @@ pub fn list_thread_ids(git: &GitOps) -> ForumResult<Vec<String>> {
         .collect();
     ids.sort();
     Ok(ids)
+}
+
+fn all_node_lookups(git: &GitOps) -> ForumResult<Vec<NodeLookup>> {
+    let mut lookups = Vec::new();
+    for thread_id in list_thread_ids(git)? {
+        let state = replay_thread(git, &thread_id)?;
+        for node in &state.nodes {
+            lookups.push(build_node_lookup(&state, node));
+        }
+    }
+    Ok(lookups)
+}
+
+fn build_node_lookup(state: &ThreadState, node: &Node) -> NodeLookup {
+    let events = state
+        .events
+        .iter()
+        .filter(|ev| ev.target_node_id.as_deref() == Some(node.node_id.as_str()))
+        .cloned()
+        .collect();
+    NodeLookup {
+        thread_id: state.id.clone(),
+        thread_title: state.title.clone(),
+        thread_kind: state.kind,
+        node: node.clone(),
+        events,
+    }
+}
+
+fn resolve_node_id_global_from_lookups(
+    lookups: &[NodeLookup],
+    node_ref: &str,
+) -> ForumResult<String> {
+    let exact_matches: Vec<&NodeLookup> = lookups
+        .iter()
+        .filter(|lookup| lookup.node.node_id == node_ref)
+        .collect();
+    match exact_matches.len() {
+        1 => return Ok(exact_matches[0].node.node_id.clone()),
+        2.. => {
+            return Err(ForumError::Repo(format!(
+                "node '{node_ref}' is ambiguous across multiple threads"
+            )));
+        }
+        0 => {}
+    }
+
+    if node_ref.len() < MIN_NODE_ID_PREFIX_LEN {
+        return Err(ForumError::Repo(format!(
+            "node id prefix '{node_ref}' is too short; use at least {MIN_NODE_ID_PREFIX_LEN} characters"
+        )));
+    }
+
+    let matches: Vec<&NodeLookup> = lookups
+        .iter()
+        .filter(|lookup| lookup.node.node_id.starts_with(node_ref))
+        .collect();
+    match matches.len() {
+        0 => Err(ForumError::Repo(format!("node '{node_ref}' not found"))),
+        1 => Ok(matches[0].node.node_id.clone()),
+        _ => Err(ForumError::Repo(format_global_ambiguity(
+            node_ref, &matches,
+        ))),
+    }
+}
+
+fn format_thread_ambiguity(thread_id: &str, node_ref: &str, matches: &[&Node]) -> String {
+    let mut message = format!("node id prefix '{node_ref}' is ambiguous in thread '{thread_id}'");
+    message.push_str("\n  candidates:");
+    for node in matches {
+        message.push_str(&format!("\n  - {}  {}", node.node_id, node.node_type));
+    }
+    message
+}
+
+fn format_global_ambiguity(node_ref: &str, matches: &[&NodeLookup]) -> String {
+    let mut message = format!("node id prefix '{node_ref}' is ambiguous");
+    message.push_str("\n  candidates:");
+    for lookup in matches {
+        message.push_str(&format!(
+            "\n  - {}  {} {}",
+            lookup.node.node_id, lookup.thread_id, lookup.node.node_type
+        ));
+    }
+    message
 }
 
 #[cfg(test)]
@@ -209,6 +375,7 @@ mod tests {
         assert_eq!(state.id, "RFC-0001");
         assert_eq!(state.kind, ThreadKind::Rfc);
         assert_eq!(state.title, "Test RFC");
+        assert_eq!(state.body, None);
         assert_eq!(state.status, "draft");
         assert_eq!(state.created_by, "human/alice");
         assert_eq!(state.events.len(), 1);

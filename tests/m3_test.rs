@@ -34,6 +34,7 @@ fn make_rfc(git: &GitOps) -> String {
         git,
         ThreadKind::Rfc,
         "Test RFC",
+        None,
         "human/alice",
         &fixed_clock(),
         &ids,
@@ -601,8 +602,136 @@ fn show_timeline_includes_say_events() {
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     let out = show::render_show(&state);
 
-    assert!(out.contains("say"));
+    assert!(out.contains("n-0001"));
     assert!(out.contains("claim"));
+    assert!(out.contains("This is important."));
+}
+
+#[test]
+fn find_node_returns_current_body_and_history() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+    let ids = SequentialIdGenerator::new("n");
+
+    let node_id = say::say_node(
+        &git,
+        &thread_id,
+        NodeType::Question,
+        "What is this?",
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+    )
+    .unwrap();
+    say::revise_node(
+        &git,
+        &thread_id,
+        &node_id,
+        "What is this object?",
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+    )
+    .unwrap();
+
+    let lookup = thread::find_node(&git, &node_id).unwrap();
+    assert_eq!(lookup.thread_id, thread_id);
+    assert_eq!(lookup.node.node_id, node_id);
+    assert_eq!(lookup.node.body, "What is this object?");
+    assert_eq!(lookup.events.len(), 2);
+
+    let out = show::render_node_show(&lookup);
+    assert!(out.contains("What is this object?"));
+    assert!(out.contains("What is this?"));
+    assert!(out.contains(&node_id));
+    assert!(out.contains("edit"));
+    assert!(out.contains("history:"));
+}
+
+#[test]
+fn find_node_accepts_unique_global_prefix() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+    let ids = SequentialIdGenerator::new("nodeprefix");
+
+    let node_id = say::say_node(
+        &git,
+        &thread_id,
+        NodeType::Question,
+        "What is this?",
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+    )
+    .unwrap();
+
+    let prefix = &node_id[..thread::MIN_NODE_ID_PREFIX_LEN];
+    let lookup = thread::find_node(&git, prefix).unwrap();
+    assert_eq!(lookup.node.node_id, node_id);
+}
+
+#[test]
+fn resolve_node_id_rejects_short_prefix() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+    let ids = SequentialIdGenerator::new("nodeprefix");
+
+    say::say_node(
+        &git,
+        &thread_id,
+        NodeType::Question,
+        "What is this?",
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+    )
+    .unwrap();
+
+    let err = thread::resolve_node_id_global(&git, "nodepre").unwrap_err();
+    assert!(err.to_string().contains("at least 8 characters"));
+}
+
+#[test]
+fn resolve_node_id_in_thread_scopes_prefix_lookup() {
+    let (_repo, git, _paths) = setup();
+    let first_thread_id = make_rfc(&git);
+    let second_thread_id = create::create_thread(
+        &git,
+        ThreadKind::Rfc,
+        "Second RFC",
+        None,
+        "human/bob",
+        &fixed_clock(),
+        &SequentialIdGenerator::new("e2"),
+    )
+    .unwrap();
+
+    let first_node_id = say::say_node(
+        &git,
+        &first_thread_id,
+        NodeType::Objection,
+        "First objection.",
+        "human/alice",
+        &fixed_clock(),
+        &SequentialIdGenerator::new("prefixsame-a"),
+    )
+    .unwrap();
+    let _second_node_id = say::say_node(
+        &git,
+        &second_thread_id,
+        NodeType::Objection,
+        "Second objection.",
+        "human/bob",
+        &fixed_clock(),
+        &SequentialIdGenerator::new("prefixsame-b"),
+    )
+    .unwrap();
+
+    let err = thread::resolve_node_id_global(&git, "prefixsa").unwrap_err();
+    assert!(err.to_string().contains("ambiguous"));
+
+    let resolved = thread::resolve_node_id_in_thread(&git, &first_thread_id, "prefixsa").unwrap();
+    assert_eq!(resolved, first_node_id);
 }
 
 // ---- policy loading from file ----
