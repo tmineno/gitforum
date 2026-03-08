@@ -644,7 +644,52 @@ CLI は失敗時に以下を返す。
 - `ai/reviewer cannot emit node type claim under current policy`
 - `provenance required for ai/summarizer`
 
-## 20. Acceptance criteria
+## 20. Testing strategy
+
+MVP のテスト環境は Rust の標準的なローカル test workflow を前提とし、外部サービスや常時起動の test server を必須としない。
+
+### Required test layers
+
+1. unit tests:
+   replay, state machine, policy, guard, merge 判定、index、search を pure Rust で検証する。
+2. integration tests:
+   一時 Git repository を作成し、CLI を end-to-end で検証する。
+3. TUI tests:
+   read-first TUI の表示状態と描画結果を検証する。完全な対話自動化は MVP の必須要件ではない。
+
+### Test isolation requirements
+
+- 各 integration test は独立した temporary directory を使うこと。
+- 各 integration test は `git init` された repo を自前で作ること。
+- Git の global/system config に依存しないよう、必要に応じて `HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_NOSYSTEM=1` を隔離すること。
+- test repo では `user.name` と `user.email` を明示設定すること。
+- ネットワークアクセスは必須にしないこと。AI integration は mock / fake provider で検証できなければならない。
+
+### Determinism requirements
+
+- clock は差し替え可能であること。
+- ID generator は差し替え可能であること。
+- 必要なら `GIT_AUTHOR_DATE` と `GIT_COMMITTER_DATE` を固定できること。
+- snapshot 的な比較を行う場合、commit hash や timestamp のような不安定値に依存してはならない。
+
+### Recommended verification surface
+
+- `git forum show`
+- `git forum verify`
+- import / export 出力
+- TUI の一覧 / 詳細レンダリング
+
+### CI baseline
+
+CI の最低ラインは以下とする。
+
+```bash
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test
+```
+
+## 21. Acceptance criteria
 
 MVP 完了条件は次とする。
 
@@ -661,7 +706,7 @@ MVP 完了条件は次とする。
 11. `git forum tui` で一覧・詳細・基本フィルタを操作できる。
 12. Rust stable toolchain で build / test できる。
 
-## 21. Recommended implementation order
+## 22. Recommended implementation order
 
 1. repository init
 2. thread create / load
@@ -675,7 +720,7 @@ MVP 完了条件は次とする。
 10. simple TUI
 11. semantic merge
 
-## 22. Open questions after MVP
+## 23. Open questions after MVP
 
 - `git notes` をどこまで併用するか
 - node revision の UI をどうするか
