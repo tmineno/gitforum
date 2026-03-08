@@ -415,6 +415,7 @@ git forum decision new <title> [--body <TEXT> | --body-file <PATH>]
 ### Listing / display
 
 ```bash
+git forum --help-llm
 git forum ls
 git forum issue ls
 git forum rfc ls

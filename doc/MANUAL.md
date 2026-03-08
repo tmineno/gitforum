@@ -16,6 +16,12 @@ If you only want to try it during development, this also works:
 cargo run -- --help
 ```
 
+To print this manual verbatim for an LLM or another tool:
+
+```bash
+git-forum --help-llm
+```
+
 ## Conventions
 
 - thread kinds: `issue`, `rfc`, `decision`

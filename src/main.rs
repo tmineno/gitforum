@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use git_forum::internal::actor;
 use git_forum::internal::clock::SystemClock;
 use git_forum::internal::config::RepoPaths;
@@ -13,6 +13,7 @@ use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id::UlidGenerator;
+use git_forum::internal::index;
 use git_forum::internal::init;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::reindex;
@@ -20,13 +21,16 @@ use git_forum::internal::run_ops;
 use git_forum::internal::say;
 use git_forum::internal::show;
 use git_forum::internal::thread;
+use git_forum::internal::tui as forum_tui;
 use git_forum::internal::verify;
 
 #[derive(Parser)]
 #[command(name = "git-forum", about = "Structured discussion in Git")]
 struct Cli {
+    #[arg(long = "help-llm", help = "Print the full manual for LLMs and exit")]
+    help_llm: bool,
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -156,6 +160,16 @@ enum Commands {
         #[command(subcommand)]
         cmd: RunCmd,
     },
+    /// Search threads by title, kind, or status
+    Search {
+        /// Search query (matched against title, id, kind, and status)
+        query: String,
+    },
+    /// Open the interactive TUI
+    Tui {
+        /// Open a specific thread in detail view directly
+        thread_id: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -231,10 +245,21 @@ enum ThreadCmd {
 
 fn main() -> Result<(), ForumError> {
     let cli = Cli::parse();
+    if cli.help_llm {
+        print!("{}", include_str!("../doc/MANUAL.md"));
+        return Ok(());
+    }
+
+    let Some(command) = cli.command else {
+        Cli::command().print_help()?;
+        println!();
+        std::process::exit(2);
+    };
+
     let clock = SystemClock;
     let ids = UlidGenerator;
 
-    match cli.command {
+    match command {
         Commands::Init => {
             let git = GitOps::discover()?;
             let paths = RepoPaths::from_repo_root(git.root());
@@ -243,8 +268,7 @@ fn main() -> Result<(), ForumError> {
         }
 
         Commands::Doctor => {
-            let git = GitOps::discover()?;
-            let paths = RepoPaths::from_repo_root(git.root());
+            let (git, paths) = discover_repo_with_init_warning()?;
             let report = doctor::run_doctor(&git, &paths)?;
             for check in &report.checks {
                 let marker = if check.passed { " ok " } else { "FAIL" };
@@ -260,8 +284,9 @@ fn main() -> Result<(), ForumError> {
         }
 
         Commands::Reindex => {
-            let git = GitOps::discover()?;
-            let report = reindex::run_reindex(&git)?;
+            let (git, paths) = discover_repo_with_init_warning()?;
+            let db_path = paths.git_forum.join("index.db");
+            let report = reindex::run_reindex(&git, &db_path)?;
             println!(
                 "Reindex complete: {} threads found, {} replayed, {} errors",
                 report.threads_found,
@@ -271,6 +296,20 @@ fn main() -> Result<(), ForumError> {
             for (id, err) in &report.errors {
                 eprintln!("  error: {id}: {err}");
             }
+        }
+
+        Commands::Search { query } => {
+            let (_git, paths) = discover_repo_with_init_warning()?;
+            let db_path = paths.git_forum.join("index.db");
+            let conn = index::open_db(&db_path)?;
+            let results = index::search_threads(&conn, &query)?;
+            print!("{}", show::render_ls_from_index(&results));
+        }
+
+        Commands::Tui { thread_id } => {
+            let (git, paths) = discover_repo_with_init_warning()?;
+            let db_path = paths.git_forum.join("index.db");
+            forum_tui::run(&git, &db_path, thread_id.as_deref())?;
         }
 
         Commands::Issue { cmd } => {
@@ -284,7 +323,7 @@ fn main() -> Result<(), ForumError> {
         }
 
         Commands::Ls => {
-            let git = GitOps::discover()?;
+            let (git, _paths) = discover_repo_with_init_warning()?;
             let ids_list = thread::list_thread_ids(&git)?;
             let mut states = Vec::new();
             for id in &ids_list {
@@ -295,14 +334,14 @@ fn main() -> Result<(), ForumError> {
         }
 
         Commands::Show { thread_id } => {
-            let git = GitOps::discover()?;
+            let (git, _paths) = discover_repo_with_init_warning()?;
             let state = thread::replay_thread(&git, &thread_id)?;
             print!("{}", show::render_show(&state));
         }
 
         Commands::Node { cmd } => match cmd {
             NodeCmd::Show { node_id } => {
-                let git = GitOps::discover()?;
+                let (git, _paths) = discover_repo_with_init_warning()?;
                 let lookup = thread::find_node(&git, &node_id)?;
                 print!("{}", show::render_node_show(&lookup));
             }
@@ -314,7 +353,7 @@ fn main() -> Result<(), ForumError> {
             body,
             as_actor,
         } => {
-            let git = GitOps::discover()?;
+            let (git, _paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
             let node_id = say::say_node(&git, &thread_id, node_type, &body, &actor, &clock, &ids)?;
             println!("Added {node_type} {node_id}");
@@ -326,7 +365,7 @@ fn main() -> Result<(), ForumError> {
             body,
             as_actor,
         } => {
-            let git = GitOps::discover()?;
+            let (git, _paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
             say::revise_node(&git, &thread_id, &resolved, &body, &actor, &clock, &ids)?;
@@ -338,7 +377,7 @@ fn main() -> Result<(), ForumError> {
             node_id,
             as_actor,
         } => {
-            let git = GitOps::discover()?;
+            let (git, _paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
             say::retract_node(&git, &thread_id, &resolved, &actor, &clock, &ids)?;
@@ -350,7 +389,7 @@ fn main() -> Result<(), ForumError> {
             node_id,
             as_actor,
         } => {
-            let git = GitOps::discover()?;
+            let (git, _paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
             say::resolve_node(&git, &thread_id, &resolved, &actor, &clock, &ids)?;
@@ -362,7 +401,7 @@ fn main() -> Result<(), ForumError> {
             node_id,
             as_actor,
         } => {
-            let git = GitOps::discover()?;
+            let (git, _paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
             say::reopen_node(&git, &thread_id, &resolved, &actor, &clock, &ids)?;
@@ -375,8 +414,7 @@ fn main() -> Result<(), ForumError> {
             sign,
             as_actor,
         } => {
-            let git = GitOps::discover()?;
-            let paths = RepoPaths::from_repo_root(git.root());
+            let (git, paths) = discover_repo_with_init_warning()?;
             let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
             say::change_state(
@@ -386,8 +424,7 @@ fn main() -> Result<(), ForumError> {
         }
 
         Commands::Verify { thread_id } => {
-            let git = GitOps::discover()?;
-            let paths = RepoPaths::from_repo_root(git.root());
+            let (git, paths) = discover_repo_with_init_warning()?;
             let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
             let report = verify::verify_thread(&git, &thread_id, &policy)?;
             if report.passed() {
@@ -407,7 +444,7 @@ fn main() -> Result<(), ForumError> {
                 ref_target,
                 as_actor,
             } => {
-                let git = GitOps::discover()?;
+                let (git, _paths) = discover_repo_with_init_warning()?;
                 let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
                 let commit_sha = evidence_ops::add_evidence(
                     &git,
@@ -431,7 +468,7 @@ fn main() -> Result<(), ForumError> {
             rel,
             as_actor,
         } => {
-            let git = GitOps::discover()?;
+            let (git, _paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
             evidence_ops::add_thread_link(
                 &git,
@@ -449,26 +486,25 @@ fn main() -> Result<(), ForumError> {
                 thread_id,
                 as_actor,
             } => {
-                let git = GitOps::discover()?;
+                let (git, _paths) = discover_repo_with_init_warning()?;
                 let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
                 let run_label = run_ops::spawn_run(&git, &thread_id, &actor, &clock)?;
                 println!("Spawned {run_label}");
             }
             RunCmd::Ls => {
-                let git = GitOps::discover()?;
+                let (git, _paths) = discover_repo_with_init_warning()?;
                 let runs = run_ops::list_runs(&git)?;
                 print!("{}", show::render_run_ls(&runs));
             }
             RunCmd::Show { run_label } => {
-                let git = GitOps::discover()?;
+                let (git, _paths) = discover_repo_with_init_warning()?;
                 let run = run_ops::read_run(&git, &run_label)?;
                 print!("{}", show::render_run_show(&run));
             }
         },
 
         Commands::Policy { cmd } => {
-            let git = GitOps::discover()?;
-            let paths = RepoPaths::from_repo_root(git.root());
+            let (git, paths) = discover_repo_with_init_warning()?;
             match cmd {
                 PolicyCmd::Lint => {
                     let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
@@ -528,7 +564,7 @@ fn run_thread_cmd(
             body_file,
             as_actor,
         } => {
-            let git = GitOps::discover()?;
+            let (git, _paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
             let body = resolve_thread_body(body, body_file)?;
             let thread_id =
@@ -536,7 +572,7 @@ fn run_thread_cmd(
             println!("Created {thread_id}");
         }
         ThreadCmd::Ls => {
-            let git = GitOps::discover()?;
+            let (git, _paths) = discover_repo_with_init_warning()?;
             let all_ids = thread::list_thread_ids(&git)?;
             let mut states = Vec::new();
             for id in &all_ids {
@@ -550,6 +586,21 @@ fn run_thread_cmd(
         }
     }
     Ok(())
+}
+
+fn discover_repo_with_init_warning() -> Result<(GitOps, RepoPaths), ForumError> {
+    let git = GitOps::discover()?;
+    let paths = RepoPaths::from_repo_root(git.root());
+    if !is_forum_initialized(&paths) {
+        eprintln!(
+            "warning: git-forum is not initialized in this repository; run `git forum init` first"
+        );
+    }
+    Ok((git, paths))
+}
+
+fn is_forum_initialized(paths: &RepoPaths) -> bool {
+    paths.dot_forum.join("policy.toml").is_file() && paths.git_forum.join("logs").is_dir()
 }
 
 fn resolve_thread_body(

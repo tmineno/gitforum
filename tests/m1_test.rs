@@ -216,15 +216,16 @@ fn doctor_uninitialized_reports_failures() {
 
 #[test]
 fn reindex_empty_repo() {
-    let (_repo, git, _paths) = setup();
-    let report = reindex::run_reindex(&git).unwrap();
+    let (_repo, git, paths) = setup();
+    let db_path = paths.git_forum.join("index.db");
+    let report = reindex::run_reindex(&git, &db_path).unwrap();
     assert_eq!(report.threads_found, 0);
     assert!(report.errors.is_empty());
 }
 
 #[test]
 fn reindex_replays_all_threads() {
-    let (_repo, git, _paths) = setup();
+    let (_repo, git, paths) = setup();
     event::write_event(&git, &sample_create("ISSUE-0001", ThreadKind::Issue, "Bug")).unwrap();
     event::write_event(
         &git,
@@ -232,7 +233,8 @@ fn reindex_replays_all_threads() {
     )
     .unwrap();
 
-    let report = reindex::run_reindex(&git).unwrap();
+    let db_path = paths.git_forum.join("index.db");
+    let report = reindex::run_reindex(&git, &db_path).unwrap();
     assert_eq!(report.threads_found, 2);
     assert_eq!(report.threads_replayed.len(), 2);
     assert!(report.errors.is_empty());

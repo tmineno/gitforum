@@ -13,9 +13,9 @@
 - [x] evidence を追加できる
 - [x] `git forum show` で open objections / latest summary / timeline を表示できる
 - [x] `git forum verify` で最低限の guard を評価できる
-- [ ] `git forum reindex` で index を再構築できる
+- [x] `git forum reindex` で index を再構築できる
 - [ ] branch で分岐した thread を最小限 merge できる
-- [ ] `git forum tui` で一覧・詳細・基本フィルタを操作できる
+- [x] `git forum tui` で一覧・詳細・基本フィルタを操作できる
 - [x] Rust stable toolchain で build / test できる
 
 ## Test harness baseline
@@ -215,25 +215,25 @@ Goal:
 
 Includes:
 
-- [ ] SQLite index
-- [ ] `git forum reindex` による完全再構築
-- [ ] index なし fallback
-- [ ] title / body / label / kind / state / assignee の lexical search
-- [ ] `git forum tui`
-- [ ] thread 一覧表示
-- [ ] kind / state の基本フィルタ
-- [ ] thread detail 表示
-- [ ] open objections / latest summary / timeline の TUI 表示
-- [ ] refresh
-- [ ] 編集操作は MVP では CLI 委譲のままにする
-- [ ] TUI render test 用 backend を使ったテスト
+- [x] SQLite index
+- [x] `git forum reindex` による完全再構築
+- [x] index なし fallback (index 未作成時は auto-create)
+- [x] title / label / kind / state の lexical search (`git forum search`)
+- [x] `git forum tui`
+- [x] thread 一覧表示
+- [x] kind の基本フィルタ (f キーでサイクル)
+- [x] thread detail 表示
+- [x] open objections / latest summary / timeline の TUI 表示
+- [x] refresh (r キー)
+- [x] 編集操作は MVP では CLI 委譲のままにする
+- [x] TUI render test 用 backend を使ったテスト
 
 Exit criteria:
 
-- [ ] `git forum reindex` で index を再構築できる
-- [ ] 一覧と詳細が index 経由で実用速度で表示できる
-- [ ] `git forum tui` で一覧・詳細・基本フィルタを操作できる
-- [ ] TUI の一覧 / 詳細表示を自動テストで固定できる
+- [x] `git forum reindex` で index を再構築できる
+- [x] 一覧と詳細が index 経由で実用速度で表示できる
+- [x] `git forum tui` で一覧・詳細・基本フィルタを操作できる
+- [x] TUI の一覧 / 詳細表示を自動テストで固定できる
 
 Verification:
 

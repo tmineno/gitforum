@@ -292,6 +292,27 @@ pub fn render_run_ls(runs: &[Run]) -> String {
     lines.join("\n")
 }
 
+/// Render search results from the local index (same columns as `render_ls`).
+pub fn render_ls_from_index(rows: &[super::index::ThreadRow]) -> String {
+    if rows.is_empty() {
+        return "no threads found\n".into();
+    }
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(format!(
+        "{:<12}  {:<10}  {:<14}  {}",
+        "ID", "KIND", "STATUS", "TITLE"
+    ));
+    lines.push("-".repeat(60));
+    for r in rows {
+        lines.push(format!(
+            "{:<12}  {:<10}  {:<14}  {}",
+            r.id, r.kind, r.status, r.title
+        ));
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
 /// Render `git forum ls` output for a list of threads.
 ///
 /// Output columns: ID, KIND, STATUS, TITLE.

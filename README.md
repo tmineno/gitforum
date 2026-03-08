@@ -62,6 +62,12 @@ If you just want to try it during development, you can run it directly without i
 cargo run -- --help
 ```
 
+To print the full CLI manual in one shot, including for LLM/tool consumption:
+
+```bash
+git-forum --help-llm
+```
+
 ## Why
 
 Typical issue trackers and code-hosting AI tools still leave a few gaps:
