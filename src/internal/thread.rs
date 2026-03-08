@@ -2,11 +2,19 @@ use chrono::{DateTime, Utc};
 
 use super::error::{ForumError, ForumResult};
 use super::event::{self, Event, EventType, NodeType, ThreadKind};
+use super::evidence::Evidence;
 use super::git_ops::GitOps;
 use super::node::Node;
 use super::refs;
 
 pub const MIN_NODE_ID_PREFIX_LEN: usize = 8;
+
+/// A link between two threads.
+#[derive(Debug, Clone)]
+pub struct ThreadLink {
+    pub target_thread_id: String,
+    pub rel: String,
+}
 
 /// Materialized state of a thread, derived from event replay.
 #[derive(Debug, Clone)]
@@ -21,6 +29,12 @@ pub struct ThreadState {
     pub events: Vec<Event>,
     /// All discussion nodes (say/edit/retract/resolve/reopen applied).
     pub nodes: Vec<Node>,
+    /// Evidence items attached to this thread via Link events.
+    pub evidence_items: Vec<Evidence>,
+    /// Links to other threads via Link events.
+    pub links: Vec<ThreadLink>,
+    /// Labels of AI runs spawned for this thread via Spawn events.
+    pub run_labels: Vec<String>,
 }
 
 /// Resolved view of a single node inside a thread.
@@ -91,6 +105,9 @@ pub fn replay(events: &[Event]) -> ForumResult<ThreadState> {
         created_by: first.actor.clone(),
         events: vec![first.clone()],
         nodes: vec![],
+        evidence_items: vec![],
+        links: vec![],
+        run_labels: vec![],
     };
 
     for ev in &events[1..] {
@@ -147,6 +164,23 @@ fn apply_event(state: &mut ThreadState, event: &Event) -> ForumResult<()> {
                     node.resolved = false;
                     node.retracted = false;
                 }
+            }
+        }
+        EventType::Link => {
+            if let Some(ev_data) = &event.evidence {
+                let mut ev = ev_data.clone();
+                ev.evidence_id = event.event_id.clone();
+                state.evidence_items.push(ev);
+            } else if let (Some(target), Some(rel)) = (&event.target_node_id, &event.link_rel) {
+                state.links.push(ThreadLink {
+                    target_thread_id: target.clone(),
+                    rel: rel.clone(),
+                });
+            }
+        }
+        EventType::Spawn => {
+            if let Some(label) = &event.run_label {
+                state.run_labels.push(label.clone());
             }
         }
         _ => {}
@@ -358,6 +392,9 @@ mod tests {
             target_node_id: None,
             new_state: None,
             approvals: vec![],
+            evidence: None,
+            link_rel: None,
+            run_label: None,
         }
     }
 
@@ -377,6 +414,9 @@ mod tests {
             target_node_id: None,
             new_state: Some(new_state.into()),
             approvals: vec![],
+            evidence: None,
+            link_rel: None,
+            run_label: None,
         }
     }
 

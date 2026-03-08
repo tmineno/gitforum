@@ -9,11 +9,14 @@ use git_forum::internal::create;
 use git_forum::internal::doctor;
 use git_forum::internal::error::ForumError;
 use git_forum::internal::event::{NodeType, ThreadKind};
+use git_forum::internal::evidence::EvidenceKind;
+use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id::UlidGenerator;
 use git_forum::internal::init;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::reindex;
+use git_forum::internal::run_ops;
 use git_forum::internal::say;
 use git_forum::internal::show;
 use git_forum::internal::thread;
@@ -134,6 +137,25 @@ enum Commands {
         #[command(subcommand)]
         cmd: PolicyCmd,
     },
+    /// Evidence sub-commands
+    Evidence {
+        #[command(subcommand)]
+        cmd: EvidenceCmd,
+    },
+    /// Add a link between two threads
+    Link {
+        thread_id: String,
+        target_thread_id: String,
+        #[arg(long, value_name = "REL")]
+        rel: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// AI run sub-commands
+    Run {
+        #[command(subcommand)]
+        cmd: RunCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -146,6 +168,34 @@ enum PolicyCmd {
         #[arg(long)]
         transition: String,
     },
+}
+
+#[derive(Subcommand)]
+enum EvidenceCmd {
+    /// Add an evidence item to a thread
+    Add {
+        thread_id: String,
+        #[arg(long, value_name = "KIND")]
+        kind: EvidenceKind,
+        #[arg(long = "ref", value_name = "REF")]
+        ref_target: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum RunCmd {
+    /// Spawn a new AI run for a thread
+    Spawn {
+        thread_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// List all runs
+    Ls,
+    /// Show a single run
+    Show { run_label: String },
 }
 
 #[derive(Subcommand)]
@@ -349,6 +399,72 @@ fn main() -> Result<(), ForumError> {
                 std::process::exit(1);
             }
         }
+
+        Commands::Evidence { cmd } => match cmd {
+            EvidenceCmd::Add {
+                thread_id,
+                kind,
+                ref_target,
+                as_actor,
+            } => {
+                let git = GitOps::discover()?;
+                let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+                let commit_sha = evidence_ops::add_evidence(
+                    &git,
+                    &thread_id,
+                    kind,
+                    &ref_target,
+                    None,
+                    &actor,
+                    &clock,
+                )?;
+                println!(
+                    "Evidence added ({})",
+                    &commit_sha[..commit_sha.len().min(8)]
+                );
+            }
+        },
+
+        Commands::Link {
+            thread_id,
+            target_thread_id,
+            rel,
+            as_actor,
+        } => {
+            let git = GitOps::discover()?;
+            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+            evidence_ops::add_thread_link(
+                &git,
+                &thread_id,
+                &target_thread_id,
+                &rel,
+                &actor,
+                &clock,
+            )?;
+            println!("{thread_id} -> {target_thread_id} ({rel})");
+        }
+
+        Commands::Run { cmd } => match cmd {
+            RunCmd::Spawn {
+                thread_id,
+                as_actor,
+            } => {
+                let git = GitOps::discover()?;
+                let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+                let run_label = run_ops::spawn_run(&git, &thread_id, &actor, &clock)?;
+                println!("Spawned {run_label}");
+            }
+            RunCmd::Ls => {
+                let git = GitOps::discover()?;
+                let runs = run_ops::list_runs(&git)?;
+                print!("{}", show::render_run_ls(&runs));
+            }
+            RunCmd::Show { run_label } => {
+                let git = GitOps::discover()?;
+                let run = run_ops::read_run(&git, &run_label)?;
+                print!("{}", show::render_run_show(&run));
+            }
+        },
 
         Commands::Policy { cmd } => {
             let git = GitOps::discover()?;

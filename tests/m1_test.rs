@@ -32,6 +32,9 @@ fn sample_create(thread_id: &str, kind: ThreadKind, title: &str) -> Event {
         target_node_id: None,
         new_state: None,
         approvals: vec![],
+        evidence: None,
+        link_rel: None,
+        run_label: None,
     }
 }
 
@@ -51,6 +54,9 @@ fn sample_state(thread_id: &str, new_state: &str) -> Event {
         target_node_id: None,
         new_state: Some(new_state.into()),
         approvals: vec![],
+        evidence: None,
+        link_rel: None,
+        run_label: None,
     }
 }
 

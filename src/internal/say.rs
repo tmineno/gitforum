@@ -38,6 +38,9 @@ pub fn say_node(
         target_node_id: None,
         new_state: None,
         approvals: vec![],
+        evidence: None,
+        link_rel: None,
+        run_label: None,
     };
     super::event::write_event(git, &ev)
 }
@@ -72,6 +75,9 @@ pub fn revise_node(
         target_node_id: Some(node_id.to_string()),
         new_state: None,
         approvals: vec![],
+        evidence: None,
+        link_rel: None,
+        run_label: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())
@@ -106,6 +112,9 @@ pub fn retract_node(
         target_node_id: Some(node_id.to_string()),
         new_state: None,
         approvals: vec![],
+        evidence: None,
+        link_rel: None,
+        run_label: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())
@@ -140,6 +149,9 @@ pub fn resolve_node(
         target_node_id: Some(node_id.to_string()),
         new_state: None,
         approvals: vec![],
+        evidence: None,
+        link_rel: None,
+        run_label: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())
@@ -174,6 +186,9 @@ pub fn reopen_node(
         target_node_id: Some(node_id.to_string()),
         new_state: None,
         approvals: vec![],
+        evidence: None,
+        link_rel: None,
+        run_label: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())
@@ -242,6 +257,9 @@ pub fn change_state(
         target_node_id: None,
         new_state: Some(new_state.to_string()),
         approvals,
+        evidence: None,
+        link_rel: None,
+        run_label: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())

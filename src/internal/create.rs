@@ -41,6 +41,9 @@ pub fn create_thread(
         target_node_id: None,
         new_state: None,
         approvals: vec![],
+        evidence: None,
+        link_rel: None,
+        run_label: None,
     };
     super::event::write_event(git, &event)?;
     Ok(thread_id)

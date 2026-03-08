@@ -8,9 +8,9 @@
 - [x] 空の Git repository で `git forum init` が動く
 - [x] `issue` / `rfc` / `decision` を作成できる
 - [x] 型付き発言を追加できる
-- [ ] AI run provenance を保存できる
+- [x] AI run provenance を保存できる
 - [x] policy による state transition 検証が動く
-- [ ] evidence を追加できる
+- [x] evidence を追加できる
 - [x] `git forum show` で open objections / latest summary / timeline を表示できる
 - [x] `git forum verify` で最低限の guard を評価できる
 - [ ] `git forum reindex` で index を再構築できる
@@ -177,25 +177,25 @@ Goal:
 
 Includes:
 
-- [ ] `git forum evidence add`
-- [ ] `commit`, `file`, `hunk`, `test`, `benchmark`, `doc`, `thread`, `external` の evidence
-- [ ] `git forum link`
-- [ ] detail view と timeline から evidence / relation を辿れる表示
-- [ ] actor と run を分離した保存モデル
-- [ ] `git forum run spawn`
-- [ ] `git forum run ls`
-- [ ] `git forum run show`
-- [ ] `model`, `context_refs`, `tool_calls`, `result`, `confidence` の保持
+- [x] `git forum evidence add`
+- [x] `commit`, `file`, `hunk`, `test`, `benchmark`, `doc`, `thread`, `external` の evidence
+- [x] `git forum link`
+- [x] detail view と timeline から evidence / relation を辿れる表示
+- [x] actor と run を分離した保存モデル
+- [x] `git forum run spawn`
+- [x] `git forum run ls`
+- [x] `git forum run show`
+- [x] `model`, `context_refs`, `tool_calls`, `result`, `confidence` の保持
 - [ ] AI actor 書き込み時の policy / provenance 検証
 - [ ] fake AI provider による integration test
 
 Exit criteria:
 
-- [ ] evidence を追加できる
-- [ ] AI run provenance を保存できる
-- [ ] `run show` で provenance を追える
-- [ ] evidence と AI run が thread detail から辿れる
-- [ ] ネットワークなしで AI 関連テストが通る
+- [x] evidence を追加できる
+- [x] AI run provenance を保存できる
+- [x] `run show` で provenance を追える
+- [x] evidence と AI run が thread detail から辿れる
+- [ ] ネットワークなしで AI 関連テストが通る (fake provider は未実装)
 
 Verification:
 

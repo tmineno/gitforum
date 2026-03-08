@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::approval::Approval;
 use super::error::ForumResult;
+use super::evidence::Evidence;
 use super::git_ops::GitOps;
 use super::refs;
 
@@ -175,6 +176,15 @@ pub struct Event {
     /// Approvals attached to State events (recorded sign-offs).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub approvals: Vec<Approval>,
+    /// Evidence attached to Link events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<Evidence>,
+    /// Relation type for Link events (e.g. `"implements"`, `"relates-to"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_rel: Option<String>,
+    /// Run label recorded by Spawn events (e.g. `"RUN-0001"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_label: Option<String>,
 }
 
 /// Write an event as a Git commit and update the thread ref.
@@ -240,6 +250,9 @@ mod tests {
             target_node_id: None,
             new_state: None,
             approvals: vec![],
+            evidence: None,
+            link_rel: None,
+            run_label: None,
         }
     }
 

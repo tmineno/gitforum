@@ -739,6 +739,9 @@ fn resolve_node_id_in_thread_scopes_prefix_lookup() {
         target_node_id: Some("deadbeef11111111111111111111111111111111".into()),
         new_state: None,
         approvals: vec![],
+        evidence: None,
+        link_rel: None,
+        run_label: None,
     };
     let second_event = Event {
         event_id: String::new(),
@@ -755,6 +758,9 @@ fn resolve_node_id_in_thread_scopes_prefix_lookup() {
         target_node_id: Some("deadbeef22222222222222222222222222222222".into()),
         new_state: None,
         approvals: vec![],
+        evidence: None,
+        link_rel: None,
+        run_label: None,
     };
     event::write_event(&git, &first_event).unwrap();
     event::write_event(&git, &second_event).unwrap();
