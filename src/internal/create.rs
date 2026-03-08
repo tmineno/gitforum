@@ -25,6 +25,29 @@ pub fn create_thread(
     clock: &dyn Clock,
     _ids: &dyn IdGenerator,
 ) -> ForumResult<String> {
+    create_thread_with_branch(git, kind, title, body, None, actor, clock, _ids)
+}
+
+/// Create a new thread with an optional branch scope.
+#[allow(clippy::too_many_arguments)]
+pub fn create_thread_with_branch(
+    git: &GitOps,
+    kind: ThreadKind,
+    title: &str,
+    body: Option<&str>,
+    branch: Option<&str>,
+    actor: &str,
+    clock: &dyn Clock,
+    _ids: &dyn IdGenerator,
+) -> ForumResult<String> {
+    if let Some(branch) = branch {
+        let refname = format!("refs/heads/{branch}");
+        if git.resolve_ref(&refname)?.is_none() {
+            return Err(super::error::ForumError::Repo(format!(
+                "branch '{branch}' does not exist in this repository"
+            )));
+        }
+    }
     let thread_id = id_alloc::alloc_thread_id(git, kind)?;
     let event = Event {
         event_id: String::new(),
@@ -44,6 +67,7 @@ pub fn create_thread(
         evidence: None,
         link_rel: None,
         run_label: None,
+        branch: branch.map(str::to_string),
     };
     super::event::write_event(git, &event)?;
     Ok(thread_id)

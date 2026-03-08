@@ -42,6 +42,7 @@ pub fn add_evidence(
         }),
         link_rel: None,
         run_label: None,
+        branch: None,
     };
     super::event::write_event(git, &ev)
 }
@@ -78,6 +79,7 @@ pub fn add_thread_link(
         evidence: None,
         link_rel: Some(rel.to_string()),
         run_label: None,
+        branch: None,
     };
     super::event::write_event(git, &ev)
 }

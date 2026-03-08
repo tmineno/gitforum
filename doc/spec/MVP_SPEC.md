@@ -375,7 +375,7 @@ can_transition = ["under-review->changes-requested"]
 
 [roles.maintainer]
 can_say = ["claim", "decision", "summary"]
-can_transition = ["draft->proposed", "under-review->accepted"]
+can_transition = ["draft->proposed", "proposed->under-review", "under-review->accepted"]
 
 [[guards]]
 on = "under-review->accepted"
@@ -407,9 +407,9 @@ git forum reindex
 ### Thread creation
 
 ```bash
-git forum issue new <title> [--body <TEXT> | --body-file <PATH>]
-git forum rfc new <title> [--body <TEXT> | --body-file <PATH>]
-git forum decision new <title> [--body <TEXT> | --body-file <PATH>]
+git forum issue new <title> [--body <TEXT> | --body-file <PATH>] [--branch <BRANCH>]
+git forum rfc new <title> [--body <TEXT> | --body-file <PATH>] [--branch <BRANCH>]
+git forum decision new <title> [--body <TEXT> | --body-file <PATH>] [--branch <BRANCH>]
 ```
 
 ### Listing / display
@@ -452,6 +452,8 @@ git forum state <THREAD_ID> <NEW_STATE> [--sign <ACTOR_ID>]...
 ```bash
 git forum evidence add <THREAD_ID> --kind <KIND> --ref <REF>
 git forum link <FROM> <TO> --rel <REL>
+git forum branch bind <THREAD_ID> <BRANCH>
+git forum branch clear <THREAD_ID>
 ```
 
 ### AI runs

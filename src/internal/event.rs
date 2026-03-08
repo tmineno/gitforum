@@ -58,6 +58,7 @@ pub enum EventType {
     Unlink,
     State,
     Assign,
+    Scope,
     Decision,
     Resolve,
     Reopen,
@@ -79,6 +80,7 @@ impl std::fmt::Display for EventType {
             Self::Unlink => "unlink",
             Self::State => "state",
             Self::Assign => "assign",
+            Self::Scope => "scope",
             Self::Decision => "decision",
             Self::Resolve => "resolve",
             Self::Reopen => "reopen",
@@ -185,6 +187,9 @@ pub struct Event {
     /// Run label recorded by Spawn events (e.g. `"RUN-0001"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_label: Option<String>,
+    /// Branch scope recorded by Create/Scope events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 /// Write an event as a Git commit and update the thread ref.
@@ -253,6 +258,7 @@ mod tests {
             evidence: None,
             link_rel: None,
             run_label: None,
+            branch: None,
         }
     }
 
@@ -278,6 +284,7 @@ mod tests {
         assert!(!json.contains("node_type"));
         assert!(!json.contains("target_node_id"));
         assert!(!json.contains("new_state"));
+        assert!(!json.contains("branch"));
     }
 
     #[test]

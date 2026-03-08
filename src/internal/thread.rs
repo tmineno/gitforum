@@ -23,6 +23,7 @@ pub struct ThreadState {
     pub kind: ThreadKind,
     pub title: String,
     pub body: Option<String>,
+    pub branch: Option<String>,
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub created_by: String,
@@ -100,6 +101,7 @@ pub fn replay(events: &[Event]) -> ForumResult<ThreadState> {
         kind,
         title,
         body: first.body.clone(),
+        branch: first.branch.clone(),
         status: kind.initial_status().to_string(),
         created_at: first.created_at,
         created_by: first.actor.clone(),
@@ -123,6 +125,9 @@ fn apply_event(state: &mut ThreadState, event: &Event) -> ForumResult<()> {
             if let Some(ref new_state) = event.new_state {
                 state.status.clone_from(new_state);
             }
+        }
+        EventType::Scope => {
+            state.branch.clone_from(&event.branch);
         }
         EventType::Say => {
             if let (Some(node_type), Some(ref body)) = (event.node_type, &event.body) {
@@ -415,6 +420,7 @@ mod tests {
             evidence: None,
             link_rel: None,
             run_label: None,
+            branch: None,
         }
     }
 
@@ -437,6 +443,7 @@ mod tests {
             evidence: None,
             link_rel: None,
             run_label: None,
+            branch: None,
         }
     }
 

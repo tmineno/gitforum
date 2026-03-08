@@ -58,7 +58,11 @@ git forum reindex
 ```bash
 git forum issue new "Parser fails on nested blocks"
 git forum issue new "Parser fails on nested blocks" --body "Repro in src/parser/tests.rs"
+git forum issue new "Parser fails on nested blocks" --body -
 git forum issue new "Parser fails on nested blocks" --body-file ./tmp/issue-body.md
+git forum issue new "Parser fails on nested blocks" --branch feat/parser-rewrite
+git forum issue new "Parser fails on nested blocks" \
+  --link-to RFC-0001 --rel implements
 ```
 
 ### RFC
@@ -67,6 +71,7 @@ git forum issue new "Parser fails on nested blocks" --body-file ./tmp/issue-body
 git forum rfc new "Switch solver backend to trait objects"
 git forum rfc new "Switch solver backend to trait objects" \
   --body "Needed to make plugin ABI stability explicit."
+git forum rfc new "Switch solver backend to trait objects" --body -
 ```
 
 ### Decision
@@ -74,6 +79,11 @@ git forum rfc new "Switch solver backend to trait objects" \
 ```bash
 git forum decision new "Adopt trait backend for v2"
 ```
+
+`--body -` reads the initial body from standard input, so you can avoid creating a temporary file.
+`--branch <BRANCH>` binds the new thread to an existing Git branch.
+`--link-to <THREAD_ID> --rel <REL>` creates the thread and immediately records one or more links from
+the new thread to existing threads.
 
 ### List by kind
 
@@ -93,6 +103,7 @@ git forum show RFC-0001
 `git forum show <THREAD_ID>` shows:
 
 - title
+- branch
 - body
 - kind
 - status
@@ -237,15 +248,25 @@ Evidence added (a1b2c3d4)
 ### Link two threads
 
 ```bash
-git forum link RFC-0001 ISSUE-0001 --rel implements
+git forum link ISSUE-0001 RFC-0001 --rel implements
 git forum link RFC-0001 DEC-0001 --rel relates-to
 ```
 
 On success:
 
 ```text
-RFC-0001 -> ISSUE-0001 (implements)
+ISSUE-0001 -> RFC-0001 (implements)
 ```
+
+### Bind a thread to a Git branch
+
+```bash
+git forum branch bind ISSUE-0001 feat/parser-rewrite
+git forum branch clear ISSUE-0001
+```
+
+This updates the thread's `scope.branch`. It is most useful for issues that track implementation work
+on a feature branch, but the command is available for any thread kind.
 
 ## AI runs
 
@@ -332,6 +353,8 @@ git forum state RFC-0001 accepted --sign human/alice --sign human/bob
 
 - `--sign` is recorded as an approval on the event
 - whether the transition succeeds depends on the state machine and policy guards
+- for RFCs, `proposed` means the author is declaring the RFC review-ready
+- for RFCs, `under-review` means active review is in progress
 
 ## Verify and inspect policy
 
@@ -363,7 +386,7 @@ can_transition = ["under-review->changes-requested"]
 
 [roles.maintainer]
 can_say = ["claim", "decision", "summary"]
-can_transition = ["draft->proposed", "under-review->accepted"]
+can_transition = ["draft->proposed", "proposed->under-review", "under-review->accepted"]
 
 [[guards]]
 on = "under-review->accepted"
@@ -458,7 +481,7 @@ git forum say RFC-0001 --type objection --body "Benchmarks are missing."
 git forum evidence add RFC-0001 --kind benchmark --ref bench/result.csv
 git forum say RFC-0001 --type summary --body "Benchmarks added; objection addressed."
 git forum resolve RFC-0001 <OBJECTION_NODE_ID>
-git forum link RFC-0001 ISSUE-0001 --rel implements
+git forum issue new "Implement trait backend" --link-to RFC-0001 --rel implements
 git forum run spawn RFC-0001 --as ai/reviewer
 git forum show RFC-0001
 git forum state RFC-0001 proposed

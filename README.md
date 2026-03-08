@@ -38,8 +38,11 @@ $ git forum node show a1b2c3d4
 $ git forum run spawn RFC-0012 --as ai/reviewer
 $ git forum evidence add RFC-0012 \
   --kind benchmark --ref bench/solver.csv --rows 15:38
+$ git forum state RFC-0012 proposed
+$ git forum state RFC-0012 under-review
 $ git forum state RFC-0012 accepted --sign human/alice
-$ git forum issue new "Implement trait backend" --from RFC-0012
+$ git forum issue new "Implement trait backend" \
+  --link-to RFC-0012 --rel implements
 ```
 
 ## Install

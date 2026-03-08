@@ -10,15 +10,25 @@ pub fn is_valid_transition(kind: ThreadKind, from: &str, to: &str) -> bool {
     valid_transitions(kind).contains(&(from, to))
 }
 
+/// Return valid destination states from the current state.
+pub fn valid_targets(kind: ThreadKind, from: &str) -> Vec<&'static str> {
+    valid_transitions(kind)
+        .iter()
+        .filter_map(|(src, dst)| (*src == from).then_some(*dst))
+        .collect()
+}
+
 fn valid_transitions(kind: ThreadKind) -> &'static [(&'static str, &'static str)] {
     match kind {
         ThreadKind::Issue => &[("open", "closed"), ("closed", "open")],
         ThreadKind::Rfc => &[
-            ("draft", "under-review"),
+            ("draft", "proposed"),
+            ("draft", "rejected"),
+            ("proposed", "under-review"),
+            ("proposed", "draft"),
             ("under-review", "accepted"),
             ("under-review", "rejected"),
             ("under-review", "draft"),
-            ("draft", "rejected"),
         ],
         ThreadKind::Decision => &[
             ("proposed", "accepted"),
@@ -33,12 +43,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rfc_draft_to_under_review_is_valid() {
-        assert!(is_valid_transition(
-            ThreadKind::Rfc,
-            "draft",
-            "under-review"
-        ));
+    fn rfc_draft_to_proposed_is_valid() {
+        assert!(is_valid_transition(ThreadKind::Rfc, "draft", "proposed"));
     }
 
     #[test]
@@ -81,6 +87,23 @@ mod tests {
             "under-review",
             "accepted"
         ));
+    }
+
+    #[test]
+    fn rfc_proposed_to_under_review_is_valid() {
+        assert!(is_valid_transition(
+            ThreadKind::Rfc,
+            "proposed",
+            "under-review"
+        ));
+    }
+
+    #[test]
+    fn valid_targets_lists_expected_rfc_transitions() {
+        assert_eq!(
+            valid_targets(ThreadKind::Rfc, "draft"),
+            vec!["proposed", "rejected"]
+        );
     }
 
     #[test]

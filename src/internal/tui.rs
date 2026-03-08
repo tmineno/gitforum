@@ -1044,6 +1044,7 @@ mod tests {
             status: status.into(),
             title: title.into(),
             body: None,
+            branch: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             created_by: "human/alice".into(),
             open_objections: 0,

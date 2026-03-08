@@ -12,7 +12,7 @@ can_transition = ["under-review->changes-requested"]
 
 [roles.maintainer]
 can_say = ["claim", "decision", "summary"]
-can_transition = ["draft->proposed", "under-review->accepted"]
+can_transition = ["draft->proposed", "proposed->under-review", "under-review->accepted"]
 
 [[guards]]
 on = "under-review->accepted"

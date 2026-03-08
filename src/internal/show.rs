@@ -18,6 +18,9 @@ pub fn render_show(state: &ThreadState) -> String {
         state.created_at.format("%Y-%m-%dT%H:%M:%SZ")
     ));
     lines.push(format!("by:       {}", state.created_by));
+    if let Some(branch) = &state.branch {
+        lines.push(format!("branch:   {}", branch));
+    }
     if let Some(body) = &state.body {
         lines.push("body:".into());
         for line in body.lines() {
@@ -136,6 +139,10 @@ fn event_detail(event: &Event) -> String {
     match event.event_type {
         EventType::Create => event.title.clone().unwrap_or_default(),
         EventType::State => event.new_state.clone().unwrap_or_default(),
+        EventType::Scope => event
+            .branch
+            .clone()
+            .unwrap_or_else(|| "(clear branch)".into()),
         EventType::Say | EventType::Edit => event.body.clone().unwrap_or_default(),
         _ => String::new(),
     }
@@ -389,6 +396,7 @@ mod tests {
             kind: ThreadKind::Rfc,
             title: "Test RFC".into(),
             body: Some("Thread body".into()),
+            branch: None,
             status: "draft".into(),
             created_at: t,
             created_by: "human/alice".into(),
@@ -410,6 +418,7 @@ mod tests {
                 evidence: None,
                 link_rel: None,
                 run_label: None,
+                branch: None,
             }],
             nodes: vec![],
             evidence_items: vec![],
@@ -420,13 +429,15 @@ mod tests {
 
     #[test]
     fn show_contains_key_fields() {
-        let state = fixed_state();
+        let mut state = fixed_state();
+        state.branch = Some("feat/solver".into());
         let out = render_show(&state);
         assert!(out.contains("RFC-0001"));
         assert!(out.contains("Test RFC"));
         assert!(out.contains("rfc"));
         assert!(out.contains("draft"));
         assert!(out.contains("human/alice"));
+        assert!(out.contains("branch:   feat/solver"));
         assert!(out.contains("body:"));
         assert!(out.contains("Thread body"));
         assert!(out.contains("2026-01-01T00:00:00Z"));
@@ -467,6 +478,7 @@ mod tests {
                 evidence: None,
                 link_rel: None,
                 run_label: None,
+                branch: None,
             }],
         };
 

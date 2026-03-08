@@ -1,8 +1,10 @@
 use std::fs;
+use std::io::Read;
 use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use git_forum::internal::actor;
+use git_forum::internal::branch_ops;
 use git_forum::internal::clock::SystemClock;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
@@ -64,6 +66,11 @@ enum Commands {
     Node {
         #[command(subcommand)]
         cmd: NodeCmd,
+    },
+    /// Bind or clear a thread's Git branch scope
+    Branch {
+        #[command(subcommand)]
+        cmd: BranchCmd,
     },
     /// Add a typed discussion node to a thread
     Say {
@@ -225,6 +232,23 @@ enum NodeCmd {
 }
 
 #[derive(Subcommand)]
+enum BranchCmd {
+    /// Bind a thread to an existing Git branch
+    Bind {
+        thread_id: String,
+        branch: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// Clear the bound branch from a thread
+    Clear {
+        thread_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum ThreadCmd {
     /// Create a new thread
     New {
@@ -235,6 +259,15 @@ enum ThreadCmd {
         /// Read initial thread body from a file
         #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
         body_file: Option<PathBuf>,
+        /// Bind the new thread to an existing Git branch
+        #[arg(long, value_name = "BRANCH")]
+        branch: Option<String>,
+        /// Create thread links immediately after creation (may be repeated)
+        #[arg(long = "link-to", value_name = "THREAD_ID")]
+        link_to: Vec<String>,
+        /// Relation to use with --link-to
+        #[arg(long, requires = "link_to", value_name = "REL")]
+        rel: Option<String>,
         /// Override actor ID (default: from git config)
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
@@ -344,6 +377,28 @@ fn main() -> Result<(), ForumError> {
                 let (git, _paths) = discover_repo_with_init_warning()?;
                 let lookup = thread::find_node(&git, &node_id)?;
                 print!("{}", show::render_node_show(&lookup));
+            }
+        },
+
+        Commands::Branch { cmd } => match cmd {
+            BranchCmd::Bind {
+                thread_id,
+                branch,
+                as_actor,
+            } => {
+                let (git, _paths) = discover_repo_with_init_warning()?;
+                let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+                branch_ops::set_branch(&git, &thread_id, Some(&branch), &actor, &clock)?;
+                println!("{thread_id} -> branch {branch}");
+            }
+            BranchCmd::Clear {
+                thread_id,
+                as_actor,
+            } => {
+                let (git, _paths) = discover_repo_with_init_warning()?;
+                let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+                branch_ops::set_branch(&git, &thread_id, None, &actor, &clock)?;
+                println!("{thread_id} -> branch <cleared>");
             }
         },
 
@@ -562,13 +617,32 @@ fn run_thread_cmd(
             title,
             body,
             body_file,
+            branch,
+            link_to,
+            rel,
             as_actor,
         } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
             let body = resolve_thread_body(body, body_file)?;
-            let thread_id =
-                create::create_thread(&git, kind, &title, body.as_deref(), &actor, clock, ids)?;
+            let thread_id = create::create_thread_with_branch(
+                &git,
+                kind,
+                &title,
+                body.as_deref(),
+                branch.as_deref(),
+                &actor,
+                clock,
+                ids,
+            )?;
+            if !link_to.is_empty() {
+                let rel = rel.as_deref().ok_or_else(|| {
+                    ForumError::Config("--rel is required when --link-to is used".into())
+                })?;
+                for target in &link_to {
+                    evidence_ops::add_thread_link(&git, &thread_id, target, rel, &actor, clock)?;
+                }
+            }
             println!("Created {thread_id}");
         }
         ThreadCmd::Ls => {
@@ -608,6 +682,11 @@ fn resolve_thread_body(
     body_file: Option<PathBuf>,
 ) -> Result<Option<String>, ForumError> {
     match (body, body_file) {
+        (Some(body), None) if body == "-" => {
+            let mut buf = String::new();
+            std::io::stdin().read_to_string(&mut buf)?;
+            Ok(Some(buf))
+        }
         (Some(body), None) => Ok(Some(body)),
         (None, Some(path)) => Ok(Some(fs::read_to_string(path)?)),
         (None, None) => Ok(None),

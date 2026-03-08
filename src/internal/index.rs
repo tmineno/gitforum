@@ -13,6 +13,7 @@ pub struct ThreadRow {
     pub status: String,
     pub title: String,
     pub body: Option<String>,
+    pub branch: Option<String>,
     pub created_at: String,
     pub created_by: String,
     pub open_objections: i64,
@@ -60,6 +61,7 @@ fn ensure_schema(conn: &Connection) -> ForumResult<()> {
             status          TEXT NOT NULL,
             title           TEXT NOT NULL,
             body            TEXT,
+            branch          TEXT,
             created_at      TEXT NOT NULL,
             created_by      TEXT NOT NULL,
             open_objections INTEGER NOT NULL DEFAULT 0,
@@ -75,7 +77,29 @@ fn ensure_schema(conn: &Connection) -> ForumResult<()> {
             body            TEXT NOT NULL
         );",
     )
-    .map_err(|e| ForumError::Repo(e.to_string()))
+    .map_err(|e| ForumError::Repo(e.to_string()))?;
+    ensure_thread_branch_column(conn)
+}
+
+fn ensure_thread_branch_column(conn: &Connection) -> ForumResult<()> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(threads)")
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+    let cols = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+    let mut has_branch = false;
+    for col in cols {
+        if col.map_err(|e| ForumError::Repo(e.to_string()))? == "branch" {
+            has_branch = true;
+            break;
+        }
+    }
+    if !has_branch {
+        conn.execute("ALTER TABLE threads ADD COLUMN branch TEXT", [])
+            .map_err(|e| ForumError::Repo(e.to_string()))?;
+    }
+    Ok(())
 }
 
 /// Remove all rows (used before a full reindex).
@@ -107,8 +131,8 @@ pub fn upsert_thread(conn: &Connection, state: &ThreadState) -> ForumResult<()> 
     conn.execute(
         "INSERT OR REPLACE INTO threads
          (id, kind, status, title, body, created_at, created_by,
-          open_objections, open_actions, has_summary, tip_sha)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+          branch, open_objections, open_actions, has_summary, tip_sha)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
         params![
             state.id,
             state.kind.to_string(),
@@ -117,6 +141,7 @@ pub fn upsert_thread(conn: &Connection, state: &ThreadState) -> ForumResult<()> 
             state.body,
             state.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
             state.created_by,
+            state.branch,
             state.open_objections().len() as i64,
             state.open_actions().len() as i64,
             state.latest_summary().is_some() as i64,
@@ -167,7 +192,7 @@ pub fn replace_nodes_for_thread(conn: &Connection, state: &ThreadState) -> Forum
 pub fn list_threads(conn: &Connection) -> ForumResult<Vec<ThreadRow>> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, kind, status, title, body, created_at, created_by,
+            "SELECT id, kind, status, title, body, branch, created_at, created_by,
                     open_objections, open_actions, has_summary, tip_sha
              FROM threads ORDER BY id",
         )
@@ -185,12 +210,13 @@ pub fn search_threads(conn: &Connection, query: &str) -> ForumResult<Vec<SearchR
     let pattern = format!("%{query}%");
     let mut stmt = conn
         .prepare(
-            "SELECT id, kind, status, title, body, created_at, created_by,
+            "SELECT id, kind, status, title, body, branch, created_at, created_by,
                     open_objections, open_actions, has_summary, tip_sha
              FROM threads
              WHERE lower(title)  LIKE lower(?1)
                 OR lower(id)     LIKE lower(?1)
                 OR lower(coalesce(body, '')) LIKE lower(?1)
+                OR lower(coalesce(branch, '')) LIKE lower(?1)
                 OR lower(kind)   LIKE lower(?1)
                 OR lower(status) LIKE lower(?1)
                 OR EXISTS (
@@ -229,12 +255,13 @@ fn collect_rows(
                 status: row.get(2)?,
                 title: row.get(3)?,
                 body: row.get(4)?,
-                created_at: row.get(5)?,
-                created_by: row.get(6)?,
-                open_objections: row.get(7)?,
-                open_actions: row.get(8)?,
-                has_summary: row.get::<_, i64>(9)? != 0,
-                tip_sha: row.get(10)?,
+                branch: row.get(5)?,
+                created_at: row.get(6)?,
+                created_by: row.get(7)?,
+                open_objections: row.get(8)?,
+                open_actions: row.get(9)?,
+                has_summary: row.get::<_, i64>(10)? != 0,
+                tip_sha: row.get(11)?,
             })
         })
         .map_err(|e| ForumError::Repo(e.to_string()))?;
@@ -313,6 +340,7 @@ mod tests {
             kind: ThreadKind::Rfc,
             title: "Test RFC".into(),
             body: None,
+            branch: None,
             status: "draft".into(),
             created_at: t,
             created_by: "human/alice".into(),
@@ -334,6 +362,7 @@ mod tests {
                 evidence: None,
                 link_rel: None,
                 run_label: None,
+                branch: None,
             }],
             nodes: vec![],
             evidence_items: vec![],

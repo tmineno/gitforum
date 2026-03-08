@@ -1,0 +1,93 @@
+mod support;
+
+use std::process::Command;
+
+use git_forum::internal::config::RepoPaths;
+use git_forum::internal::git_ops::GitOps;
+use git_forum::internal::init;
+use git_forum::internal::thread;
+
+fn git(repo: &support::repo::TestRepo, args: &[&str]) {
+    let output = Command::new("git")
+        .current_dir(repo.path())
+        .args(args)
+        .output()
+        .expect("failed to run git");
+    assert!(
+        output.status.success(),
+        "git command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn create_real_branch(repo: &support::repo::TestRepo, branch: &str) {
+    git(repo, &["commit", "--allow-empty", "-m", "init"]);
+    git(repo, &["branch", branch]);
+}
+
+#[test]
+fn thread_new_can_bind_branch_scope() {
+    let repo = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(repo.path());
+    init::init_forum(&paths).unwrap();
+    create_real_branch(&repo, "feat/parser-rewrite");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args([
+            "issue",
+            "new",
+            "Parser fails",
+            "--branch",
+            "feat/parser-rewrite",
+        ])
+        .output()
+        .expect("failed to create issue");
+    assert!(output.status.success());
+
+    let git = GitOps::new(repo.path().to_path_buf());
+    let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    assert_eq!(state.branch.as_deref(), Some("feat/parser-rewrite"));
+}
+
+#[test]
+fn branch_bind_and_clear_update_thread_scope() {
+    let repo = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(repo.path());
+    init::init_forum(&paths).unwrap();
+    create_real_branch(&repo, "feat/solver");
+
+    let create = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["issue", "new", "Implement solver"])
+        .output()
+        .expect("failed to create issue");
+    assert!(create.status.success());
+
+    let bind = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["branch", "bind", "ISSUE-0001", "feat/solver"])
+        .output()
+        .expect("failed to bind branch");
+    assert!(bind.status.success());
+
+    let show = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["show", "ISSUE-0001"])
+        .output()
+        .expect("failed to show issue");
+    assert!(show.status.success());
+    let stdout = String::from_utf8(show.stdout).unwrap();
+    assert!(stdout.contains("branch:   feat/solver"));
+
+    let clear = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["branch", "clear", "ISSUE-0001"])
+        .output()
+        .expect("failed to clear branch");
+    assert!(clear.status.success());
+
+    let git = GitOps::new(repo.path().to_path_buf());
+    let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    assert_eq!(state.branch, None);
+}

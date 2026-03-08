@@ -41,6 +41,7 @@ pub fn say_node(
         evidence: None,
         link_rel: None,
         run_label: None,
+        branch: None,
     };
     super::event::write_event(git, &ev)
 }
@@ -78,6 +79,7 @@ pub fn revise_node(
         evidence: None,
         link_rel: None,
         run_label: None,
+        branch: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())
@@ -115,6 +117,7 @@ pub fn retract_node(
         evidence: None,
         link_rel: None,
         run_label: None,
+        branch: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())
@@ -152,6 +155,7 @@ pub fn resolve_node(
         evidence: None,
         link_rel: None,
         run_label: None,
+        branch: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())
@@ -189,6 +193,7 @@ pub fn reopen_node(
         evidence: None,
         link_rel: None,
         run_label: None,
+        branch: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())
@@ -215,8 +220,14 @@ pub fn change_state(
     let from = &state.status.clone();
 
     if !state_machine::is_valid_transition(state.kind, from, new_state) {
+        let valid = state_machine::valid_targets(state.kind, from);
+        let valid_msg = if valid.is_empty() {
+            "none".to_string()
+        } else {
+            valid.join(", ")
+        };
         return Err(ForumError::StateMachine(format!(
-            "transition {from}->{new_state} is not valid for {:?}",
+            "transition {from}->{new_state} is not valid for {:?}; valid transitions from '{from}': [{valid_msg}]",
             state.kind
         )));
     }
@@ -260,6 +271,7 @@ pub fn change_state(
         evidence: None,
         link_rel: None,
         run_label: None,
+        branch: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())

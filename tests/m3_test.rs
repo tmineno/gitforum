@@ -42,6 +42,31 @@ fn make_rfc(git: &GitOps) -> String {
     .unwrap()
 }
 
+fn move_rfc_to_under_review(git: &GitOps, thread_id: &str, ids: &SequentialIdGenerator) {
+    say::change_state(
+        git,
+        thread_id,
+        "proposed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        ids,
+        &empty_policy(),
+    )
+    .unwrap();
+    say::change_state(
+        git,
+        thread_id,
+        "under-review",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        ids,
+        &empty_policy(),
+    )
+    .unwrap();
+}
+
 fn policy_with_guards() -> Policy {
     use std::collections::HashMap;
     Policy {
@@ -321,7 +346,18 @@ fn change_state_valid_transition_no_guards() {
     let thread_id = make_rfc(&git);
     let ids = SequentialIdGenerator::new("n");
 
-    // Move to under-review (no guards on this transition in empty_policy)
+    say::change_state(
+        &git,
+        &thread_id,
+        "proposed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+        &empty_policy(),
+    )
+    .unwrap();
+
     say::change_state(
         &git,
         &thread_id,
@@ -355,6 +391,8 @@ fn change_state_invalid_transition_fails() {
         &empty_policy(),
     );
     assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("valid transitions from 'draft': [proposed, rejected]"));
 }
 
 #[test]
@@ -363,18 +401,7 @@ fn change_state_fails_guard_no_open_objections() {
     let thread_id = make_rfc(&git);
     let ids = SequentialIdGenerator::new("n");
 
-    // Move to under-review first
-    say::change_state(
-        &git,
-        &thread_id,
-        "under-review",
-        &[],
-        "human/alice",
-        &fixed_clock(),
-        &ids,
-        &empty_policy(),
-    )
-    .unwrap();
+    move_rfc_to_under_review(&git, &thread_id, &ids);
 
     // Add an open objection
     say::say_node(
@@ -419,18 +446,7 @@ fn change_state_passes_all_guards() {
     let thread_id = make_rfc(&git);
     let ids = SequentialIdGenerator::new("n");
 
-    // Move to under-review
-    say::change_state(
-        &git,
-        &thread_id,
-        "under-review",
-        &[],
-        "human/alice",
-        &fixed_clock(),
-        &ids,
-        &empty_policy(),
-    )
-    .unwrap();
+    move_rfc_to_under_review(&git, &thread_id, &ids);
 
     // Add a summary (satisfies at_least_one_summary)
     say::say_node(
@@ -469,18 +485,7 @@ fn verify_passes_no_guards_configured() {
     let thread_id = make_rfc(&git);
     let ids = SequentialIdGenerator::new("n");
 
-    // Move to under-review so verify has a forward target
-    say::change_state(
-        &git,
-        &thread_id,
-        "under-review",
-        &[],
-        "human/alice",
-        &fixed_clock(),
-        &ids,
-        &empty_policy(),
-    )
-    .unwrap();
+    move_rfc_to_under_review(&git, &thread_id, &ids);
 
     let report = verify::verify_thread(&git, &thread_id, &empty_policy()).unwrap();
     assert!(report.passed());
@@ -492,18 +497,7 @@ fn verify_reports_open_objection_violation() {
     let thread_id = make_rfc(&git);
     let ids = SequentialIdGenerator::new("n");
 
-    // Move to under-review
-    say::change_state(
-        &git,
-        &thread_id,
-        "under-review",
-        &[],
-        "human/alice",
-        &fixed_clock(),
-        &ids,
-        &empty_policy(),
-    )
-    .unwrap();
+    move_rfc_to_under_review(&git, &thread_id, &ids);
 
     // Add open objection
     say::say_node(
@@ -744,6 +738,7 @@ fn resolve_node_id_in_thread_scopes_prefix_lookup() {
         evidence: None,
         link_rel: None,
         run_label: None,
+        branch: None,
     };
     let second_event = Event {
         event_id: String::new(),
@@ -763,6 +758,7 @@ fn resolve_node_id_in_thread_scopes_prefix_lookup() {
         evidence: None,
         link_rel: None,
         run_label: None,
+        branch: None,
     };
     event::write_event(&git, &first_event).unwrap();
     event::write_event(&git, &second_event).unwrap();

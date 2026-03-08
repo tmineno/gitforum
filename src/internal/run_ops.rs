@@ -85,6 +85,7 @@ pub fn spawn_run(
         evidence: None,
         link_rel: None,
         run_label: Some(run_label.clone()),
+        branch: None,
     };
     super::event::write_event(git, &ev)?;
 
