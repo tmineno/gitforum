@@ -211,28 +211,30 @@ cargo run -- forum show RFC-0001
 ## Milestone 5: Index, search, and TUI
 
 Goal:
-実用的な閲覧速度と read-first TUI を用意する。
+実用的な閲覧速度と、最小作成操作を含む lightweight TUI を用意する。
 
 Includes:
 
 - [x] SQLite index
 - [x] `git forum reindex` による完全再構築
 - [x] index なし fallback (index 未作成時は auto-create)
-- [x] title / label / kind / state の lexical search (`git forum search`)
+- [x] thread title / thread body / current node body / kind / state の lexical search (`git forum search`)
 - [x] `git forum tui`
 - [x] thread 一覧表示
 - [x] kind の基本フィルタ (f キーでサイクル)
 - [x] thread detail 表示
 - [x] open objections / latest summary / timeline の TUI 表示
 - [x] refresh (r キー)
-- [x] 編集操作は MVP では CLI 委譲のままにする
+- [x] list view からの thread create
+- [x] thread detail / node detail からの node create
 - [x] TUI render test 用 backend を使ったテスト
 
 Exit criteria:
 
 - [x] `git forum reindex` で index を再構築できる
 - [x] 一覧と詳細が index 経由で実用速度で表示できる
-- [x] `git forum tui` で一覧・詳細・基本フィルタを操作できる
+- [x] node body hit を thread-oriented search result に表示できる
+- [x] `git forum tui` で一覧・詳細・基本フィルタ・最小 create を操作できる
 - [x] TUI の一覧 / 詳細表示を自動テストで固定できる
 
 Verification:

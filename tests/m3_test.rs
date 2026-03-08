@@ -608,7 +608,7 @@ fn show_timeline_includes_say_events() {
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     let out = show::render_show(&state);
 
-    assert!(out.contains(&node_id));
+    assert!(out.contains(&node_id[..node_id.len().min(16)]));
     assert!(out.contains("claim"));
     assert!(out.contains("This is important."));
 }
@@ -649,9 +649,11 @@ fn find_node_returns_current_body_and_history() {
     let out = show::render_node_show(&lookup);
     assert!(out.contains("What is this object?"));
     assert!(out.contains("What is this?"));
-    assert!(out.contains(&node_id));
+    assert!(out.contains(&node_id[..node_id.len().min(16)]));
     assert!(out.contains("edit"));
     assert!(out.contains("history:"));
+    assert!(out.contains("node_id"));
+    assert!(out.contains("event_id"));
 }
 
 #[test]

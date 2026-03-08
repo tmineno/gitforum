@@ -21,6 +21,22 @@ pub struct ThreadRow {
     pub tip_sha: String,
 }
 
+/// A current node body that matched a search query.
+#[derive(Debug, Clone)]
+pub struct NodeSearchHit {
+    pub node_id: String,
+    pub node_type: String,
+    pub status: String,
+    pub body: String,
+}
+
+/// A thread result with optional matching node hits.
+#[derive(Debug, Clone)]
+pub struct SearchRow {
+    pub thread: ThreadRow,
+    pub node_hits: Vec<NodeSearchHit>,
+}
+
 /// Open (or create) the SQLite index at `path` and ensure the schema exists.
 ///
 /// Preconditions: parent directory of `path` may or may not exist (created if absent).
@@ -50,6 +66,13 @@ fn ensure_schema(conn: &Connection) -> ForumResult<()> {
             open_actions    INTEGER NOT NULL DEFAULT 0,
             has_summary     INTEGER NOT NULL DEFAULT 0,
             tip_sha         TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS nodes (
+            id              TEXT PRIMARY KEY,
+            thread_id       TEXT NOT NULL,
+            node_type       TEXT NOT NULL,
+            status          TEXT NOT NULL,
+            body            TEXT NOT NULL
         );",
     )
     .map_err(|e| ForumError::Repo(e.to_string()))
@@ -62,6 +85,8 @@ fn ensure_schema(conn: &Connection) -> ForumResult<()> {
 /// Failure modes: ForumError::Repo on SQL error.
 /// Side effects: deletes all rows.
 pub fn clear_all(conn: &Connection) -> ForumResult<()> {
+    conn.execute("DELETE FROM nodes", [])
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
     conn.execute("DELETE FROM threads", [])
         .map_err(|e| ForumError::Repo(e.to_string()))?;
     Ok(())
@@ -102,6 +127,37 @@ pub fn upsert_thread(conn: &Connection, state: &ThreadState) -> ForumResult<()> 
     Ok(())
 }
 
+/// Replace indexed current nodes for a replayed ThreadState.
+///
+/// Preconditions: `conn` is open with schema applied.
+/// Postconditions: node rows for the thread reflect current replayed state.
+/// Failure modes: ForumError::Repo on SQL error.
+/// Side effects: deletes and inserts node rows for one thread.
+pub fn replace_nodes_for_thread(conn: &Connection, state: &ThreadState) -> ForumResult<()> {
+    conn.execute("DELETE FROM nodes WHERE thread_id = ?1", params![state.id])
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+
+    let mut stmt = conn
+        .prepare(
+            "INSERT OR REPLACE INTO nodes
+             (id, thread_id, node_type, status, body)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+
+    for node in &state.nodes {
+        stmt.execute(params![
+            node.node_id,
+            state.id,
+            node.node_type.to_string(),
+            node_status(node),
+            node.body,
+        ])
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+    }
+    Ok(())
+}
+
 /// Return all thread rows ordered by ID.
 ///
 /// Preconditions: `conn` is open with schema applied.
@@ -119,13 +175,13 @@ pub fn list_threads(conn: &Connection) -> ForumResult<Vec<ThreadRow>> {
     collect_rows(&mut stmt, [])
 }
 
-/// Return thread rows whose title, id, kind, or status match `query` (case-insensitive LIKE).
+/// Return thread rows whose indexed thread or current node fields match `query`.
 ///
 /// Preconditions: `conn` is open with schema applied.
-/// Postconditions: returns matching rows ordered by ID.
+/// Postconditions: returns matching rows ordered by ID, with matching current node hits attached.
 /// Failure modes: ForumError::Repo on SQL error.
 /// Side effects: none.
-pub fn search_threads(conn: &Connection, query: &str) -> ForumResult<Vec<ThreadRow>> {
+pub fn search_threads(conn: &Connection, query: &str) -> ForumResult<Vec<SearchRow>> {
     let pattern = format!("%{query}%");
     let mut stmt = conn
         .prepare(
@@ -134,12 +190,31 @@ pub fn search_threads(conn: &Connection, query: &str) -> ForumResult<Vec<ThreadR
              FROM threads
              WHERE lower(title)  LIKE lower(?1)
                 OR lower(id)     LIKE lower(?1)
+                OR lower(coalesce(body, '')) LIKE lower(?1)
                 OR lower(kind)   LIKE lower(?1)
                 OR lower(status) LIKE lower(?1)
+                OR EXISTS (
+                    SELECT 1
+                    FROM nodes
+                    WHERE nodes.thread_id = threads.id
+                      AND (
+                        lower(nodes.id) LIKE lower(?1)
+                        OR lower(nodes.node_type) LIKE lower(?1)
+                        OR lower(nodes.status) LIKE lower(?1)
+                        OR lower(nodes.body) LIKE lower(?1)
+                      )
+                )
              ORDER BY id",
         )
         .map_err(|e| ForumError::Repo(e.to_string()))?;
-    collect_rows(&mut stmt, rusqlite::params![pattern])
+    let thread_rows = collect_rows(&mut stmt, rusqlite::params![pattern.as_str()])?;
+    thread_rows
+        .into_iter()
+        .map(|thread| {
+            let node_hits = search_node_hits(conn, &thread.id, pattern.as_str())?;
+            Ok(SearchRow { thread, node_hits })
+        })
+        .collect()
 }
 
 fn collect_rows(
@@ -169,6 +244,54 @@ fn collect_rows(
         rows.push(r.map_err(|e| ForumError::Repo(e.to_string()))?);
     }
     Ok(rows)
+}
+
+fn search_node_hits(
+    conn: &Connection,
+    thread_id: &str,
+    pattern: &str,
+) -> ForumResult<Vec<NodeSearchHit>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, node_type, status, body
+             FROM nodes
+             WHERE thread_id = ?1
+               AND (
+                    lower(id) LIKE lower(?2)
+                    OR lower(node_type) LIKE lower(?2)
+                    OR lower(status) LIKE lower(?2)
+                    OR lower(body) LIKE lower(?2)
+               )
+             ORDER BY id",
+        )
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+
+    let iter = stmt
+        .query_map(params![thread_id, pattern], |row| {
+            Ok(NodeSearchHit {
+                node_id: row.get(0)?,
+                node_type: row.get(1)?,
+                status: row.get(2)?,
+                body: row.get(3)?,
+            })
+        })
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+
+    let mut rows = Vec::new();
+    for r in iter {
+        rows.push(r.map_err(|e| ForumError::Repo(e.to_string()))?);
+    }
+    Ok(rows)
+}
+
+fn node_status(node: &crate::internal::node::Node) -> &'static str {
+    if node.retracted {
+        "retracted"
+    } else if node.resolved {
+        "resolved"
+    } else {
+        "open"
+    }
 }
 
 #[cfg(test)]
@@ -248,6 +371,7 @@ mod tests {
         upsert_thread(&conn, &make_state("RFC-0001")).unwrap();
         let results = search_threads(&conn, "Test").unwrap();
         assert_eq!(results.len(), 1);
+        assert_eq!(results[0].thread.id, "RFC-0001");
     }
 
     #[test]

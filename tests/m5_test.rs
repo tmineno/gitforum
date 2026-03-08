@@ -10,6 +10,8 @@ use git_forum::internal::id::SequentialIdGenerator;
 use git_forum::internal::index;
 use git_forum::internal::init;
 use git_forum::internal::reindex;
+use git_forum::internal::say;
+use git_forum::internal::tui;
 
 fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
     let repo = support::repo::TestRepo::new();
@@ -35,6 +37,26 @@ fn make_thread(git: &GitOps, kind: ThreadKind, title: &str) -> String {
         &SequentialIdGenerator::new("t"),
     )
     .unwrap()
+}
+
+fn add_node(
+    git: &GitOps,
+    thread_id: &str,
+    node_type: git_forum::internal::event::NodeType,
+    body: &str,
+) {
+    say::say_node(
+        git,
+        thread_id,
+        node_type,
+        body,
+        "human/alice",
+        &FixedClock {
+            instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
+        },
+        &SequentialIdGenerator::new("n"),
+    )
+    .unwrap();
 }
 
 // ---- Index unit tests ----
@@ -117,7 +139,7 @@ fn search_finds_by_title() {
     let conn = index::open_db(&db_path).unwrap();
     let results = index::search_threads(&conn, "Unique").unwrap();
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].title, "Unique Title Here");
+    assert_eq!(results[0].thread.title, "Unique Title Here");
 }
 
 #[test]
@@ -133,7 +155,31 @@ fn search_finds_by_kind() {
     let conn = index::open_db(&db_path).unwrap();
     let results = index::search_threads(&conn, "rfc").unwrap();
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].kind, "rfc");
+    assert_eq!(results[0].thread.kind, "rfc");
+}
+
+#[test]
+fn search_finds_by_current_node_body_and_reports_hit() {
+    let (_repo, git, paths) = setup();
+    init::init_forum(&paths).unwrap();
+    let thread_id = make_thread(&git, ThreadKind::Rfc, "RFC A");
+    add_node(
+        &git,
+        &thread_id,
+        git_forum::internal::event::NodeType::Question,
+        "Where is the migration plan?",
+    );
+
+    let db_path = paths.git_forum.join("index.db");
+    reindex::run_reindex(&git, &db_path).unwrap();
+
+    let conn = index::open_db(&db_path).unwrap();
+    let results = index::search_threads(&conn, "migration").unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].thread.id, thread_id);
+    assert_eq!(results[0].node_hits.len(), 1);
+    assert_eq!(results[0].node_hits[0].node_type, "question");
+    assert!(results[0].node_hits[0].body.contains("migration plan"));
 }
 
 #[test]
@@ -147,6 +193,19 @@ fn search_empty_returns_no_match_message_via_render() {
 
     let conn = index::open_db(&db_path).unwrap();
     let results = index::search_threads(&conn, "zzznomatch").unwrap();
-    let out = git_forum::internal::show::render_ls_from_index(&results);
+    let out = git_forum::internal::show::render_search_results(&results);
     assert_eq!(out, "no threads found\n");
+}
+
+#[test]
+fn tui_load_threads_reindexes_on_startup() {
+    let (_repo, git, paths) = setup();
+    init::init_forum(&paths).unwrap();
+    make_thread(&git, ThreadKind::Rfc, "TUI Visible RFC");
+
+    let db_path = paths.git_forum.join("index.db");
+    let rows = tui::load_threads(&git, &db_path).unwrap();
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].title, "TUI Visible RFC");
 }

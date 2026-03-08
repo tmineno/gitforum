@@ -275,9 +275,11 @@ fn show_contains_all_required_fields() {
     assert!(out.contains("2026-01-01T00:00:00Z"), "missing timestamp");
     assert!(out.contains("timeline:"), "missing timeline section");
     assert!(out.contains("date"), "missing timeline header");
+    assert!(out.contains("node_id"), "missing node_id timeline header");
+    assert!(out.contains("event_id"), "missing event_id timeline header");
     let event_id = &state.events[0].event_id;
     assert!(
-        out.contains(event_id),
+        out.contains(&event_id[..event_id.len().min(16)]),
         "missing create event id in timeline"
     );
     assert!(
@@ -322,7 +324,6 @@ fn show_snapshot_stable() {
     let state = thread::replay_thread(&git, "RFC-0001").unwrap();
     let out = show::render_show(&state);
     let event_id = &state.events[0].event_id;
-    let id_width = 18usize.max(event_id.len());
 
     let expected = format!(
         "\
@@ -335,20 +336,23 @@ body:
   Initial thread body.
 
 timeline:
-  {:<20}  {:<id_width$}  {:<18}  {:<10}  {}
-  {:<20}  {:<id_width$}  {:<18}  {:<10}  {}
+  {:<20}  {:<node_width$}  {:<event_width$}  {:<18}  {:<10}  {}
+  {:<20}  {:<node_width$}  {:<event_width$}  {:<18}  {:<10}  {}
 ",
         "date",
-        "id",
+        "node_id",
+        "event_id",
         "author",
         "type",
         "body",
         "2026-01-01T00:00:00Z",
-        event_id,
+        "-",
+        &event_id[..event_id.len().min(16)],
         "human/alice",
         "create",
         "Test RFC",
-        id_width = id_width,
+        node_width = "node_id".len().max(16),
+        event_width = "event_id".len().max(16),
     );
     assert_eq!(out, expected);
 }

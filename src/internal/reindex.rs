@@ -29,7 +29,9 @@ pub fn run_reindex(git: &GitOps, db_path: &Path) -> ForumResult<ReindexReport> {
     for id in &ids {
         match thread::replay_thread(git, id) {
             Ok(state) => {
-                if let Err(e) = index::upsert_thread(&conn, &state) {
+                if let Err(e) = index::upsert_thread(&conn, &state)
+                    .and_then(|_| index::replace_nodes_for_thread(&conn, &state))
+                {
                     errors.push((id.clone(), e));
                 } else {
                     threads_replayed.push(state);

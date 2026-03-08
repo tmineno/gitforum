@@ -303,7 +303,7 @@ fn main() -> Result<(), ForumError> {
             let db_path = paths.git_forum.join("index.db");
             let conn = index::open_db(&db_path)?;
             let results = index::search_threads(&conn, &query)?;
-            print!("{}", show::render_ls_from_index(&results));
+            print!("{}", show::render_search_results(&results));
         }
 
         Commands::Tui { thread_id } => {

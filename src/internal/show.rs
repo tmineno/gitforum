@@ -34,7 +34,7 @@ pub fn render_show(state: &ThreadState) -> String {
         lines.push(format!("open objections: {}", open_obj.len()));
         for node in &open_obj {
             let preview = truncate_body(&node.body, 60);
-            lines.push(format!("  - {} {}", node.node_id, preview));
+            lines.push(format!("  - {} {}", short_oid(&node.node_id), preview));
         }
         lines.push(String::new());
     }
@@ -44,7 +44,7 @@ pub fn render_show(state: &ThreadState) -> String {
         lines.push(format!("open actions: {}", open_act.len()));
         for node in &open_act {
             let preview = truncate_body(&node.body, 60);
-            lines.push(format!("  - {} {}", node.node_id, preview));
+            lines.push(format!("  - {} {}", short_oid(&node.node_id), preview));
         }
         lines.push(String::new());
     }
@@ -96,7 +96,11 @@ pub fn render_node_show(lookup: &NodeLookup) -> String {
     let mut lines: Vec<String> = Vec::new();
     let node = &lookup.node;
 
-    lines.push(format!("{:<12} {}", node.node_id, node.node_type));
+    lines.push(format!(
+        "{:<18} {}",
+        short_oid(&node.node_id),
+        node.node_type
+    ));
     lines.push(format!(
         "thread:   {} {}",
         lookup.thread_id, lookup.thread_title
@@ -147,11 +151,16 @@ fn node_status(node: &super::node::Node) -> &'static str {
     }
 }
 
-fn event_display_id(event: &Event) -> &str {
-    event
-        .target_node_id
-        .as_deref()
-        .unwrap_or(event.event_id.as_str())
+fn event_node_id(event: &Event) -> Option<&str> {
+    match event.event_type {
+        EventType::Say => Some(
+            event
+                .target_node_id
+                .as_deref()
+                .unwrap_or(event.event_id.as_str()),
+        ),
+        _ => event.target_node_id.as_deref(),
+    }
 }
 
 fn event_display_type(event: &Event) -> String {
@@ -170,7 +179,8 @@ fn timeline_body(event: &Event) -> String {
 
 struct TimelineWidths {
     date: usize,
-    id: usize,
+    node_id: usize,
+    event_id: usize,
     author: usize,
     r#type: usize,
 }
@@ -178,7 +188,8 @@ struct TimelineWidths {
 fn timeline_widths(events: &[Event]) -> TimelineWidths {
     let mut widths = TimelineWidths {
         date: 20,
-        id: 18,
+        node_id: 16,
+        event_id: 16,
         author: 18,
         r#type: 10,
     };
@@ -191,7 +202,13 @@ fn timeline_widths(events: &[Event]) -> TimelineWidths {
                 .to_string()
                 .len(),
         );
-        widths.id = widths.id.max(event_display_id(event).len());
+        widths.node_id = widths.node_id.max(
+            event_node_id(event)
+                .map(short_oid)
+                .map(str::len)
+                .unwrap_or(1),
+        );
+        widths.event_id = widths.event_id.max(short_oid(&event.event_id).len());
         widths.author = widths.author.max(event.actor.len());
         widths.r#type = widths.r#type.max(event_display_type(event).len());
     }
@@ -201,14 +218,16 @@ fn timeline_widths(events: &[Event]) -> TimelineWidths {
 
 fn format_timeline_header(widths: &TimelineWidths) -> String {
     format!(
-        "  {:<date$}  {:<id$}  {:<author$}  {:<type$}  {}",
+        "  {:<date$}  {:<node_id$}  {:<event_id$}  {:<author$}  {:<type$}  {}",
         "date",
-        "id",
+        "node_id",
+        "event_id",
         "author",
         "type",
         "body",
         date = widths.date,
-        id = widths.id,
+        node_id = widths.node_id,
+        event_id = widths.event_id,
         author = widths.author,
         type = widths.r#type,
     )
@@ -216,14 +235,16 @@ fn format_timeline_header(widths: &TimelineWidths) -> String {
 
 fn format_timeline_entry(event: &Event, widths: &TimelineWidths) -> String {
     format!(
-        "  {:<date$}  {:<id$}  {:<author$}  {:<type$}  {}",
+        "  {:<date$}  {:<node_id$}  {:<event_id$}  {:<author$}  {:<type$}  {}",
         event.created_at.format("%Y-%m-%dT%H:%M:%SZ"),
-        event_display_id(event),
+        event_node_id(event).map(short_oid).unwrap_or("-"),
+        short_oid(&event.event_id),
         event.actor,
         event_display_type(event),
         timeline_body(event),
         date = widths.date,
-        id = widths.id,
+        node_id = widths.node_id,
+        event_id = widths.event_id,
         author = widths.author,
         type = widths.r#type,
     )
@@ -292,8 +313,8 @@ pub fn render_run_ls(runs: &[Run]) -> String {
     lines.join("\n")
 }
 
-/// Render search results from the local index (same columns as `render_ls`).
-pub fn render_ls_from_index(rows: &[super::index::ThreadRow]) -> String {
+/// Render search results from the local index.
+pub fn render_search_results(rows: &[super::index::SearchRow]) -> String {
     if rows.is_empty() {
         return "no threads found\n".into();
     }
@@ -306,11 +327,24 @@ pub fn render_ls_from_index(rows: &[super::index::ThreadRow]) -> String {
     for r in rows {
         lines.push(format!(
             "{:<12}  {:<10}  {:<14}  {}",
-            r.id, r.kind, r.status, r.title
+            r.thread.id, r.thread.kind, r.thread.status, r.thread.title
         ));
+        for hit in &r.node_hits {
+            lines.push(format!(
+                "  -> node {}  {:<10}  {:<10}  {}",
+                short_oid(&hit.node_id),
+                hit.node_type,
+                hit.status,
+                single_line_preview(&hit.body, 60),
+            ));
+        }
     }
     lines.push(String::new());
     lines.join("\n")
+}
+
+fn short_oid(id: &str) -> &str {
+    &id[..id.len().min(16)]
 }
 
 /// Render `git forum ls` output for a list of threads.
@@ -445,6 +479,9 @@ mod tests {
         assert!(out.contains("history:"));
         assert!(out.contains("question"));
         assert!(out.contains("date"));
+        assert!(out.contains("node_id"));
+        assert!(out.contains("event_id"));
+        assert!(out.contains("evt-0002"));
     }
 
     #[test]

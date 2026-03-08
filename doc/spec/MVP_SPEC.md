@@ -568,15 +568,20 @@ MVP では以下をチェックする。
 
 ### 13.12 `git forum tui`
 
-MVP の TUI は read-first とし、最低限次を提供する。
+MVP の TUI は read-first を基本としつつ、最小限の create 操作を提供してよい。
 
 1. thread 一覧の表示
 2. kind / state による基本フィルタ
 3. thread detail の表示
-4. open objections / latest summary / timeline の表示
-5. index 再読込または refresh
+4. node detail の表示
+5. open objections / latest summary / timeline の表示
+6. index 再読込または refresh
+7. thread create
+8. thread detail からの node create
+9. node create 時の multiline body editor
+10. node detail からの resolve / reopen / retract
 
-thread 作成や state change などの編集操作は、MVP では CLI に委譲してよい。
+state change や policy-sensitive operation は、MVP では CLI に委譲してよい。
 
 ## 14. ID scheme
 
@@ -649,12 +654,17 @@ MVP 検索は lexical 検索でよい。
 
 最低限:
 
-- title 検索
-- body 検索
-- label フィルタ
+- thread title 検索
+- thread body 検索
+- current node body 検索
+- thread / node ID 検索
 - kind フィルタ
 - state フィルタ
-- assignee フィルタ
+
+MVP の検索結果は thread 単位で返してよい。ただし current node body で hit した場合は、
+どの node が hit したかを結果中に表示できなければならない。
+
+label / assignee ベースの絞り込みは、対応する metadata が導入されるまで将来拡張でよい。
 
 高度な semantic search はスコープ外。
 

@@ -27,6 +27,7 @@ git-forum --help-llm
 - thread kinds: `issue`, `rfc`, `decision`
 - thread IDs: `ISSUE-0001`, `RFC-0001`, `DEC-0001`
 - node IDs: printed by `git forum say`; canonical IDs are Git commit OIDs of the `say` event
+- CLI/TUI displays of node and event OIDs usually show the first 16 characters
 - node IDs in CLI arguments:
   - full IDs always work
   - if there is no exact match, a unique prefix of at least 8 characters is accepted
@@ -116,6 +117,26 @@ links: 1
 runs: 1
   - RUN-0001
 ```
+
+## Search
+
+```bash
+git forum search migration
+git forum search objection
+git forum search RFC-0001
+```
+
+`git forum search <QUERY>` searches the local index across:
+
+- thread title
+- thread body
+- thread kind and state
+- thread ID
+- current node body
+- current node type and node ID
+
+Results are still grouped by thread. If the match came from a current node, the output includes
+the matching node under the thread row.
 
 ## Add discussion nodes
 
@@ -255,6 +276,44 @@ git forum run show RUN-0001
 - started / ended timestamps
 - model (if recorded)
 - result and confidence (if recorded)
+
+## TUI
+
+```bash
+git forum tui
+git forum tui RFC-0001
+```
+
+Current controls:
+
+- list view:
+  - `j` / `k`: move between threads
+  - `enter`: open thread detail
+  - `c`: create a new thread
+  - `f`: cycle kind filter
+  - `r`: refresh from Git into the local index
+  - `q`: quit
+- thread detail view:
+  - `j` / `k`: move between nodes in the thread
+  - `enter`: open the selected node detail
+  - `c`: create a new node in the current thread
+  - `r`: refresh the thread from Git
+  - `esc` / `q`: go back to the thread list
+- node detail view:
+  - `c`: create a new node in the parent thread
+  - `x`: resolve the current node
+  - `o`: reopen the current node if it is resolved or retracted
+  - `R`: retract the current node
+  - `j` / `k`: scroll
+  - `r`: refresh the node from Git
+  - `esc` / `q`: go back to the parent thread detail
+- create thread / create node:
+  - `tab`: move between fields
+  - `up` / `down`: cycle kind, or move within the node type dropdown when that field is active
+  - in create node, move to `body` and press `enter` to open the multiline body editor
+  - in create node, move to `submit` and press `enter` to create the node
+  - in the body editor, `enter` inserts a newline and `ctrl+s` returns to the form
+  - `esc`: cancel
 
 ## Change thread state
 
@@ -417,8 +476,8 @@ This manual currently covers:
 - evidence add
 - link
 - run spawn / ls / show
+- TUI
 
 Still out of scope:
 
 - import / export
-- TUI

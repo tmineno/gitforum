@@ -261,6 +261,26 @@ pub fn find_node(git: &GitOps, node_ref: &str) -> ForumResult<NodeLookup> {
         .ok_or_else(|| ForumError::Repo(format!("node '{resolved}' not found")))
 }
 
+/// Find a node by ID inside a single thread.
+pub fn find_node_in_thread(
+    git: &GitOps,
+    thread_id: &str,
+    node_ref: &str,
+) -> ForumResult<NodeLookup> {
+    let state = replay_thread(git, thread_id)?;
+    let resolved = resolve_node_id_in_thread(git, thread_id, node_ref)?;
+    state
+        .nodes
+        .iter()
+        .find(|node| node.node_id == resolved)
+        .map(|node| build_node_lookup(&state, node))
+        .ok_or_else(|| {
+            ForumError::Repo(format!(
+                "node '{resolved}' not found in thread '{thread_id}'"
+            ))
+        })
+}
+
 /// List all thread IDs from Git refs.
 pub fn list_thread_ids(git: &GitOps) -> ForumResult<Vec<String>> {
     let ref_names = git.list_refs(refs::THREADS_PREFIX)?;
