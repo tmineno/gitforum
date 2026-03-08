@@ -258,10 +258,10 @@ fn format_timeline_entry(event: &Event, widths: &TimelineWidths) -> String {
 }
 
 fn truncate_body(s: &str, max: usize) -> String {
-    if s.len() <= max {
+    if s.chars().count() <= max {
         s.to_string()
     } else {
-        format!("{}...", &s[..max])
+        format!("{}...", s.chars().take(max).collect::<String>())
     }
 }
 
@@ -507,6 +507,14 @@ mod tests {
     fn show_is_deterministic() {
         let state = fixed_state();
         assert_eq!(render_show(&state), render_show(&state));
+    }
+
+    #[test]
+    fn single_line_preview_handles_multibyte_text() {
+        let preview =
+            single_line_preview("実装開始: CMake + ImGui + GLFW スケルトンアプリの構築", 20);
+        assert!(preview.starts_with("実装開始"));
+        assert!(preview.ends_with("..."));
     }
 
     #[test]

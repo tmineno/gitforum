@@ -491,10 +491,10 @@ fn form_line(active: bool, label: &str, value: &str) -> String {
 
 fn single_line_preview(s: &str, max: usize) -> String {
     let joined = s.lines().collect::<Vec<_>>().join(" / ");
-    if joined.len() <= max {
+    if joined.chars().count() <= max {
         joined
     } else {
-        format!("{}...", &joined[..max])
+        format!("{}...", joined.chars().take(max).collect::<String>())
     }
 }
 
@@ -1230,6 +1230,14 @@ mod tests {
         assert!(out.contains("submit: [Create node]"));
         assert!(out.contains("node types"));
         assert!(out.contains("> claim"));
+    }
+
+    #[test]
+    fn single_line_preview_handles_multibyte_text() {
+        let preview =
+            single_line_preview("実装開始: CMake + ImGui + GLFW スケルトンアプリの構築", 20);
+        assert!(preview.starts_with("実装開始"));
+        assert!(preview.ends_with("..."));
     }
 
     #[test]
