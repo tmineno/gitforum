@@ -98,6 +98,19 @@ git forum show RFC-0001
 
 The timeline is displayed in `date ID author type body` order.
 
+If the thread has evidence, links, or AI runs attached, they appear between the summary and the timeline:
+
+```text
+evidence: 1
+  - a1b2c3d4  benchmark  bench/result.csv
+
+links: 1
+  - ISSUE-0001  implements
+
+runs: 1
+  - RUN-0001
+```
+
 ## Add discussion nodes
 
 ### Add a node
@@ -170,6 +183,72 @@ git forum node show 6f1d2c3b
 - the history related to that node
 
 If a prefix is ambiguous, the command fails and prints candidate full IDs.
+
+## Evidence and links
+
+### Add evidence to a thread
+
+```bash
+git forum evidence add RFC-0001 --kind benchmark --ref bench/result.csv
+git forum evidence add RFC-0001 --kind commit --ref abc123def456
+git forum evidence add RFC-0001 --kind file --ref src/lib.rs
+```
+
+Valid evidence kinds: `commit`, `file`, `hunk`, `test`, `benchmark`, `doc`, `thread`, `external`.
+
+On success, the command prints the first 8 characters of the evidence ID (the Git commit SHA of the Link event):
+
+```text
+Evidence added (a1b2c3d4)
+```
+
+### Link two threads
+
+```bash
+git forum link RFC-0001 ISSUE-0001 --rel implements
+git forum link RFC-0001 DEC-0001 --rel relates-to
+```
+
+On success:
+
+```text
+RFC-0001 -> ISSUE-0001 (implements)
+```
+
+## AI runs
+
+### Spawn a run
+
+```bash
+git forum run spawn RFC-0001 --as ai/reviewer
+```
+
+Creates a run record at `refs/forum/runs/RUN-NNNN` with status `running`, and writes a `Spawn` event into the thread's timeline. On success:
+
+```text
+Spawned RUN-0001
+```
+
+### List runs
+
+```bash
+git forum run ls
+```
+
+### Show a run
+
+```bash
+git forum run show RUN-0001
+```
+
+`git forum run show <RUN_LABEL>` shows:
+
+- label and status
+- thread it was spawned for
+- actor
+- started / ended timestamps
+- model (if recorded)
+- result and confidence (if recorded)
 
 ## Change thread state
 
@@ -304,12 +383,17 @@ git forum init
 git forum rfc new "Switch solver backend to trait objects" \
   --body "Needed to make plugin ABI stability explicit."
 git forum say RFC-0001 --type claim --body "Needed for compatibility."
-git forum say RFC-0001 --type question --body "What is the migration plan?"
+git forum say RFC-0001 --type objection --body "Benchmarks are missing."
+git forum evidence add RFC-0001 --kind benchmark --ref bench/result.csv
+git forum say RFC-0001 --type summary --body "Benchmarks added; objection addressed."
+git forum resolve RFC-0001 <OBJECTION_NODE_ID>
+git forum link RFC-0001 ISSUE-0001 --rel implements
+git forum run spawn RFC-0001 --as ai/reviewer
 git forum show RFC-0001
-git forum node show 6f1d2c3b4a5e67890123456789abcdef01234567
 git forum state RFC-0001 proposed
 git forum state RFC-0001 under-review
 git forum verify RFC-0001
+git forum state RFC-0001 accepted --sign human/alice
 ```
 
 ## Current scope
@@ -318,16 +402,17 @@ This manual currently covers:
 
 - init / doctor / reindex
 - issue / rfc / decision create and list
-- thread show
+- thread show (with evidence / links / runs sections)
 - node show
 - say / revise / retract / resolve / reopen
 - state
 - verify
 - policy lint / check
+- evidence add
+- link
+- run spawn / ls / show
 
 Still out of scope:
 
-- evidence commands
-- AI run commands
 - import / export
 - TUI
