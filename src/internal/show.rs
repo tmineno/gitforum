@@ -1,4 +1,4 @@
-use super::event::EventType;
+use super::event::{Event, EventType};
 use super::thread::ThreadState;
 
 /// Render `git forum show` output for a thread.
@@ -19,7 +19,31 @@ pub fn render_show(state: &ThreadState) -> String {
     lines.push(format!("by:       {}", state.created_by));
     lines.push(String::new());
 
-    // M3 will add: open objections, open actions, latest summary
+    let open_obj = state.open_objections();
+    if !open_obj.is_empty() {
+        lines.push(format!("open objections: {}", open_obj.len()));
+        for node in &open_obj {
+            let preview = truncate_body(&node.body, 60);
+            lines.push(format!("  - {} {}", node.node_id, preview));
+        }
+        lines.push(String::new());
+    }
+
+    let open_act = state.open_actions();
+    if !open_act.is_empty() {
+        lines.push(format!("open actions: {}", open_act.len()));
+        for node in &open_act {
+            let preview = truncate_body(&node.body, 60);
+            lines.push(format!("  - {} {}", node.node_id, preview));
+        }
+        lines.push(String::new());
+    }
+
+    if let Some(summary) = state.latest_summary() {
+        lines.push("latest summary:".into());
+        lines.push(format!("  {}", summary.body));
+        lines.push(String::new());
+    }
 
     lines.push("timeline:".into());
     for event in &state.events {
@@ -40,11 +64,34 @@ pub fn render_show(state: &ThreadState) -> String {
     lines.join("\n")
 }
 
-fn event_detail(event: &super::event::Event) -> String {
+fn event_detail(event: &Event) -> String {
     match event.event_type {
         EventType::Create => format!("\"{}\"", event.title.as_deref().unwrap_or("")),
         EventType::State => format!("-> {}", event.new_state.as_deref().unwrap_or("")),
+        EventType::Say => {
+            let nt = event.node_type.map(|n| n.to_string()).unwrap_or_default();
+            let nid = event.target_node_id.as_deref().unwrap_or("");
+            format!("{nt} {nid}")
+        }
+        EventType::Edit => format!("edit {}", event.target_node_id.as_deref().unwrap_or("")),
+        EventType::Retract => {
+            format!("retract {}", event.target_node_id.as_deref().unwrap_or(""))
+        }
+        EventType::Resolve => {
+            format!("resolve {}", event.target_node_id.as_deref().unwrap_or(""))
+        }
+        EventType::Reopen => {
+            format!("reopen {}", event.target_node_id.as_deref().unwrap_or(""))
+        }
         _ => String::new(),
+    }
+}
+
+fn truncate_body(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max])
     }
 }
 
@@ -78,7 +125,7 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::event::{Event, EventType, ThreadKind};
+    use crate::internal::event::{EventType, ThreadKind};
     use crate::internal::thread::ThreadState;
     use chrono::TimeZone;
 
@@ -105,7 +152,9 @@ mod tests {
                 node_type: None,
                 target_node_id: None,
                 new_state: None,
+                approvals: vec![],
             }],
+            nodes: vec![],
         }
     }
 

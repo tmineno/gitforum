@@ -5,13 +5,16 @@ use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
 use git_forum::internal::doctor;
 use git_forum::internal::error::ForumError;
-use git_forum::internal::event::ThreadKind;
+use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id::UlidGenerator;
 use git_forum::internal::init;
+use git_forum::internal::policy::Policy;
 use git_forum::internal::reindex;
+use git_forum::internal::say;
 use git_forum::internal::show;
 use git_forum::internal::thread;
+use git_forum::internal::verify;
 
 #[derive(Parser)]
 #[command(name = "git-forum", about = "Structured discussion in Git")]
@@ -47,6 +50,75 @@ enum Commands {
     Ls,
     /// Show thread details
     Show { thread_id: String },
+    /// Add a typed discussion node to a thread
+    Say {
+        thread_id: String,
+        #[arg(long = "type", value_name = "NODE_TYPE")]
+        node_type: NodeType,
+        #[arg(long)]
+        body: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// Revise the body of an existing node
+    Revise {
+        thread_id: String,
+        node_id: String,
+        #[arg(long)]
+        body: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// Retract a node (soft-delete)
+    Retract {
+        thread_id: String,
+        node_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// Resolve a node (mark as addressed)
+    Resolve {
+        thread_id: String,
+        node_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// Reopen a resolved or retracted node
+    Reopen {
+        thread_id: String,
+        node_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// Transition a thread to a new state
+    State {
+        thread_id: String,
+        new_state: String,
+        /// Actor IDs to record as approvals (may be repeated)
+        #[arg(long = "sign", value_name = "ACTOR")]
+        sign: Vec<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// Verify a thread against policy guards
+    Verify { thread_id: String },
+    /// Policy sub-commands
+    Policy {
+        #[command(subcommand)]
+        cmd: PolicyCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum PolicyCmd {
+    /// Check policy file for structural problems
+    Lint,
+    /// Check whether a transition satisfies policy guards
+    Check {
+        thread_id: String,
+        #[arg(long)]
+        transition: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -131,6 +203,139 @@ fn main() -> Result<(), ForumError> {
             let git = GitOps::discover()?;
             let state = thread::replay_thread(&git, &thread_id)?;
             print!("{}", show::render_show(&state));
+        }
+
+        Commands::Say {
+            thread_id,
+            node_type,
+            body,
+            as_actor,
+        } => {
+            let git = GitOps::discover()?;
+            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+            let node_id = say::say_node(&git, &thread_id, node_type, &body, &actor, &clock, &ids)?;
+            println!("Added {node_type} {node_id}");
+        }
+
+        Commands::Revise {
+            thread_id,
+            node_id,
+            body,
+            as_actor,
+        } => {
+            let git = GitOps::discover()?;
+            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+            say::revise_node(&git, &thread_id, &node_id, &body, &actor, &clock, &ids)?;
+            println!("Revised {node_id}");
+        }
+
+        Commands::Retract {
+            thread_id,
+            node_id,
+            as_actor,
+        } => {
+            let git = GitOps::discover()?;
+            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+            say::retract_node(&git, &thread_id, &node_id, &actor, &clock, &ids)?;
+            println!("Retracted {node_id}");
+        }
+
+        Commands::Resolve {
+            thread_id,
+            node_id,
+            as_actor,
+        } => {
+            let git = GitOps::discover()?;
+            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+            say::resolve_node(&git, &thread_id, &node_id, &actor, &clock, &ids)?;
+            println!("Resolved {node_id}");
+        }
+
+        Commands::Reopen {
+            thread_id,
+            node_id,
+            as_actor,
+        } => {
+            let git = GitOps::discover()?;
+            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+            say::reopen_node(&git, &thread_id, &node_id, &actor, &clock, &ids)?;
+            println!("Reopened {node_id}");
+        }
+
+        Commands::State {
+            thread_id,
+            new_state,
+            sign,
+            as_actor,
+        } => {
+            let git = GitOps::discover()?;
+            let paths = RepoPaths::from_repo_root(git.root());
+            let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
+            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+            say::change_state(
+                &git, &thread_id, &new_state, &sign, &actor, &clock, &ids, &policy,
+            )?;
+            println!("{thread_id} -> {new_state}");
+        }
+
+        Commands::Verify { thread_id } => {
+            let git = GitOps::discover()?;
+            let paths = RepoPaths::from_repo_root(git.root());
+            let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
+            let report = verify::verify_thread(&git, &thread_id, &policy)?;
+            if report.passed() {
+                println!("{thread_id}: ok");
+            } else {
+                for v in &report.violations {
+                    println!("FAIL [{}] {}", v.rule, v.reason);
+                }
+                std::process::exit(1);
+            }
+        }
+
+        Commands::Policy { cmd } => {
+            let git = GitOps::discover()?;
+            let paths = RepoPaths::from_repo_root(git.root());
+            match cmd {
+                PolicyCmd::Lint => {
+                    let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
+                    let diags = git_forum::internal::policy::lint_policy(&policy);
+                    if diags.is_empty() {
+                        println!("policy ok");
+                    } else {
+                        for d in &diags {
+                            println!("WARN {d}");
+                        }
+                    }
+                }
+                PolicyCmd::Check {
+                    thread_id,
+                    transition,
+                } => {
+                    let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
+                    let state = thread::replay_thread(&git, &thread_id)?;
+                    let parts: Vec<&str> = transition.splitn(2, "->").collect();
+                    if parts.len() != 2 {
+                        eprintln!("error: --transition must be 'from->to'");
+                        std::process::exit(1);
+                    }
+                    let violations = git_forum::internal::policy::check_guards(
+                        &policy,
+                        &state,
+                        parts[0],
+                        parts[1],
+                        &[],
+                    );
+                    if violations.is_empty() {
+                        println!("transition {transition}: ok");
+                    } else {
+                        for v in &violations {
+                            println!("FAIL [{}] {}", v.rule, v.reason);
+                        }
+                        std::process::exit(1);
+                    }
+                }
+            }
         }
     }
 

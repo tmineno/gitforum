@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use super::approval::Approval;
 use super::error::ForumResult;
 use super::git_ops::GitOps;
 use super::refs;
@@ -106,6 +107,43 @@ pub enum NodeType {
     Assumption,
 }
 
+impl std::fmt::Display for NodeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Claim => "claim",
+            Self::Question => "question",
+            Self::Objection => "objection",
+            Self::Alternative => "alternative",
+            Self::Evidence => "evidence",
+            Self::Summary => "summary",
+            Self::Decision => "decision",
+            Self::Action => "action",
+            Self::Risk => "risk",
+            Self::Assumption => "assumption",
+        };
+        f.write_str(s)
+    }
+}
+
+impl std::str::FromStr for NodeType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "claim" => Ok(Self::Claim),
+            "question" => Ok(Self::Question),
+            "objection" => Ok(Self::Objection),
+            "alternative" => Ok(Self::Alternative),
+            "evidence" => Ok(Self::Evidence),
+            "summary" => Ok(Self::Summary),
+            "decision" => Ok(Self::Decision),
+            "action" => Ok(Self::Action),
+            "risk" => Ok(Self::Risk),
+            "assumption" => Ok(Self::Assumption),
+            _ => Err(format!("unknown node type '{s}'; valid types: claim, question, objection, alternative, evidence, summary, decision, action, risk, assumption")),
+        }
+    }
+}
+
 /// An immutable event in a thread's history.
 ///
 /// Stored as `event.json` inside each Git commit's tree.
@@ -133,6 +171,9 @@ pub struct Event {
     pub target_node_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_state: Option<String>,
+    /// Approvals attached to State events (recorded sign-offs).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approvals: Vec<Approval>,
 }
 
 /// Write an event as a Git commit and update the thread ref.
@@ -196,6 +237,7 @@ mod tests {
             node_type: None,
             target_node_id: None,
             new_state: None,
+            approvals: vec![],
         }
     }
 

@@ -1,8 +1,9 @@
 use chrono::{DateTime, Utc};
 
 use super::error::{ForumError, ForumResult};
-use super::event::{self, Event, EventType, ThreadKind};
+use super::event::{self, Event, EventType, NodeType, ThreadKind};
 use super::git_ops::GitOps;
+use super::node::Node;
 use super::refs;
 
 /// Materialized state of a thread, derived from event replay.
@@ -15,6 +16,34 @@ pub struct ThreadState {
     pub created_at: DateTime<Utc>,
     pub created_by: String,
     pub events: Vec<Event>,
+    /// All discussion nodes (say/edit/retract/resolve/reopen applied).
+    pub nodes: Vec<Node>,
+}
+
+impl ThreadState {
+    /// Open (unresolved, not retracted) objection nodes.
+    pub fn open_objections(&self) -> Vec<&Node> {
+        self.nodes
+            .iter()
+            .filter(|n| n.node_type == NodeType::Objection && n.is_open())
+            .collect()
+    }
+
+    /// Open (unresolved, not retracted) action nodes.
+    pub fn open_actions(&self) -> Vec<&Node> {
+        self.nodes
+            .iter()
+            .filter(|n| n.node_type == NodeType::Action && n.is_open())
+            .collect()
+    }
+
+    /// Most recent non-retracted summary node, if any.
+    pub fn latest_summary(&self) -> Option<&Node> {
+        self.nodes
+            .iter()
+            .filter(|n| n.node_type == NodeType::Summary && !n.retracted)
+            .next_back()
+    }
 }
 
 /// Replay events to reconstruct thread state.
@@ -47,6 +76,7 @@ pub fn replay(events: &[Event]) -> ForumResult<ThreadState> {
         created_at: first.created_at,
         created_by: first.actor.clone(),
         events: vec![first.clone()],
+        nodes: vec![],
     };
 
     for ev in &events[1..] {
@@ -57,12 +87,58 @@ pub fn replay(events: &[Event]) -> ForumResult<ThreadState> {
 
 fn apply_event(state: &mut ThreadState, event: &Event) -> ForumResult<()> {
     state.events.push(event.clone());
-    if event.event_type == EventType::State {
-        if let Some(ref new_state) = event.new_state {
-            state.status.clone_from(new_state);
+    match event.event_type {
+        EventType::State => {
+            if let Some(ref new_state) = event.new_state {
+                state.status.clone_from(new_state);
+            }
         }
+        EventType::Say => {
+            if let (Some(node_type), Some(ref node_id), Some(ref body)) =
+                (event.node_type, &event.target_node_id, &event.body)
+            {
+                state.nodes.push(Node {
+                    node_id: node_id.clone(),
+                    node_type,
+                    body: body.clone(),
+                    actor: event.actor.clone(),
+                    created_at: event.created_at,
+                    resolved: false,
+                    retracted: false,
+                });
+            }
+        }
+        EventType::Edit => {
+            if let (Some(ref node_id), Some(ref body)) = (&event.target_node_id, &event.body) {
+                if let Some(node) = state.nodes.iter_mut().find(|n| &n.node_id == node_id) {
+                    node.body = body.clone();
+                }
+            }
+        }
+        EventType::Retract => {
+            if let Some(ref node_id) = event.target_node_id {
+                if let Some(node) = state.nodes.iter_mut().find(|n| &n.node_id == node_id) {
+                    node.retracted = true;
+                }
+            }
+        }
+        EventType::Resolve => {
+            if let Some(ref node_id) = event.target_node_id {
+                if let Some(node) = state.nodes.iter_mut().find(|n| &n.node_id == node_id) {
+                    node.resolved = true;
+                }
+            }
+        }
+        EventType::Reopen => {
+            if let Some(ref node_id) = event.target_node_id {
+                if let Some(node) = state.nodes.iter_mut().find(|n| &n.node_id == node_id) {
+                    node.resolved = false;
+                    node.retracted = false;
+                }
+            }
+        }
+        _ => {}
     }
-    // Other event types will be handled in later milestones.
     Ok(())
 }
 
@@ -103,6 +179,7 @@ mod tests {
             node_type: None,
             target_node_id: None,
             new_state: None,
+            approvals: vec![],
         }
     }
 
@@ -121,6 +198,7 @@ mod tests {
             node_type: None,
             target_node_id: None,
             new_state: Some(new_state.into()),
+            approvals: vec![],
         }
     }
 

@@ -7,12 +7,12 @@
 
 - [x] 空の Git repository で `git forum init` が動く
 - [x] `issue` / `rfc` / `decision` を作成できる
-- [ ] 型付き発言を追加できる
+- [x] 型付き発言を追加できる
 - [ ] AI run provenance を保存できる
-- [ ] policy による state transition 検証が動く
+- [x] policy による state transition 検証が動く
 - [ ] evidence を追加できる
-- [ ] `git forum show` で open objections / latest summary / timeline を表示できる
-- [ ] `git forum verify` で最低限の guard を評価できる
+- [x] `git forum show` で open objections / latest summary / timeline を表示できる
+- [x] `git forum verify` で最低限の guard を評価できる
 - [ ] `git forum reindex` で index を再構築できる
 - [ ] branch で分岐した thread を最小限 merge できる
 - [ ] `git forum tui` で一覧・詳細・基本フィルタを操作できる
@@ -131,31 +131,31 @@ Goal:
 
 Includes:
 
-- [ ] `claim`, `question`, `objection`, `alternative`, `evidence`, `summary`, `decision`, `action`, `risk`, `assumption`
-- [ ] `git forum say`
-- [ ] `git forum revise`
-- [ ] `git forum retract`
-- [ ] `git forum resolve`
-- [ ] `git forum reopen`
-- [ ] open objections / open actions の算出
-- [ ] `.forum/policy.toml` parser
+- [x] `claim`, `question`, `objection`, `alternative`, `evidence`, `summary`, `decision`, `action`, `risk`, `assumption`
+- [x] `git forum say`
+- [x] `git forum revise`
+- [x] `git forum retract`
+- [x] `git forum resolve`
+- [x] `git forum reopen`
+- [x] open objections / open actions の算出
+- [x] `.forum/policy.toml` parser
 - [ ] role ごとの node type / state transition 制約
 - [ ] provenance 必須判定
-- [ ] `one_human_approval`, `at_least_one_summary`, `no_open_objections`
-- [ ] `git forum state <THREAD_ID> <NEW_STATE> [--sign <ACTOR_ID>]...`
-- [ ] `git forum verify`
-- [ ] `git forum policy lint`
-- [ ] `git forum policy check`
-- [ ] `verify` 出力の snapshot または安定比較を用意する
+- [x] `one_human_approval`, `at_least_one_summary`, `no_open_objections`
+- [x] `git forum state <THREAD_ID> <NEW_STATE> [--sign <ACTOR_ID>]...`
+- [x] `git forum verify`
+- [x] `git forum policy lint`
+- [x] `git forum policy check`
+- [x] `verify` 出力の snapshot または安定比較を用意する
 
 Exit criteria:
 
-- [ ] 型付き発言を追加できる
-- [ ] `objection` と `action` を resolve / reopen できる
-- [ ] `accepted` への遷移で human approval と guard が評価される
-- [ ] `git forum show` で open objections / latest summary / timeline を表示できる
-- [ ] `git forum verify` で最低限の guard を評価できる
-- [ ] policy / guard の unit test が揃う
+- [x] 型付き発言を追加できる
+- [x] `objection` と `action` を resolve / reopen できる
+- [x] `accepted` への遷移で human approval と guard が評価される
+- [x] `git forum show` で open objections / latest summary / timeline を表示できる
+- [x] `git forum verify` で最低限の guard を評価できる
+- [x] policy / guard の unit test が揃う
 
 Verification:
 
