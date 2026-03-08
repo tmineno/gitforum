@@ -1,0 +1,12 @@
+/target/
+/tmp/
+
+*.log
+.DS_Store
+
+.env
+.env.*
+.direnv/
+
+.vscode/
+.idea/
