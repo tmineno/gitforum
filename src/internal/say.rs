@@ -21,11 +21,10 @@ pub fn say_node(
     body: &str,
     actor: &str,
     clock: &dyn Clock,
-    ids: &dyn IdGenerator,
+    _ids: &dyn IdGenerator,
 ) -> ForumResult<String> {
-    let node_id = ids.next_id();
     let ev = Event {
-        event_id: ids.next_id(),
+        event_id: String::new(),
         thread_id: thread_id.to_string(),
         event_type: EventType::Say,
         created_at: clock.now(),
@@ -36,12 +35,11 @@ pub fn say_node(
         kind: None,
         body: Some(body.to_string()),
         node_type: Some(node_type),
-        target_node_id: Some(node_id.clone()),
+        target_node_id: None,
         new_state: None,
         approvals: vec![],
     };
-    super::event::write_event(git, &ev)?;
-    Ok(node_id)
+    super::event::write_event(git, &ev)
 }
 
 /// Revise the body of an existing node.
@@ -57,10 +55,10 @@ pub fn revise_node(
     body: &str,
     actor: &str,
     clock: &dyn Clock,
-    ids: &dyn IdGenerator,
+    _ids: &dyn IdGenerator,
 ) -> ForumResult<()> {
     let ev = Event {
-        event_id: ids.next_id(),
+        event_id: String::new(),
         thread_id: thread_id.to_string(),
         event_type: EventType::Edit,
         created_at: clock.now(),
@@ -91,10 +89,10 @@ pub fn retract_node(
     node_id: &str,
     actor: &str,
     clock: &dyn Clock,
-    ids: &dyn IdGenerator,
+    _ids: &dyn IdGenerator,
 ) -> ForumResult<()> {
     let ev = Event {
-        event_id: ids.next_id(),
+        event_id: String::new(),
         thread_id: thread_id.to_string(),
         event_type: EventType::Retract,
         created_at: clock.now(),
@@ -125,10 +123,10 @@ pub fn resolve_node(
     node_id: &str,
     actor: &str,
     clock: &dyn Clock,
-    ids: &dyn IdGenerator,
+    _ids: &dyn IdGenerator,
 ) -> ForumResult<()> {
     let ev = Event {
-        event_id: ids.next_id(),
+        event_id: String::new(),
         thread_id: thread_id.to_string(),
         event_type: EventType::Resolve,
         created_at: clock.now(),
@@ -159,10 +157,10 @@ pub fn reopen_node(
     node_id: &str,
     actor: &str,
     clock: &dyn Clock,
-    ids: &dyn IdGenerator,
+    _ids: &dyn IdGenerator,
 ) -> ForumResult<()> {
     let ev = Event {
-        event_id: ids.next_id(),
+        event_id: String::new(),
         thread_id: thread_id.to_string(),
         event_type: EventType::Reopen,
         created_at: clock.now(),
@@ -195,7 +193,7 @@ pub fn change_state(
     sign_actors: &[String],
     actor: &str,
     clock: &dyn Clock,
-    ids: &dyn IdGenerator,
+    _ids: &dyn IdGenerator,
     policy: &Policy,
 ) -> ForumResult<()> {
     let state = thread::replay_thread(git, thread_id)?;
@@ -230,7 +228,7 @@ pub fn change_state(
     }
 
     let ev = Event {
-        event_id: ids.next_id(),
+        event_id: String::new(),
         thread_id: thread_id.to_string(),
         event_type: EventType::State,
         created_at: now,

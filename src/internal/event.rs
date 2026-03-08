@@ -149,6 +149,7 @@ impl std::str::FromStr for NodeType {
 /// Stored as `event.json` inside each Git commit's tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
+    #[serde(default, skip_serializing)]
     pub event_id: String,
     pub thread_id: String,
     pub event_type: EventType,
@@ -201,7 +202,8 @@ pub fn write_event(git: &GitOps, event: &Event) -> ForumResult<String> {
 /// Read an event from a commit SHA.
 pub fn read_event(git: &GitOps, commit_sha: &str) -> ForumResult<Event> {
     let json = git.show_file(commit_sha, "event.json")?;
-    let event: Event = serde_json::from_str(&json)?;
+    let mut event: Event = serde_json::from_str(&json)?;
+    event.event_id = commit_sha.to_string();
     Ok(event)
 }
 
@@ -246,7 +248,7 @@ mod tests {
         let event = sample_create_event();
         let json = serde_json::to_string_pretty(&event).unwrap();
         let parsed: Event = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.event_id, "evt-0001");
+        assert_eq!(parsed.event_id, "");
         assert_eq!(parsed.event_type, EventType::Create);
         assert_eq!(parsed.kind, Some(ThreadKind::Rfc));
         assert_eq!(parsed.title.as_deref(), Some("Test RFC"));
@@ -258,6 +260,7 @@ mod tests {
         let mut event = sample_create_event();
         event.body = None;
         let json = serde_json::to_string_pretty(&event).unwrap();
+        assert!(!json.contains("event_id"));
         assert!(!json.contains("body"));
         assert!(!json.contains("node_type"));
         assert!(!json.contains("target_node_id"));

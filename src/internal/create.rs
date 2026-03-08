@@ -23,11 +23,11 @@ pub fn create_thread(
     body: Option<&str>,
     actor: &str,
     clock: &dyn Clock,
-    ids: &dyn IdGenerator,
+    _ids: &dyn IdGenerator,
 ) -> ForumResult<String> {
     let thread_id = id_alloc::alloc_thread_id(git, kind)?;
     let event = Event {
-        event_id: ids.next_id(),
+        event_id: String::new(),
         thread_id: thread_id.clone(),
         event_type: EventType::Create,
         created_at: clock.now(),

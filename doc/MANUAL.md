@@ -20,7 +20,7 @@ cargo run -- --help
 
 - thread kinds: `issue`, `rfc`, `decision`
 - thread IDs: `ISSUE-0001`, `RFC-0001`, `DEC-0001`
-- node IDs: printed by `git forum say`
+- node IDs: printed by `git forum say`; canonical IDs are Git commit OIDs of the `say` event
 - node IDs in CLI arguments:
   - full IDs always work
   - if there is no exact match, a unique prefix of at least 8 characters is accepted
@@ -125,25 +125,25 @@ Valid node types:
 On success, the command prints the node ID.
 
 ```text
-Added question 0019ccd4b0eb9-928b0ca08d384041
+Added question 6f1d2c3b4a5e67890123456789abcdef01234567
 ```
 
 ### Revise a node
 
 ```bash
-git forum revise RFC-0001 0019ccd4b0eb9-928b0ca08d384041 \
+git forum revise RFC-0001 6f1d2c3b4a5e67890123456789abcdef01234567 \
   --body "What is the migration and rollback plan?"
-git forum revise RFC-0001 0019ccd4 \
+git forum revise RFC-0001 6f1d2c3b \
   --body "What is the migration and rollback plan?"
 ```
 
 ### Retract / resolve / reopen a node
 
 ```bash
-git forum retract RFC-0001 0019ccd4b0eb9-928b0ca08d384041
-git forum resolve RFC-0001 0019ccd4b0eb9-928b0ca08d384041
-git forum reopen RFC-0001 0019ccd4b0eb9-928b0ca08d384041
-git forum resolve RFC-0001 0019ccd4
+git forum retract RFC-0001 6f1d2c3b4a5e67890123456789abcdef01234567
+git forum resolve RFC-0001 6f1d2c3b4a5e67890123456789abcdef01234567
+git forum reopen RFC-0001 6f1d2c3b4a5e67890123456789abcdef01234567
+git forum resolve RFC-0001 6f1d2c3b
 ```
 
 - `resolve` / `reopen` are mainly for `objection` and `action`
@@ -154,8 +154,8 @@ git forum resolve RFC-0001 0019ccd4
 Use this when you want to inspect one node directly instead of reading the whole thread:
 
 ```bash
-git forum node show 0019ccd4b0eb9-928b0ca08d384041
-git forum node show 0019ccd4
+git forum node show 6f1d2c3b4a5e67890123456789abcdef01234567
+git forum node show 6f1d2c3b
 ```
 
 `git forum node show <NODE_ID>` shows:
@@ -306,7 +306,7 @@ git forum rfc new "Switch solver backend to trait objects" \
 git forum say RFC-0001 --type claim --body "Needed for compatibility."
 git forum say RFC-0001 --type question --body "What is the migration plan?"
 git forum show RFC-0001
-git forum node show 0019ccd4b0eb9-928b0ca08d384041
+git forum node show 6f1d2c3b4a5e67890123456789abcdef01234567
 git forum state RFC-0001 proposed
 git forum state RFC-0001 under-review
 git forum verify RFC-0001

@@ -108,11 +108,9 @@ fn apply_event(state: &mut ThreadState, event: &Event) -> ForumResult<()> {
             }
         }
         EventType::Say => {
-            if let (Some(node_type), Some(ref node_id), Some(ref body)) =
-                (event.node_type, &event.target_node_id, &event.body)
-            {
+            if let (Some(node_type), Some(ref body)) = (event.node_type, &event.body) {
                 state.nodes.push(Node {
-                    node_id: node_id.clone(),
+                    node_id: say_node_id(event).to_string(),
                     node_type,
                     body: body.clone(),
                     actor: event.actor.clone(),
@@ -255,7 +253,7 @@ fn build_node_lookup(state: &ThreadState, node: &Node) -> NodeLookup {
     let events = state
         .events
         .iter()
-        .filter(|ev| ev.target_node_id.as_deref() == Some(node.node_id.as_str()))
+        .filter(|ev| event_references_node(ev, node.node_id.as_str()))
         .cloned()
         .collect();
     NodeLookup {
@@ -264,6 +262,20 @@ fn build_node_lookup(state: &ThreadState, node: &Node) -> NodeLookup {
         thread_kind: state.kind,
         node: node.clone(),
         events,
+    }
+}
+
+fn say_node_id(event: &Event) -> &str {
+    event
+        .target_node_id
+        .as_deref()
+        .unwrap_or(event.event_id.as_str())
+}
+
+fn event_references_node(event: &Event, node_id: &str) -> bool {
+    match event.event_type {
+        EventType::Say => say_node_id(event) == node_id,
+        _ => event.target_node_id.as_deref() == Some(node_id),
     }
 }
 

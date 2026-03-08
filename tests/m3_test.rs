@@ -1,10 +1,10 @@
 mod support;
 
 use chrono::{TimeZone, Utc};
-use git_forum::internal::clock::FixedClock;
+use git_forum::internal::clock::{Clock, FixedClock};
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
-use git_forum::internal::event::{NodeType, ThreadKind};
+use git_forum::internal::event::{self, Event, EventType, NodeType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id::SequentialIdGenerator;
 use git_forum::internal::init;
@@ -83,6 +83,12 @@ fn say_creates_node_in_replay() {
         &ids,
     )
     .unwrap();
+
+    let tip = git
+        .resolve_ref(&format!("refs/forum/threads/{thread_id}"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(tip, node_id);
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(state.nodes.len(), 1);
@@ -588,7 +594,7 @@ fn show_timeline_includes_say_events() {
     let thread_id = make_rfc(&git);
     let ids = SequentialIdGenerator::new("n");
 
-    say::say_node(
+    let node_id = say::say_node(
         &git,
         &thread_id,
         NodeType::Claim,
@@ -602,7 +608,7 @@ fn show_timeline_includes_say_events() {
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     let out = show::render_show(&state);
 
-    assert!(out.contains("n-0001"));
+    assert!(out.contains(&node_id));
     assert!(out.contains("claim"));
     assert!(out.contains("This is important."));
 }
@@ -687,7 +693,19 @@ fn resolve_node_id_rejects_short_prefix() {
     )
     .unwrap();
 
-    let err = thread::resolve_node_id_global(&git, "nodepre").unwrap_err();
+    let node_id = say::say_node(
+        &git,
+        &thread_id,
+        NodeType::Question,
+        "What is this?",
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+    )
+    .unwrap();
+
+    let short_prefix = &node_id[..thread::MIN_NODE_ID_PREFIX_LEN - 1];
+    let err = thread::resolve_node_id_global(&git, short_prefix).unwrap_err();
     assert!(err.to_string().contains("at least 8 characters"));
 }
 
@@ -706,32 +724,46 @@ fn resolve_node_id_in_thread_scopes_prefix_lookup() {
     )
     .unwrap();
 
-    let first_node_id = say::say_node(
-        &git,
-        &first_thread_id,
-        NodeType::Objection,
-        "First objection.",
-        "human/alice",
-        &fixed_clock(),
-        &SequentialIdGenerator::new("prefixsame-a"),
-    )
-    .unwrap();
-    let _second_node_id = say::say_node(
-        &git,
-        &second_thread_id,
-        NodeType::Objection,
-        "Second objection.",
-        "human/bob",
-        &fixed_clock(),
-        &SequentialIdGenerator::new("prefixsame-b"),
-    )
-    .unwrap();
+    let first_event = Event {
+        event_id: String::new(),
+        thread_id: first_thread_id.clone(),
+        event_type: EventType::Say,
+        created_at: fixed_clock().now(),
+        actor: "human/alice".into(),
+        base_rev: None,
+        parents: vec![],
+        title: None,
+        kind: None,
+        body: Some("First objection.".into()),
+        node_type: Some(NodeType::Objection),
+        target_node_id: Some("deadbeef11111111111111111111111111111111".into()),
+        new_state: None,
+        approvals: vec![],
+    };
+    let second_event = Event {
+        event_id: String::new(),
+        thread_id: second_thread_id.clone(),
+        event_type: EventType::Say,
+        created_at: fixed_clock().now(),
+        actor: "human/bob".into(),
+        base_rev: None,
+        parents: vec![],
+        title: None,
+        kind: None,
+        body: Some("Second objection.".into()),
+        node_type: Some(NodeType::Objection),
+        target_node_id: Some("deadbeef22222222222222222222222222222222".into()),
+        new_state: None,
+        approvals: vec![],
+    };
+    event::write_event(&git, &first_event).unwrap();
+    event::write_event(&git, &second_event).unwrap();
 
-    let err = thread::resolve_node_id_global(&git, "prefixsa").unwrap_err();
+    let err = thread::resolve_node_id_global(&git, "deadbeef").unwrap_err();
     assert!(err.to_string().contains("ambiguous"));
 
-    let resolved = thread::resolve_node_id_in_thread(&git, &first_thread_id, "prefixsa").unwrap();
-    assert_eq!(resolved, first_node_id);
+    let resolved = thread::resolve_node_id_in_thread(&git, &first_thread_id, "deadbeef").unwrap();
+    assert_eq!(resolved, "deadbeef11111111111111111111111111111111");
 }
 
 // ---- policy loading from file ----

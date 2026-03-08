@@ -101,7 +101,7 @@ fn write_and_read_event_roundtrip() {
     assert!(!commit_sha.is_empty());
 
     let loaded = event::read_event(&git, &commit_sha).unwrap();
-    assert_eq!(loaded.event_id, "evt-0001");
+    assert_eq!(loaded.event_id, commit_sha);
     assert_eq!(loaded.event_type, EventType::Create);
     assert_eq!(loaded.thread_id, "RFC-0001");
     assert_eq!(loaded.title.as_deref(), Some("Test RFC"));

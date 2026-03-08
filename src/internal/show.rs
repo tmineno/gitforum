@@ -4,8 +4,8 @@ use super::thread::{NodeLookup, ThreadState};
 /// Render `git forum show` output for a thread.
 ///
 /// Output is deterministic given deterministic event timestamps and IDs.
-/// Snapshot strategy: tests use FixedClock so `created_at` is stable;
-/// no commit hashes or wall-clock times appear in the output.
+/// Snapshot strategy: tests use fixed synthetic events where needed;
+/// integration tests should avoid asserting exact Git OIDs.
 pub fn render_show(state: &ThreadState) -> String {
     let mut lines: Vec<String> = Vec::new();
 
@@ -342,11 +342,10 @@ mod tests {
     }
 
     #[test]
-    fn show_no_commit_hash() {
+    fn show_includes_timeline_event_id() {
         let state = fixed_state();
         let out = render_show(&state);
-        // SHA-like 40-char hex strings should not appear
-        assert!(!out.chars().filter(|c| c.is_ascii_hexdigit()).count() > 40);
+        assert!(out.contains("evt-0001"));
     }
 
     #[test]

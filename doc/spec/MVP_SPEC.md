@@ -161,7 +161,6 @@ JSON 例:
 
 必須フィールド:
 
-- `event_id`
 - `thread_id`
 - `event_type`
 - `created_at`
@@ -507,7 +506,7 @@ git forum policy check <THREAD_ID> --transition <TRANSITION>
 - `retract` は対象 node を参照する `retract` event を append する。
 - `resolve` / `reopen` は `objection` または `action` にのみ適用できる。
 - `resolve` 済み node は open objection / open action 集計から除外する。
-- `NODE_ID` は full ID を受け付けること。
+- `NODE_ID` は canonical node OID の full ID を受け付けること。
 - exact match がない場合は、同一 thread 内で一意な prefix を受け付けてよい。
 - prefix 解決の最小長は 8 文字とする。
 - prefix が曖昧な場合は候補 full ID 一覧を表示して失敗する。
@@ -526,6 +525,7 @@ git forum policy check <THREAD_ID> --transition <TRANSITION>
 ### 13.6 `git forum node show`
 
 - node id から単一 node を引けること。
+- canonical node ID は、その node を導入した `say` event commit の Git OID とする。
 - full ID に加えて、global に一意な prefix を受け付けてよい。
 - prefix 解決の最小長は 8 文字とする。
 - prefix が曖昧な場合は候補 full ID 一覧を表示して失敗する。
@@ -577,16 +577,41 @@ MVP の TUI は read-first とし、最低限次を提供する。
 
 thread 作成や state change などの編集操作は、MVP では CLI に委譲してよい。
 
-## 14. ID format
+## 14. ID scheme
 
-MVP の表示 ID は人間可読とする。
+MVP では thread と event / node で役割の異なる ID を使う。
+
+### 14.1 Thread display IDs
+
+thread の primary display ID は人間可読とする。
 
 - issue: `ISSUE-0001`
 - rfc: `RFC-0001`
 - decision: `DEC-0001`
 - run: `RUN-0001`
 
-内部的には UUID / ULID を使ってもよいが、CLI では短い表示 ID を primary にする。
+これらは CLI の一覧・作成・参照に使う display ID である。
+
+### 14.2 Canonical event IDs
+
+- event の canonical ID は、その event を保存した commit の Git OID とする。
+- `event.json` は self-referential になるため、自身の canonical OID を authoritative field として重複保持しなくてよい。
+- reader / replay / show は、event を含む commit OID を使って canonical event ID を materialize すること。
+
+### 14.3 Canonical node IDs
+
+- node の canonical ID は、その node を導入した `say` event commit の Git OID とする。
+- `say` event は canonical node ID を generated opaque ID として別途発行してはならない。
+- `edit`, `retract`, `resolve`, `reopen` は canonical node OID を `target_node_id` として参照する。
+
+### 14.4 CLI short-ID resolution
+
+- CLI は full canonical OID を受け付けること。
+- exact match がある場合はそれを優先すること。
+- exact match がない場合は、8 文字以上の unique prefix を受け付けてよい。
+- `node show` は repository 全体で解決すること。
+- thread-scoped な node 操作は、その thread 内だけで解決すること。
+- prefix が曖昧な場合は候補 full ID 一覧を返して失敗すること。
 
 ## 15. Semantic merge
 

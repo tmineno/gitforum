@@ -34,7 +34,7 @@ $ git forum rfc new "Switch solver backend to trait objects" \
   --body "Needed to make plugin ABI stability explicit."
 $ git forum say RFC-0012 --type claim \
   --body "Needed for plugin ABI stability."
-$ git forum node show 01ARZ3NDEKTSV4RRFFQ69G5FAV
+$ git forum node show a1b2c3d4
 $ git forum run spawn RFC-0012 --as ai/reviewer
 $ git forum evidence add RFC-0012 \
   --kind benchmark --ref bench/solver.csv --rows 15:38
