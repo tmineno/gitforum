@@ -162,6 +162,11 @@ Valid node types:
 - `risk`
 - `assumption`
 
+`summary` is not just another comment. In the default workflow it is the human-readable statement of
+what the thread currently concludes, what objections were addressed, and what decision is ready to
+be accepted. The default policy therefore requires at least one `summary` before an RFC can move to
+`accepted`.
+
 On success, the command prints the node ID.
 
 ```text
@@ -295,6 +300,7 @@ Current controls:
   - `q`: quit
 - thread detail view:
   - `j` / `k`: move between nodes in the thread
+  - `up` / `down`: scroll the thread body and timeline pane
   - `enter`: open the selected node detail
   - `c`: create a new node in the current thread
   - `r`: refresh the thread from Git

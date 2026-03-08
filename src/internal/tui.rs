@@ -79,6 +79,7 @@ pub struct App {
     pub table_state: TableState,
     pub kind_filter: Option<String>,
     pub thread_text: String,
+    pub thread_scroll: u16,
     pub thread_nodes: Vec<Node>,
     pub node_table_state: TableState,
     pub node_detail_text: String,
@@ -99,6 +100,7 @@ impl App {
             table_state,
             kind_filter: None,
             thread_text: String::new(),
+            thread_scroll: 0,
             thread_nodes: Vec::new(),
             node_table_state: TableState::default(),
             node_detail_text: String::new(),
@@ -218,6 +220,14 @@ impl App {
             });
     }
 
+    fn scroll_thread_down(&mut self) {
+        self.thread_scroll = self.thread_scroll.saturating_add(1);
+    }
+
+    fn scroll_thread_up(&mut self) {
+        self.thread_scroll = self.thread_scroll.saturating_sub(1);
+    }
+
     fn begin_create_thread(&mut self) {
         self.thread_form = ThreadForm {
             kind_index: default_thread_kind_index(self.kind_filter.as_deref()),
@@ -329,12 +339,15 @@ fn handle_key(
             KeyCode::Char('q') | KeyCode::Esc => {
                 app.view = View::List;
                 app.thread_text.clear();
+                app.thread_scroll = 0;
                 app.thread_nodes.clear();
                 app.node_detail_text.clear();
                 app.node_detail_scroll = 0;
             }
-            KeyCode::Char('j') | KeyCode::Down => app.move_node_down(),
-            KeyCode::Char('k') | KeyCode::Up => app.move_node_up(),
+            KeyCode::Char('j') => app.move_node_down(),
+            KeyCode::Char('k') => app.move_node_up(),
+            KeyCode::Down => app.scroll_thread_down(),
+            KeyCode::Up => app.scroll_thread_up(),
             KeyCode::Char('c') => app.begin_create_node(&thread_id),
             KeyCode::Char('r') => {
                 let selected = app.selected_node_id();
@@ -407,6 +420,7 @@ fn open_thread_detail(
 ) -> ForumResult<()> {
     let state = thread::replay_thread(git, thread_id)?;
     app.thread_text = show::render_show(&state);
+    app.thread_scroll = 0;
     app.thread_nodes = state.nodes;
     app.node_detail_text.clear();
     app.node_detail_scroll = 0;
@@ -792,7 +806,7 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         .split(area);
 
     f.render_widget(
-        Paragraph::new(" [esc/q]back  [enter]node  [c]create node  [r]refresh  [j/k]select node"),
+        Paragraph::new(" [esc/q]back  [enter]node  [c]create node  [r]refresh  [j/k]select node  [up/down]scroll body"),
         chunks[0],
     );
 
@@ -807,11 +821,13 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         .split(chunks[1]);
 
     f.render_widget(
-        Paragraph::new(app.thread_text.as_str()).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" {thread_id} ")),
-        ),
+        Paragraph::new(app.thread_text.as_str())
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(" {thread_id} ")),
+            )
+            .scroll((app.thread_scroll, 0)),
         main[0],
     );
 
@@ -1140,6 +1156,21 @@ mod tests {
         app.thread_text = "RFC-0001 Test RFC\nkind: rfc\n".into();
         let out = render_to_string(&mut app, 80, 20);
         assert!(out.contains("RFC-0001"));
+    }
+
+    #[test]
+    fn thread_detail_arrow_keys_scroll_body() {
+        let mut app = App::new(vec![]);
+        app.view = View::ThreadDetail("RFC-0001".into());
+        app.thread_text = (0..20)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        app.scroll_thread_down();
+        app.scroll_thread_down();
+        assert_eq!(app.thread_scroll, 2);
+        app.scroll_thread_up();
+        assert_eq!(app.thread_scroll, 1);
     }
 
     #[test]
