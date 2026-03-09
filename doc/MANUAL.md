@@ -1,7 +1,15 @@
 # Manual
 
-This document describes how to use the current `git-forum` CLI.
-It is intentionally based on the commands that are implemented today, not future spec ideas.
+This manual describes the preferred `git-forum` workflow after the current product reset:
+
+- start work with `rfc`
+- implement with `issue`
+- use typed discussion instead of plain comments
+- let humans and agents use the same CLI surface
+
+Note:
+Current binaries may still expose older `decision` and `run` commands. They are legacy surfaces from
+an older direction and are intentionally omitted below.
 
 ## Install
 
@@ -10,7 +18,7 @@ cargo install --path .
 git-forum --help
 ```
 
-If you only want to try it during development, this also works:
+If you only want to try it during development:
 
 ```bash
 cargo run -- --help
@@ -24,8 +32,8 @@ git-forum --help-llm
 
 ## Conventions
 
-- thread kinds: `issue`, `rfc`, `decision`
-- thread IDs: `ISSUE-0001`, `RFC-0001`, `DEC-0001`
+- thread kinds: `issue`, `rfc`
+- thread IDs: `ISSUE-0001`, `RFC-0001`
 - node IDs: printed by `git forum say`; canonical IDs are Git commit OIDs of the `say` event
 - CLI/TUI displays of node and event OIDs usually show the first 16 characters
 - node IDs in CLI arguments:
@@ -35,7 +43,17 @@ git-forum --help-llm
   - `revise`, `retract`, `resolve`, and `reopen` resolve prefixes inside the specified thread
 - actor:
   - if `--as` is omitted, the current actor is inferred from Git config
-  - you can override it explicitly, for example `--as human/alice`
+  - you can override it explicitly, for example `--as human/alice` or `--as ai/reviewer`
+
+## Preferred model
+
+- `rfc` is the starting point for a project, feature, or design change
+- `issue` is the implementation work item
+- an accepted RFC plus its latest summary acts as the decision record
+- agents are participants, not a separate control plane
+
+In other words: do not start with a standalone `decision` object. Start with an RFC, then create
+linked issues once the RFC is accepted.
 
 ## Repository setup
 
@@ -53,52 +71,50 @@ git forum reindex
 
 ## Create threads
 
-### Issue
-
-```bash
-git forum issue new "Parser fails on nested blocks"
-git forum issue new "Parser fails on nested blocks" --body "Repro in src/parser/tests.rs"
-git forum issue new "Parser fails on nested blocks" --body -
-git forum issue new "Parser fails on nested blocks" --body-file ./tmp/issue-body.md
-git forum issue new "Parser fails on nested blocks" --branch feat/parser-rewrite
-git forum issue new "Parser fails on nested blocks" \
-  --link-to RFC-0001 --rel implements
-```
-
 ### RFC
+
+Use RFCs to frame work before implementation starts.
 
 ```bash
 git forum rfc new "Switch solver backend to trait objects"
 git forum rfc new "Switch solver backend to trait objects" \
-  --body "Needed to make plugin ABI stability explicit."
+  --body "Goal, constraints, and acceptance."
 git forum rfc new "Switch solver backend to trait objects" --body -
+git forum rfc new "Switch solver backend to trait objects" --body-file ./tmp/rfc.md
 ```
 
-### Decision
+### Issue
+
+Use issues for implementation work, especially when code or a branch is involved.
 
 ```bash
-git forum decision new "Adopt trait backend for v2"
+git forum issue new "Implement trait backend"
+git forum issue new "Implement trait backend" --body "Initial implementation checklist"
+git forum issue new "Implement trait backend" --body -
+git forum issue new "Implement trait backend" --body-file ./tmp/issue.md
+git forum issue new "Implement trait backend" --branch feat/trait-backend
+git forum issue new "Implement trait backend" \
+  --link-to RFC-0001 --rel implements
 ```
 
 `--body -` reads the initial body from standard input, so you can avoid creating a temporary file.
 `--branch <BRANCH>` binds the new thread to an existing Git branch.
-`--link-to <THREAD_ID> --rel <REL>` creates the thread and immediately records one or more links from
-the new thread to existing threads.
+`--link-to <THREAD_ID> --rel <REL>` creates the thread and immediately records one or more links
+from the new thread to existing threads.
 
 ### List by kind
 
 ```bash
 git forum issue ls
-git forum issue ls --branch v0.1.0
+git forum issue ls --branch feat/trait-backend
 git forum rfc ls
-git forum decision ls
 ```
 
 ## List and inspect threads
 
 ```bash
 git forum ls
-git forum ls --branch feat/parser-rewrite
+git forum ls --branch feat/trait-backend
 git forum show RFC-0001
 ```
 
@@ -117,11 +133,13 @@ git forum show RFC-0001
 - open objections
 - open actions
 - latest summary
+- evidence section
+- links section
 - timeline
 
-The timeline is displayed in `date ID author type body` order.
+The timeline is displayed in `date node_id event_id author type body` order.
 
-If the thread has evidence, links, or AI runs attached, they appear between the summary and the timeline:
+If the thread has evidence or links attached, they appear between the summary and the timeline:
 
 ```text
 evidence: 1
@@ -129,9 +147,6 @@ evidence: 1
 
 links: 1
   - ISSUE-0001  implements
-
-runs: 1
-  - RUN-0001
 ```
 
 ## Search
@@ -151,21 +166,34 @@ git forum search RFC-0001
 - current node body
 - current node type and node ID
 
-Results are still grouped by thread. If the match came from a current node, the output includes
-the matching node under the thread row.
+Results are grouped by thread. If the match came from a current node, the output includes the
+matching node under the thread row.
 
-## Add discussion nodes
+## Add structured discussion
 
 ### Add a node
 
+Today the primitive command is still `say --type`.
+
 ```bash
-git forum say RFC-0001 --type claim --body "Needed for compatibility."
-git forum say RFC-0001 --type question --body "What is the migration plan?"
+git forum say RFC-0001 --type claim --body "Need a stable plugin-facing boundary."
+git forum say RFC-0001 --type question --body "What compatibility risks remain?"
 git forum say RFC-0001 --type objection --body "Benchmarks are missing."
-git forum say RFC-0001 --type summary --body "Current consensus is to keep both backends."
+git forum say RFC-0001 --type summary --body "Direction is sound, but migration evidence is missing."
+git forum say ISSUE-0001 --type action --body "Add branch-local benchmark fixture."
+git forum say ISSUE-0001 --type risk --body "Parser behavior may diverge under edge inputs."
 ```
 
-Valid node types:
+The target first batch of shorthand commands is:
+
+- `git forum claim`
+- `git forum question`
+- `git forum objection`
+- `git forum summary`
+- `git forum action`
+- `git forum risk`
+
+Valid node types used in the preferred workflow:
 
 - `claim`
 - `question`
@@ -173,14 +201,13 @@ Valid node types:
 - `alternative`
 - `evidence`
 - `summary`
-- `decision`
 - `action`
 - `risk`
 - `assumption`
 
 `summary` is not just another comment. In the default workflow it is the human-readable statement of
-what the thread currently concludes, what objections were addressed, and what decision is ready to
-be accepted. The default policy therefore requires at least one `summary` before an RFC can move to
+what the thread currently concludes, what objections were addressed, and what is ready to move
+forward. The default policy therefore requires at least one `summary` before an RFC can move to
 `accepted`.
 
 On success, the command prints the node ID.
@@ -239,18 +266,20 @@ If a prefix is ambiguous, the command fails and prints candidate full IDs.
 
 ```bash
 git forum evidence add RFC-0001 --kind benchmark --ref bench/result.csv
-git forum evidence add RFC-0001 --kind commit --ref HEAD~1
-git forum evidence add RFC-0001 --kind commit --ref abc123def456
-git forum evidence add RFC-0001 --kind file --ref src/lib.rs
+git forum evidence add ISSUE-0001 --kind commit --ref HEAD~1
+git forum evidence add ISSUE-0001 --kind commit --ref abc123def456
+git forum evidence add ISSUE-0001 --kind file --ref src/lib.rs
+git forum evidence add ISSUE-0001 --kind test --ref tests/backend_trait.rs
 ```
 
 Valid evidence kinds: `commit`, `file`, `hunk`, `test`, `benchmark`, `doc`, `thread`, `external`.
 
 For `--kind commit`, `--ref` may be a full SHA, short SHA, branch, tag, or other Git revision
-expression. `git-forum` resolves it to a commit and stores the canonical commit OID. If the revision
-does not resolve to a commit object, the command fails.
+expression. `git-forum` resolves it to a commit and stores the canonical commit OID. If the
+revision does not resolve to a commit object, the command fails.
 
-On success, the command prints the first 8 characters of the evidence ID (the Git commit SHA of the Link event):
+On success, the command prints the first 8 characters of the evidence ID, which is the Git commit
+SHA of the `link` event:
 
 ```text
 Evidence added (a1b2c3d4)
@@ -260,9 +289,9 @@ Evidence added (a1b2c3d4)
 
 ```bash
 git forum link ISSUE-0001 RFC-0001 --rel implements
-git forum link RFC-0001 DEC-0001 --rel relates-to
 git forum link ISSUE-0002 ISSUE-0001 --rel depends-on
 git forum link ISSUE-0003 ISSUE-0002 --rel blocks
+git forum link RFC-0002 RFC-0001 --rel relates-to
 ```
 
 On success:
@@ -281,43 +310,8 @@ git forum branch bind ISSUE-0001 feat/parser-rewrite
 git forum branch clear ISSUE-0001
 ```
 
-This updates the thread's `scope.branch`. It is most useful for issues that track implementation work
-on a feature branch, but the command is available for any thread kind.
-
-## AI runs
-
-### Spawn a run
-
-```bash
-git forum run spawn RFC-0001 --as ai/reviewer
-```
-
-Creates a run record at `refs/forum/runs/RUN-NNNN` with status `running`, and writes a `Spawn` event into the thread's timeline. On success:
-
-```text
-Spawned RUN-0001
-```
-
-### List runs
-
-```bash
-git forum run ls
-```
-
-### Show a run
-
-```bash
-git forum run show RUN-0001
-```
-
-`git forum run show <RUN_LABEL>` shows:
-
-- label and status
-- thread it was spawned for
-- actor
-- started / ended timestamps
-- model (if recorded)
-- result and confidence (if recorded)
+This updates the thread's `scope.branch`. It is most useful for issues that track implementation
+work on a feature branch, but the command is available for any thread kind.
 
 ## TUI
 
@@ -330,14 +324,18 @@ Current controls:
 
 - list view:
   - `j` / `k`: move between threads
+  - left click on a thread row: open thread detail
   - `enter`: open thread detail
   - `c`: create a new thread
   - `f`: cycle kind filter
   - `r`: refresh from Git into the local index
+  - mouse wheel: move through the list
   - `q`: quit
 - thread detail view:
   - `j` / `k`: move between nodes in the thread
   - `up` / `down`: scroll the thread body and timeline pane
+  - left click on a node row: open node detail
+  - mouse wheel over the left pane: scroll the thread body and timeline pane
   - `enter`: open the selected node detail
   - `c`: create a new node in the current thread
   - `l`: create a thread link from the current thread
@@ -350,6 +348,7 @@ Current controls:
   - `o`: reopen the current node if it is resolved or retracted
   - `R`: retract the current node
   - `j` / `k`: scroll
+  - mouse wheel: scroll the node detail text
   - `r`: refresh the node from Git
   - `esc` / `q`: go back to the parent thread detail
 - create thread / create node / create link:
@@ -365,6 +364,7 @@ Current controls:
     `depends-on`, and `blocks`
   - in create link, choose `manual` target kind to type a thread ID directly
   - in create link, move to `submit` and press `enter` to create the link
+  - clicking the `submit` row also submits the current form
   - in the body editor, `enter` inserts a newline and `ctrl+s` returns to the form
   - `esc`: cancel
 
@@ -374,7 +374,6 @@ Current controls:
 git forum state RFC-0001 proposed
 git forum state RFC-0001 under-review
 git forum state RFC-0001 accepted --sign human/alice
-git forum state RFC-0001 accepted --sign human/alice --sign human/bob
 git forum state ISSUE-0001 closed --resolve-open-actions
 git forum state bulk --to closed --branch v0.1.0
 git forum state bulk --to closed ISSUE-0001 ISSUE-0002 --dry-run
@@ -384,6 +383,7 @@ git forum state bulk --to closed ISSUE-0001 ISSUE-0002 --dry-run
 - whether the transition succeeds depends on the state machine and policy guards
 - for RFCs, `proposed` means the author is declaring the RFC review-ready
 - for RFCs, `under-review` means active review is in progress
+- an accepted RFC is the decision record; there is no separate decision workflow in the preferred model
 - if policy requires `no_open_actions`, closing an issue with open `action` nodes fails
 - `--resolve-open-actions` is an explicit escape hatch for issue close; it resolves open `action`
   nodes before writing the closing state event
@@ -416,11 +416,11 @@ A default file looks like this:
 
 ```toml
 [roles.reviewer]
-can_say = ["objection", "evidence", "summary", "risk"]
-can_transition = ["under-review->changes-requested"]
+can_say = ["question", "objection", "summary", "risk"]
+can_transition = []
 
 [roles.maintainer]
-can_say = ["claim", "decision", "summary"]
+can_say = ["claim", "summary", "action"]
 can_transition = ["draft->proposed", "proposed->under-review", "under-review->accepted"]
 
 [[guards]]
@@ -448,87 +448,50 @@ requires = ["no_open_actions"]
 
 ### What is enforced today
 
-Current implementation status is narrower than the long-term spec:
+Current implementation status is narrower than the target spec:
 
 - `git forum state ...` evaluates guard rules from `[[guards]]`
 - `git forum verify` evaluates those same guard rules in read-only mode
-- `git forum policy lint` currently performs structural validation, mainly checking that guard transitions use the `from->to` format
+- `git forum policy lint` currently performs structural validation, mainly checking that guard
+  transitions use the `from->to` format
 
-Role sections such as `can_say` and `can_transition` are parsed and preserved, but they are not yet fully enforced across all commands.
-
-### Editing the policy file
-
-The file is plain TOML, so the normal workflow is:
-
-1. edit `.forum/policy.toml`
-2. run `git forum policy lint`
-3. run `git forum policy check ...` or `git forum verify ...`
-
-Example:
-
-```bash
-git forum policy lint
-git forum policy check RFC-0001 --transition under-review->accepted
-git forum verify RFC-0001
-```
+Role sections such as `can_say` and `can_transition` are parsed and preserved, but they are not yet
+fully enforced across all commands.
 
 ### What `git forum verify` actually does
 
 `git forum verify` is read-only. It does not change the thread state and it does not attach approvals.
 
-At the moment, it only evaluates a small set of forward transitions:
+At the moment, it evaluates these forward transitions:
 
-- RFC in `under-review` is checked against `under-review -> accepted`
-- Issue in `open` is checked against `open -> closed`
-- Decision in `proposed` is checked against `proposed -> accepted`
+- RFC in `under-review` against `under-review -> accepted`
+- Issue in `open` against `open -> closed`
 - other kinds or states currently return `ok` because no verify target is defined
 
-In practice, this means `verify` is most useful right before an acceptance-like transition. It answers: "If I tried to move this thread forward now, which guard checks would fail?"
-
-### Typical output
-
-If all configured guards pass:
-
-```text
-RFC-0001: ok
-```
-
-If one or more guards fail:
-
-```text
-FAIL [no_open_objections] unresolved objections remain
-FAIL [at_least_one_summary] no summary node found
-```
-
-### `verify` vs `policy check`
-
-Use `verify` when you want the tool to infer the next forward transition from the current thread state.
-
-Use `policy check` when you want to ask about a specific transition explicitly:
-
-```bash
-git forum policy check RFC-0001 --transition under-review->accepted
-git forum policy check DEC-0001 --transition proposed->accepted
-```
+In practice, this means `verify` is most useful right before an acceptance-like transition. It answers:
+"If I tried to move this thread forward now, which guard checks would fail?"
 
 ## Typical workflow
 
 ```bash
 git forum init
 git forum rfc new "Switch solver backend to trait objects" \
-  --body "Needed to make plugin ABI stability explicit."
+  --body "Goal, constraints, and acceptance."
 git forum say RFC-0001 --type claim --body "Needed for compatibility."
+git forum say RFC-0001 --type question --body "What is the migration plan?" --as ai/reviewer
 git forum say RFC-0001 --type objection --body "Benchmarks are missing."
 git forum evidence add RFC-0001 --kind benchmark --ref bench/result.csv
 git forum say RFC-0001 --type summary --body "Benchmarks added; objection addressed."
 git forum resolve RFC-0001 <OBJECTION_NODE_ID>
-git forum issue new "Implement trait backend" --link-to RFC-0001 --rel implements
-git forum run spawn RFC-0001 --as ai/reviewer
-git forum show RFC-0001
 git forum state RFC-0001 proposed
 git forum state RFC-0001 under-review
 git forum verify RFC-0001
 git forum state RFC-0001 accepted --sign human/alice
+git forum issue new "Implement trait backend" --link-to RFC-0001 --rel implements
+git forum branch bind ISSUE-0001 feat/trait-backend
+git forum say ISSUE-0001 --type action --body "Wire trait backend behind feature flag."
+git forum evidence add ISSUE-0001 --kind test --ref tests/backend_trait.rs
+git forum state ISSUE-0001 closed
 ```
 
 ## Current scope
@@ -536,18 +499,27 @@ git forum state RFC-0001 accepted --sign human/alice
 This manual currently covers:
 
 - init / doctor / reindex
-- issue / rfc / decision create and list
-- thread show (with evidence / links / runs sections)
+- issue / rfc create and list
+- thread show
 - node show
+- search
 - say / revise / retract / resolve / reopen
 - state
 - verify
 - policy lint / check
 - evidence add
 - link
-- run spawn / ls / show
+- branch bind / clear
 - TUI
 
 Still out of scope:
 
 - import / export
+- merge conflict resolution UX
+- shorthand discussion commands
+
+## Legacy note
+
+Some current builds still expose `decision` and `run` commands. They belong to an older direction
+that treated decisions and AI provenance as first-class objects. The preferred workflow in this
+manual does not rely on them.

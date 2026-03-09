@@ -1,48 +1,57 @@
 # git-forum
 
-> Git-native RFCs, decisions, and auditable AI discussions.
+> Git-native RFCs, issues, and structured human-agent coding discussion.
 
-`git-forum` is a CLI for managing issues, RFCs, and decisions in Git.
-It records human and AI discussion as structured artifacts such as `claim`, `objection`, `evidence`, `summary`, and `decision`, instead of a plain comment stream.
+`git-forum` is a CLI for running design and implementation work in Git with two first-class
+objects: `rfc` and `issue`.
+
+It records discussion as typed nodes such as `claim`, `question`, `objection`, `summary`,
+`action`, and `risk`, instead of a plain comment stream. The goal is not to manage AI provenance.
+The goal is to give humans and coding agents the same work protocol.
 
 ```mermaid
 ---
 config:
-  theme: 'base'
+  theme: "base"
   themeVariables:
     fontSize: 16px
 ---
 flowchart LR
-    A[Open RFC<br/>human / ai] --> B[Add claim / objection / evidence]
-    B --> C[AI review / summary<br/>surface duplicates, gaps, unresolved points]
-    C --> D{Any unresolved objection?}
-    D -- yes --> B
-    D -- no --> E{Human sign-off, evidence,<br/>and summary ready?}
-    E -- no --> B
-    E -- yes --> F[Record decision / ADR]
-    F --> G[Create implementation issue]
-    G --> H[Verify with test / benchmark / review]
+    A[Open RFC<br/>human / agent] --> B[Add claim / question / objection]
+    B --> C[Add summary / evidence / risk]
+    C --> D{Ready for sign-off?}
+    D -- no --> B
+    D -- yes --> E[Accept RFC]
+    E --> F[Create implementation issue]
+    F --> G[Bind branch]
+    G --> H[Implement with action / risk / evidence]
+    H --> I[Verify and close issue]
 ```
 
-The core idea of `git-forum` is to keep design discussion, decisions, evidence, and AI work history in one place: branchable, reviewable, and preserved in Git history.
+The core idea of `git-forum` is to keep goals, constraints, implementation work, and review in one
+Git-native history: branchable, reviewable, and preserved in the same repository as the code.
 
 ## What it feels like
 
 ```bash
 $ git forum init
 $ git forum rfc new "Switch solver backend to trait objects" \
-  --body "Needed to make plugin ABI stability explicit."
-$ git forum say RFC-0012 --type claim \
-  --body "Needed for plugin ABI stability."
-$ git forum node show a1b2c3d4
-$ git forum run spawn RFC-0012 --as ai/reviewer
-$ git forum evidence add RFC-0012 \
-  --kind benchmark --ref bench/solver.csv --rows 15:38
-$ git forum state RFC-0012 proposed
-$ git forum state RFC-0012 under-review
-$ git forum state RFC-0012 accepted --sign human/alice
+  --body "Goal, constraints, acceptance."
+$ git forum say RFC-0001 --type claim \
+  --body "Need a stable plugin-facing boundary."
+$ git forum say RFC-0001 --type question \
+  --body "What compatibility risks remain?" \
+  --as ai/reviewer
+$ git forum say RFC-0001 --type summary \
+  --body "Direction is plausible, but migration evidence is still missing."
+$ git forum state RFC-0001 proposed
+$ git forum state RFC-0001 under-review
+$ git forum state RFC-0001 accepted --sign human/alice
 $ git forum issue new "Implement trait backend" \
-  --link-to RFC-0012 --rel implements
+  --link-to RFC-0001 --rel implements
+$ git forum branch bind ISSUE-0001 feat/trait-backend
+$ git forum evidence add ISSUE-0001 --kind test --ref tests/backend_trait.rs
+$ git forum state ISSUE-0001 closed
 ```
 
 ## Install
@@ -59,13 +68,13 @@ cargo install --path .
 git-forum --help
 ```
 
-If you just want to try it during development, you can run it directly without installing:
+If you only want to try it during development:
 
 ```bash
 cargo run -- --help
 ```
 
-To print the full CLI manual in one shot, including for LLM/tool consumption:
+To print the manual in one shot, including for LLM/tool consumption:
 
 ```bash
 git-forum --help-llm
@@ -73,46 +82,56 @@ git-forum --help-llm
 
 ## Why
 
-Typical issue trackers and code-hosting AI tools still leave a few gaps:
+Typical issue trackers and code-hosting tools still leave a few gaps:
 
-- issues, RFCs, and decisions are managed separately
-- discussion, conclusions, and evidence are weakly connected
-- it is hard to audit what an AI saw, why it acted, and what it produced
-- branch-local discussion is hard to merge semantically later
+- problem framing and implementation tasks drift apart
+- comment streams do not distinguish question, objection, summary, and action
+- humans and coding agents often end up using different work interfaces
+- branch-local work is hard to connect back to the design discussion
 
 `git-forum` aims to handle that workflow in a Git-native way.
 
-## What makes git-forum different
+## What Makes git-forum Different
+
+### RFC-first project starts
+
+New work usually starts as an `rfc`, not an `issue`. An accepted RFC is the decision record. There
+is no separate `decision` object in the target model.
 
 ### Structured discussion, not just comments
 
-Discussion is modeled as typed nodes such as `claim`, `question`, `objection`, `alternative`, `evidence`, `summary`, `decision`, and `action`.
+Discussion is modeled as typed nodes such as `claim`, `question`, `objection`, `summary`,
+`action`, and `risk`.
 
-### Auditable AI participation
+### Human and agent use the same protocol
 
-AI output and state changes carry provenance, so you can track which actor used which model, with which context and tool calls.
+The preferred workflow does not require a separate AI command set. Humans and agents should be able
+to use the same thread model, the same node types, and the same state transitions.
 
-### RFC and decision as first-class objects
+### Branch-bound implementation work
 
-It treats `rfc` and `decision` as first-class objects, not just `issue`.
+Issues are where implementation happens. They can link back to RFCs and bind to Git branches, so
+design and code stay connected.
 
-### Branch-aware deliberation
+### Git-native evidence and links
 
-Discussion can branch with code and be merged later.
+Threads can point to commits, files, tests, benchmarks, and other threads, and all of that lives in
+Git history.
 
 ## Core model
 
-- thread: shared abstraction for `issue`, `rfc`, and `decision`
-- event: append-only record for creation, discussion, state transitions, and verification
+- thread: shared abstraction for `issue` and `rfc`
+- event: append-only record for creation, discussion, state transitions, links, and verification
+- node: typed contribution such as `claim`, `question`, or `summary`
 - evidence: links to commits, files, tests, benchmarks, docs, and threads
 - actor: a human or AI participant
-- run: one AI execution unit
 
-The detailed data model and MVP boundary are defined in [./doc/spec/MVP_SPEC.md](./doc/spec/MVP_SPEC.md). For CLI usage, see [./doc/MANUAL.md](./doc/MANUAL.md).
+The detailed target model and MVP boundary are defined in [./doc/spec/MVP_SPEC.md](./doc/spec/MVP_SPEC.md).
+For current CLI usage, see [./doc/MANUAL.md](./doc/MANUAL.md).
 
 ## Repository layout
 
-Authoritative data lives in Git refs, while repository-shared rules and templates live in the working tree.
+Authoritative data lives in Git refs, while shared rules and templates live in the working tree.
 
 ```text
 .forum/
@@ -121,38 +140,41 @@ Authoritative data lives in Git refs, while repository-shared rules and template
   templates/
     issue.md
     rfc.md
-    decision.md
 
 .git/forum/
   index.sqlite
   local.toml
 
 refs/forum/threads/*
-refs/forum/runs/*
-refs/forum/actors/*
 refs/forum/index/*
 ```
 
 ## Status
 
-`git-forum` is currently in the MVP stage. The first implementation is focused on:
+`git-forum` is currently in the MVP stage. The target MVP is focused on:
 
-- the three core objects: `issue`, `rfc`, `decision`
+- two core objects: `issue` and `rfc`
 - append-only event log
 - typed discussion nodes
-- AI run provenance
 - policy-driven state transitions
-- evidence links
+- evidence links and thread links
+- branch binding for implementation issues
 - local search and display
 - a simple TUI
 - minimal GitHub / GitLab import and export
 
+Note:
+Current code still contains experimental `decision` and `run` surfaces from an older direction.
+They are not part of the preferred workflow described here.
+
 ## Non-goals for the MVP
 
-The following are intentionally out of scope for the MVP:
+The following are intentionally out of scope:
 
 - heavy Web UI
 - central SaaS server
+- mandatory AI provenance tracking
+- separate high-level agent-only command sets
 - large Jira-style workflow management
 - PM features such as story points or burndown
 - advanced access control
@@ -163,15 +185,15 @@ The following are intentionally out of scope for the MVP:
 
 ### MVP
 
-A minimal local-first setup with CLI and a simple TUI.
+A minimal local-first setup with CLI and a simple TUI for RFC-first human-agent coding.
 
 ### v0.2
 
-Better semantic merge, expanded GitHub/GitLab bridge support, and improved search performance.
+Better semantic merge, import/export, shorthand discussion commands, and improved search.
 
 ### v0.3
 
-Richer TUI support, stronger policy features, and expanded AI roles.
+Richer TUI support, stronger policy features, and better branch-aware workflows.
 
 ## License
 

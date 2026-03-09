@@ -1,53 +1,53 @@
 # MVP TODO
 
-この文書は [doc/spec/MVP_SPEC.md](./spec/MVP_SPEC.md) を、MVP 完了までのマイルストーンに再編したものです。
-仕様の解釈が分かれた場合は spec を優先します。
+This document reorganizes [doc/spec/MVP_SPEC.md](./spec/MVP_SPEC.md) into milestones.
+When spec and implementation diverge, the spec wins.
 
 ## Finish line
 
-- [x] 空の Git repository で `git forum init` が動く
-- [x] `issue` / `rfc` / `decision` を作成できる
-- [x] 型付き発言を追加できる
-- [x] AI run provenance を保存できる
-- [x] policy による state transition 検証が動く
-- [x] evidence を追加できる
-- [x] `git forum show` で open objections / latest summary / timeline を表示できる
-- [x] `git forum verify` で最低限の guard を評価できる
-- [x] `git forum reindex` で index を再構築できる
-- [ ] branch で分岐した thread を最小限 merge できる
-- [x] `git forum tui` で一覧・詳細・基本フィルタを操作できる
-- [x] Rust stable toolchain で build / test できる
+- [x] `git forum init` works in an empty Git repository
+- [x] `issue` and `rfc` can be created
+- [x] typed discussion nodes can be added
+- [ ] first-batch shorthand discussion commands exist
+- [x] policy-driven state validation works
+- [x] evidence and links can be attached
+- [x] branch binding for issues works
+- [x] `git forum show` displays open objections / open actions / latest summary / timeline
+- [x] `git forum verify` evaluates the minimum required guards
+- [x] `git forum reindex` rebuilds the local index
+- [x] `git forum tui` supports list/detail/basic create flows
+- [ ] minimal semantic merge is implemented
+- [x] the project builds and tests on stable Rust
+- [ ] legacy `decision` and `run` surfaces are removed or clearly demoted from the preferred UX
 
 ## Test harness baseline
 
-全マイルストーンを通して、次の testing strategy を維持する。
+Across all milestones:
 
-- [x] unit tests は replay / state machine / policy / guard / merge / index / search を pure Rust で検証する
-- [x] integration tests は毎回 temporary Git repo を作り、global/system Git config に依存しない
-- [ ] AI integration は mock / fake provider で検証できる
-- [x] clock と ID generator は差し替え可能にする
-- [ ] snapshot 比較は `show` / `verify` / export / TUI render のような安定した出力面に限定する
-- [x] CI の最低ラインは `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test`
+- [x] unit tests cover replay / state machine / policy / guard / merge / index / search
+- [x] integration tests use temporary Git repositories
+- [x] clock and ID generation are replaceable
+- [ ] stable snapshot coverage is limited to `show`, `verify`, export, and TUI render
+- [x] CI baseline is `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test`
 
-Initial layout:
+Planned layout:
 
-- [x] `tests/support/` に一時 repo、環境隔離、Git helper、clock/id stub、CLI helper を置く
-- [ ] `tests/fixtures/` に import/export や replay 用の固定入力を置く
-- [ ] `tests/snapshots/` に stable output の snapshot を置く
+- [x] `tests/support/` for temp repo, env isolation, Git helpers, clock/id helpers, CLI helpers, TUI helpers
+- [ ] `tests/fixtures/` for import/export and merge inputs
+- [ ] `tests/snapshots/` for stable output checks
 
 ## Milestone 0: Rust bootstrap
 
 Goal:
-Rust で継続実装できる最小の土台を作る。
+Keep a stable Rust foundation for continued work.
 
 Done when:
 
-- [x] `Cargo.toml` と `src/` の最小構成がある
-- [x] `git-forum` 単一バイナリの entrypoint がある
-- [x] `cargo fmt --check` / `cargo clippy -- -D warnings` / `cargo test` が通る
-- [x] エラー型、設定読込、CLI entrypoint の基本骨格がある
-- [x] `tests/support/` の骨格を作る
-- [x] test 用の clock / ID generator 差し替えポイントを設計する
+- [x] `Cargo.toml` and `src/` exist
+- [x] single-binary CLI entrypoint exists
+- [x] fmt / clippy / test pass
+- [x] base error/config/CLI skeleton exists
+- [x] test helper scaffolding exists
 
 Verification:
 
@@ -61,26 +61,24 @@ cargo test
 ## Milestone 1: Repository and event foundation
 
 Goal:
-Git repository の中に forum データを保存し、event replay で状態を復元できるようにする。
+Store forum data in Git and reconstruct state from append-only events.
 
 Includes:
 
-- [x] `.forum/` と `.git/forum/` の初期化
+- [x] `.forum/` and `.git/forum/` initialization
 - [x] `git forum init`
-- [x] thread / run / actor / index の ref namespace
-- [x] event を Git commit として保存する処理
-- [x] event replay による thread 状態再構成
+- [x] thread and index ref namespaces
+- [x] event persistence as Git commits
+- [x] thread replay
 - [x] `git forum doctor`
-- [x] `git forum reindex` の骨格
-- [x] isolated temporary Git repo を作る integration test helper
-- [x] Git config を隔離する test helper
+- [x] `git forum reindex`
+- [x] isolated temporary Git repo helpers
 
 Exit criteria:
 
-- [x] 空 repo で `git forum init` が成功する
-- [x] thread の最新状態を ref から再構成できる
-- [x] local index を壊しても再構築できる前提が成立している
-- [x] integration test が global/system Git config に依存せず通る
+- [x] empty repo init works
+- [x] latest thread state can be replayed from refs
+- [x] local index can be rebuilt from Git
 
 Verification:
 
@@ -90,37 +88,34 @@ cargo run -- forum doctor
 cargo run -- forum reindex
 ```
 
-## Milestone 2: Thread lifecycle and read path
+## Milestone 2: RFC and issue lifecycle
 
 Goal:
-thread の作成、一覧、詳細表示ができ、基本的な議論の流れを CLI で見られるようにする。
+Make `rfc` and `issue` the only preferred thread kinds.
 
 Includes:
 
-- [x] `Thread`, `Event`, `Evidence`, `Actor`, `Run`, `Approval` の Rust 型
-- [x] issue / rfc / decision の state machine
-- [x] 人間可読 ID 採番
+- [x] issue / rfc state machines
+- [x] human-readable IDs
 - [x] `git forum issue new`
 - [x] `git forum rfc new`
-- [x] `git forum decision new`
-- [x] thread の初期 body を保存できる
-- [x] `git forum ls` と kind 別 `ls`
+- [x] thread body on create
+- [x] `git forum ls`, `issue ls`, `rfc ls`
 - [x] `git forum show`
-- [x] `show` 出力の snapshot 方針を固める
+- [ ] remove or demote legacy `decision` thread kind from CLI, templates, docs, and tests
+- [ ] remove `DEC-*` assumptions from examples and fixtures
 
 Exit criteria:
 
-- [x] `issue` / `rfc` / `decision` を作成できる
-- [x] `git forum show` で title / body / kind / state / timeline を表示できる
-- [x] `show` の表示が replay 結果と一致する
-- [x] `show` の snapshot が不安定値なしで比較できる
+- [x] issue and rfc can be created and displayed
+- [x] `show` output matches replay state
+- [ ] preferred docs no longer depend on `decision`
 
 Verification:
 
 ```bash
 cargo run -- forum issue new "First issue" --body "Problem statement"
 cargo run -- forum rfc new "First RFC" --body-file ./tmp/rfc-body.md
-cargo run -- forum decision new "First decision"
 cargo run -- forum ls
 cargo run -- forum show RFC-0001
 ```
@@ -128,117 +123,117 @@ cargo run -- forum show RFC-0001
 ## Milestone 3: Structured discussion and approvals
 
 Goal:
-型付き議論、node の解決状態、policy に基づく state change を実装する。
+Make typed discussion the main work surface.
 
 Includes:
 
-- [x] `claim`, `question`, `objection`, `alternative`, `evidence`, `summary`, `decision`, `action`, `risk`, `assumption`
+- [x] typed nodes for claim / question / objection / alternative / evidence / summary / action / risk / assumption
 - [x] `git forum say`
 - [x] `git forum revise`
 - [x] `git forum retract`
 - [x] `git forum resolve`
 - [x] `git forum reopen`
-- [x] open objections / open actions の算出
+- [x] open objection / open action tracking
 - [x] `.forum/policy.toml` parser
-- [ ] role ごとの node type / state transition 制約
-- [ ] provenance 必須判定
-- [x] `one_human_approval`, `at_least_one_summary`, `no_open_objections`
-- [x] `no_open_actions`
-- [x] `git forum state <THREAD_ID> <NEW_STATE> [--sign <ACTOR_ID>]...`
-- [x] `git forum state <THREAD_ID> <NEW_STATE> --resolve-open-actions`
+- [x] `one_human_approval`, `at_least_one_summary`, `no_open_objections`, `no_open_actions`
+- [x] `git forum state`
+- [x] `git forum state --resolve-open-actions`
+- [x] `git forum state bulk`
 - [x] `git forum verify`
 - [x] `git forum policy lint`
 - [x] `git forum policy check`
-- [x] `verify` 出力の snapshot または安定比較を用意する
+- [ ] first-batch shorthand commands:
+  - [ ] `git forum claim`
+  - [ ] `git forum question`
+  - [ ] `git forum objection`
+  - [ ] `git forum summary`
+  - [ ] `git forum action`
+  - [ ] `git forum risk`
+- [ ] decide whether `alternative`, `evidence`, and `assumption` also deserve shorthand commands
+- [ ] fuller role-based enforcement for `can_say` and `can_transition`
 
 Exit criteria:
 
-- [x] 型付き発言を追加できる
-- [x] `objection` と `action` を resolve / reopen できる
-- [x] Issue close 時に open action を guard できる
-- [x] `accepted` への遷移で human approval と guard が評価される
-- [x] `git forum show` で open objections / latest summary / timeline を表示できる
-- [x] `git forum verify` で最低限の guard を評価できる
-- [x] policy / guard の unit test が揃う
+- [x] typed discussion can be added
+- [x] objections and actions can be resolved / reopened
+- [x] issue close can be blocked by open actions
+- [x] RFC acceptance can require summary and human approval
+- [ ] preferred UX does not require `say --type` for common node types
 
 Verification:
 
 ```bash
 cargo run -- forum say RFC-0001 --type claim --body "Needed for compatibility."
 cargo run -- forum say RFC-0001 --type objection --body "Benchmarks are missing."
-cargo run -- forum policy lint
 cargo run -- forum policy check RFC-0001 --transition under-review->accepted
-cargo run -- forum state RFC-0001 accepted --sign human/alice
 cargo run -- forum verify RFC-0001
-cargo run -- forum show RFC-0001
 ```
 
-## Milestone 4: Evidence and AI provenance
+## Milestone 4: Evidence, links, and branch-oriented implementation
 
 Goal:
-根拠リンクと AI run の provenance を thread に結びつける。
+Connect accepted RFCs to implementation issues and code evidence.
 
 Includes:
 
 - [x] `git forum evidence add`
-- [x] `commit`, `file`, `hunk`, `test`, `benchmark`, `doc`, `thread`, `external` の evidence
+- [x] commit / file / hunk / test / benchmark / doc / thread / external evidence
 - [x] `git forum link`
-- [x] detail view と timeline から evidence / relation を辿れる表示
-- [x] actor と run を分離した保存モデル
-- [x] `git forum run spawn`
-- [x] `git forum run ls`
-- [x] `git forum run show`
-- [x] `model`, `context_refs`, `tool_calls`, `result`, `confidence` の保持
-- [ ] AI actor 書き込み時の policy / provenance 検証
-- [ ] fake AI provider による integration test
+- [x] timeline and detail rendering for evidence / relation
+- [x] `git forum branch bind`
+- [x] `git forum branch clear`
+- [x] branch column and branch filtering in lists
+- [ ] tighten the RFC -> issue implementation workflow in examples and docs
+- [ ] remove or demote legacy `run` / provenance UX from docs and preferred examples
 
 Exit criteria:
 
-- [x] evidence を追加できる
-- [x] AI run provenance を保存できる
-- [x] `run show` で provenance を追える
-- [x] evidence と AI run が thread detail から辿れる
-- [ ] ネットワークなしで AI 関連テストが通る (fake provider は未実装)
+- [x] evidence can be attached
+- [x] thread links can be followed from detail views
+- [x] issues can bind to branches
+- [ ] preferred workflow reads as "accepted RFC -> linked issue -> branch-bound implementation"
 
 Verification:
 
 ```bash
-cargo run -- forum evidence add RFC-0001 --kind benchmark --ref bench/result.csv
-cargo run -- forum link RFC-0001 ISSUE-0001 --rel implements
-cargo run -- forum run spawn RFC-0001 --as ai/reviewer
-cargo run -- forum run ls
-cargo run -- forum run show RUN-0001
-cargo run -- forum show RFC-0001
+cargo run -- forum link ISSUE-0001 RFC-0001 --rel implements
+cargo run -- forum branch bind ISSUE-0001 feat/parser-rewrite
+cargo run -- forum evidence add ISSUE-0001 --kind test --ref tests/parser.rs
+cargo run -- forum show ISSUE-0001
 ```
 
 ## Milestone 5: Index, search, and TUI
 
 Goal:
-実用的な閲覧速度と、最小作成操作を含む lightweight TUI を用意する。
+Provide practical read performance and a lightweight local UI.
 
 Includes:
 
 - [x] SQLite index
-- [x] `git forum reindex` による完全再構築
-- [x] index なし fallback (index 未作成時は auto-create)
-- [x] thread title / thread body / current node body / kind / state の lexical search (`git forum search`)
+- [x] full `reindex`
+- [x] auto-create fallback when index is missing
+- [x] lexical search over thread title / thread body / current node body / kind / state
 - [x] `git forum tui`
-- [x] thread 一覧表示
-- [x] kind の基本フィルタ (f キーでサイクル)
-- [x] thread detail 表示
-- [x] open objections / latest summary / timeline の TUI 表示
-- [x] refresh (r キー)
-- [x] list view からの thread create
-- [x] thread detail / node detail からの node create
-- [x] TUI render test 用 backend を使ったテスト
+- [x] list and detail views
+- [x] basic filter
+- [x] node create from thread detail and node detail
+- [x] thread create from list view
+- [x] thread link create from TUI
+- [x] basic mouse support:
+  - [x] click to open rows
+  - [x] wheel scroll
+  - [x] click submit rows
+- [ ] expanded mouse support:
+  - [ ] click dropdown / target list / filter / back actions
+  - [ ] decide whether hover / drag / range select are worth supporting
+- [x] TUI render tests
 
 Exit criteria:
 
-- [x] `git forum reindex` で index を再構築できる
-- [x] 一覧と詳細が index 経由で実用速度で表示できる
-- [x] node body hit を thread-oriented search result に表示できる
-- [x] `git forum tui` で一覧・詳細・基本フィルタ・最小 create を操作できる
-- [x] TUI の一覧 / 詳細表示を自動テストで固定できる
+- [x] index rebuild works
+- [x] thread-oriented search shows matching nodes
+- [x] TUI supports list/detail/filter/minimum create flows
+- [ ] TUI keyboard and mouse flows are coherent enough for everyday use
 
 Verification:
 
@@ -252,39 +247,31 @@ cargo test index
 ## Milestone 6: Merge, import/export, and release hardening
 
 Goal:
-MVP の残り要件を閉じ、受け入れ条件を満たした状態で固定する。
+Close the remaining MVP gaps and align implementation with the new docs.
 
 Includes:
 
-- [ ] 新規 `say` event 追加同士の auto-merge
-- [ ] evidence 集合追加の auto-merge
-- [ ] summary 追加の auto-merge
-- [ ] 競合する terminal state の conflict 検出
-- [ ] concurrent `resolve` / `reopen` の conflict 検出
-- [x] `git forum state bulk --to <STATE>` の設計と実装
-- [x] bulk state change の `--branch` / `--kind` / `--status` filter
-- [x] bulk state change の partial apply / nonzero exit semantics
-- [x] bulk state change の `--dry-run`
-- [x] bulk state change の `--resolve-open-actions`
-- [ ] synthetic merge event と unresolved conflict 表示
-- [ ] GitHub issue から `issue` への最小 import
-- [ ] markdown RFC から `rfc` への手動補助付き import
-- [ ] `issue` の GitHub issue 形式 export
-- [ ] `rfc` の markdown export
-- [ ] `decision` の ADR 形式 export
-- [ ] replay / policy / verify / merge / index のユニットテスト
-- [ ] Git repository を使う統合テスト
-- [ ] import / export fixture と snapshot
-- [ ] README と spec のコマンド例の整合維持
-- [ ] CI を `format -> lint -> test` の順で回す
-- [ ] acceptance criteria の最終確認
+- [ ] auto-merge of concurrent new `say` events
+- [ ] auto-merge of evidence additions
+- [ ] auto-merge of summary additions
+- [ ] conflict detection for concurrent terminal state changes
+- [ ] conflict detection for concurrent `resolve` / `reopen`
+- [ ] synthetic merge event and unresolved-conflict rendering
+- [ ] GitHub issue -> `issue` import
+- [ ] markdown -> `rfc` import with manual cleanup
+- [ ] `issue` export
+- [ ] `rfc` export
+- [ ] remove or fully demote legacy `decision` CLI surface
+- [ ] remove or fully demote legacy `run` / provenance CLI surface
+- [ ] README / MANUAL / spec / examples stay aligned
+- [ ] acceptance criteria final pass
 
 Exit criteria:
 
-- [ ] branch で分岐した thread を最小限 merge できる
-- [ ] import / export の最低限要件を満たす
-- [ ] Rust stable toolchain で build / test できる
-- [ ] Finish line のチェックがすべて埋まる
+- [ ] minimal semantic merge exists
+- [ ] import / export minimum requirements are met
+- [ ] preferred docs match the shipped workflow
+- [ ] finish line items are all complete
 
 Verification:
 
@@ -296,13 +283,12 @@ cargo test
 
 ## Scope guard
 
-MVP では次を入れない。
+The MVP still excludes:
 
 - Web UI
-- 中央サーバー
-- リアルタイム共同編集
-- 高度なアクセス制御
-- フル編集機能を備えた rich TUI
-- 自動 patch 適用
-- 複雑な embeddings ベース推薦
-- 企業向け PM 機能
+- central server
+- real-time collaboration
+- mandatory AI provenance as a gate
+- separate high-level agent-only workflows
+- rich full-edit TUI
+- automatic patch application

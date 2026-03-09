@@ -13,7 +13,7 @@ For `git-forum`, the important identity boundary is already the Git object graph
 
 ## Decision
 
-- Thread display IDs remain human-readable sequences such as `RFC-0001`, `ISSUE-0001`, and `DEC-0001`.
+- Thread display IDs remain human-readable sequences such as `RFC-0001` and `ISSUE-0001`.
 - The canonical ID of an event is the Git commit OID of the commit that stores that event.
 - The canonical ID of a node is the Git commit OID of the `say` event commit that introduced that node.
 - `edit`, `retract`, `resolve`, and `reopen` events reference nodes by that canonical node OID.

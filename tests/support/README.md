@@ -1,7 +1,12 @@
 # Test Support Design
 
 This directory contains shared support code for integration tests and TUI tests.
-For the MVP, it is the place where we enforce three rules: every test gets a clean Git repo, unstable values are fixed, and external dependencies are replaced with fakes.
+
+For the current MVP direction, it exists to enforce three rules:
+
+- every test gets a clean Git repo
+- unstable values are fixed or injectable
+- tests stay local-first and do not depend on hosted services
 
 ## Planned modules
 
@@ -24,9 +29,6 @@ For the MVP, it is the place where we enforce three rules: every test gets a cle
   - create commits for tests
   - fix `GIT_AUTHOR_DATE` and `GIT_COMMITTER_DATE`
   - help with branch creation and merge
-- `ai.rs`
-  - fake provider
-  - return fixed run results / tool calls / confidence
 - `tui.rs`
   - build the TUI backend
   - build test inputs for list / detail rendering
