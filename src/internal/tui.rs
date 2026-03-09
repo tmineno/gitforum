@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
+    MouseEvent, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -117,6 +120,17 @@ struct LinkForm {
     field: LinkFormField,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct UiRects {
+    list_table: Option<Rect>,
+    thread_body: Option<Rect>,
+    thread_nodes: Option<Rect>,
+    node_detail: Option<Rect>,
+    thread_submit: Option<Rect>,
+    node_submit: Option<Rect>,
+    link_submit: Option<Rect>,
+}
+
 /// Application state for the TUI.
 pub struct App {
     pub view: View,
@@ -132,6 +146,7 @@ pub struct App {
     thread_form: ThreadForm,
     node_form: NodeForm,
     link_form: LinkForm,
+    ui_rects: UiRects,
 }
 
 impl App {
@@ -169,6 +184,7 @@ impl App {
                 manual_target: String::new(),
                 field: LinkFormField::Relation,
             },
+            ui_rects: UiRects::default(),
         }
     }
 
@@ -350,14 +366,19 @@ pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> For
 
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let result = run_app(&mut terminal, &mut app, git, &conn, db_path);
 
     disable_raw_mode().ok();
-    execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )
+    .ok();
     terminal.show_cursor().ok();
 
     result
@@ -374,10 +395,18 @@ pub(crate) fn run_app<B: Backend>(
         terminal.draw(|f| render(f, app))?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if handle_key(app, key, git, conn, db_path)? {
-                    return Ok(());
+            match event::read()? {
+                Event::Key(key) => {
+                    if handle_key(app, key, git, conn, db_path)? {
+                        return Ok(());
+                    }
                 }
+                Event::Mouse(mouse) => {
+                    if handle_mouse(app, mouse, git, conn, db_path)? {
+                        return Ok(());
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -499,6 +528,130 @@ fn handle_key(
         View::CreateLink { thread_id, origin } => {
             handle_create_link_key(app, key, git, &thread_id, &origin)?;
         }
+    }
+    Ok(false)
+}
+
+fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
+    column >= rect.x
+        && column < rect.x.saturating_add(rect.width)
+        && row >= rect.y
+        && row < rect.y.saturating_add(rect.height)
+}
+
+fn table_row_at(area: Rect, row: u16) -> Option<usize> {
+    if area.width < 2 || area.height < 3 || row < area.y + 2 || row >= area.y + area.height - 1 {
+        return None;
+    }
+    Some((row - area.y - 2) as usize)
+}
+
+fn handle_mouse(
+    app: &mut App,
+    mouse: MouseEvent,
+    git: &GitOps,
+    _conn: &rusqlite::Connection,
+    _db_path: &Path,
+) -> ForumResult<bool> {
+    match app.view.clone() {
+        View::List => match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(area) = app.ui_rects.list_table {
+                    if let Some(index) = table_row_at(area, mouse.row) {
+                        let visible_len = app.visible_threads().len();
+                        if index < visible_len {
+                            app.table_state.select(Some(index));
+                            if let Some(thread_id) = app.selected_thread_id() {
+                                open_thread_detail(app, git, &thread_id, None)?;
+                            }
+                        }
+                    }
+                }
+            }
+            MouseEventKind::ScrollDown => app.move_down(),
+            MouseEventKind::ScrollUp => app.move_up(),
+            _ => {}
+        },
+        View::ThreadDetail(thread_id) => match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(area) = app.ui_rects.thread_nodes {
+                    if let Some(index) = table_row_at(area, mouse.row) {
+                        if index < app.thread_nodes.len() {
+                            app.node_table_state.select(Some(index));
+                            if let Some(node_id) = app.selected_node_id() {
+                                open_node_detail(app, git, &thread_id, &node_id)?;
+                            }
+                        }
+                    }
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if let Some(area) = app.ui_rects.thread_body {
+                    if rect_contains(area, mouse.column, mouse.row) {
+                        app.scroll_thread_down();
+                    }
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                if let Some(area) = app.ui_rects.thread_body {
+                    if rect_contains(area, mouse.column, mouse.row) {
+                        app.scroll_thread_up();
+                    }
+                }
+            }
+            _ => {}
+        },
+        View::NodeDetail { .. } => match mouse.kind {
+            MouseEventKind::ScrollDown => {
+                if let Some(area) = app.ui_rects.node_detail {
+                    if rect_contains(area, mouse.column, mouse.row) {
+                        app.node_detail_scroll = app.node_detail_scroll.saturating_add(1);
+                    }
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                if let Some(area) = app.ui_rects.node_detail {
+                    if rect_contains(area, mouse.column, mouse.row) {
+                        app.node_detail_scroll = app.node_detail_scroll.saturating_sub(1);
+                    }
+                }
+            }
+            _ => {}
+        },
+        View::CreateThread => {
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                && app
+                    .ui_rects
+                    .thread_submit
+                    .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
+            {
+                app.thread_form.field = ThreadFormField::Submit;
+                submit_create_thread(app, git, _conn, _db_path)?;
+            }
+        }
+        View::CreateNode { thread_id } => {
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                && app
+                    .ui_rects
+                    .node_submit
+                    .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
+            {
+                app.node_form.field = NodeFormField::Submit;
+                submit_create_node(app, git, _conn, _db_path, &thread_id)?;
+            }
+        }
+        View::CreateLink { thread_id, origin } => {
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                && app
+                    .ui_rects
+                    .link_submit
+                    .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
+            {
+                app.link_form.field = LinkFormField::Submit;
+                submit_create_link(app, git, &thread_id, &origin)?;
+            }
+        }
+        View::EditThreadBody | View::EditNodeBody { .. } => {}
     }
     Ok(false)
 }
@@ -1038,6 +1191,7 @@ fn submit_create_link(
 
 /// Render the current app state into `frame`.
 pub fn render(f: &mut Frame, app: &mut App) {
+    app.ui_rects = UiRects::default();
     match app.view {
         View::List => render_list(f, f.area(), app),
         View::ThreadDetail(_) => render_thread_detail(f, f.area(), app),
@@ -1102,6 +1256,7 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
                 .add_modifier(Modifier::BOLD),
         );
 
+    app.ui_rects.list_table = Some(chunks[1]);
     f.render_stateful_widget(table, chunks[1], &mut app.table_state);
 
     f.render_widget(Paragraph::new(format!(" {count} threads")), chunks[2]);
@@ -1129,6 +1284,9 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(chunks[1]);
+
+    app.ui_rects.thread_body = Some(main[0]);
+    app.ui_rects.thread_nodes = Some(main[1]);
 
     f.render_widget(
         Paragraph::new(app.thread_text.as_str())
@@ -1176,7 +1334,7 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_stateful_widget(table, main[1], &mut app.node_table_state);
 }
 
-pub(crate) fn render_node_detail(f: &mut Frame, area: Rect, app: &App) {
+pub(crate) fn render_node_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(0)])
@@ -1194,6 +1352,7 @@ pub(crate) fn render_node_detail(f: &mut Frame, area: Rect, app: &App) {
     } else {
         String::new()
     };
+    app.ui_rects.node_detail = Some(chunks[1]);
     f.render_widget(
         Paragraph::new(app.node_detail_text.as_str())
             .block(
@@ -1206,7 +1365,7 @@ pub(crate) fn render_node_detail(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &App) {
+pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(0)])
@@ -1257,6 +1416,12 @@ pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &App) {
         ),
         main[0],
     );
+    app.ui_rects.thread_submit = Some(Rect {
+        x: main[0].x + 1,
+        y: main[0].y + 5,
+        width: main[0].width.saturating_sub(2),
+        height: 1,
+    });
 
     let items: Vec<ListItem> = thread_kind_labels()
         .iter()
@@ -1280,7 +1445,7 @@ pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(list, main[1]);
 }
 
-pub(crate) fn render_create_node(f: &mut Frame, area: Rect, app: &App) {
+pub(crate) fn render_create_node(f: &mut Frame, area: Rect, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(0)])
@@ -1326,6 +1491,12 @@ pub(crate) fn render_create_node(f: &mut Frame, area: Rect, app: &App) {
         ),
         main[0],
     );
+    app.ui_rects.node_submit = Some(Rect {
+        x: main[0].x + 1,
+        y: main[0].y + 5,
+        width: main[0].width.saturating_sub(2),
+        height: 1,
+    });
 
     let items: Vec<ListItem> = node_type_labels()
         .iter()
@@ -1391,7 +1562,7 @@ pub(crate) fn render_edit_thread_body(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-pub(crate) fn render_create_link(f: &mut Frame, area: Rect, app: &App) {
+pub(crate) fn render_create_link(f: &mut Frame, area: Rect, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(0)])
@@ -1453,6 +1624,12 @@ pub(crate) fn render_create_link(f: &mut Frame, area: Rect, app: &App) {
         ),
         main[0],
     );
+    app.ui_rects.link_submit = Some(Rect {
+        x: main[0].x + 1,
+        y: main[0].y + 5,
+        width: main[0].width.saturating_sub(2),
+        height: 1,
+    });
 
     let target_kind = link_target_kind_values()[app.link_form.target_kind_index];
     if app.link_form.field == LinkFormField::Relation {
@@ -1588,6 +1765,15 @@ mod tests {
             .join("\n")
     }
 
+    fn mouse_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
     fn setup_repo() -> (
         TempDir,
         GitOps,
@@ -1655,6 +1841,42 @@ mod tests {
     }
 
     #[test]
+    fn mouse_click_on_list_row_opens_thread_detail() {
+        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        crate::internal::create::create_thread(
+            &git,
+            crate::internal::event::ThreadKind::Rfc,
+            "Test RFC",
+            None,
+            "human/test-user",
+            &crate::internal::clock::FixedClock {
+                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            },
+            &crate::internal::id::SequentialIdGenerator::new("t"),
+        )
+        .unwrap();
+        reindex::run_reindex(&git, &db_path).unwrap();
+        let mut app = App::new(index::list_threads(&conn).unwrap());
+        let _ = render_to_string(&mut app, 80, 20);
+        let area = app.ui_rects.list_table.unwrap();
+
+        handle_mouse(
+            &mut app,
+            mouse_event(
+                MouseEventKind::Down(MouseButton::Left),
+                area.x + 2,
+                area.y + 2,
+            ),
+            &git,
+            &conn,
+            &db_path,
+        )
+        .unwrap();
+
+        assert_eq!(app.view, View::ThreadDetail("RFC-0001".into()));
+    }
+
+    #[test]
     fn list_view_filter_hides_non_matching() {
         let rows = vec![
             make_row("ISSUE-0001", "issue", "open", "Bug"),
@@ -1688,6 +1910,32 @@ mod tests {
         app.scroll_thread_down();
         assert_eq!(app.thread_scroll, 2);
         app.scroll_thread_up();
+        assert_eq!(app.thread_scroll, 1);
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_thread_body() {
+        let mut app = App::new(vec![]);
+        let dir = TempDir::new().unwrap();
+        let git = GitOps::new(dir.path().to_path_buf());
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        app.view = View::ThreadDetail("RFC-0001".into());
+        app.thread_text = (0..20)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _ = render_to_string(&mut app, 120, 24);
+        let area = app.ui_rects.thread_body.unwrap();
+
+        handle_mouse(
+            &mut app,
+            mouse_event(MouseEventKind::ScrollDown, area.x + 1, area.y + 1),
+            &git,
+            &conn,
+            dir.path(),
+        )
+        .unwrap();
+
         assert_eq!(app.thread_scroll, 1);
     }
 
@@ -1981,6 +2229,29 @@ mod tests {
         let rows = index::list_threads(&conn).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].title, "Created in TUI");
+    }
+
+    #[test]
+    fn mouse_click_on_thread_submit_creates_thread() {
+        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let mut app = App::new(vec![]);
+        app.begin_create_thread();
+        app.thread_form.title = "Created with mouse".into();
+        app.thread_form.body = "Body from mouse".into();
+        let _ = render_to_string(&mut app, 120, 24);
+        let area = app.ui_rects.thread_submit.unwrap();
+
+        handle_mouse(
+            &mut app,
+            mouse_event(MouseEventKind::Down(MouseButton::Left), area.x + 1, area.y),
+            &git,
+            &conn,
+            &db_path,
+        )
+        .unwrap();
+
+        assert_eq!(app.view, View::ThreadDetail("RFC-0001".into()));
+        assert!(app.thread_text.contains("Created with mouse"));
     }
 
     #[test]
