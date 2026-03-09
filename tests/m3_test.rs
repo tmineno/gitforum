@@ -52,6 +52,7 @@ fn move_rfc_to_under_review(git: &GitOps, thread_id: &str, ids: &SequentialIdGen
         &fixed_clock(),
         ids,
         &empty_policy(),
+        say::StateChangeOptions::default(),
     )
     .unwrap();
     say::change_state(
@@ -63,6 +64,7 @@ fn move_rfc_to_under_review(git: &GitOps, thread_id: &str, ids: &SequentialIdGen
         &fixed_clock(),
         ids,
         &empty_policy(),
+        say::StateChangeOptions::default(),
     )
     .unwrap();
 }
@@ -355,6 +357,7 @@ fn change_state_valid_transition_no_guards() {
         &fixed_clock(),
         &ids,
         &empty_policy(),
+        say::StateChangeOptions::default(),
     )
     .unwrap();
 
@@ -367,6 +370,7 @@ fn change_state_valid_transition_no_guards() {
         &fixed_clock(),
         &ids,
         &empty_policy(),
+        say::StateChangeOptions::default(),
     )
     .unwrap();
 
@@ -389,6 +393,7 @@ fn change_state_invalid_transition_fails() {
         &fixed_clock(),
         &ids,
         &empty_policy(),
+        say::StateChangeOptions::default(),
     );
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -434,6 +439,7 @@ fn change_state_fails_guard_no_open_objections() {
         &fixed_clock(),
         &ids,
         &policy,
+        say::StateChangeOptions::default(),
     );
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -470,11 +476,120 @@ fn change_state_passes_all_guards() {
         &fixed_clock(),
         &ids,
         &policy_with_guards(),
+        say::StateChangeOptions::default(),
     )
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(state.status, "accepted");
+}
+
+#[test]
+fn change_state_issue_close_fails_guard_no_open_actions() {
+    use std::collections::HashMap;
+
+    let (_repo, git, _paths) = setup();
+    let thread_id = create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Implement engine",
+        None,
+        "human/alice",
+        &fixed_clock(),
+        &SequentialIdGenerator::new("issue"),
+    )
+    .unwrap();
+    let ids = SequentialIdGenerator::new("issue-action");
+
+    say::say_node(
+        &git,
+        &thread_id,
+        NodeType::Action,
+        "Implement parser",
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+    )
+    .unwrap();
+
+    let policy = Policy {
+        roles: HashMap::new(),
+        guards: vec![GuardEntry {
+            on: "open->closed".into(),
+            requires: vec![GuardRule::NoOpenActions],
+        }],
+    };
+
+    let err = say::change_state(
+        &git,
+        &thread_id,
+        "closed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+        &policy,
+        say::StateChangeOptions::default(),
+    )
+    .unwrap_err();
+
+    assert!(err.to_string().contains("no_open_actions"));
+}
+
+#[test]
+fn change_state_issue_close_can_resolve_open_actions() {
+    use std::collections::HashMap;
+
+    let (_repo, git, _paths) = setup();
+    let thread_id = create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Implement engine",
+        None,
+        "human/alice",
+        &fixed_clock(),
+        &SequentialIdGenerator::new("issue"),
+    )
+    .unwrap();
+    let ids = SequentialIdGenerator::new("issue-action");
+
+    say::say_node(
+        &git,
+        &thread_id,
+        NodeType::Action,
+        "Implement parser",
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+    )
+    .unwrap();
+
+    let policy = Policy {
+        roles: HashMap::new(),
+        guards: vec![GuardEntry {
+            on: "open->closed".into(),
+            requires: vec![GuardRule::NoOpenActions],
+        }],
+    };
+
+    say::change_state(
+        &git,
+        &thread_id,
+        "closed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+        &policy,
+        say::StateChangeOptions {
+            resolve_open_actions: true,
+        },
+    )
+    .unwrap();
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.status, "closed");
+    assert_eq!(state.open_actions().len(), 0);
 }
 
 // ---- verify ----
@@ -517,6 +632,50 @@ fn verify_reports_open_objection_violation() {
         .violations
         .iter()
         .any(|v| v.rule == "no_open_objections"));
+}
+
+#[test]
+fn verify_reports_open_action_violation_for_issue_close() {
+    use std::collections::HashMap;
+
+    let (_repo, git, _paths) = setup();
+    let thread_id = create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Implement engine",
+        None,
+        "human/alice",
+        &fixed_clock(),
+        &SequentialIdGenerator::new("issue"),
+    )
+    .unwrap();
+    let ids = SequentialIdGenerator::new("issue-action");
+
+    say::say_node(
+        &git,
+        &thread_id,
+        NodeType::Action,
+        "Implement parser",
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+    )
+    .unwrap();
+
+    let policy = Policy {
+        roles: HashMap::new(),
+        guards: vec![GuardEntry {
+            on: "open->closed".into(),
+            requires: vec![GuardRule::NoOpenActions],
+        }],
+    };
+
+    let report = verify::verify_thread(&git, &thread_id, &policy).unwrap();
+    assert!(!report.passed());
+    assert!(report
+        .violations
+        .iter()
+        .any(|v| v.rule == "no_open_actions"));
 }
 
 // ---- show with nodes ----

@@ -199,28 +199,33 @@ pub fn reopen_node(
     Ok(())
 }
 
-/// Attempt a thread state transition, checking the state machine and policy guards.
-///
-/// Preconditions: thread_id exists; sign_actors is the list of approving actor IDs.
-/// Postconditions: on success, a State event with attached approvals is written.
-/// Failure modes: ForumError::StateMachine if transition invalid; ForumError::Policy if guards fail.
-/// Side effects: writes git objects, updates ref.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StateChangeOptions {
+    pub resolve_open_actions: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct StateChangePlan {
+    pub from_state: String,
+    pub approvals: Vec<Approval>,
+    pub resolve_action_ids: Vec<String>,
+}
+
 #[allow(clippy::too_many_arguments)]
-pub fn change_state(
+pub fn prepare_state_change(
     git: &GitOps,
     thread_id: &str,
     new_state: &str,
     sign_actors: &[String],
-    actor: &str,
     clock: &dyn Clock,
-    _ids: &dyn IdGenerator,
     policy: &Policy,
-) -> ForumResult<()> {
+    options: StateChangeOptions,
+) -> ForumResult<StateChangePlan> {
     let state = thread::replay_thread(git, thread_id)?;
-    let from = &state.status.clone();
+    let from = state.status.clone();
 
-    if !state_machine::is_valid_transition(state.kind, from, new_state) {
-        let valid = state_machine::valid_targets(state.kind, from);
+    if !state_machine::is_valid_transition(state.kind, &from, new_state) {
+        let valid = state_machine::valid_targets(state.kind, &from);
         let valid_msg = if valid.is_empty() {
             "none".to_string()
         } else {
@@ -244,7 +249,33 @@ pub fn change_state(
         })
         .collect();
 
-    let violations = super::policy::check_guards(policy, &state, from, new_state, &approvals);
+    let resolve_action_ids = if options.resolve_open_actions
+        && state.kind == super::event::ThreadKind::Issue
+        && new_state == "closed"
+    {
+        state
+            .open_actions()
+            .iter()
+            .map(|node| node.node_id.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let effective_state = if resolve_action_ids.is_empty() {
+        state
+    } else {
+        let mut effective = state.clone();
+        for node in &mut effective.nodes {
+            if resolve_action_ids.iter().any(|id| id == &node.node_id) {
+                node.resolved = true;
+            }
+        }
+        effective
+    };
+
+    let violations =
+        super::policy::check_guards(policy, &effective_state, &from, new_state, &approvals);
     if !violations.is_empty() {
         let msgs: Vec<String> = violations
             .iter()
@@ -253,11 +284,50 @@ pub fn change_state(
         return Err(ForumError::Policy(msgs.join("; ")));
     }
 
+    Ok(StateChangePlan {
+        from_state: from,
+        approvals,
+        resolve_action_ids,
+    })
+}
+
+/// Attempt a thread state transition, checking the state machine and policy guards.
+///
+/// Preconditions: thread_id exists; sign_actors is the list of approving actor IDs.
+/// Postconditions: on success, a State event with attached approvals is written.
+/// Failure modes: ForumError::StateMachine if transition invalid; ForumError::Policy if guards fail.
+/// Side effects: writes git objects, updates ref.
+#[allow(clippy::too_many_arguments)]
+pub fn change_state(
+    git: &GitOps,
+    thread_id: &str,
+    new_state: &str,
+    sign_actors: &[String],
+    actor: &str,
+    clock: &dyn Clock,
+    _ids: &dyn IdGenerator,
+    policy: &Policy,
+    options: StateChangeOptions,
+) -> ForumResult<()> {
+    let plan = prepare_state_change(
+        git,
+        thread_id,
+        new_state,
+        sign_actors,
+        clock,
+        policy,
+        options,
+    )?;
+
+    for node_id in &plan.resolve_action_ids {
+        resolve_node(git, thread_id, node_id, actor, clock, _ids)?;
+    }
+
     let ev = Event {
         event_id: String::new(),
         thread_id: thread_id.to_string(),
         event_type: EventType::State,
-        created_at: now,
+        created_at: clock.now(),
         actor: actor.to_string(),
         base_rev: None,
         parents: vec![],
@@ -267,7 +337,7 @@ pub fn change_state(
         node_type: None,
         target_node_id: None,
         new_state: Some(new_state.to_string()),
-        approvals,
+        approvals: plan.approvals,
         evidence: None,
         link_rel: None,
         run_label: None,

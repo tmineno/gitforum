@@ -143,7 +143,9 @@ Includes:
 - [ ] role ごとの node type / state transition 制約
 - [ ] provenance 必須判定
 - [x] `one_human_approval`, `at_least_one_summary`, `no_open_objections`
+- [x] `no_open_actions`
 - [x] `git forum state <THREAD_ID> <NEW_STATE> [--sign <ACTOR_ID>]...`
+- [x] `git forum state <THREAD_ID> <NEW_STATE> --resolve-open-actions`
 - [x] `git forum verify`
 - [x] `git forum policy lint`
 - [x] `git forum policy check`
@@ -153,6 +155,7 @@ Exit criteria:
 
 - [x] 型付き発言を追加できる
 - [x] `objection` と `action` を resolve / reopen できる
+- [x] Issue close 時に open action を guard できる
 - [x] `accepted` への遷移で human approval と guard が評価される
 - [x] `git forum show` で open objections / latest summary / timeline を表示できる
 - [x] `git forum verify` で最低限の guard を評価できる
@@ -258,6 +261,11 @@ Includes:
 - [ ] summary 追加の auto-merge
 - [ ] 競合する terminal state の conflict 検出
 - [ ] concurrent `resolve` / `reopen` の conflict 検出
+- [x] `git forum state bulk --to <STATE>` の設計と実装
+- [x] bulk state change の `--branch` / `--kind` / `--status` filter
+- [x] bulk state change の partial apply / nonzero exit semantics
+- [x] bulk state change の `--dry-run`
+- [x] bulk state change の `--resolve-open-actions`
 - [ ] synthetic merge event と unresolved conflict 表示
 - [ ] GitHub issue から `issue` への最小 import
 - [ ] markdown RFC から `rfc` への手動補助付き import

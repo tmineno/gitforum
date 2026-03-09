@@ -11,6 +11,7 @@ use super::thread::ThreadState;
 #[serde(rename_all = "snake_case")]
 pub enum GuardRule {
     NoOpenObjections,
+    NoOpenActions,
     AtLeastOneSummary,
     OneHumanApproval,
 }
@@ -19,6 +20,7 @@ impl std::fmt::Display for GuardRule {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoOpenObjections => write!(f, "no_open_objections"),
+            Self::NoOpenActions => write!(f, "no_open_actions"),
             Self::AtLeastOneSummary => write!(f, "at_least_one_summary"),
             Self::OneHumanApproval => write!(f, "one_human_approval"),
         }
@@ -119,6 +121,17 @@ pub fn evaluate_rule(
                 None
             }
         }
+        GuardRule::NoOpenActions => {
+            let open = state.open_actions();
+            if !open.is_empty() {
+                Some(GuardViolation {
+                    rule: rule.to_string(),
+                    reason: format!("{} open action(s)", open.len()),
+                })
+            } else {
+                None
+            }
+        }
         GuardRule::AtLeastOneSummary => {
             if state.latest_summary().is_none() {
                 Some(GuardViolation {
@@ -173,6 +186,7 @@ mod tests {
                 on: "under-review->accepted".into(),
                 requires: vec![
                     GuardRule::NoOpenObjections,
+                    GuardRule::NoOpenActions,
                     GuardRule::AtLeastOneSummary,
                     GuardRule::OneHumanApproval,
                 ],
@@ -215,6 +229,7 @@ mod tests {
             GuardRule::AtLeastOneSummary.to_string(),
             "at_least_one_summary"
         );
+        assert_eq!(GuardRule::NoOpenActions.to_string(), "no_open_actions");
         assert_eq!(
             GuardRule::OneHumanApproval.to_string(),
             "one_human_approval"

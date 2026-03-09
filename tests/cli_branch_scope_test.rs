@@ -91,3 +91,37 @@ fn branch_bind_and_clear_update_thread_scope() {
     let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
     assert_eq!(state.branch, None);
 }
+
+#[test]
+fn issue_ls_can_filter_by_branch() {
+    let repo = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(repo.path());
+    init::init_forum(&paths).unwrap();
+    create_real_branch(&repo, "v0.1.0");
+
+    let issue_a = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["issue", "new", "Setup CI", "--branch", "v0.1.0"])
+        .output()
+        .expect("failed to create issue A");
+    assert!(issue_a.status.success());
+
+    let issue_b = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["issue", "new", "Refactor parser"])
+        .output()
+        .expect("failed to create issue B");
+    assert!(issue_b.status.success());
+
+    let ls = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["issue", "ls", "--branch", "v0.1.0"])
+        .output()
+        .expect("failed to list issues by branch");
+    assert!(ls.status.success());
+    let stdout = String::from_utf8(ls.stdout).unwrap();
+    assert!(stdout.contains("BRANCH"));
+    assert!(stdout.contains("ISSUE-0001"));
+    assert!(stdout.contains("v0.1.0"));
+    assert!(!stdout.contains("ISSUE-0002"));
+}

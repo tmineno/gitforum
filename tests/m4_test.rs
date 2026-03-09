@@ -137,6 +137,8 @@ fn show_includes_evidence_section() {
     assert!(out.contains("evidence: 1"));
     assert!(out.contains("benchmark"));
     assert!(out.contains("bench/result.csv"));
+    assert!(out.contains("link"));
+    assert!(out.contains("benchmark bench/result.csv"));
 }
 
 // ---- Thread link tests ----
@@ -182,6 +184,7 @@ fn show_includes_links_section() {
     assert!(out.contains("links: 1"));
     assert!(out.contains("ISSUE-0001"));
     assert!(out.contains("implements"));
+    assert!(out.contains("ISSUE-0001 (implements)"));
 }
 
 #[test]

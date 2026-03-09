@@ -17,6 +17,7 @@ use super::clock::SystemClock;
 use super::create;
 use super::error::ForumResult;
 use super::event::{NodeType, ThreadKind};
+use super::evidence_ops;
 use super::git_ops::GitOps;
 use super::id::UlidGenerator;
 use super::index::{self, ThreadRow};
@@ -30,10 +31,28 @@ use super::thread;
 pub enum View {
     List,
     ThreadDetail(String),
-    NodeDetail { thread_id: String, node_id: String },
+    NodeDetail {
+        thread_id: String,
+        node_id: String,
+    },
     CreateThread,
-    CreateNode { thread_id: String },
-    EditNodeBody { thread_id: String },
+    EditThreadBody,
+    CreateNode {
+        thread_id: String,
+    },
+    EditNodeBody {
+        thread_id: String,
+    },
+    CreateLink {
+        thread_id: String,
+        origin: LinkOrigin,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkOrigin {
+    ThreadDetail { selected_node_id: Option<String> },
+    NodeDetail { node_id: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +60,7 @@ enum ThreadFormField {
     Kind,
     Title,
     Body,
+    Submit,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +92,31 @@ struct NodeForm {
     field: NodeFormField,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinkFormField {
+    Relation,
+    TargetKind,
+    Target,
+    Submit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinkTargetKind {
+    Issue,
+    Rfc,
+    Decision,
+    Manual,
+}
+
+#[derive(Debug, Clone)]
+struct LinkForm {
+    relation_index: usize,
+    target_kind_index: usize,
+    target_index: usize,
+    manual_target: String,
+    field: LinkFormField,
+}
+
 /// Application state for the TUI.
 pub struct App {
     pub view: View,
@@ -86,6 +131,7 @@ pub struct App {
     pub node_detail_scroll: u16,
     thread_form: ThreadForm,
     node_form: NodeForm,
+    link_form: LinkForm,
 }
 
 impl App {
@@ -115,6 +161,13 @@ impl App {
                 node_type_index: 0,
                 body: String::new(),
                 field: NodeFormField::Type,
+            },
+            link_form: LinkForm {
+                relation_index: 0,
+                target_kind_index: 0,
+                target_index: 0,
+                manual_target: String::new(),
+                field: LinkFormField::Relation,
             },
         }
     }
@@ -248,6 +301,36 @@ impl App {
             thread_id: thread_id.to_string(),
         };
     }
+
+    fn begin_create_link_from_thread(&mut self, thread_id: &str) {
+        self.reset_link_form();
+        self.view = View::CreateLink {
+            thread_id: thread_id.to_string(),
+            origin: LinkOrigin::ThreadDetail {
+                selected_node_id: self.selected_node_id(),
+            },
+        };
+    }
+
+    fn begin_create_link_from_node(&mut self, thread_id: &str, node_id: &str) {
+        self.reset_link_form();
+        self.view = View::CreateLink {
+            thread_id: thread_id.to_string(),
+            origin: LinkOrigin::NodeDetail {
+                node_id: node_id.to_string(),
+            },
+        };
+    }
+
+    fn reset_link_form(&mut self) {
+        self.link_form = LinkForm {
+            relation_index: 0,
+            target_kind_index: 0,
+            target_index: 0,
+            manual_target: String::new(),
+            field: LinkFormField::Relation,
+        };
+    }
 }
 
 /// Run the interactive TUI.
@@ -349,6 +432,7 @@ fn handle_key(
             KeyCode::Down => app.scroll_thread_down(),
             KeyCode::Up => app.scroll_thread_up(),
             KeyCode::Char('c') => app.begin_create_node(&thread_id),
+            KeyCode::Char('l') => app.begin_create_link_from_thread(&thread_id),
             KeyCode::Char('r') => {
                 let selected = app.selected_node_id();
                 reindex::run_reindex(git, db_path)?;
@@ -366,6 +450,7 @@ fn handle_key(
                 open_thread_detail(app, git, &thread_id, Some(&node_id))?;
             }
             KeyCode::Char('c') => app.begin_create_node(&thread_id),
+            KeyCode::Char('l') => app.begin_create_link_from_node(&thread_id, &node_id),
             KeyCode::Char('x') => {
                 apply_node_status_action(
                     app,
@@ -402,11 +487,17 @@ fn handle_key(
         View::CreateThread => {
             handle_create_thread_key(app, key, git, conn, db_path)?;
         }
+        View::EditThreadBody => {
+            handle_edit_thread_body_key(app, key)?;
+        }
         View::CreateNode { thread_id } => {
             handle_create_node_key(app, key, git, conn, db_path, &thread_id)?;
         }
         View::EditNodeBody { thread_id } => {
             handle_edit_node_body_key(app, key, &thread_id)?;
+        }
+        View::CreateLink { thread_id, origin } => {
+            handle_create_link_key(app, key, git, &thread_id, &origin)?;
         }
     }
     Ok(false)
@@ -554,6 +645,80 @@ fn node_type_labels() -> [&'static str; 10] {
     ]
 }
 
+fn link_relation_labels() -> [&'static str; 4] {
+    ["implements", "relates-to", "depends-on", "blocks"]
+}
+
+fn link_target_kind_values() -> [LinkTargetKind; 4] {
+    [
+        LinkTargetKind::Issue,
+        LinkTargetKind::Rfc,
+        LinkTargetKind::Decision,
+        LinkTargetKind::Manual,
+    ]
+}
+
+fn link_target_kind_labels() -> [&'static str; 4] {
+    ["issue", "rfc", "decision", "manual"]
+}
+
+fn thread_kind_matches_target(kind: &str, target_kind: LinkTargetKind) -> bool {
+    match target_kind {
+        LinkTargetKind::Issue => kind == "issue",
+        LinkTargetKind::Rfc => kind == "rfc",
+        LinkTargetKind::Decision => kind == "decision",
+        LinkTargetKind::Manual => false,
+    }
+}
+
+fn auto_link_candidates<'a>(app: &'a App, source_thread_id: &str) -> Vec<&'a ThreadRow> {
+    let target_kind = link_target_kind_values()[app.link_form.target_kind_index];
+    if target_kind == LinkTargetKind::Manual {
+        return Vec::new();
+    }
+
+    app.threads
+        .iter()
+        .filter(|row| {
+            row.id != source_thread_id && thread_kind_matches_target(&row.kind, target_kind)
+        })
+        .collect()
+}
+
+fn selected_link_target(app: &App, source_thread_id: &str) -> Option<String> {
+    let target_kind = link_target_kind_values()[app.link_form.target_kind_index];
+    match target_kind {
+        LinkTargetKind::Manual => {
+            let target = app.link_form.manual_target.trim();
+            (!target.is_empty()).then(|| target.to_string())
+        }
+        _ => auto_link_candidates(app, source_thread_id)
+            .get(app.link_form.target_index)
+            .map(|row| row.id.clone()),
+    }
+}
+
+fn selected_link_target_label(app: &App, source_thread_id: &str) -> String {
+    let target_kind = link_target_kind_values()[app.link_form.target_kind_index];
+    match target_kind {
+        LinkTargetKind::Manual => {
+            let target = app.link_form.manual_target.trim();
+            if target.is_empty() {
+                "(enter thread id)".to_string()
+            } else {
+                target.to_string()
+            }
+        }
+        _ => {
+            let candidates = auto_link_candidates(app, source_thread_id);
+            candidates
+                .get(app.link_form.target_index)
+                .map(|row| format!("{}  {}", row.id, single_line_preview(&row.title, 28)))
+                .unwrap_or_else(|| "(no matching threads)".to_string())
+        }
+    }
+}
+
 fn handle_create_thread_key(
     app: &mut App,
     key: crossterm::event::KeyEvent,
@@ -567,7 +732,8 @@ fn handle_create_thread_key(
             app.thread_form.field = match app.thread_form.field {
                 ThreadFormField::Kind => ThreadFormField::Title,
                 ThreadFormField::Title => ThreadFormField::Body,
-                ThreadFormField::Body => ThreadFormField::Kind,
+                ThreadFormField::Body => ThreadFormField::Submit,
+                ThreadFormField::Submit => ThreadFormField::Kind,
             };
         }
         KeyCode::Up => {
@@ -585,17 +751,44 @@ fn handle_create_thread_key(
             ThreadFormField::Title => {
                 app.thread_form.title.pop();
             }
-            ThreadFormField::Body => {
-                app.thread_form.body.pop();
-            }
-            ThreadFormField::Kind => {}
+            ThreadFormField::Body | ThreadFormField::Kind | ThreadFormField::Submit => {}
         },
         KeyCode::Char(ch) => match app.thread_form.field {
             ThreadFormField::Title => app.thread_form.title.push(ch),
-            ThreadFormField::Body => app.thread_form.body.push(ch),
-            ThreadFormField::Kind => {}
+            ThreadFormField::Body | ThreadFormField::Kind | ThreadFormField::Submit => {}
         },
-        KeyCode::Enter => submit_create_thread(app, git, conn, db_path)?,
+        KeyCode::Enter => match app.thread_form.field {
+            ThreadFormField::Body => app.view = View::EditThreadBody,
+            ThreadFormField::Submit => submit_create_thread(app, git, conn, db_path)?,
+            ThreadFormField::Kind | ThreadFormField::Title => {}
+        },
+        _ => {}
+    }
+    Ok(())
+}
+
+fn handle_edit_thread_body_key(app: &mut App, key: crossterm::event::KeyEvent) -> ForumResult<()> {
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
+        app.view = View::CreateThread;
+        app.thread_form.field = ThreadFormField::Body;
+        return Ok(());
+    }
+
+    match key.code {
+        KeyCode::Esc => {
+            app.view = View::CreateThread;
+            app.thread_form.field = ThreadFormField::Body;
+        }
+        KeyCode::Enter => app.thread_form.body.push('\n'),
+        KeyCode::Backspace => {
+            app.thread_form.body.pop();
+        }
+        KeyCode::Tab => app.thread_form.body.push_str("    "),
+        KeyCode::Char(ch) => {
+            if !key.modifiers.contains(KeyModifiers::CONTROL) {
+                app.thread_form.body.push(ch);
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -678,6 +871,102 @@ fn handle_edit_node_body_key(
     Ok(())
 }
 
+fn return_from_link_form(
+    app: &mut App,
+    git: &GitOps,
+    thread_id: &str,
+    origin: &LinkOrigin,
+) -> ForumResult<()> {
+    match origin {
+        LinkOrigin::ThreadDetail { selected_node_id } => {
+            open_thread_detail(app, git, thread_id, selected_node_id.as_deref())
+        }
+        LinkOrigin::NodeDetail { node_id } => open_node_detail(app, git, thread_id, node_id),
+    }
+}
+
+fn handle_create_link_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+    git: &GitOps,
+    thread_id: &str,
+    origin: &LinkOrigin,
+) -> ForumResult<()> {
+    match key.code {
+        KeyCode::Esc => return_from_link_form(app, git, thread_id, origin)?,
+        KeyCode::Tab => {
+            app.link_form.field = match app.link_form.field {
+                LinkFormField::Relation => LinkFormField::TargetKind,
+                LinkFormField::TargetKind => LinkFormField::Target,
+                LinkFormField::Target => LinkFormField::Submit,
+                LinkFormField::Submit => LinkFormField::Relation,
+            };
+        }
+        KeyCode::Up => match app.link_form.field {
+            LinkFormField::Relation => {
+                app.link_form.relation_index = app.link_form.relation_index.saturating_sub(1);
+            }
+            LinkFormField::TargetKind => {
+                app.link_form.target_kind_index = app.link_form.target_kind_index.saturating_sub(1);
+                app.link_form.target_index = 0;
+            }
+            LinkFormField::Target
+                if link_target_kind_values()[app.link_form.target_kind_index]
+                    != LinkTargetKind::Manual =>
+            {
+                app.link_form.target_index = app.link_form.target_index.saturating_sub(1);
+            }
+            LinkFormField::Target | LinkFormField::Submit => {}
+        },
+        KeyCode::Down => match app.link_form.field {
+            LinkFormField::Relation => {
+                app.link_form.relation_index =
+                    (app.link_form.relation_index + 1).min(link_relation_labels().len() - 1);
+            }
+            LinkFormField::TargetKind => {
+                app.link_form.target_kind_index =
+                    (app.link_form.target_kind_index + 1).min(link_target_kind_values().len() - 1);
+                app.link_form.target_index = 0;
+            }
+            LinkFormField::Target
+                if link_target_kind_values()[app.link_form.target_kind_index]
+                    != LinkTargetKind::Manual =>
+            {
+                let candidates = auto_link_candidates(app, thread_id);
+                if !candidates.is_empty() {
+                    app.link_form.target_index =
+                        (app.link_form.target_index + 1).min(candidates.len() - 1);
+                }
+            }
+            LinkFormField::Target | LinkFormField::Submit => {}
+        },
+        KeyCode::Backspace => {
+            if app.link_form.field == LinkFormField::Target
+                && link_target_kind_values()[app.link_form.target_kind_index]
+                    == LinkTargetKind::Manual
+            {
+                app.link_form.manual_target.pop();
+            }
+        }
+        KeyCode::Char(ch) => {
+            if app.link_form.field == LinkFormField::Target
+                && link_target_kind_values()[app.link_form.target_kind_index]
+                    == LinkTargetKind::Manual
+                && !key.modifiers.contains(KeyModifiers::CONTROL)
+            {
+                app.link_form.manual_target.push(ch);
+            }
+        }
+        KeyCode::Enter => {
+            if app.link_form.field == LinkFormField::Submit {
+                submit_create_link(app, git, thread_id, origin)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn submit_create_thread(
     app: &mut App,
     git: &GitOps,
@@ -730,6 +1019,23 @@ fn submit_create_node(
     open_thread_detail(app, git, thread_id, Some(&node_id))
 }
 
+fn submit_create_link(
+    app: &mut App,
+    git: &GitOps,
+    thread_id: &str,
+    origin: &LinkOrigin,
+) -> ForumResult<()> {
+    let Some(target_thread_id) = selected_link_target(app, thread_id) else {
+        return Ok(());
+    };
+
+    let actor = actor::current_actor(git);
+    let clock = SystemClock;
+    let relation = link_relation_labels()[app.link_form.relation_index];
+    evidence_ops::add_thread_link(git, thread_id, &target_thread_id, relation, &actor, &clock)?;
+    return_from_link_form(app, git, thread_id, origin)
+}
+
 /// Render the current app state into `frame`.
 pub fn render(f: &mut Frame, app: &mut App) {
     match app.view {
@@ -737,8 +1043,10 @@ pub fn render(f: &mut Frame, app: &mut App) {
         View::ThreadDetail(_) => render_thread_detail(f, f.area(), app),
         View::NodeDetail { .. } => render_node_detail(f, f.area(), app),
         View::CreateThread => render_create_thread(f, f.area(), app),
+        View::EditThreadBody => render_edit_thread_body(f, f.area(), app),
         View::CreateNode { .. } => render_create_node(f, f.area(), app),
         View::EditNodeBody { .. } => render_edit_node_body(f, f.area(), app),
+        View::CreateLink { .. } => render_create_link(f, f.area(), app),
     }
 }
 
@@ -806,7 +1114,9 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         .split(area);
 
     f.render_widget(
-        Paragraph::new(" [esc/q]back  [enter]node  [c]create node  [r]refresh  [j/k]select node  [up/down]scroll body"),
+        Paragraph::new(
+            " [esc/q]back  [enter]node  [c]create node  [l]link  [r]refresh  [j/k]select node  [up/down]scroll body",
+        ),
         chunks[0],
     );
 
@@ -873,7 +1183,9 @@ pub(crate) fn render_node_detail(f: &mut Frame, area: Rect, app: &App) {
         .split(area);
 
     f.render_widget(
-        Paragraph::new(" [esc/q]back  [c]create node  [x]resolve  [o]reopen  [R]retract  [r]refresh  [j/k]scroll"),
+        Paragraph::new(
+            " [esc/q]back  [c]create node  [l]link  [x]resolve  [o]reopen  [R]retract  [r]refresh  [j/k]scroll",
+        ),
         chunks[0],
     );
 
@@ -900,11 +1212,20 @@ pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(area);
 
-    f.render_widget(
-        Paragraph::new(" [tab]next field  [up/down]cycle kind  [enter]submit  [esc]cancel"),
-        chunks[0],
-    );
+    let help = match app.thread_form.field {
+        ThreadFormField::Kind => " [tab]next field  [up/down]cycle kind  [esc]cancel",
+        ThreadFormField::Title => " [tab]next field  [type]edit title  [esc]cancel",
+        ThreadFormField::Body => " [tab]next field  [enter]edit body  [esc]cancel",
+        ThreadFormField::Submit => " [tab]next field  [enter]submit  [esc]cancel",
+    };
+    f.render_widget(Paragraph::new(help), chunks[0]);
 
+    let main = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .split(chunks[1]);
+
+    let body_preview = thread_body_preview(&app.thread_form.body);
     let lines = [
         form_line(
             app.thread_form.field == ThreadFormField::Kind,
@@ -919,7 +1240,13 @@ pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &App) {
         form_line(
             app.thread_form.field == ThreadFormField::Body,
             "body",
-            app.thread_form.body.as_str(),
+            &body_preview,
+        ),
+        String::new(),
+        form_line(
+            app.thread_form.field == ThreadFormField::Submit,
+            "submit",
+            "[Create thread]",
         ),
     ];
     f.render_widget(
@@ -928,8 +1255,29 @@ pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &App) {
                 .borders(Borders::ALL)
                 .title(" create thread "),
         ),
-        chunks[1],
+        main[0],
     );
+
+    let items: Vec<ListItem> = thread_kind_labels()
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let prefix = if app.thread_form.field == ThreadFormField::Kind
+                && i == app.thread_form.kind_index
+            {
+                "> "
+            } else {
+                "  "
+            };
+            ListItem::new(format!("{prefix}{label}"))
+        })
+        .collect();
+    let list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" thread kinds "),
+    );
+    f.render_widget(list, main[1]);
 }
 
 pub(crate) fn render_create_node(f: &mut Frame, area: Rect, app: &App) {
@@ -1022,7 +1370,176 @@ pub(crate) fn render_edit_node_body(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
+pub(crate) fn render_edit_thread_body(f: &mut Frame, area: Rect, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+
+    f.render_widget(
+        Paragraph::new(" [ctrl+s]done  [enter]newline  [tab]indent  [esc]back"),
+        chunks[0],
+    );
+
+    f.render_widget(
+        Paragraph::new(app.thread_form.body.as_str()).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" edit thread body "),
+        ),
+        chunks[1],
+    );
+}
+
+pub(crate) fn render_create_link(f: &mut Frame, area: Rect, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+
+    let help = match app.link_form.field {
+        LinkFormField::Relation => " [tab]next field  [up/down]cycle relation  [esc]cancel",
+        LinkFormField::TargetKind => " [tab]next field  [up/down]cycle target kind  [esc]cancel",
+        LinkFormField::Target => {
+            if link_target_kind_values()[app.link_form.target_kind_index] == LinkTargetKind::Manual
+            {
+                " [tab]next field  [type]target id  [esc]cancel"
+            } else {
+                " [tab]next field  [up/down]select target  [esc]cancel"
+            }
+        }
+        LinkFormField::Submit => " [tab]next field  [enter]submit  [esc]cancel",
+    };
+    f.render_widget(Paragraph::new(help), chunks[0]);
+
+    let main = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .split(chunks[1]);
+
+    let thread_id = if let View::CreateLink { ref thread_id, .. } = app.view {
+        thread_id.as_str()
+    } else {
+        ""
+    };
+    let lines = [
+        form_line(
+            app.link_form.field == LinkFormField::Relation,
+            "relation",
+            link_relation_labels()[app.link_form.relation_index],
+        ),
+        form_line(
+            app.link_form.field == LinkFormField::TargetKind,
+            "target kind",
+            link_target_kind_labels()[app.link_form.target_kind_index],
+        ),
+        form_line(
+            app.link_form.field == LinkFormField::Target,
+            "target",
+            &selected_link_target_label(app, thread_id),
+        ),
+        String::new(),
+        form_line(
+            app.link_form.field == LinkFormField::Submit,
+            "submit",
+            "[Create link]",
+        ),
+    ];
+    f.render_widget(
+        Paragraph::new(lines.join("\n")).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" create link from {thread_id} ")),
+        ),
+        main[0],
+    );
+
+    let target_kind = link_target_kind_values()[app.link_form.target_kind_index];
+    if app.link_form.field == LinkFormField::Relation {
+        let items: Vec<ListItem> = link_relation_labels()
+            .iter()
+            .enumerate()
+            .map(|(index, label)| {
+                let prefix = if index == app.link_form.relation_index {
+                    ">"
+                } else {
+                    " "
+                };
+                ListItem::new(format!("{prefix} {label}"))
+            })
+            .collect();
+        let list = List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" link relations "),
+        );
+        f.render_widget(list, main[1]);
+    } else if app.link_form.field == LinkFormField::TargetKind {
+        let items: Vec<ListItem> = link_target_kind_labels()
+            .iter()
+            .enumerate()
+            .map(|(index, label)| {
+                let prefix = if index == app.link_form.target_kind_index {
+                    ">"
+                } else {
+                    " "
+                };
+                ListItem::new(format!("{prefix} {label}"))
+            })
+            .collect();
+        let list = List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" target kinds "),
+        );
+        f.render_widget(list, main[1]);
+    } else if target_kind == LinkTargetKind::Manual {
+        let message = Paragraph::new(
+            "Enter a thread ID manually.\n\nExamples:\n  ISSUE-0001\n  RFC-0002\n  DEC-0003",
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" manual target "),
+        );
+        f.render_widget(message, main[1]);
+    } else {
+        let candidates = auto_link_candidates(app, thread_id);
+        let items: Vec<ListItem> = candidates
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let prefix = if index == app.link_form.target_index {
+                    ">"
+                } else {
+                    " "
+                };
+                ListItem::new(format!(
+                    "{prefix} {}  {}",
+                    row.id,
+                    single_line_preview(&row.title, 28)
+                ))
+            })
+            .collect();
+        let title = format!(
+            " {} targets ({}) ",
+            link_target_kind_labels()[app.link_form.target_kind_index],
+            candidates.len()
+        );
+        let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
+        f.render_widget(list, main[1]);
+    }
+}
+
 fn node_body_preview(body: &str) -> String {
+    if body.trim().is_empty() {
+        "(empty)".to_string()
+    } else {
+        single_line_preview(body, 40)
+    }
+}
+
+fn thread_body_preview(body: &str) -> String {
     if body.trim().is_empty() {
         "(empty)".to_string()
     } else {
@@ -1217,6 +1734,10 @@ mod tests {
         assert!(out.contains("create thread"));
         assert!(out.contains("kind: rfc"));
         assert!(out.contains("title:"));
+        assert!(out.contains("body: (empty)"));
+        assert!(out.contains("submit: [Create thread]"));
+        assert!(out.contains("thread kinds"));
+        assert!(out.contains("> rfc"));
     }
 
     #[test]
@@ -1233,11 +1754,42 @@ mod tests {
     }
 
     #[test]
+    fn create_link_view_shows_auto_resolvable_targets() {
+        let rows = vec![
+            make_row("RFC-0001", "rfc", "draft", "Source RFC"),
+            make_row("ISSUE-0001", "issue", "open", "Implement parser"),
+            make_row("ISSUE-0002", "issue", "open", "Add tests"),
+        ];
+        let mut app = App::new(rows);
+        app.begin_create_link_from_thread("RFC-0001");
+        app.link_form.field = LinkFormField::Target;
+        let out = render_to_string(&mut app, 120, 24);
+        assert!(out.contains("create link from RFC-0001"));
+        assert!(out.contains("relation: implements"));
+        assert!(out.contains("target kind: issue"));
+        assert!(out.contains("issue targets (2)"));
+        assert!(out.contains("> ISSUE-0001  Implement parser"));
+    }
+
+    #[test]
     fn single_line_preview_handles_multibyte_text() {
         let preview =
             single_line_preview("実装開始: CMake + ImGui + GLFW スケルトンアプリの構築", 20);
         assert!(preview.starts_with("実装開始"));
         assert!(preview.ends_with("..."));
+    }
+
+    #[test]
+    fn edit_thread_body_view_shows_editor() {
+        let mut app = App::new(vec![]);
+        app.begin_create_thread();
+        app.thread_form.body = "line 1\nline 2".into();
+        app.view = View::EditThreadBody;
+        let out = render_to_string(&mut app, 80, 20);
+        assert!(out.contains("edit thread body"));
+        assert!(out.contains("line 1"));
+        assert!(out.contains("line 2"));
+        assert!(out.contains("ctrl+s"));
     }
 
     #[test]
@@ -1285,6 +1837,42 @@ mod tests {
             }
         );
         assert_eq!(app.node_form.field, NodeFormField::Type);
+    }
+
+    #[test]
+    fn enter_on_thread_body_field_opens_multiline_editor() {
+        let mut app = App::new(vec![]);
+        app.begin_create_thread();
+        app.thread_form.field = ThreadFormField::Body;
+
+        handle_edit_transition_via_create_thread(&mut app);
+
+        assert_eq!(app.view, View::EditThreadBody);
+    }
+
+    #[test]
+    fn enter_on_thread_kind_field_does_not_submit() {
+        let mut app = App::new(vec![]);
+        app.begin_create_thread();
+
+        handle_edit_transition_via_create_thread(&mut app);
+
+        assert_eq!(app.view, View::CreateThread);
+        assert_eq!(app.thread_form.field, ThreadFormField::Kind);
+    }
+
+    fn handle_edit_transition_via_create_thread(app: &mut App) {
+        let dir = TempDir::new().unwrap();
+        let git = GitOps::new(dir.path().to_path_buf());
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        handle_create_thread_key(
+            app,
+            crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &git,
+            &conn,
+            dir.path(),
+        )
+        .unwrap();
     }
 
     fn handle_edit_transition_via_create_node(app: &mut App) {
@@ -1346,6 +1934,38 @@ mod tests {
     }
 
     #[test]
+    fn edit_thread_body_supports_multiline_text() {
+        let mut app = App::new(vec![]);
+        app.begin_create_thread();
+        app.view = View::EditThreadBody;
+
+        handle_edit_thread_body_key(
+            &mut app,
+            crossterm::event::KeyEvent::new(KeyCode::Char('A'), KeyModifiers::NONE),
+        )
+        .unwrap();
+        handle_edit_thread_body_key(
+            &mut app,
+            crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        )
+        .unwrap();
+        handle_edit_thread_body_key(
+            &mut app,
+            crossterm::event::KeyEvent::new(KeyCode::Char('B'), KeyModifiers::NONE),
+        )
+        .unwrap();
+        handle_edit_thread_body_key(
+            &mut app,
+            crossterm::event::KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+        )
+        .unwrap();
+
+        assert_eq!(app.thread_form.body, "A\nB");
+        assert_eq!(app.view, View::CreateThread);
+        assert_eq!(app.thread_form.field, ThreadFormField::Body);
+    }
+
+    #[test]
     fn submit_create_thread_creates_thread_and_opens_detail() {
         let (_dir, git, _paths, conn, db_path) = setup_repo();
         let mut app = App::new(vec![]);
@@ -1400,6 +2020,124 @@ mod tests {
         assert_eq!(app.thread_nodes.len(), 1);
         assert_eq!(app.thread_nodes[0].body, "Node from TUI\nwith more detail");
         assert_eq!(app.node_table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn submit_create_link_from_thread_adds_link_and_returns_to_thread_detail() {
+        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let source_id = crate::internal::create::create_thread(
+            &git,
+            crate::internal::event::ThreadKind::Rfc,
+            "Source RFC",
+            None,
+            "human/test-user",
+            &crate::internal::clock::FixedClock {
+                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            },
+            &crate::internal::id::SequentialIdGenerator::new("t"),
+        )
+        .unwrap();
+        crate::internal::create::create_thread(
+            &git,
+            crate::internal::event::ThreadKind::Issue,
+            "Implementation issue",
+            None,
+            "human/test-user",
+            &crate::internal::clock::FixedClock {
+                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
+            },
+            &crate::internal::id::SequentialIdGenerator::new("u"),
+        )
+        .unwrap();
+        reindex::run_reindex(&git, &db_path).unwrap();
+
+        let mut app = App::new(index::list_threads(&conn).unwrap());
+        open_thread_detail(&mut app, &git, &source_id, None).unwrap();
+        app.begin_create_link_from_thread(&source_id);
+        app.link_form.field = LinkFormField::Submit;
+
+        handle_create_link_key(
+            &mut app,
+            crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &git,
+            &source_id,
+            &LinkOrigin::ThreadDetail {
+                selected_node_id: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(app.view, View::ThreadDetail(source_id.clone()));
+        assert!(app.thread_text.contains("links: 1"));
+        assert!(app.thread_text.contains("ISSUE-0001  implements"));
+    }
+
+    #[test]
+    fn submit_create_link_from_node_returns_to_node_detail() {
+        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let source_id = crate::internal::create::create_thread(
+            &git,
+            crate::internal::event::ThreadKind::Rfc,
+            "Source RFC",
+            None,
+            "human/test-user",
+            &crate::internal::clock::FixedClock {
+                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            },
+            &crate::internal::id::SequentialIdGenerator::new("t"),
+        )
+        .unwrap();
+        crate::internal::create::create_thread(
+            &git,
+            crate::internal::event::ThreadKind::Issue,
+            "Implementation issue",
+            None,
+            "human/test-user",
+            &crate::internal::clock::FixedClock {
+                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
+            },
+            &crate::internal::id::SequentialIdGenerator::new("u"),
+        )
+        .unwrap();
+        let node_id = crate::internal::say::say_node(
+            &git,
+            &source_id,
+            crate::internal::event::NodeType::Claim,
+            "Investigate parser shape",
+            "human/test-user",
+            &crate::internal::clock::FixedClock {
+                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 2, 0).unwrap(),
+            },
+            &crate::internal::id::SequentialIdGenerator::new("n"),
+        )
+        .unwrap();
+        reindex::run_reindex(&git, &db_path).unwrap();
+
+        let mut app = App::new(index::list_threads(&conn).unwrap());
+        open_node_detail(&mut app, &git, &source_id, &node_id).unwrap();
+        app.begin_create_link_from_node(&source_id, &node_id);
+        app.link_form.field = LinkFormField::Submit;
+
+        handle_create_link_key(
+            &mut app,
+            crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &git,
+            &source_id,
+            &LinkOrigin::NodeDetail {
+                node_id: node_id.clone(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            app.view,
+            View::NodeDetail {
+                thread_id: source_id.clone(),
+                node_id: node_id.clone(),
+            }
+        );
+        assert!(app.node_detail_text.contains("thread links: 1"));
+        assert!(app.node_detail_text.contains("ISSUE-0001  implements"));
     }
 
     #[test]

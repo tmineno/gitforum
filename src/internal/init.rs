@@ -17,6 +17,10 @@ can_transition = ["draft->proposed", "proposed->under-review", "under-review->ac
 [[guards]]
 on = "under-review->accepted"
 requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
+
+[[guards]]
+on = "open->closed"
+requires = ["no_open_actions"]
 "#;
 
 const DEFAULT_ACTORS: &str = r#"# git-forum actors

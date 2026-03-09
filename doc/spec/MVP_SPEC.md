@@ -211,6 +211,8 @@ MVP では次の node type をサポートする。
 - `assumption`
 
 `objection` と `action` は作成時に open とみなし、`resolve` event で closed、`reopen` event で再び open とみなす。
+Issue を `closed` にする際、open な `action` はデフォルトで残してはならない。MVP では `no_open_actions`
+guard により close を拒否し、明示オプションが指定された場合に限って close 前に一括 resolve してよい。
 `retract` された node は履歴には残るが、open count や guard 判定からは除外する。
 
 ## 7.4 Evidence
@@ -380,6 +382,10 @@ can_transition = ["draft->proposed", "proposed->under-review", "under-review->ac
 [[guards]]
 on = "under-review->accepted"
 requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
+
+[[guards]]
+on = "open->closed"
+requires = ["no_open_actions"]
 ```
 
 ### MVP validation rules
@@ -390,7 +396,8 @@ requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
 2. policy にない transition は拒否。
 3. `accepted` への遷移には human approval を要求できる。
 4. `no_open_objections` guard を評価できる。
-5. approval の最小単位として `recorded` mechanism を扱える。
+5. `Issue open -> closed` に対する `no_open_actions` guard を評価できる。
+6. approval の最小単位として `recorded` mechanism を扱える。
 
 ## 12. CLI surface
 
@@ -416,8 +423,8 @@ git forum decision new <title> [--body <TEXT> | --body-file <PATH>] [--branch <B
 
 ```bash
 git forum --help-llm
-git forum ls
-git forum issue ls
+git forum ls [--branch <BRANCH>]
+git forum issue ls [--branch <BRANCH>]
 git forum rfc ls
 git forum decision ls
 git forum show <THREAD_ID>
@@ -445,6 +452,8 @@ git forum reopen <NODE_ID>
 
 ```bash
 git forum state <THREAD_ID> <NEW_STATE> [--sign <ACTOR_ID>]...
+git forum state <THREAD_ID> <NEW_STATE> [--sign <ACTOR_ID>]... [--resolve-open-actions]
+git forum state bulk --to <NEW_STATE> [<THREAD_ID>...] [--branch <BRANCH>] [--kind <KIND>] [--status <STATUS>] [--sign <ACTOR_ID>]... [--resolve-open-actions] [--dry-run]
 ```
 
 ### Evidence / links
@@ -542,6 +551,18 @@ git forum policy check <THREAD_ID> --transition <TRANSITION>
 - guard を評価する。
 - approval が必要なら `--sign <ACTOR_ID>` で渡された actor から `approvals[]` を構成する。
 - state event を append する。
+- `Issue open -> closed` は、policy が `no_open_actions` を要求する場合、open action が残っていれば失敗する。
+- `--resolve-open-actions` が指定された場合に限り、close 前に open action 群へ `resolve` event を積んでから遷移してよい。
+
+### 13.7b `git forum state bulk`
+
+- 対象 thread 群に対して同一 state transition を個別評価する。
+- 対象の指定は thread ID 列挙、または `--branch` / `--kind` / `--status` による絞り込みを受け付けてよい。
+- 各 thread の guard 判定は独立に行う。
+- default は partial apply とし、成功した thread は更新し、失敗した thread は理由付きで報告する。
+- 1 件でも失敗があれば終了コードは非 0 とする。
+- `--dry-run` は対象集合と成否予測のみを表示し、event を書き込まない。
+- `--resolve-open-actions` が指定された場合は、各 Issue で close 前に open action 群を resolve してよい。
 
 ### 13.8 `git forum verify`
 
@@ -550,6 +571,7 @@ MVP では以下をチェックする。
 - policy violation がないか
 - required summary があるか
 - open objection が残っていないか
+- issue close 前に open action が残っていないか
 - required evidence が満たされているか
 
 ### 13.9 `git forum evidence add|link`
@@ -558,6 +580,7 @@ MVP では以下をチェックする。
 - `evidence add --kind commit --ref <REV>` は `<REV>` を commit object に解決し、canonical commit OID を保存する。
 - commit に解決できない revision は reject する。
 - `link` は thread 間、thread と evidence 間、または decision と issue 間の relation を記録する。
+- relation 名は free-form でよいが、MVP の例示として `implements`, `relates-to`, `depends-on`, `blocks` を扱う。
 - relation は timeline と detail view から辿れること。
 
 ### 13.10 `git forum run spawn|ls|show`
@@ -585,6 +608,7 @@ MVP の TUI は read-first を基本としつつ、最小限の create 操作を
 8. thread detail からの node create
 9. node create 時の multiline body editor
 10. node detail からの resolve / reopen / retract
+11. thread detail / node detail からの thread link create
 
 state change や policy-sensitive operation は、MVP では CLI に委譲してよい。
 

@@ -89,6 +89,7 @@ the new thread to existing threads.
 
 ```bash
 git forum issue ls
+git forum issue ls --branch v0.1.0
 git forum rfc ls
 git forum decision ls
 ```
@@ -97,8 +98,12 @@ git forum decision ls
 
 ```bash
 git forum ls
+git forum ls --branch feat/parser-rewrite
 git forum show RFC-0001
 ```
+
+`git forum ls` and kind-specific `ls` commands show `ID`, `KIND`, `STATUS`, `BRANCH`, and `TITLE`.
+`--branch <BRANCH>` filters the listing to threads currently bound to that branch.
 
 `git forum show <THREAD_ID>` shows:
 
@@ -256,6 +261,8 @@ Evidence added (a1b2c3d4)
 ```bash
 git forum link ISSUE-0001 RFC-0001 --rel implements
 git forum link RFC-0001 DEC-0001 --rel relates-to
+git forum link ISSUE-0002 ISSUE-0001 --rel depends-on
+git forum link ISSUE-0003 ISSUE-0002 --rel blocks
 ```
 
 On success:
@@ -263,6 +270,9 @@ On success:
 ```text
 ISSUE-0001 -> RFC-0001 (implements)
 ```
+
+`--rel` is currently free-form. Common values are `implements`, `relates-to`, `depends-on`, and
+`blocks`.
 
 ### Bind a thread to a Git branch
 
@@ -330,21 +340,31 @@ Current controls:
   - `up` / `down`: scroll the thread body and timeline pane
   - `enter`: open the selected node detail
   - `c`: create a new node in the current thread
+  - `l`: create a thread link from the current thread
   - `r`: refresh the thread from Git
   - `esc` / `q`: go back to the thread list
 - node detail view:
   - `c`: create a new node in the parent thread
+  - `l`: create a thread link on the parent thread
   - `x`: resolve the current node
   - `o`: reopen the current node if it is resolved or retracted
   - `R`: retract the current node
   - `j` / `k`: scroll
   - `r`: refresh the node from Git
   - `esc` / `q`: go back to the parent thread detail
-- create thread / create node:
+- create thread / create node / create link:
   - `tab`: move between fields
-  - `up` / `down`: cycle kind, or move within the node type dropdown when that field is active
+  - `up` / `down`: cycle kind in create thread, or move within the node type dropdown in create node
+  - in create thread, move to `body` and press `enter` to open the multiline body editor
+  - in create thread, move to `submit` and press `enter` to create the thread
   - in create node, move to `body` and press `enter` to open the multiline body editor
   - in create node, move to `submit` and press `enter` to create the node
+  - in create link, choose a relation, choose a target kind, then select a matching thread when the
+    target kind is auto-resolvable
+  - the TUI link form currently offers the common relations `implements`, `relates-to`,
+    `depends-on`, and `blocks`
+  - in create link, choose `manual` target kind to type a thread ID directly
+  - in create link, move to `submit` and press `enter` to create the link
   - in the body editor, `enter` inserts a newline and `ctrl+s` returns to the form
   - `esc`: cancel
 
@@ -355,12 +375,21 @@ git forum state RFC-0001 proposed
 git forum state RFC-0001 under-review
 git forum state RFC-0001 accepted --sign human/alice
 git forum state RFC-0001 accepted --sign human/alice --sign human/bob
+git forum state ISSUE-0001 closed --resolve-open-actions
+git forum state bulk --to closed --branch v0.1.0
+git forum state bulk --to closed ISSUE-0001 ISSUE-0002 --dry-run
 ```
 
 - `--sign` is recorded as an approval on the event
 - whether the transition succeeds depends on the state machine and policy guards
 - for RFCs, `proposed` means the author is declaring the RFC review-ready
 - for RFCs, `under-review` means active review is in progress
+- if policy requires `no_open_actions`, closing an issue with open `action` nodes fails
+- `--resolve-open-actions` is an explicit escape hatch for issue close; it resolves open `action`
+  nodes before writing the closing state event
+- `state bulk` evaluates each target independently, applies successful transitions, reports
+  failures inline, and exits non-zero if any target failed
+- `state bulk --dry-run` reports what would succeed or fail without writing any events
 
 ## Verify and inspect policy
 
@@ -397,6 +426,10 @@ can_transition = ["draft->proposed", "proposed->under-review", "under-review->ac
 [[guards]]
 on = "under-review->accepted"
 requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
+
+[[guards]]
+on = "open->closed"
+requires = ["no_open_actions"]
 ```
 
 ### What the fields mean
@@ -409,6 +442,7 @@ requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
 ### Guard rules currently understood by the implementation
 
 - `no_open_objections`
+- `no_open_actions`
 - `at_least_one_summary`
 - `one_human_approval`
 
@@ -445,6 +479,7 @@ git forum verify RFC-0001
 At the moment, it only evaluates a small set of forward transitions:
 
 - RFC in `under-review` is checked against `under-review -> accepted`
+- Issue in `open` is checked against `open -> closed`
 - Decision in `proposed` is checked against `proposed -> accepted`
 - other kinds or states currently return `ok` because no verify target is defined
 

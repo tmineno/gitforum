@@ -151,6 +151,15 @@ fn event_detail(event: &Event) -> String {
             .branch
             .clone()
             .unwrap_or_else(|| "(clear branch)".into()),
+        EventType::Link => {
+            if let Some(evidence) = &event.evidence {
+                format!("{} {}", evidence.kind, evidence.ref_target)
+            } else if let (Some(target), Some(rel)) = (&event.target_node_id, &event.link_rel) {
+                format!("{target} ({rel})")
+            } else {
+                String::new()
+            }
+        }
         EventType::Say | EventType::Edit => event.body.clone().unwrap_or_default(),
         _ => String::new(),
     }
@@ -364,24 +373,49 @@ fn short_oid(id: &str) -> &str {
 
 /// Render `git forum ls` output for a list of threads.
 ///
-/// Output columns: ID, KIND, STATUS, TITLE.
+/// Output columns: ID, KIND, STATUS, BRANCH, TITLE.
 /// Deterministic when thread IDs and statuses are deterministic.
 pub fn render_ls(states: &[&ThreadState]) -> String {
     if states.is_empty() {
         return "no threads found\n".into();
     }
+    let id_width = states
+        .iter()
+        .map(|s| s.id.len())
+        .max()
+        .unwrap_or(12)
+        .max(12);
+    let kind_width = states
+        .iter()
+        .map(|s| s.kind.to_string().len())
+        .max()
+        .unwrap_or(10)
+        .max(10);
+    let status_width = states
+        .iter()
+        .map(|s| s.status.len())
+        .max()
+        .unwrap_or(14)
+        .max(14);
+    let branch_width = states
+        .iter()
+        .map(|s| s.branch.as_deref().unwrap_or("-").len())
+        .max()
+        .unwrap_or(12)
+        .max(12);
     let mut lines: Vec<String> = Vec::new();
     lines.push(format!(
-        "{:<12}  {:<10}  {:<14}  {}",
-        "ID", "KIND", "STATUS", "TITLE"
+        "{:<id_width$}  {:<kind_width$}  {:<status_width$}  {:<branch_width$}  {}",
+        "ID", "KIND", "STATUS", "BRANCH", "TITLE"
     ));
-    lines.push("-".repeat(60));
+    lines.push("-".repeat(id_width + kind_width + status_width + branch_width + 10));
     for s in states {
         lines.push(format!(
-            "{:<12}  {:<10}  {:<14}  {}",
+            "{:<id_width$}  {:<kind_width$}  {:<status_width$}  {:<branch_width$}  {}",
             s.id,
             s.kind.to_string(),
             s.status,
+            s.branch.as_deref().unwrap_or("-"),
             s.title,
         ));
     }
@@ -538,11 +572,14 @@ mod tests {
 
     #[test]
     fn ls_contains_all_threads() {
-        let s = fixed_state();
+        let mut s = fixed_state();
+        s.branch = Some("feat/parser".into());
         let out = render_ls(&[&s]);
+        assert!(out.contains("BRANCH"));
         assert!(out.contains("RFC-0001"));
         assert!(out.contains("rfc"));
         assert!(out.contains("draft"));
+        assert!(out.contains("feat/parser"));
         assert!(out.contains("Test RFC"));
     }
 }
