@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Instant;
 
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton,
@@ -98,6 +99,25 @@ struct NodeForm {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SortColumn {
+    Id,
+    Kind,
+    Status,
+    Created,
+    Updated,
+    Title,
+}
+
+const SORT_COLUMNS: [SortColumn; 6] = [
+    SortColumn::Id,
+    SortColumn::Kind,
+    SortColumn::Status,
+    SortColumn::Created,
+    SortColumn::Updated,
+    SortColumn::Title,
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LinkFormField {
     Relation,
     TargetKind,
@@ -130,6 +150,16 @@ struct UiRects {
     thread_submit: Option<Rect>,
     node_submit: Option<Rect>,
     link_submit: Option<Rect>,
+    /// Dropdown area in form views (right pane).
+    dropdown: Option<Rect>,
+    /// Column header rects for click-to-sort in list view.
+    column_headers: [Option<Rect>; 6],
+    /// Filter label area in list view help line.
+    filter_label: Option<Rect>,
+    /// Help line area (first row) for back navigation clicks.
+    help_line: Option<Rect>,
+    /// Form field areas for click-to-focus.
+    form_fields: [Option<Rect>; 4],
 }
 
 /// Application state for the TUI.
@@ -148,6 +178,10 @@ pub struct App {
     node_form: NodeForm,
     link_form: LinkForm,
     ui_rects: UiRects,
+    /// Tracks the last left-click position and time for double-click detection.
+    last_click: Option<(u16, u16, Instant)>,
+    sort_column: SortColumn,
+    sort_ascending: bool,
 }
 
 impl App {
@@ -186,11 +220,15 @@ impl App {
                 field: LinkFormField::Relation,
             },
             ui_rects: UiRects::default(),
+            last_click: None,
+            sort_column: SortColumn::Updated,
+            sort_ascending: false,
         }
     }
 
     pub fn visible_threads(&self) -> Vec<&ThreadRow> {
-        self.threads
+        let mut rows: Vec<&ThreadRow> = self
+            .threads
             .iter()
             .filter(|t| {
                 self.kind_filter
@@ -198,7 +236,24 @@ impl App {
                     .map(|k| t.kind == k)
                     .unwrap_or(true)
             })
-            .collect()
+            .collect();
+        let asc = self.sort_ascending;
+        rows.sort_by(|a, b| {
+            let ord = match self.sort_column {
+                SortColumn::Id => a.id.cmp(&b.id),
+                SortColumn::Kind => a.kind.cmp(&b.kind),
+                SortColumn::Status => a.status.cmp(&b.status),
+                SortColumn::Created => a.created_at.cmp(&b.created_at),
+                SortColumn::Updated => a.updated_at.cmp(&b.updated_at),
+                SortColumn::Title => a.title.cmp(&b.title),
+            };
+            if asc {
+                ord
+            } else {
+                ord.reverse()
+            }
+        });
+        rows
     }
 
     fn selected_thread_id(&self) -> Option<String> {
@@ -244,6 +299,17 @@ impl App {
         };
         let n = self.visible_threads().len();
         self.table_state.select(if n > 0 { Some(0) } else { None });
+    }
+
+    fn column_header_at(&self, column: u16, row: u16) -> Option<SortColumn> {
+        for (i, rect) in self.ui_rects.column_headers.iter().enumerate() {
+            if let Some(area) = rect {
+                if rect_contains(*area, column, row) {
+                    return Some(SORT_COLUMNS[i]);
+                }
+            }
+        }
+        None
     }
 
     fn selected_node_id(&self) -> Option<String> {
@@ -547,6 +613,15 @@ fn table_row_at(area: Rect, row: u16) -> Option<usize> {
     Some((row - area.y - 2) as usize)
 }
 
+/// Map a click position inside a bordered list/dropdown to an item index.
+/// Assumes border (1 row top for title/border) + items start at row 1 inside.
+fn dropdown_item_at(area: Rect, row: u16) -> Option<usize> {
+    if row <= area.y || row >= area.y + area.height.saturating_sub(1) {
+        return None;
+    }
+    Some((row - area.y - 1) as usize)
+}
+
 fn handle_mouse(
     app: &mut App,
     mouse: MouseEvent,
@@ -557,17 +632,40 @@ fn handle_mouse(
     match app.view.clone() {
         View::List => match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(area) = app.ui_rects.list_table {
+                let now = Instant::now();
+                let is_double = app.last_click.is_some_and(|(c, r, t)| {
+                    c == mouse.column && r == mouse.row && now.duration_since(t).as_millis() < 400
+                });
+                // Click filter label to cycle
+                if app
+                    .ui_rects
+                    .filter_label
+                    .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
+                {
+                    app.cycle_filter();
+                } else if let Some(col) = app.column_header_at(mouse.column, mouse.row) {
+                    if col == app.sort_column {
+                        app.sort_ascending = !app.sort_ascending;
+                    } else {
+                        app.sort_column = col;
+                        app.sort_ascending = true;
+                    }
+                    let n = app.visible_threads().len();
+                    app.table_state.select(if n > 0 { Some(0) } else { None });
+                } else if let Some(area) = app.ui_rects.list_table {
                     if let Some(index) = table_row_at(area, mouse.row) {
                         let visible_len = app.visible_threads().len();
                         if index < visible_len {
                             app.table_state.select(Some(index));
-                            if let Some(thread_id) = app.selected_thread_id() {
-                                open_thread_detail(app, git, &thread_id, None)?;
+                            if is_double {
+                                if let Some(thread_id) = app.selected_thread_id() {
+                                    open_thread_detail(app, git, &thread_id, None)?;
+                                }
                             }
                         }
                     }
                 }
+                app.last_click = Some((mouse.column, mouse.row, now));
             }
             MouseEventKind::ScrollDown => app.move_down(),
             MouseEventKind::ScrollUp => app.move_up(),
@@ -575,16 +673,33 @@ fn handle_mouse(
         },
         View::ThreadDetail(thread_id) => match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(area) = app.ui_rects.thread_nodes {
+                let now = Instant::now();
+                let is_double = app.last_click.is_some_and(|(c, r, t)| {
+                    c == mouse.column && r == mouse.row && now.duration_since(t).as_millis() < 400
+                });
+                // Click [esc/q]back to go back
+                if app
+                    .ui_rects
+                    .help_line
+                    .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
+                {
+                    app.view = View::List;
+                    app.thread_text.clear();
+                    app.thread_nodes.clear();
+                    app.thread_scroll = 0;
+                } else if let Some(area) = app.ui_rects.thread_nodes {
                     if let Some(index) = table_row_at(area, mouse.row) {
                         if index < app.thread_nodes.len() {
                             app.node_table_state.select(Some(index));
-                            if let Some(node_id) = app.selected_node_id() {
-                                open_node_detail(app, git, &thread_id, &node_id)?;
+                            if is_double {
+                                if let Some(node_id) = app.selected_node_id() {
+                                    open_node_detail(app, git, &thread_id, &node_id)?;
+                                }
                             }
                         }
                     }
                 }
+                app.last_click = Some((mouse.column, mouse.row, now));
             }
             MouseEventKind::ScrollDown => {
                 if let Some(area) = app.ui_rects.thread_body {
@@ -612,7 +727,19 @@ fn handle_mouse(
             }
             _ => {}
         },
-        View::NodeDetail { .. } => match mouse.kind {
+        View::NodeDetail { ref thread_id, .. } => match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Click [esc/q]back to go back to thread detail
+                if app
+                    .ui_rects
+                    .help_line
+                    .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
+                {
+                    let tid = thread_id.clone();
+                    let selected = app.selected_node_id();
+                    open_thread_detail(app, git, &tid, selected.as_deref())?;
+                }
+            }
             MouseEventKind::ScrollDown => {
                 if let Some(area) = app.ui_rects.node_detail {
                     if rect_contains(area, mouse.column, mouse.row) {
@@ -630,36 +757,123 @@ fn handle_mouse(
             _ => {}
         },
         View::CreateThread => {
-            if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-                && app
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                if app
                     .ui_rects
                     .thread_submit
                     .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
-            {
-                app.thread_form.field = ThreadFormField::Submit;
-                submit_create_thread(app, git, _conn, _db_path)?;
+                {
+                    app.thread_form.field = ThreadFormField::Submit;
+                    submit_create_thread(app, git, _conn, _db_path)?;
+                } else if let Some(area) = app.ui_rects.dropdown {
+                    if let Some(index) = dropdown_item_at(area, mouse.row) {
+                        let max = thread_kind_labels().len();
+                        if index < max {
+                            app.thread_form.kind_index = index;
+                            app.thread_form.field = ThreadFormField::Kind;
+                        }
+                    }
+                } else {
+                    // Click form field labels to focus
+                    let fields = [
+                        ThreadFormField::Kind,
+                        ThreadFormField::Title,
+                        ThreadFormField::Body,
+                        ThreadFormField::Submit,
+                    ];
+                    for (i, field) in fields.iter().enumerate() {
+                        if app.ui_rects.form_fields[i]
+                            .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
+                        {
+                            app.thread_form.field = *field;
+                            break;
+                        }
+                    }
+                }
             }
         }
         View::CreateNode { thread_id } => {
-            if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-                && app
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                if app
                     .ui_rects
                     .node_submit
                     .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
-            {
-                app.node_form.field = NodeFormField::Submit;
-                submit_create_node(app, git, _conn, _db_path, &thread_id)?;
+                {
+                    app.node_form.field = NodeFormField::Submit;
+                    submit_create_node(app, git, _conn, _db_path, &thread_id)?;
+                } else if let Some(area) = app.ui_rects.dropdown {
+                    if let Some(index) = dropdown_item_at(area, mouse.row) {
+                        let max = node_type_labels().len();
+                        if index < max {
+                            app.node_form.node_type_index = index;
+                            app.node_form.field = NodeFormField::Type;
+                        }
+                    }
+                } else {
+                    let fields = [
+                        NodeFormField::Type,
+                        NodeFormField::Body,
+                        NodeFormField::Submit,
+                    ];
+                    for (i, field) in fields.iter().enumerate() {
+                        if app.ui_rects.form_fields[i]
+                            .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
+                        {
+                            app.node_form.field = *field;
+                            break;
+                        }
+                    }
+                }
             }
         }
         View::CreateLink { thread_id, origin } => {
-            if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-                && app
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                if app
                     .ui_rects
                     .link_submit
                     .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
-            {
-                app.link_form.field = LinkFormField::Submit;
-                submit_create_link(app, git, &thread_id, &origin)?;
+                {
+                    app.link_form.field = LinkFormField::Submit;
+                    submit_create_link(app, git, &thread_id, &origin)?;
+                } else if let Some(area) = app.ui_rects.dropdown {
+                    if let Some(index) = dropdown_item_at(area, mouse.row) {
+                        match app.link_form.field {
+                            LinkFormField::Relation => {
+                                if index < link_relation_labels().len() {
+                                    app.link_form.relation_index = index;
+                                }
+                            }
+                            LinkFormField::TargetKind => {
+                                if index < link_target_kind_labels().len() {
+                                    app.link_form.target_kind_index = index;
+                                    app.link_form.target_index = 0;
+                                }
+                            }
+                            LinkFormField::Target => {
+                                let candidates = auto_link_candidates(app, &thread_id);
+                                if index < candidates.len() {
+                                    app.link_form.target_index = index;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                } else {
+                    let fields = [
+                        LinkFormField::Relation,
+                        LinkFormField::TargetKind,
+                        LinkFormField::Target,
+                        LinkFormField::Submit,
+                    ];
+                    for (i, field) in fields.iter().enumerate() {
+                        if app.ui_rects.form_fields[i]
+                            .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
+                        {
+                            app.link_form.field = *field;
+                            break;
+                        }
+                    }
+                }
             }
         }
         View::EditThreadBody | View::EditNodeBody { .. } => {}
@@ -1234,10 +1448,20 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
         .split(area);
 
     let filter_label = app.kind_filter.as_deref().unwrap_or("all");
-    let help = Line::from(format!(
+    let help_text = format!(
         " [q]quit  [enter]detail  [c]create thread  [r]refresh  [f]filter:{filter_label}  [j/k]navigate"
-    ));
-    f.render_widget(Paragraph::new(help), chunks[0]);
+    );
+    // Track filter label position for mouse click cycling
+    let filter_prefix = " [q]quit  [enter]detail  [c]create thread  [r]refresh  ";
+    let filter_start = filter_prefix.len() as u16;
+    let filter_len = format!("[f]filter:{filter_label}").len() as u16;
+    app.ui_rects.filter_label = Some(Rect {
+        x: chunks[0].x + filter_start,
+        y: chunks[0].y,
+        width: filter_len,
+        height: 1,
+    });
+    f.render_widget(Paragraph::new(Line::from(help_text)), chunks[0]);
 
     // Collect rows eagerly so the immutable borrow of `app.threads` ends
     // before we need `&mut app.table_state` for render_stateful_widget.
@@ -1268,8 +1492,24 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Length(12),
         Constraint::Min(20),
     ];
-    let header = Row::new(["ID", "KIND", "STATUS", "CREATED", "UPDATED", "TITLE"])
-        .style(Style::default().add_modifier(Modifier::BOLD));
+    let labels = ["ID", "KIND", "STATUS", "CREATED", "UPDATED", "TITLE"];
+    let indicator = if app.sort_ascending {
+        " \u{25b2}"
+    } else {
+        " \u{25bc}"
+    };
+    let header_cells: Vec<Cell> = SORT_COLUMNS
+        .iter()
+        .zip(labels.iter())
+        .map(|(col, label)| {
+            if *col == app.sort_column {
+                Cell::from(format!("{label}{indicator}"))
+            } else {
+                Cell::from(*label)
+            }
+        })
+        .collect();
+    let header = Row::new(header_cells).style(Style::default().add_modifier(Modifier::BOLD));
     let table = Table::new(rows, widths)
         .header(header)
         .block(Block::default().borders(Borders::ALL).title(" git-forum "))
@@ -1278,6 +1518,40 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
                 .bg(Color::Blue)
                 .add_modifier(Modifier::BOLD),
         );
+
+    // Track column header rects for click-to-sort.
+    // Table area has border (1px each side), header row is at area.y + 1.
+    let table_area = chunks[1];
+    let header_y = table_area.y + 1;
+    let mut col_x = table_area.x + 1; // +1 for left border
+    let inner_width = table_area.width.saturating_sub(2);
+    // Resolve constraints to actual widths
+    let resolved: Vec<u16> = {
+        let fixed_total: u16 = widths
+            .iter()
+            .filter_map(|c| match c {
+                Constraint::Length(l) => Some(*l),
+                _ => None,
+            })
+            .sum();
+        widths
+            .iter()
+            .map(|c| match c {
+                Constraint::Length(l) => *l,
+                Constraint::Min(_) => inner_width.saturating_sub(fixed_total),
+                _ => 0,
+            })
+            .collect()
+    };
+    for (i, w) in resolved.iter().enumerate() {
+        app.ui_rects.column_headers[i] = Some(Rect {
+            x: col_x,
+            y: header_y,
+            width: *w,
+            height: 1,
+        });
+        col_x += w;
+    }
 
     app.ui_rects.list_table = Some(chunks[1]);
     f.render_stateful_widget(table, chunks[1], &mut app.table_state);
@@ -1291,6 +1565,13 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(area);
 
+    // Track [esc/q]back label for mouse click
+    app.ui_rects.help_line = Some(Rect {
+        x: chunks[0].x + 1,
+        y: chunks[0].y,
+        width: 11, // "[esc/q]back"
+        height: 1,
+    });
     f.render_widget(
         Paragraph::new(
             " [esc/q]back  [enter]node  [c]create node  [l]link  [r]refresh  [j/k]select node  [up/down]scroll body",
@@ -1364,6 +1645,13 @@ pub(crate) fn render_node_detail(f: &mut Frame, area: Rect, app: &mut App) {
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(area);
 
+    // Track [esc/q]back label for mouse click
+    app.ui_rects.help_line = Some(Rect {
+        x: chunks[0].x + 1,
+        y: chunks[0].y,
+        width: 11, // "[esc/q]back"
+        height: 1,
+    });
     f.render_widget(
         Paragraph::new(
             " [esc/q]back  [c]create node  [l]link  [x]resolve  [o]reopen  [R]retract  [r]refresh  [j/k]scroll",
@@ -1447,6 +1735,15 @@ pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &mut App) {
         width: main[0].width.saturating_sub(2),
         height: 1,
     });
+    // Track form field rects for click-to-focus (inside block: +1 for border)
+    for (i, field_y) in [1u16, 2, 3, 5].iter().enumerate() {
+        app.ui_rects.form_fields[i] = Some(Rect {
+            x: main[0].x + 1,
+            y: main[0].y + field_y,
+            width: main[0].width.saturating_sub(2),
+            height: 1,
+        });
+    }
 
     let items: Vec<ListItem> = thread_kind_labels()
         .iter()
@@ -1467,6 +1764,8 @@ pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &mut App) {
             .borders(Borders::ALL)
             .title(" thread kinds "),
     );
+    // Track dropdown rect for click-to-select
+    app.ui_rects.dropdown = Some(main[1]);
     f.render_widget(list, main[1]);
 }
 
@@ -1522,6 +1821,15 @@ pub(crate) fn render_create_node(f: &mut Frame, area: Rect, app: &mut App) {
         width: main[0].width.saturating_sub(2),
         height: 1,
     });
+    // Track form field rects: type(1), body(3), submit(5) — rows 2,4 are blank
+    for (i, field_y) in [1u16, 3, 5].iter().enumerate() {
+        app.ui_rects.form_fields[i] = Some(Rect {
+            x: main[0].x + 1,
+            y: main[0].y + field_y,
+            width: main[0].width.saturating_sub(2),
+            height: 1,
+        });
+    }
 
     let items: Vec<ListItem> = node_type_labels()
         .iter()
@@ -1542,6 +1850,7 @@ pub(crate) fn render_create_node(f: &mut Frame, area: Rect, app: &mut App) {
         " node types "
     };
     let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
+    app.ui_rects.dropdown = Some(main[1]);
     f.render_widget(list, main[1]);
 }
 
@@ -1655,6 +1964,17 @@ pub(crate) fn render_create_link(f: &mut Frame, area: Rect, app: &mut App) {
         width: main[0].width.saturating_sub(2),
         height: 1,
     });
+    // Track form field rects: relation(1), target_kind(2), target(3), submit(5)
+    for (i, field_y) in [1u16, 2, 3, 5].iter().enumerate() {
+        app.ui_rects.form_fields[i] = Some(Rect {
+            x: main[0].x + 1,
+            y: main[0].y + field_y,
+            width: main[0].width.saturating_sub(2),
+            height: 1,
+        });
+    }
+    // Track dropdown rect (right pane)
+    app.ui_rects.dropdown = Some(main[1]);
 
     let target_kind = link_target_kind_values()[app.link_form.target_kind_index];
     if app.link_form.field == LinkFormField::Relation {
@@ -1867,7 +2187,7 @@ mod tests {
     }
 
     #[test]
-    fn mouse_click_on_list_row_opens_thread_detail() {
+    fn mouse_single_click_selects_row() {
         let (_dir, git, _paths, conn, db_path) = setup_repo();
         crate::internal::create::create_thread(
             &git,
@@ -1886,6 +2206,7 @@ mod tests {
         let _ = render_to_string(&mut app, 80, 20);
         let area = app.ui_rects.list_table.unwrap();
 
+        // Single click should select, not open
         handle_mouse(
             &mut app,
             mouse_event(
@@ -1899,7 +2220,90 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(app.view, View::List);
+        assert_eq!(app.table_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn mouse_double_click_opens_thread_detail() {
+        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        crate::internal::create::create_thread(
+            &git,
+            crate::internal::event::ThreadKind::Rfc,
+            "Test RFC",
+            None,
+            "human/test-user",
+            &crate::internal::clock::FixedClock {
+                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            },
+            &crate::internal::id::SequentialIdGenerator::new("t"),
+        )
+        .unwrap();
+        reindex::run_reindex(&git, &db_path).unwrap();
+        let mut app = App::new(index::list_threads(&conn).unwrap());
+        let _ = render_to_string(&mut app, 80, 20);
+        let area = app.ui_rects.list_table.unwrap();
+
+        let click = mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            area.x + 2,
+            area.y + 2,
+        );
+        // First click selects
+        handle_mouse(&mut app, click, &git, &conn, &db_path).unwrap();
+        assert_eq!(app.view, View::List);
+        // Second click (same position, quick) opens
+        handle_mouse(&mut app, click, &git, &conn, &db_path).unwrap();
         assert_eq!(app.view, View::ThreadDetail("RFC-0001".into()));
+    }
+
+    #[test]
+    fn click_column_header_sorts_list() {
+        let mut row_a = make_row("ISSUE-0001", "issue", "open", "Alpha");
+        row_a.created_at = "2026-01-01T00:00:00Z".into();
+        row_a.updated_at = "2026-01-03T00:00:00Z".into();
+        let mut row_b = make_row("RFC-0001", "rfc", "draft", "Beta");
+        row_b.created_at = "2026-01-02T00:00:00Z".into();
+        row_b.updated_at = "2026-01-02T00:00:00Z".into();
+        let mut app = App::new(vec![row_a, row_b]);
+        // Default sort: Updated descending → ISSUE-0001 first (updated 01-03)
+        assert_eq!(app.visible_threads()[0].id, "ISSUE-0001");
+
+        let _ = render_to_string(&mut app, 100, 20);
+
+        // Click on the "CREATED" column header (4th column)
+        let header_rect = app.ui_rects.column_headers[3].unwrap();
+        let click = mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            header_rect.x + 1,
+            header_rect.y,
+        );
+        handle_mouse(
+            &mut app,
+            click,
+            &GitOps::new(std::path::PathBuf::from("/")),
+            &rusqlite::Connection::open_in_memory().unwrap(),
+            std::path::Path::new("/tmp/test.db"),
+        )
+        .unwrap();
+
+        // Now sorted by Created ascending → ISSUE-0001 first (created 01-01)
+        assert_eq!(app.sort_column, SortColumn::Created);
+        assert!(app.sort_ascending);
+        assert_eq!(app.visible_threads()[0].id, "ISSUE-0001");
+        assert_eq!(app.visible_threads()[1].id, "RFC-0001");
+
+        // Click same header again → toggles to descending
+        handle_mouse(
+            &mut app,
+            click,
+            &GitOps::new(std::path::PathBuf::from("/")),
+            &rusqlite::Connection::open_in_memory().unwrap(),
+            std::path::Path::new("/tmp/test.db"),
+        )
+        .unwrap();
+        assert!(!app.sort_ascending);
+        assert_eq!(app.visible_threads()[0].id, "RFC-0001");
     }
 
     #[test]

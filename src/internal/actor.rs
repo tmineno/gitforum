@@ -23,11 +23,18 @@ pub struct Actor {
     pub key_id: Option<String>,
 }
 
-/// Resolve the current actor ID from git config user.name.
+/// Resolve the current actor ID.
 ///
-/// Format: `human/<slug>` where slug is lowercased, spaces → hyphens.
-/// Falls back to `human/user` if git config is unavailable.
+/// Resolution order:
+/// 1. `GIT_FORUM_ACTOR` environment variable (highest priority after `--as`)
+/// 2. Git config `user.name` → `human/<slug>` (lowercased, spaces → hyphens)
+/// 3. `human/user` fallback
 pub fn current_actor(git: &GitOps) -> String {
+    if let Ok(actor) = std::env::var("GIT_FORUM_ACTOR") {
+        if !actor.is_empty() {
+            return actor;
+        }
+    }
     match git.run(&["config", "user.name"]) {
         Ok(name) if !name.is_empty() => {
             let slug = name.to_lowercase().replace(' ', "-");

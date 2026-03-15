@@ -175,6 +175,10 @@ The target workflow uses these node types:
 - `action`
 - `risk`
 - `assumption`
+- `review`
+
+`review` is a holistic analysis of the entire thread, distinct from `claim` (single assertion) and
+`summary` (consensus digest). Reviews are informational and typically not resolvable.
 
 `objection` and `action` are open when created. `resolve` closes them. `reopen` reopens them.
 Retracted nodes remain in history but no longer count as open.

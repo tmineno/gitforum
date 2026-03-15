@@ -38,8 +38,10 @@ git-forum --help-llm
   - `git forum node show` resolves prefixes globally
   - `revise`, `retract`, `resolve`, and `reopen` resolve prefixes inside the specified thread
 - actor:
-  - if `--as` is omitted, the current actor is inferred from Git config
-  - you can override it explicitly, for example `--as human/alice` or `--as ai/reviewer`
+  - resolution order: `--as` flag → `GIT_FORUM_ACTOR` env var → Git config `user.name`
+  - `--as human/alice` or `--as ai/reviewer` overrides everything
+  - `GIT_FORUM_ACTOR=ai/reviewer` persists across commands without repeating `--as`
+  - if neither is set, the actor is inferred from Git config as `human/<slug>`
 
 ## Preferred model
 
@@ -234,6 +236,10 @@ git forum revise RFC-0001 6f1d2c3b \
   --body "What is the migration and rollback plan?"
 ```
 
+Use `revise` to update an existing node when the intent is the same but the content needs
+correction. For example, revise a summary to incorporate new objections rather than adding a
+second summary node. The revision history is preserved and visible in `git forum node show`.
+
 ### Retract / resolve / reopen a node
 
 ```bash
@@ -367,17 +373,20 @@ Current controls:
 
 - list view:
   - `j` / `k`: move between threads
-  - left click on a thread row: open thread detail
+  - single click on a thread row: select it
+  - double click on a thread row: open thread detail
   - `enter`: open thread detail
   - `c`: create a new thread
   - `f`: cycle kind filter
   - `r`: refresh from Git into the local index
+  - click a column header: sort by that column (click again to toggle ascending/descending)
   - mouse wheel: move through the list
   - `q`: quit
 - thread detail view:
   - `j` / `k`: move between nodes in the thread
   - `up` / `down`: scroll the thread body and timeline pane
-  - left click on a node row: open node detail
+  - single click on a node row: select it
+  - double click on a node row: open node detail
   - mouse wheel over the left pane: scroll the thread body and timeline pane
   - `enter`: open the selected node detail
   - `c`: create a new node in the current thread
@@ -549,6 +558,57 @@ git forum say ISSUE-0001 --type action --body "Wire trait backend behind feature
 git forum evidence add ISSUE-0001 --kind test --ref tests/backend_trait.rs
 git forum state ISSUE-0001 closed
 ```
+
+## AI-agent workflow pattern
+
+A common pattern with coding agents (AI reviewer, AI implementer) uses the same CLI surface as
+human participants. The typical flow is:
+
+1. A human or agent opens an RFC and adds initial claims.
+2. An AI reviewer posts objections and questions using `--as ai/reviewer`.
+3. An implementer (human or agent) replies to each objection with evidence or claims.
+4. A human resolves addressed objections, adds a summary, and signs the acceptance.
+
+```bash
+# 1. Human opens the RFC
+git forum rfc new "Add caching layer" --body "Goal and constraints."
+
+# 2. AI reviewer raises concerns
+GIT_FORUM_ACTOR=ai/reviewer
+git forum objection RFC-0001 "No eviction strategy described."
+git forum question RFC-0001 "What is the expected cache hit ratio?"
+
+# 3. Implementer responds to the objection
+git forum claim RFC-0001 "LRU eviction with 10-minute TTL." \
+  --reply-to <OBJECTION_NODE_ID>
+
+# 4. Human resolves the objection, summarizes, and accepts
+git forum resolve RFC-0001 <OBJECTION_NODE_ID>
+git forum summary RFC-0001 "Caching with LRU eviction approved."
+git forum state RFC-0001 proposed
+git forum state RFC-0001 under-review
+git forum state RFC-0001 accepted --sign human/alice
+```
+
+## Linking implementation commits as evidence
+
+After implementing work on a branch, link the commits back to the RFC or issue so that the
+decision trail connects to the code:
+
+```bash
+# Link the commit that implements the feature
+git forum evidence add ISSUE-0001 --kind commit --ref HEAD
+git forum evidence add ISSUE-0001 --kind commit --ref abc123
+
+# Link a test file as evidence
+git forum evidence add ISSUE-0001 --kind test --ref tests/cache_test.rs
+
+# Link back to the RFC that motivated this issue
+git forum evidence add ISSUE-0001 --kind thread --ref RFC-0001
+```
+
+`--kind commit --ref` accepts any Git revision expression (SHA, branch, tag, `HEAD~1`). The
+resolved commit OID is stored canonically.
 
 ## Concurrency
 
