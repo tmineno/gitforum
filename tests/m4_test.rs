@@ -200,6 +200,7 @@ fn node_show_includes_parent_thread_links() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 

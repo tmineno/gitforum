@@ -59,6 +59,14 @@ enum Commands {
     },
     /// Show thread details
     Show { thread_id: String },
+    /// Show unresolved items for a thread or all threads
+    Status {
+        /// Thread ID (omit for --all)
+        thread_id: Option<String>,
+        /// Show status across all open threads
+        #[arg(long)]
+        all: bool,
+    },
     /// Node sub-commands
     Node {
         #[command(subcommand)]
@@ -69,55 +77,113 @@ enum Commands {
         #[command(subcommand)]
         cmd: BranchCmd,
     },
+    /// Revise the body of a thread
+    ReviseBody {
+        thread_id: String,
+        /// New thread body text (use "-" to read from stdin)
+        #[arg(long, conflicts_with = "body_file")]
+        body: Option<String>,
+        /// Read new thread body from a file
+        #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        /// Node IDs to mark as incorporated into this body revision
+        #[arg(long = "incorporates", value_name = "NODE_ID")]
+        incorporates: Vec<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
     /// Add a typed discussion node to a thread
     Say {
         thread_id: String,
         #[arg(long = "type", value_name = "NODE_TYPE")]
         node_type: NodeType,
-        #[arg(long)]
-        body: String,
+        #[arg(long, conflicts_with = "body_file")]
+        body: Option<String>,
+        /// Read node body from a file
+        #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        /// Reply to a specific node
+        #[arg(long = "reply-to", value_name = "NODE_ID")]
+        reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
     /// Add a claim node to a thread
     Claim {
         thread_id: String,
-        body: String,
+        /// Node body (positional or use --body/--body-file)
+        body: Option<String>,
+        /// Read node body from a file
+        #[arg(long = "body-file", value_name = "PATH")]
+        body_file: Option<PathBuf>,
+        #[arg(long = "reply-to", value_name = "NODE_ID")]
+        reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
     /// Add a question node to a thread
     Question {
         thread_id: String,
-        body: String,
+        body: Option<String>,
+        #[arg(long = "body-file", value_name = "PATH")]
+        body_file: Option<PathBuf>,
+        #[arg(long = "reply-to", value_name = "NODE_ID")]
+        reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
     /// Add an objection node to a thread
     Objection {
         thread_id: String,
-        body: String,
+        body: Option<String>,
+        #[arg(long = "body-file", value_name = "PATH")]
+        body_file: Option<PathBuf>,
+        #[arg(long = "reply-to", value_name = "NODE_ID")]
+        reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
     /// Add a summary node to a thread
     Summary {
         thread_id: String,
-        body: String,
+        body: Option<String>,
+        #[arg(long = "body-file", value_name = "PATH")]
+        body_file: Option<PathBuf>,
+        #[arg(long = "reply-to", value_name = "NODE_ID")]
+        reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
     /// Add an action node to a thread
     Action {
         thread_id: String,
-        body: String,
+        body: Option<String>,
+        #[arg(long = "body-file", value_name = "PATH")]
+        body_file: Option<PathBuf>,
+        #[arg(long = "reply-to", value_name = "NODE_ID")]
+        reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
     /// Add a risk node to a thread
     Risk {
         thread_id: String,
-        body: String,
+        body: Option<String>,
+        #[arg(long = "body-file", value_name = "PATH")]
+        body_file: Option<PathBuf>,
+        #[arg(long = "reply-to", value_name = "NODE_ID")]
+        reply_to: Option<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// Add a review node to a thread
+    Review {
+        thread_id: String,
+        body: Option<String>,
+        #[arg(long = "body-file", value_name = "PATH")]
+        body_file: Option<PathBuf>,
+        #[arg(long = "reply-to", value_name = "NODE_ID")]
+        reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
@@ -129,8 +195,11 @@ enum Commands {
             help = "Full node ID or unique prefix within the thread (8+ chars unless exact match)"
         )]
         node_id: String,
-        #[arg(long)]
-        body: String,
+        #[arg(long, conflicts_with = "body_file")]
+        body: Option<String>,
+        /// Read revised body from a file
+        #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
+        body_file: Option<PathBuf>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
@@ -325,6 +394,18 @@ enum ThreadCmd {
         #[arg(long, value_name = "BRANCH")]
         branch: Option<String>,
     },
+    /// Revise the body of a thread
+    ReviseBody {
+        thread_id: String,
+        #[arg(long, conflicts_with = "body_file")]
+        body: Option<String>,
+        #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        #[arg(long = "incorporates", value_name = "NODE_ID")]
+        incorporates: Vec<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
 }
 
 fn main() -> Result<(), ForumError> {
@@ -416,6 +497,22 @@ fn main() -> Result<(), ForumError> {
             print!("{}", show::render_show(&state));
         }
 
+        Commands::Status { thread_id, all } => {
+            let (git, _paths) = discover_repo_with_init_warning()?;
+            if all {
+                let states = list_thread_states(&git, None, None)?;
+                let refs: Vec<&thread::ThreadState> = states.iter().collect();
+                print!("{}", show::render_status_all(&refs));
+            } else if let Some(thread_id) = thread_id {
+                let state = thread::replay_thread(&git, &thread_id)?;
+                print!("{}", show::render_status(&state));
+            } else {
+                return Err(ForumError::Config(
+                    "usage: git forum status <THREAD_ID> or git forum status --all".into(),
+                ));
+            }
+        }
+
         Commands::Node { cmd } => match cmd {
             NodeCmd::Show { node_id } => {
                 let (git, _paths) = discover_repo_with_init_warning()?;
@@ -446,29 +543,79 @@ fn main() -> Result<(), ForumError> {
             }
         },
 
-        Commands::Say {
+        Commands::ReviseBody {
             thread_id,
-            node_type,
             body,
+            body_file,
+            incorporates,
             as_actor,
         } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
-            let node_id = say::say_node(&git, &thread_id, node_type, &body, &actor, &clock, &ids)?;
+            let body_text = resolve_body_required(body, body_file)?;
+            say::revise_body(
+                &git,
+                &thread_id,
+                &body_text,
+                &incorporates,
+                &actor,
+                &clock,
+                &ids,
+            )?;
+            println!("Body revised for {thread_id}");
+        }
+
+        Commands::Say {
+            thread_id,
+            node_type,
+            body,
+            body_file,
+            reply_to,
+            as_actor,
+        } => {
+            let (git, _paths) = discover_repo_with_init_warning()?;
+            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+            let body_text = resolve_body_required(body, body_file)?;
+            let resolved_reply = resolve_reply_to(&git, &thread_id, reply_to.as_deref())?;
+            let node_id = say::say_node(
+                &git,
+                &thread_id,
+                node_type,
+                &body_text,
+                &actor,
+                &clock,
+                &ids,
+                resolved_reply.as_deref(),
+            )?;
             println!("Added {node_type} {node_id}");
         }
         Commands::Claim {
             thread_id,
             body,
-            as_actor,
-        } => run_shorthand_say(&thread_id, &body, as_actor, NodeType::Claim, &clock, &ids)?,
-        Commands::Question {
-            thread_id,
-            body,
+            body_file,
+            reply_to,
             as_actor,
         } => run_shorthand_say(
             &thread_id,
-            &body,
+            body,
+            body_file,
+            reply_to,
+            as_actor,
+            NodeType::Claim,
+            &clock,
+            &ids,
+        )?,
+        Commands::Question {
+            thread_id,
+            body,
+            body_file,
+            reply_to,
+            as_actor,
+        } => run_shorthand_say(
+            &thread_id,
+            body,
+            body_file,
+            reply_to,
             as_actor,
             NodeType::Question,
             &clock,
@@ -477,10 +624,14 @@ fn main() -> Result<(), ForumError> {
         Commands::Objection {
             thread_id,
             body,
+            body_file,
+            reply_to,
             as_actor,
         } => run_shorthand_say(
             &thread_id,
-            &body,
+            body,
+            body_file,
+            reply_to,
             as_actor,
             NodeType::Objection,
             &clock,
@@ -489,29 +640,82 @@ fn main() -> Result<(), ForumError> {
         Commands::Summary {
             thread_id,
             body,
+            body_file,
+            reply_to,
             as_actor,
-        } => run_shorthand_say(&thread_id, &body, as_actor, NodeType::Summary, &clock, &ids)?,
+        } => run_shorthand_say(
+            &thread_id,
+            body,
+            body_file,
+            reply_to,
+            as_actor,
+            NodeType::Summary,
+            &clock,
+            &ids,
+        )?,
         Commands::Action {
             thread_id,
             body,
+            body_file,
+            reply_to,
             as_actor,
-        } => run_shorthand_say(&thread_id, &body, as_actor, NodeType::Action, &clock, &ids)?,
+        } => run_shorthand_say(
+            &thread_id,
+            body,
+            body_file,
+            reply_to,
+            as_actor,
+            NodeType::Action,
+            &clock,
+            &ids,
+        )?,
         Commands::Risk {
             thread_id,
             body,
+            body_file,
+            reply_to,
             as_actor,
-        } => run_shorthand_say(&thread_id, &body, as_actor, NodeType::Risk, &clock, &ids)?,
+        } => run_shorthand_say(
+            &thread_id,
+            body,
+            body_file,
+            reply_to,
+            as_actor,
+            NodeType::Risk,
+            &clock,
+            &ids,
+        )?,
+        Commands::Review {
+            thread_id,
+            body,
+            body_file,
+            reply_to,
+            as_actor,
+        } => run_shorthand_say(
+            &thread_id,
+            body,
+            body_file,
+            reply_to,
+            as_actor,
+            NodeType::Review,
+            &clock,
+            &ids,
+        )?,
 
         Commands::Revise {
             thread_id,
             node_id,
             body,
+            body_file,
             as_actor,
         } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+            let body_text = resolve_body_required(body, body_file)?;
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
-            say::revise_node(&git, &thread_id, &resolved, &body, &actor, &clock, &ids)?;
+            say::revise_node(
+                &git, &thread_id, &resolved, &body_text, &actor, &clock, &ids,
+            )?;
             println!("Revised {resolved}");
         }
 
@@ -737,9 +941,26 @@ fn main() -> Result<(), ForumError> {
     Ok(())
 }
 
+fn resolve_reply_to(
+    git: &GitOps,
+    thread_id: &str,
+    reply_to: Option<&str>,
+) -> Result<Option<String>, ForumError> {
+    match reply_to {
+        Some(node_ref) => {
+            let resolved = thread::resolve_node_id_in_thread(git, thread_id, node_ref)?;
+            Ok(Some(resolved))
+        }
+        None => Ok(None),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_shorthand_say(
     thread_id: &str,
-    body: &str,
+    body: Option<String>,
+    body_file: Option<PathBuf>,
+    reply_to: Option<String>,
     as_actor: Option<String>,
     node_type: NodeType,
     clock: &dyn git_forum::internal::clock::Clock,
@@ -747,9 +968,28 @@ fn run_shorthand_say(
 ) -> Result<(), ForumError> {
     let (git, _paths) = discover_repo_with_init_warning()?;
     let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
-    let node_id = say::say_node(&git, thread_id, node_type, body, &actor, clock, ids)?;
+    let body_text = resolve_body_required(body, body_file)?;
+    let resolved_reply = resolve_reply_to(&git, thread_id, reply_to.as_deref())?;
+    let node_id = say::say_node(
+        &git,
+        thread_id,
+        node_type,
+        &body_text,
+        &actor,
+        clock,
+        ids,
+        resolved_reply.as_deref(),
+    )?;
     println!("Added {node_type} {node_id}");
     Ok(())
+}
+
+fn resolve_body_required(
+    body: Option<String>,
+    body_file: Option<PathBuf>,
+) -> Result<String, ForumError> {
+    resolve_thread_body(body, body_file)?
+        .ok_or_else(|| ForumError::Config("--body or --body-file is required".into()))
 }
 
 fn run_thread_cmd(
@@ -796,6 +1036,27 @@ fn run_thread_cmd(
             let states = list_thread_states(&git, Some(kind), branch.as_deref())?;
             let refs: Vec<&thread::ThreadState> = states.iter().collect();
             print!("{}", show::render_ls(&refs));
+        }
+        ThreadCmd::ReviseBody {
+            thread_id,
+            body,
+            body_file,
+            incorporates,
+            as_actor,
+        } => {
+            let (git, _paths) = discover_repo_with_init_warning()?;
+            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+            let body_text = resolve_body_required(body, body_file)?;
+            say::revise_body(
+                &git,
+                &thread_id,
+                &body_text,
+                &incorporates,
+                &actor,
+                clock,
+                ids,
+            )?;
+            println!("Body revised for {thread_id}");
         }
     }
     Ok(())

@@ -34,6 +34,10 @@ pub struct ThreadState {
     pub evidence_items: Vec<Evidence>,
     /// Links to other threads via Link events.
     pub links: Vec<ThreadLink>,
+    /// Number of times the thread body has been revised.
+    pub body_revision_count: usize,
+    /// Node IDs that have been incorporated into the body.
+    pub incorporated_node_ids: Vec<String>,
 }
 
 /// Resolved view of a single node inside a thread.
@@ -61,6 +65,14 @@ impl ThreadState {
         self.nodes
             .iter()
             .filter(|n| n.node_type == NodeType::Action && n.is_open())
+            .collect()
+    }
+
+    /// Direct replies to a given node.
+    pub fn replies_to(&self, node_id: &str) -> Vec<&Node> {
+        self.nodes
+            .iter()
+            .filter(|n| n.reply_to.as_deref() == Some(node_id))
             .collect()
     }
 
@@ -108,6 +120,8 @@ pub fn replay(events: &[Event]) -> ForumResult<ThreadState> {
         nodes: vec![],
         evidence_items: vec![],
         links: vec![],
+        body_revision_count: 0,
+        incorporated_node_ids: vec![],
     };
 
     for ev in &events[1..] {
@@ -137,6 +151,8 @@ fn apply_event(state: &mut ThreadState, event: &Event) -> ForumResult<()> {
                     created_at: event.created_at,
                     resolved: false,
                     retracted: false,
+                    incorporated: false,
+                    reply_to: event.reply_to.clone(),
                 });
             }
         }
@@ -166,6 +182,21 @@ fn apply_event(state: &mut ThreadState, event: &Event) -> ForumResult<()> {
                 if let Some(node) = state.nodes.iter_mut().find(|n| &n.node_id == node_id) {
                     node.resolved = false;
                     node.retracted = false;
+                    node.incorporated = false;
+                }
+            }
+        }
+        EventType::ReviseBody => {
+            if let Some(ref body) = event.body {
+                state.body = Some(body.clone());
+                state.body_revision_count += 1;
+            }
+            for node_id in &event.incorporated_node_ids {
+                if let Some(node) = state.nodes.iter_mut().find(|n| n.node_id == *node_id) {
+                    node.incorporated = true;
+                }
+                if !state.incorporated_node_ids.contains(node_id) {
+                    state.incorporated_node_ids.push(node_id.clone());
                 }
             }
         }
@@ -414,6 +445,8 @@ mod tests {
             evidence: None,
             link_rel: None,
             branch: None,
+            incorporated_node_ids: vec![],
+            reply_to: None,
         }
     }
 
@@ -436,6 +469,8 @@ mod tests {
             evidence: None,
             link_rel: None,
             branch: None,
+            incorporated_node_ids: vec![],
+            reply_to: None,
         }
     }
 

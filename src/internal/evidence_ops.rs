@@ -43,6 +43,8 @@ pub fn add_evidence(
         }),
         link_rel: None,
         branch: None,
+        incorporated_node_ids: vec![],
+        reply_to: None,
     };
     super::event::write_event(git, &ev)
 }
@@ -90,6 +92,8 @@ pub fn add_thread_link(
         evidence: None,
         link_rel: Some(rel.to_string()),
         branch: None,
+        incorporated_node_ids: vec![],
+        reply_to: None,
     };
     super::event::write_event(git, &ev)
 }

@@ -55,6 +55,7 @@ fn add_node(
             instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
         },
         &SequentialIdGenerator::new("n"),
+        None,
     )
     .unwrap();
 }

@@ -108,6 +108,7 @@ fn say_creates_node_in_replay() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -139,6 +140,7 @@ fn objection_appears_in_open_objections() {
         "human/bob",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -162,6 +164,7 @@ fn resolve_removes_from_open_objections() {
         "human/bob",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -195,6 +198,7 @@ fn reopen_restores_to_open_objections() {
         "human/bob",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -236,6 +240,7 @@ fn retract_removes_node_from_open() {
         "human/bob",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -268,6 +273,7 @@ fn revise_updates_node_body() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -300,6 +306,7 @@ fn latest_summary_tracks_most_recent() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -311,6 +318,7 @@ fn latest_summary_tracks_most_recent() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -333,6 +341,7 @@ fn open_actions_tracks_unresolved_actions() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -417,6 +426,7 @@ fn change_state_fails_guard_no_open_objections() {
         "human/bob",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -463,6 +473,7 @@ fn change_state_passes_all_guards() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -509,6 +520,7 @@ fn change_state_issue_close_fails_guard_no_open_actions() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -561,6 +573,7 @@ fn change_state_issue_close_can_resolve_open_actions() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -623,6 +636,7 @@ fn verify_reports_open_objection_violation() {
         "human/bob",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -659,6 +673,7 @@ fn verify_reports_open_action_violation_for_issue_close() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -694,6 +709,7 @@ fn show_includes_open_objections_section() {
         "human/bob",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -718,6 +734,7 @@ fn show_includes_latest_summary_section() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -755,6 +772,7 @@ fn show_timeline_includes_say_events() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -780,6 +798,7 @@ fn find_node_returns_current_body_and_history() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
     say::revise_node(
@@ -823,6 +842,7 @@ fn find_node_accepts_unique_global_prefix() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -845,6 +865,7 @@ fn resolve_node_id_rejects_short_prefix() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -856,6 +877,7 @@ fn resolve_node_id_rejects_short_prefix() {
         "human/alice",
         &fixed_clock(),
         &ids,
+        None,
     )
     .unwrap();
 
@@ -897,6 +919,8 @@ fn resolve_node_id_in_thread_scopes_prefix_lookup() {
         evidence: None,
         link_rel: None,
         branch: None,
+        incorporated_node_ids: vec![],
+        reply_to: None,
     };
     let second_event = Event {
         event_id: String::new(),
@@ -916,6 +940,8 @@ fn resolve_node_id_in_thread_scopes_prefix_lookup() {
         evidence: None,
         link_rel: None,
         branch: None,
+        incorporated_node_ids: vec![],
+        reply_to: None,
     };
     event::write_event(&git, &first_event).unwrap();
     event::write_event(&git, &second_event).unwrap();

@@ -31,6 +31,26 @@ pub fn render_show(state: &ThreadState) -> String {
     }
     lines.push(String::new());
 
+    if state.body_revision_count > 0 {
+        lines.push(format!("body revisions: {}", state.body_revision_count));
+    }
+
+    let incorporated: Vec<&super::node::Node> =
+        state.nodes.iter().filter(|n| n.incorporated).collect();
+    if !incorporated.is_empty() {
+        lines.push(format!("incorporated nodes: {}", incorporated.len()));
+        for node in &incorporated {
+            let preview = truncate_body(&node.body, 60);
+            lines.push(format!(
+                "  - {} {} {}",
+                short_oid(&node.node_id),
+                node.node_type,
+                preview
+            ));
+        }
+        lines.push(String::new());
+    }
+
     let open_obj = state.open_objections();
     if !open_obj.is_empty() {
         lines.push(format!("open objections: {}", open_obj.len()));
@@ -74,6 +94,33 @@ pub fn render_show(state: &ThreadState) -> String {
         lines.push(String::new());
     }
 
+    // Conversation grouping: show reply chains grouped by root node
+    let conversations = build_conversations(&state.nodes);
+    if !conversations.is_empty() {
+        lines.push(format!("conversations: {}", conversations.len()));
+        for convo in &conversations {
+            let root = convo[0];
+            let status = node_status(root);
+            lines.push(format!(
+                "  {} {} [{}] {}",
+                short_oid(&root.node_id),
+                root.node_type,
+                status,
+                truncate_body(&root.body, 50)
+            ));
+            for reply in &convo[1..] {
+                lines.push(format!(
+                    "    -> {} {} {} {}",
+                    short_oid(&reply.node_id),
+                    reply.node_type,
+                    reply.actor,
+                    truncate_body(&reply.body, 50)
+                ));
+            }
+        }
+        lines.push(String::new());
+    }
+
     lines.push("timeline:".into());
     let widths = timeline_widths(&state.events);
     lines.push(format_timeline_header(&widths));
@@ -106,6 +153,9 @@ pub fn render_node_show(lookup: &NodeLookup) -> String {
         node.created_at.format("%Y-%m-%dT%H:%M:%SZ")
     ));
     lines.push(format!("by:       {}", node.actor));
+    if let Some(ref parent_id) = node.reply_to {
+        lines.push(format!("reply-to: {}", short_oid(parent_id)));
+    }
     lines.push("body:".into());
     for line in node.body.lines() {
         lines.push(format!("  {line}"));
@@ -151,7 +201,9 @@ fn event_detail(event: &Event) -> String {
                 String::new()
             }
         }
-        EventType::Say | EventType::Edit => event.body.clone().unwrap_or_default(),
+        EventType::Say | EventType::Edit | EventType::ReviseBody => {
+            event.body.clone().unwrap_or_default()
+        }
         _ => String::new(),
     }
 }
@@ -159,6 +211,8 @@ fn event_detail(event: &Event) -> String {
 fn node_status(node: &super::node::Node) -> &'static str {
     if node.retracted {
         "retracted"
+    } else if node.incorporated {
+        "incorporated"
     } else if node.resolved {
         "resolved"
     } else {
@@ -184,6 +238,7 @@ fn event_display_type(event: &Event) -> String {
             .node_type
             .map(|node_type| node_type.to_string())
             .unwrap_or_else(|| event.event_type.to_string()),
+        EventType::ReviseBody => "revise-body".to_string(),
         _ => event.event_type.to_string(),
     }
 }
@@ -265,6 +320,57 @@ fn format_timeline_entry(event: &Event, widths: &TimelineWidths) -> String {
     )
 }
 
+/// Build conversation groups from nodes with reply chains.
+///
+/// A conversation is a root node (no reply_to, or reply_to not found in nodes)
+/// plus all transitive replies to it, in chronological order.
+/// Only nodes that are part of a reply chain (have reply_to or are replied to) are included.
+fn build_conversations(nodes: &[super::node::Node]) -> Vec<Vec<&super::node::Node>> {
+    use std::collections::{HashMap, HashSet};
+
+    // Build parent->children map
+    let node_ids: HashSet<&str> = nodes.iter().map(|n| n.node_id.as_str()).collect();
+    let mut children: HashMap<&str, Vec<&super::node::Node>> = HashMap::new();
+    let mut has_parent: HashSet<&str> = HashSet::new();
+
+    for node in nodes {
+        if let Some(ref parent_id) = node.reply_to {
+            if node_ids.contains(parent_id.as_str()) {
+                children.entry(parent_id.as_str()).or_default().push(node);
+                has_parent.insert(node.node_id.as_str());
+            }
+        }
+    }
+
+    // Roots: nodes that have children OR are replied to, but have no parent in the thread
+    let mut roots: Vec<&super::node::Node> = Vec::new();
+    for node in nodes {
+        if !has_parent.contains(node.node_id.as_str())
+            && children.contains_key(node.node_id.as_str())
+        {
+            roots.push(node);
+        }
+    }
+
+    // Build conversation chains via BFS
+    let mut conversations = Vec::new();
+    for root in roots {
+        let mut chain = vec![root];
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(root.node_id.as_str());
+        while let Some(parent_id) = queue.pop_front() {
+            if let Some(replies) = children.get(parent_id) {
+                for reply in replies {
+                    chain.push(reply);
+                    queue.push_back(reply.node_id.as_str());
+                }
+            }
+        }
+        conversations.push(chain);
+    }
+    conversations
+}
+
 fn truncate_body(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -276,6 +382,78 @@ fn truncate_body(s: &str, max: usize) -> String {
 fn single_line_preview(s: &str, max: usize) -> String {
     let joined = s.lines().collect::<Vec<_>>().join(" / ");
     truncate_body(&joined, max)
+}
+
+/// Render `git forum status` output for a single thread.
+pub fn render_status(state: &ThreadState) -> String {
+    let mut lines: Vec<String> = Vec::new();
+
+    lines.push(format!(
+        "{:<12} {} ({})",
+        state.id, state.title, state.status
+    ));
+
+    let open_obj = state.open_objections();
+    let open_act = state.open_actions();
+    let open_questions: Vec<&super::node::Node> = state
+        .nodes
+        .iter()
+        .filter(|n| n.node_type == super::event::NodeType::Question && n.is_open())
+        .collect();
+
+    if open_obj.is_empty() && open_act.is_empty() && open_questions.is_empty() {
+        lines.push("  no open items".into());
+    } else {
+        if !open_obj.is_empty() {
+            lines.push(format!("  objections ({})", open_obj.len()));
+            for node in &open_obj {
+                lines.push(format!(
+                    "    - {} {}",
+                    short_oid(&node.node_id),
+                    truncate_body(&node.body, 60)
+                ));
+            }
+        }
+        if !open_act.is_empty() {
+            lines.push(format!("  actions ({})", open_act.len()));
+            for node in &open_act {
+                lines.push(format!(
+                    "    - {} {}",
+                    short_oid(&node.node_id),
+                    truncate_body(&node.body, 60)
+                ));
+            }
+        }
+        if !open_questions.is_empty() {
+            lines.push(format!("  questions ({})", open_questions.len()));
+            for node in &open_questions {
+                lines.push(format!(
+                    "    - {} {}",
+                    short_oid(&node.node_id),
+                    truncate_body(&node.body, 60)
+                ));
+            }
+        }
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+/// Render `git forum status --all` output across multiple threads.
+pub fn render_status_all(states: &[&ThreadState]) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut any_open = false;
+    for state in states {
+        let text = render_status(state);
+        if !text.contains("no open items") {
+            lines.push(text);
+            any_open = true;
+        }
+    }
+    if !any_open {
+        return "no open items across any thread\n".into();
+    }
+    lines.join("")
 }
 
 /// Render search results from the local index.
@@ -314,7 +492,7 @@ fn short_oid(id: &str) -> &str {
 
 /// Render `git forum ls` output for a list of threads.
 ///
-/// Output columns: ID, KIND, STATUS, BRANCH, TITLE.
+/// Output columns: ID, KIND, STATUS, BRANCH, CREATED, UPDATED, TITLE.
 /// Deterministic when thread IDs and statuses are deterministic.
 pub fn render_ls(states: &[&ThreadState]) -> String {
     if states.is_empty() {
@@ -344,19 +522,30 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
         .max()
         .unwrap_or(12)
         .max(12);
+    let date_width = 10; // YYYY-MM-DD
     let mut lines: Vec<String> = Vec::new();
     lines.push(format!(
-        "{:<id_width$}  {:<kind_width$}  {:<status_width$}  {:<branch_width$}  {}",
-        "ID", "KIND", "STATUS", "BRANCH", "TITLE"
+        "{:<id_width$}  {:<kind_width$}  {:<status_width$}  {:<branch_width$}  {:<date_width$}  {:<date_width$}  {}",
+        "ID", "KIND", "STATUS", "BRANCH", "CREATED", "UPDATED", "TITLE"
     ));
-    lines.push("-".repeat(id_width + kind_width + status_width + branch_width + 10));
+    lines.push(
+        "-".repeat(id_width + kind_width + status_width + branch_width + date_width * 2 + 14),
+    );
     for s in states {
+        let created = &s.created_at.format("%Y-%m-%d").to_string();
+        let updated = s
+            .events
+            .last()
+            .map(|e| e.created_at.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| "-".into());
         lines.push(format!(
-            "{:<id_width$}  {:<kind_width$}  {:<status_width$}  {:<branch_width$}  {}",
+            "{:<id_width$}  {:<kind_width$}  {:<status_width$}  {:<branch_width$}  {:<date_width$}  {:<date_width$}  {}",
             s.id,
             s.kind.to_string(),
             s.status,
             s.branch.as_deref().unwrap_or("-"),
+            created,
+            updated,
             s.title,
         ));
     }
@@ -401,10 +590,14 @@ mod tests {
                 evidence: None,
                 link_rel: None,
                 branch: None,
+                incorporated_node_ids: vec![],
+                reply_to: None,
             }],
             nodes: vec![],
             evidence_items: vec![],
             links: vec![],
+            body_revision_count: 0,
+            incorporated_node_ids: vec![],
         }
     }
 
@@ -440,6 +633,8 @@ mod tests {
                 created_at: t,
                 resolved: false,
                 retracted: false,
+                incorporated: false,
+                reply_to: None,
             },
             links: vec![crate::internal::thread::ThreadLink {
                 target_thread_id: "ISSUE-0001".into(),
@@ -463,6 +658,8 @@ mod tests {
                 evidence: None,
                 link_rel: None,
                 branch: None,
+                incorporated_node_ids: vec![],
+                reply_to: None,
             }],
         };
 

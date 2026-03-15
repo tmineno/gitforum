@@ -126,11 +126,14 @@ git forum show RFC-0001
 - status
 - created_at
 - created_by
+- body revisions count (if body has been revised)
+- incorporated nodes (if any)
 - open objections
 - open actions
 - latest summary
 - evidence section
 - links section
+- conversations (reply chains grouped by root node)
 - timeline
 
 The timeline is displayed in `date node_id event_id author type body` order.
@@ -170,6 +173,8 @@ matching node under the thread row.
 ### Add a node
 
 Use shorthand commands for common node types. `say --type` remains the primitive fallback.
+All node commands accept `--body`, `--body-file`, and `--body -` (stdin) in addition to a
+positional body argument.
 
 ```bash
 git forum claim RFC-0001 "Need a stable plugin-facing boundary."
@@ -178,6 +183,9 @@ git forum objection RFC-0001 "Benchmarks are missing."
 git forum summary RFC-0001 "Direction is sound, but migration evidence is missing."
 git forum action ISSUE-0001 "Add branch-local benchmark fixture."
 git forum risk ISSUE-0001 "Parser behavior may diverge under edge inputs."
+git forum review RFC-0001 "Overall analysis of the RFC."
+git forum objection RFC-0001 --body-file ./tmp/detailed-objection.md
+git forum claim RFC-0001 --body -
 ```
 
 Supported shorthand commands:
@@ -188,6 +196,7 @@ Supported shorthand commands:
 - `git forum summary`
 - `git forum action`
 - `git forum risk`
+- `git forum review`
 
 Valid node types used in the preferred workflow:
 
@@ -200,6 +209,10 @@ Valid node types used in the preferred workflow:
 - `action`
 - `risk`
 - `assumption`
+- `review`
+
+`review` is a holistic analysis of the entire thread, distinct from `claim` (single assertion) and
+`summary` (consensus digest). Reviews are informational and typically not resolvable.
 
 `summary` is not just another comment. In the default workflow it is the human-readable statement of
 what the thread currently concludes, what objections were addressed, and what is ready to move
@@ -233,6 +246,39 @@ git forum resolve RFC-0001 6f1d2c3b
 - `resolve` / `reopen` are mainly for `objection` and `action`
 - `retract` keeps history while marking the node inactive
 
+### Reply to a node
+
+Use `--reply-to` to link a node as a response to an existing node:
+
+```bash
+git forum claim RFC-0001 "Tests added, benchmark in bench/result.csv" \
+  --reply-to <OBJECTION_NODE_ID>
+git forum question RFC-0001 "Can you clarify X?" --reply-to <CLAIM_NODE_ID>
+```
+
+`--reply-to` is accepted on `say` and all shorthand commands. Reply chains of arbitrary depth are
+supported. `git forum show` groups reply chains into conversations for readability.
+
+### Revise thread body
+
+```bash
+git forum revise-body RFC-0001 --body "Updated body text"
+git forum revise-body RFC-0001 --body-file ./tmp/body.md
+git forum revise-body RFC-0001 --body -
+git forum rfc revise-body RFC-0001 --body "Updated body"
+git forum issue revise-body ISSUE-0001 --body "Updated body"
+```
+
+`--incorporates` marks referenced nodes as incorporated into this revision:
+
+```bash
+git forum revise-body RFC-0001 --body "Revised body" \
+  --incorporates 6f1d2c3b --incorporates a1b2c3d4
+```
+
+Incorporated nodes appear as `incorporated` status in show output, distinct from `resolved` and
+`retracted`. They represent content that has been folded into the current body.
+
 ## Inspect a single node
 
 Use this when you want to inspect one node directly instead of reading the whole thread:
@@ -247,7 +293,8 @@ git forum node show 6f1d2c3b
 - node ID
 - the thread it belongs to
 - kind
-- current state: `open`, `resolved`, `retracted`
+- current state: `open`, `resolved`, `retracted`, `incorporated`
+- in reply to (if this node is a reply)
 - created_at
 - actor
 - current body
@@ -363,6 +410,19 @@ Current controls:
   - clicking the `submit` row also submits the current form
   - in the body editor, `enter` inserts a newline and `ctrl+s` returns to the form
   - `esc`: cancel
+
+## Status
+
+```bash
+git forum status RFC-0001
+git forum status --all
+```
+
+`git forum status <THREAD_ID>` shows unresolved items grouped by type: open objections, open
+actions, and open questions.
+
+`git forum status --all` shows unresolved items across all open threads, omitting threads with no
+open items.
 
 ## Change thread state
 
@@ -490,6 +550,30 @@ git forum evidence add ISSUE-0001 --kind test --ref tests/backend_trait.rs
 git forum state ISSUE-0001 closed
 ```
 
+## Concurrency
+
+`git-forum` uses Git's atomic ref updates (compare-and-swap) to detect concurrent writes. Each
+`write_event` call reads the current thread ref tip, creates a new commit, and atomically updates
+the ref only if the tip has not changed since it was read.
+
+If two writers attempt to update the same thread simultaneously, one will succeed and the other will
+fail with a clear error:
+
+```text
+concurrent write conflict on refs/forum/threads/RFC-0001: expected <sha> but ref was updated by another writer. Retry your command.
+```
+
+**Recommended patterns for parallel agent workflows:**
+
+- **Different threads**: fully safe in parallel. Each thread has its own ref.
+- **Same thread**: serialize writes, or retry on conflict. Conflicts are rare for human workflows
+  but more likely when multiple agents update the same thread simultaneously.
+- **Create vs update**: thread creation uses `create_ref` which fails if the ref already exists,
+  preventing duplicate thread IDs.
+
+This is related to ISSUE-0006 (semantic merge for concurrent events), which would automatically
+resolve non-conflicting concurrent writes to the same thread.
+
 ## Current scope
 
 This manual currently covers:
@@ -499,7 +583,9 @@ This manual currently covers:
 - thread show
 - node show
 - search
-- say / revise / retract / resolve / reopen
+- say / revise / retract / resolve / reopen (with --reply-to)
+- revise-body (with --incorporates)
+- status
 - state
 - verify
 - policy lint / check

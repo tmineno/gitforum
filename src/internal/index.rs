@@ -20,6 +20,7 @@ pub struct ThreadRow {
     pub open_actions: i64,
     pub has_summary: bool,
     pub tip_sha: String,
+    pub updated_at: String,
 }
 
 /// A current node body that matched a search query.
@@ -78,7 +79,8 @@ fn ensure_schema(conn: &Connection) -> ForumResult<()> {
         );",
     )
     .map_err(|e| ForumError::Repo(e.to_string()))?;
-    ensure_thread_branch_column(conn)
+    ensure_thread_branch_column(conn)?;
+    ensure_thread_updated_at_column(conn)
 }
 
 fn ensure_thread_branch_column(conn: &Connection) -> ForumResult<()> {
@@ -98,6 +100,30 @@ fn ensure_thread_branch_column(conn: &Connection) -> ForumResult<()> {
     if !has_branch {
         conn.execute("ALTER TABLE threads ADD COLUMN branch TEXT", [])
             .map_err(|e| ForumError::Repo(e.to_string()))?;
+    }
+    Ok(())
+}
+
+fn ensure_thread_updated_at_column(conn: &Connection) -> ForumResult<()> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(threads)")
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+    let cols = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+    let mut has_updated_at = false;
+    for col in cols {
+        if col.map_err(|e| ForumError::Repo(e.to_string()))? == "updated_at" {
+            has_updated_at = true;
+            break;
+        }
+    }
+    if !has_updated_at {
+        conn.execute(
+            "ALTER TABLE threads ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
     }
     Ok(())
 }
@@ -128,11 +154,16 @@ pub fn upsert_thread(conn: &Connection, state: &ThreadState) -> ForumResult<()> 
         .last()
         .map(|e| e.event_id.as_str())
         .unwrap_or("");
+    let updated_at = state
+        .events
+        .last()
+        .map(|e| e.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .unwrap_or_default();
     conn.execute(
         "INSERT OR REPLACE INTO threads
          (id, kind, status, title, body, created_at, created_by,
-          branch, open_objections, open_actions, has_summary, tip_sha)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+          branch, open_objections, open_actions, has_summary, tip_sha, updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
         params![
             state.id,
             state.kind.to_string(),
@@ -146,6 +177,7 @@ pub fn upsert_thread(conn: &Connection, state: &ThreadState) -> ForumResult<()> 
             state.open_actions().len() as i64,
             state.latest_summary().is_some() as i64,
             tip_sha,
+            updated_at,
         ],
     )
     .map_err(|e| ForumError::Repo(e.to_string()))?;
@@ -193,7 +225,7 @@ pub fn list_threads(conn: &Connection) -> ForumResult<Vec<ThreadRow>> {
     let mut stmt = conn
         .prepare(
             "SELECT id, kind, status, title, body, branch, created_at, created_by,
-                    open_objections, open_actions, has_summary, tip_sha
+                    open_objections, open_actions, has_summary, tip_sha, coalesce(updated_at, '')
              FROM threads ORDER BY id",
         )
         .map_err(|e| ForumError::Repo(e.to_string()))?;
@@ -211,7 +243,7 @@ pub fn search_threads(conn: &Connection, query: &str) -> ForumResult<Vec<SearchR
     let mut stmt = conn
         .prepare(
             "SELECT id, kind, status, title, body, branch, created_at, created_by,
-                    open_objections, open_actions, has_summary, tip_sha
+                    open_objections, open_actions, has_summary, tip_sha, coalesce(updated_at, '')
              FROM threads
              WHERE lower(title)  LIKE lower(?1)
                 OR lower(id)     LIKE lower(?1)
@@ -262,6 +294,7 @@ fn collect_rows(
                 open_actions: row.get(9)?,
                 has_summary: row.get::<_, i64>(10)? != 0,
                 tip_sha: row.get(11)?,
+                updated_at: row.get(12)?,
             })
         })
         .map_err(|e| ForumError::Repo(e.to_string()))?;
@@ -314,6 +347,8 @@ fn search_node_hits(
 fn node_status(node: &crate::internal::node::Node) -> &'static str {
     if node.retracted {
         "retracted"
+    } else if node.incorporated {
+        "incorporated"
     } else if node.resolved {
         "resolved"
     } else {
@@ -362,10 +397,14 @@ mod tests {
                 evidence: None,
                 link_rel: None,
                 branch: None,
+                incorporated_node_ids: vec![],
+                reply_to: None,
             }],
             nodes: vec![],
             evidence_items: vec![],
             links: vec![],
+            body_revision_count: 0,
+            incorporated_node_ids: vec![],
         }
     }
 

@@ -12,7 +12,9 @@ use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, TableState};
+use ratatui::widgets::{
+    Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, TableState, Wrap,
+};
 use ratatui::{Frame, Terminal};
 
 use super::actor;
@@ -590,11 +592,21 @@ fn handle_mouse(
                         app.scroll_thread_down();
                     }
                 }
+                if let Some(area) = app.ui_rects.thread_nodes {
+                    if rect_contains(area, mouse.column, mouse.row) {
+                        app.move_node_down();
+                    }
+                }
             }
             MouseEventKind::ScrollUp => {
                 if let Some(area) = app.ui_rects.thread_body {
                     if rect_contains(area, mouse.column, mouse.row) {
                         app.scroll_thread_up();
+                    }
+                }
+                if let Some(area) = app.ui_rects.thread_nodes {
+                    if rect_contains(area, mouse.column, mouse.row) {
+                        app.move_node_up();
                     }
                 }
             }
@@ -704,7 +716,9 @@ fn apply_node_status_action(
         NodeStatusAction::Resolve if !lookup.node.resolved && !lookup.node.retracted => {
             say::resolve_node(git, thread_id, &lookup.node.node_id, &actor, &clock, &ids)?;
         }
-        NodeStatusAction::Reopen if lookup.node.resolved || lookup.node.retracted => {
+        NodeStatusAction::Reopen
+            if lookup.node.resolved || lookup.node.retracted || lookup.node.incorporated =>
+        {
             say::reopen_node(git, thread_id, &lookup.node.node_id, &actor, &clock, &ids)?;
         }
         NodeStatusAction::Retract if !lookup.node.retracted => {
@@ -741,9 +755,20 @@ fn single_line_preview(s: &str, max: usize) -> String {
     }
 }
 
+/// Shorten an ISO datetime string to date-only (YYYY-MM-DD) for list display.
+fn short_datetime(s: &str) -> String {
+    if s.len() >= 10 {
+        s[..10].to_string()
+    } else {
+        s.to_string()
+    }
+}
+
 fn node_status(node: &Node) -> &'static str {
     if node.retracted {
         "retracted"
+    } else if node.incorporated {
+        "incorporated"
     } else if node.resolved {
         "resolved"
     } else {
@@ -1160,7 +1185,7 @@ fn submit_create_node(
     let clock = SystemClock;
     let ids = UlidGenerator;
     let node_type = node_type_values()[app.node_form.node_type_index];
-    let node_id = say::say_node(git, thread_id, node_type, body, &actor, &clock, &ids)?;
+    let node_id = say::say_node(git, thread_id, node_type, body, &actor, &clock, &ids, None)?;
     reindex::run_reindex(git, db_path)?;
     app.threads = index::list_threads(conn)?;
     open_thread_detail(app, git, thread_id, Some(&node_id))
@@ -1226,6 +1251,8 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
                     Cell::from(t.id.clone()),
                     Cell::from(t.kind.clone()),
                     Cell::from(t.status.clone()),
+                    Cell::from(short_datetime(&t.created_at)),
+                    Cell::from(short_datetime(&t.updated_at)),
                     Cell::from(t.title.clone()),
                 ])
             })
@@ -1237,9 +1264,11 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Length(13),
         Constraint::Length(10),
         Constraint::Length(14),
+        Constraint::Length(12),
+        Constraint::Length(12),
         Constraint::Min(20),
     ];
-    let header = Row::new(["ID", "KIND", "STATUS", "TITLE"])
+    let header = Row::new(["ID", "KIND", "STATUS", "CREATED", "UPDATED", "TITLE"])
         .style(Style::default().add_modifier(Modifier::BOLD));
     let table = Table::new(rows, widths)
         .header(header)
@@ -1289,6 +1318,7 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
                     .borders(Borders::ALL)
                     .title(format!(" {thread_id} ")),
             )
+            .wrap(Wrap { trim: false })
             .scroll((app.thread_scroll, 0)),
         main[0],
     );
@@ -1354,6 +1384,7 @@ pub(crate) fn render_node_detail(f: &mut Frame, area: Rect, app: &mut App) {
                     .borders(Borders::ALL)
                     .title(format!(" node {title} ")),
             )
+            .wrap(Wrap { trim: false })
             .scroll((app.node_detail_scroll, 0)),
         chunks[1],
     );
@@ -1739,6 +1770,7 @@ mod tests {
             open_actions: 0,
             has_summary: false,
             tip_sha: "abc".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
         }
     }
 
@@ -1946,6 +1978,8 @@ mod tests {
             created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             resolved: false,
             retracted: false,
+            incorporated: false,
+            reply_to: None,
         }];
         app.node_table_state.select(Some(0));
         let out = render_to_string(&mut app, 160, 30);
@@ -2374,6 +2408,7 @@ mod tests {
                 instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 2, 0).unwrap(),
             },
             &crate::internal::id::SequentialIdGenerator::new("n"),
+            None,
         )
         .unwrap();
         reindex::run_reindex(&git, &db_path).unwrap();
@@ -2430,6 +2465,7 @@ mod tests {
                 instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
             },
             &crate::internal::id::SequentialIdGenerator::new("n"),
+            None,
         )
         .unwrap();
 
@@ -2503,6 +2539,8 @@ mod tests {
                 created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
                 resolved: false,
                 retracted: false,
+                incorporated: false,
+                reply_to: None,
             },
             Node {
                 node_id: "b".into(),
@@ -2512,6 +2550,8 @@ mod tests {
                 created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
                 resolved: false,
                 retracted: false,
+                incorporated: false,
+                reply_to: None,
             },
         ];
         app.node_table_state.select(Some(0));

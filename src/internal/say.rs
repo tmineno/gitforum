@@ -14,6 +14,7 @@ use super::thread;
 /// Postconditions: a Say event is written and the thread ref updated.
 /// Failure modes: ForumError::Git on subprocess failure.
 /// Side effects: writes git objects, updates ref.
+#[allow(clippy::too_many_arguments)]
 pub fn say_node(
     git: &GitOps,
     thread_id: &str,
@@ -22,6 +23,7 @@ pub fn say_node(
     actor: &str,
     clock: &dyn Clock,
     _ids: &dyn IdGenerator,
+    reply_to: Option<&str>,
 ) -> ForumResult<String> {
     let ev = Event {
         event_id: String::new(),
@@ -41,8 +43,59 @@ pub fn say_node(
         evidence: None,
         link_rel: None,
         branch: None,
+        incorporated_node_ids: vec![],
+        reply_to: reply_to.map(str::to_string),
     };
     super::event::write_event(git, &ev)
+}
+
+/// Revise the body of a thread, optionally incorporating referenced nodes.
+///
+/// Preconditions: thread_id exists; all incorporated node IDs must exist in the thread.
+/// Postconditions: a ReviseBody event is written with the new body.
+/// Failure modes: ForumError::Git on subprocess failure; ForumError::Repo if
+///   an incorporated node ID is not found in the thread.
+/// Side effects: writes git objects, updates ref.
+pub fn revise_body(
+    git: &GitOps,
+    thread_id: &str,
+    body: &str,
+    incorporates: &[String],
+    actor: &str,
+    clock: &dyn Clock,
+    _ids: &dyn IdGenerator,
+) -> ForumResult<()> {
+    let resolved_ids: Vec<String> = if incorporates.is_empty() {
+        vec![]
+    } else {
+        incorporates
+            .iter()
+            .map(|id| thread::resolve_node_id_in_thread(git, thread_id, id))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let ev = Event {
+        event_id: String::new(),
+        thread_id: thread_id.to_string(),
+        event_type: EventType::ReviseBody,
+        created_at: clock.now(),
+        actor: actor.to_string(),
+        base_rev: None,
+        parents: vec![],
+        title: None,
+        kind: None,
+        body: Some(body.to_string()),
+        node_type: None,
+        target_node_id: None,
+        new_state: None,
+        approvals: vec![],
+        evidence: None,
+        link_rel: None,
+        branch: None,
+        incorporated_node_ids: resolved_ids,
+        reply_to: None,
+    };
+    super::event::write_event(git, &ev)?;
+    Ok(())
 }
 
 /// Revise the body of an existing node.
@@ -78,6 +131,8 @@ pub fn revise_node(
         evidence: None,
         link_rel: None,
         branch: None,
+        incorporated_node_ids: vec![],
+        reply_to: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())
@@ -115,6 +170,8 @@ pub fn retract_node(
         evidence: None,
         link_rel: None,
         branch: None,
+        incorporated_node_ids: vec![],
+        reply_to: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())
@@ -152,6 +209,8 @@ pub fn resolve_node(
         evidence: None,
         link_rel: None,
         branch: None,
+        incorporated_node_ids: vec![],
+        reply_to: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())
@@ -189,6 +248,8 @@ pub fn reopen_node(
         evidence: None,
         link_rel: None,
         branch: None,
+        incorporated_node_ids: vec![],
+        reply_to: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())
@@ -336,6 +397,8 @@ pub fn change_state(
         evidence: None,
         link_rel: None,
         branch: None,
+        incorporated_node_ids: vec![],
+        reply_to: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())

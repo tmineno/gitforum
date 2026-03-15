@@ -17,11 +17,13 @@ pub struct Node {
     pub created_at: DateTime<Utc>,
     pub resolved: bool,
     pub retracted: bool,
+    pub incorporated: bool,
+    pub reply_to: Option<String>,
 }
 
 impl Node {
-    /// True when the node is neither resolved nor retracted.
+    /// True when the node is neither resolved, retracted, nor incorporated.
     pub fn is_open(&self) -> bool {
-        !self.resolved && !self.retracted
+        !self.resolved && !self.retracted && !self.incorporated
     }
 }

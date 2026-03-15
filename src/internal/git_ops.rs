@@ -103,6 +103,33 @@ impl GitOps {
         Ok(())
     }
 
+    /// Atomically update a ref only if its current value matches `old_sha`.
+    ///
+    /// Uses `git update-ref <ref> <new> <old>` for compare-and-swap.
+    /// Returns ForumError::Git if the ref has been updated by another writer.
+    pub fn update_ref_cas(&self, refname: &str, new_sha: &str, old_sha: &str) -> ForumResult<()> {
+        self.run(&["update-ref", refname, new_sha, old_sha])
+            .map_err(|_| {
+                ForumError::Git(format!(
+                    "concurrent write conflict on {refname}: expected {old_sha} but ref was updated by another writer. Retry your command."
+                ))
+            })?;
+        Ok(())
+    }
+
+    /// Create a ref that must not already exist.
+    ///
+    /// Uses `git update-ref <ref> <new> 0{40}` to ensure the ref is new.
+    pub fn create_ref(&self, refname: &str, sha: &str) -> ForumResult<()> {
+        let zero = "0000000000000000000000000000000000000000";
+        self.run(&["update-ref", refname, sha, zero]).map_err(|_| {
+            ForumError::Git(format!(
+                "ref {refname} already exists; concurrent create conflict"
+            ))
+        })?;
+        Ok(())
+    }
+
     /// Resolve a ref to a commit SHA. Returns None if the ref doesn't exist.
     pub fn resolve_ref(&self, refname: &str) -> ForumResult<Option<String>> {
         match self.run(&["rev-parse", "--verify", refname]) {

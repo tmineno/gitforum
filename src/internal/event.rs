@@ -57,6 +57,8 @@ pub enum EventType {
     Reopen,
     Verify,
     Merge,
+    #[serde(rename = "revise-body")]
+    ReviseBody,
 }
 
 impl std::fmt::Display for EventType {
@@ -73,6 +75,7 @@ impl std::fmt::Display for EventType {
             Self::Reopen => "reopen",
             Self::Verify => "verify",
             Self::Merge => "merge",
+            Self::ReviseBody => "revise-body",
         };
         f.write_str(s)
     }
@@ -91,6 +94,7 @@ pub enum NodeType {
     Action,
     Risk,
     Assumption,
+    Review,
 }
 
 impl std::fmt::Display for NodeType {
@@ -105,6 +109,7 @@ impl std::fmt::Display for NodeType {
             Self::Action => "action",
             Self::Risk => "risk",
             Self::Assumption => "assumption",
+            Self::Review => "review",
         };
         f.write_str(s)
     }
@@ -123,7 +128,8 @@ impl std::str::FromStr for NodeType {
             "action" => Ok(Self::Action),
             "risk" => Ok(Self::Risk),
             "assumption" => Ok(Self::Assumption),
-            _ => Err(format!("unknown node type '{s}'; valid types: claim, question, objection, alternative, evidence, summary, action, risk, assumption")),
+            "review" => Ok(Self::Review),
+            _ => Err(format!("unknown node type '{s}'; valid types: claim, question, objection, alternative, evidence, summary, action, risk, assumption, review")),
         }
     }
 }
@@ -168,6 +174,12 @@ pub struct Event {
     /// Branch scope recorded by Create/Scope events.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// Node IDs incorporated into a body revision (ReviseBody events).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub incorporated_node_ids: Vec<String>,
+    /// Node ID this node is replying to (Say events).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
 }
 
 /// Write an event as a Git commit and update the thread ref.
@@ -188,7 +200,11 @@ pub fn write_event(git: &GitOps, event: &Event) -> ForumResult<String> {
     let message = format!("[git-forum] {} {}", event.event_type, event.thread_id);
     let commit_sha = git.commit_tree(&tree_sha, &parents, &message)?;
 
-    git.update_ref(&ref_name, &commit_sha)?;
+    // Use compare-and-swap to detect concurrent writes
+    match &parent_sha {
+        Some(old_sha) => git.update_ref_cas(&ref_name, &commit_sha, old_sha)?,
+        None => git.create_ref(&ref_name, &commit_sha)?,
+    }
     Ok(commit_sha)
 }
 
@@ -236,6 +252,8 @@ mod tests {
             evidence: None,
             link_rel: None,
             branch: None,
+            incorporated_node_ids: vec![],
+            reply_to: None,
         }
     }
 

@@ -43,6 +43,8 @@ pub fn set_branch(
         evidence: None,
         link_rel: None,
         branch: branch.map(str::to_string),
+        incorporated_node_ids: vec![],
+        reply_to: None,
     };
     super::event::write_event(git, &ev)?;
     Ok(())
