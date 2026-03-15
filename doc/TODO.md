@@ -8,7 +8,7 @@ When spec and implementation diverge, the spec wins.
 - [x] `git forum init` works in an empty Git repository
 - [x] `issue` and `rfc` can be created
 - [x] typed discussion nodes can be added
-- [ ] first-batch shorthand discussion commands exist
+- [x] first-batch shorthand discussion commands exist
 - [x] policy-driven state validation works
 - [x] evidence and links can be attached
 - [x] branch binding for issues works
@@ -18,7 +18,7 @@ When spec and implementation diverge, the spec wins.
 - [x] `git forum tui` supports list/detail/basic create flows
 - [ ] minimal semantic merge is implemented
 - [x] the project builds and tests on stable Rust
-- [ ] legacy `decision` and `run` surfaces are removed or clearly demoted from the preferred UX
+- [x] legacy `decision` and `run` surfaces are removed or clearly demoted from the preferred UX
 
 ## Test harness baseline
 
@@ -83,9 +83,9 @@ Exit criteria:
 Verification:
 
 ```bash
-cargo run -- forum init
-cargo run -- forum doctor
-cargo run -- forum reindex
+cargo run -- init
+cargo run -- doctor
+cargo run -- reindex
 ```
 
 ## Milestone 2: RFC and issue lifecycle
@@ -102,22 +102,22 @@ Includes:
 - [x] thread body on create
 - [x] `git forum ls`, `issue ls`, `rfc ls`
 - [x] `git forum show`
-- [ ] remove or demote legacy `decision` thread kind from CLI, templates, docs, and tests
-- [ ] remove `DEC-*` assumptions from examples and fixtures
+- [x] remove or demote legacy `decision` thread kind from CLI, templates, docs, and tests
+- [x] remove `DEC-*` assumptions from examples and fixtures
 
 Exit criteria:
 
 - [x] issue and rfc can be created and displayed
 - [x] `show` output matches replay state
-- [ ] preferred docs no longer depend on `decision`
+- [x] preferred docs no longer depend on `decision`
 
 Verification:
 
 ```bash
-cargo run -- forum issue new "First issue" --body "Problem statement"
-cargo run -- forum rfc new "First RFC" --body-file ./tmp/rfc-body.md
-cargo run -- forum ls
-cargo run -- forum show RFC-0001
+cargo run -- issue new "First issue" --body "Problem statement"
+cargo run -- rfc new "First RFC" --body-file ./tmp/rfc-body.md
+cargo run -- ls
+cargo run -- show RFC-0001
 ```
 
 ## Milestone 3: Structured discussion and approvals
@@ -142,13 +142,13 @@ Includes:
 - [x] `git forum verify`
 - [x] `git forum policy lint`
 - [x] `git forum policy check`
-- [ ] first-batch shorthand commands:
-  - [ ] `git forum claim`
-  - [ ] `git forum question`
-  - [ ] `git forum objection`
-  - [ ] `git forum summary`
-  - [ ] `git forum action`
-  - [ ] `git forum risk`
+- [x] first-batch shorthand commands:
+  - [x] `git forum claim`
+  - [x] `git forum question`
+  - [x] `git forum objection`
+  - [x] `git forum summary`
+  - [x] `git forum action`
+  - [x] `git forum risk`
 - [ ] decide whether `alternative`, `evidence`, and `assumption` also deserve shorthand commands
 - [ ] fuller role-based enforcement for `can_say` and `can_transition`
 
@@ -158,15 +158,15 @@ Exit criteria:
 - [x] objections and actions can be resolved / reopened
 - [x] issue close can be blocked by open actions
 - [x] RFC acceptance can require summary and human approval
-- [ ] preferred UX does not require `say --type` for common node types
+- [x] preferred UX does not require `say --type` for common node types
 
 Verification:
 
 ```bash
-cargo run -- forum say RFC-0001 --type claim --body "Needed for compatibility."
-cargo run -- forum say RFC-0001 --type objection --body "Benchmarks are missing."
-cargo run -- forum policy check RFC-0001 --transition under-review->accepted
-cargo run -- forum verify RFC-0001
+cargo run -- claim RFC-0001 "Needed for compatibility."
+cargo run -- objection RFC-0001 "Benchmarks are missing."
+cargo run -- policy check RFC-0001 --transition under-review->accepted
+cargo run -- verify RFC-0001
 ```
 
 ## Milestone 4: Evidence, links, and branch-oriented implementation
@@ -184,7 +184,7 @@ Includes:
 - [x] `git forum branch clear`
 - [x] branch column and branch filtering in lists
 - [ ] tighten the RFC -> issue implementation workflow in examples and docs
-- [ ] remove or demote legacy `run` / provenance UX from docs and preferred examples
+- [x] remove or demote legacy `run` / provenance UX from docs and preferred examples
 
 Exit criteria:
 
@@ -196,10 +196,10 @@ Exit criteria:
 Verification:
 
 ```bash
-cargo run -- forum link ISSUE-0001 RFC-0001 --rel implements
-cargo run -- forum branch bind ISSUE-0001 feat/parser-rewrite
-cargo run -- forum evidence add ISSUE-0001 --kind test --ref tests/parser.rs
-cargo run -- forum show ISSUE-0001
+cargo run -- link ISSUE-0001 RFC-0001 --rel implements
+cargo run -- branch bind ISSUE-0001 feat/parser-rewrite
+cargo run -- evidence add ISSUE-0001 --kind test --ref tests/parser.rs
+cargo run -- show ISSUE-0001
 ```
 
 ## Milestone 5: Index, search, and TUI
@@ -238,9 +238,9 @@ Exit criteria:
 Verification:
 
 ```bash
-cargo run -- forum reindex
-cargo run -- forum tui
-cargo run -- forum tui RFC-0001
+cargo run -- reindex
+cargo run -- tui
+cargo run -- tui RFC-0001
 cargo test index
 ```
 
@@ -261,8 +261,8 @@ Includes:
 - [ ] markdown -> `rfc` import with manual cleanup
 - [ ] `issue` export
 - [ ] `rfc` export
-- [ ] remove or fully demote legacy `decision` CLI surface
-- [ ] remove or fully demote legacy `run` / provenance CLI surface
+- [x] remove or fully demote legacy `decision` CLI surface
+- [x] remove or fully demote legacy `run` / provenance CLI surface
 - [ ] README / MANUAL / spec / examples stay aligned
 - [ ] acceptance criteria final pass
 

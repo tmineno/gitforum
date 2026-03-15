@@ -79,6 +79,48 @@ enum Commands {
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
+    /// Add a claim node to a thread
+    Claim {
+        thread_id: String,
+        body: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// Add a question node to a thread
+    Question {
+        thread_id: String,
+        body: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// Add an objection node to a thread
+    Objection {
+        thread_id: String,
+        body: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// Add a summary node to a thread
+    Summary {
+        thread_id: String,
+        body: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// Add an action node to a thread
+    Action {
+        thread_id: String,
+        body: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// Add a risk node to a thread
+    Risk {
+        thread_id: String,
+        body: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
     /// Revise the body of an existing node
     Revise {
         thread_id: String,
@@ -415,6 +457,51 @@ fn main() -> Result<(), ForumError> {
             let node_id = say::say_node(&git, &thread_id, node_type, &body, &actor, &clock, &ids)?;
             println!("Added {node_type} {node_id}");
         }
+        Commands::Claim {
+            thread_id,
+            body,
+            as_actor,
+        } => run_shorthand_say(&thread_id, &body, as_actor, NodeType::Claim, &clock, &ids)?,
+        Commands::Question {
+            thread_id,
+            body,
+            as_actor,
+        } => run_shorthand_say(
+            &thread_id,
+            &body,
+            as_actor,
+            NodeType::Question,
+            &clock,
+            &ids,
+        )?,
+        Commands::Objection {
+            thread_id,
+            body,
+            as_actor,
+        } => run_shorthand_say(
+            &thread_id,
+            &body,
+            as_actor,
+            NodeType::Objection,
+            &clock,
+            &ids,
+        )?,
+        Commands::Summary {
+            thread_id,
+            body,
+            as_actor,
+        } => run_shorthand_say(&thread_id, &body, as_actor, NodeType::Summary, &clock, &ids)?,
+        Commands::Action {
+            thread_id,
+            body,
+            as_actor,
+        } => run_shorthand_say(&thread_id, &body, as_actor, NodeType::Action, &clock, &ids)?,
+        Commands::Risk {
+            thread_id,
+            body,
+            as_actor,
+        } => run_shorthand_say(&thread_id, &body, as_actor, NodeType::Risk, &clock, &ids)?,
+
         Commands::Revise {
             thread_id,
             node_id,
@@ -647,6 +734,21 @@ fn main() -> Result<(), ForumError> {
         }
     }
 
+    Ok(())
+}
+
+fn run_shorthand_say(
+    thread_id: &str,
+    body: &str,
+    as_actor: Option<String>,
+    node_type: NodeType,
+    clock: &dyn git_forum::internal::clock::Clock,
+    ids: &dyn git_forum::internal::id::IdGenerator,
+) -> Result<(), ForumError> {
+    let (git, _paths) = discover_repo_with_init_warning()?;
+    let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+    let node_id = say::say_node(&git, thread_id, node_type, body, &actor, clock, ids)?;
+    println!("Added {node_type} {node_id}");
     Ok(())
 }
 

@@ -37,13 +37,11 @@ Git-native history: branchable, reviewable, and preserved in the same repository
 $ git forum init
 $ git forum rfc new "Switch solver backend to trait objects" \
   --body "Goal, constraints, acceptance."
-$ git forum say RFC-0001 --type claim \
-  --body "Need a stable plugin-facing boundary."
-$ git forum say RFC-0001 --type question \
-  --body "What compatibility risks remain?" \
+$ git forum claim RFC-0001 "Need a stable plugin-facing boundary."
+$ git forum question RFC-0001 "What compatibility risks remain?" \
   --as ai/reviewer
-$ git forum say RFC-0001 --type summary \
-  --body "Direction is plausible, but migration evidence is still missing."
+$ git forum summary RFC-0001 \
+  "Direction is plausible, but migration evidence is still missing."
 $ git forum state RFC-0001 proposed
 $ git forum state RFC-0001 under-review
 $ git forum state RFC-0001 accepted --sign human/alice
@@ -164,8 +162,7 @@ refs/forum/index/*
 - minimal GitHub / GitLab import and export
 
 Note:
-Current code still contains experimental `decision` and `run` surfaces from an older direction.
-They are not part of the preferred workflow described here.
+The implementation now follows the preferred `rfc` + `issue` workflow described here.
 
 ## Non-goals for the MVP
 
@@ -189,7 +186,7 @@ A minimal local-first setup with CLI and a simple TUI for RFC-first human-agent 
 
 ### v0.2
 
-Better semantic merge, import/export, shorthand discussion commands, and improved search.
+Better semantic merge, import/export, improved search, and more TUI polish.
 
 ### v0.3
 

@@ -1,15 +1,11 @@
 # Manual
 
-This manual describes the preferred `git-forum` workflow after the current product reset:
+This manual describes the preferred `git-forum` workflow:
 
 - start work with `rfc`
 - implement with `issue`
 - use typed discussion instead of plain comments
 - let humans and agents use the same CLI surface
-
-Note:
-Current binaries may still expose older `decision` and `run` commands. They are legacy surfaces from
-an older direction and are intentionally omitted below.
 
 ## Install
 
@@ -173,18 +169,18 @@ matching node under the thread row.
 
 ### Add a node
 
-Today the primitive command is still `say --type`.
+Use shorthand commands for common node types. `say --type` remains the primitive fallback.
 
 ```bash
-git forum say RFC-0001 --type claim --body "Need a stable plugin-facing boundary."
-git forum say RFC-0001 --type question --body "What compatibility risks remain?"
-git forum say RFC-0001 --type objection --body "Benchmarks are missing."
-git forum say RFC-0001 --type summary --body "Direction is sound, but migration evidence is missing."
-git forum say ISSUE-0001 --type action --body "Add branch-local benchmark fixture."
-git forum say ISSUE-0001 --type risk --body "Parser behavior may diverge under edge inputs."
+git forum claim RFC-0001 "Need a stable plugin-facing boundary."
+git forum question RFC-0001 "What compatibility risks remain?"
+git forum objection RFC-0001 "Benchmarks are missing."
+git forum summary RFC-0001 "Direction is sound, but migration evidence is missing."
+git forum action ISSUE-0001 "Add branch-local benchmark fixture."
+git forum risk ISSUE-0001 "Parser behavior may diverge under edge inputs."
 ```
 
-The target first batch of shorthand commands is:
+Supported shorthand commands:
 
 - `git forum claim`
 - `git forum question`
@@ -516,10 +512,3 @@ Still out of scope:
 
 - import / export
 - merge conflict resolution UX
-- shorthand discussion commands
-
-## Legacy note
-
-Some current builds still expose `decision` and `run` commands. They belong to an older direction
-that treated decisions and AI provenance as first-class objects. The preferred workflow in this
-manual does not rely on them.
