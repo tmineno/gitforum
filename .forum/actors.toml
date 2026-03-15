@@ -1,0 +1,7 @@
+# git-forum actors
+# Register human and AI actors here.
+#
+# [[actors]]
+# id = "human/alice"
+# kind = "human"
+# display_name = "Alice"
