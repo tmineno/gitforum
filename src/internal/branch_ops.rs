@@ -42,7 +42,6 @@ pub fn set_branch(
         approvals: vec![],
         evidence: None,
         link_rel: None,
-        run_label: None,
         branch: branch.map(str::to_string),
     };
     super::event::write_event(git, &ev)?;

@@ -30,11 +30,6 @@ fn valid_transitions(kind: ThreadKind) -> &'static [(&'static str, &'static str)
             ("under-review", "rejected"),
             ("under-review", "draft"),
         ],
-        ThreadKind::Decision => &[
-            ("proposed", "accepted"),
-            ("proposed", "rejected"),
-            ("accepted", "superseded"),
-        ],
     }
 }
 
@@ -60,24 +55,6 @@ mod tests {
     #[test]
     fn issue_closed_can_reopen() {
         assert!(is_valid_transition(ThreadKind::Issue, "closed", "open"));
-    }
-
-    #[test]
-    fn decision_proposed_to_accepted_is_valid() {
-        assert!(is_valid_transition(
-            ThreadKind::Decision,
-            "proposed",
-            "accepted"
-        ));
-    }
-
-    #[test]
-    fn decision_accepted_to_superseded_is_valid() {
-        assert!(is_valid_transition(
-            ThreadKind::Decision,
-            "accepted",
-            "superseded"
-        ));
     }
 
     #[test]

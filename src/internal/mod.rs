@@ -18,8 +18,6 @@ pub mod node;
 pub mod policy;
 pub mod refs;
 pub mod reindex;
-pub mod run;
-pub mod run_ops;
 pub mod say;
 pub mod show;
 pub mod state_machine;

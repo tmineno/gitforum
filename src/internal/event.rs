@@ -13,7 +13,6 @@ use super::refs;
 pub enum ThreadKind {
     Issue,
     Rfc,
-    Decision,
 }
 
 impl ThreadKind {
@@ -22,7 +21,6 @@ impl ThreadKind {
         match self {
             Self::Issue => "open",
             Self::Rfc => "draft",
-            Self::Decision => "proposed",
         }
     }
 
@@ -31,7 +29,6 @@ impl ThreadKind {
         match self {
             Self::Issue => "ISSUE",
             Self::Rfc => "RFC",
-            Self::Decision => "DEC",
         }
     }
 }
@@ -41,7 +38,6 @@ impl std::fmt::Display for ThreadKind {
         match self {
             Self::Issue => write!(f, "issue"),
             Self::Rfc => write!(f, "rfc"),
-            Self::Decision => write!(f, "decision"),
         }
     }
 }
@@ -55,18 +51,12 @@ pub enum EventType {
     Retract,
     Say,
     Link,
-    Unlink,
     State,
-    Assign,
     Scope,
-    Decision,
     Resolve,
     Reopen,
-    Spawn,
-    Result,
     Verify,
     Merge,
-    Close,
 }
 
 impl std::fmt::Display for EventType {
@@ -77,18 +67,12 @@ impl std::fmt::Display for EventType {
             Self::Retract => "retract",
             Self::Say => "say",
             Self::Link => "link",
-            Self::Unlink => "unlink",
             Self::State => "state",
-            Self::Assign => "assign",
             Self::Scope => "scope",
-            Self::Decision => "decision",
             Self::Resolve => "resolve",
             Self::Reopen => "reopen",
-            Self::Spawn => "spawn",
-            Self::Result => "result",
             Self::Verify => "verify",
             Self::Merge => "merge",
-            Self::Close => "close",
         };
         f.write_str(s)
     }
@@ -104,7 +88,6 @@ pub enum NodeType {
     Alternative,
     Evidence,
     Summary,
-    Decision,
     Action,
     Risk,
     Assumption,
@@ -119,7 +102,6 @@ impl std::fmt::Display for NodeType {
             Self::Alternative => "alternative",
             Self::Evidence => "evidence",
             Self::Summary => "summary",
-            Self::Decision => "decision",
             Self::Action => "action",
             Self::Risk => "risk",
             Self::Assumption => "assumption",
@@ -138,11 +120,10 @@ impl std::str::FromStr for NodeType {
             "alternative" => Ok(Self::Alternative),
             "evidence" => Ok(Self::Evidence),
             "summary" => Ok(Self::Summary),
-            "decision" => Ok(Self::Decision),
             "action" => Ok(Self::Action),
             "risk" => Ok(Self::Risk),
             "assumption" => Ok(Self::Assumption),
-            _ => Err(format!("unknown node type '{s}'; valid types: claim, question, objection, alternative, evidence, summary, decision, action, risk, assumption")),
+            _ => Err(format!("unknown node type '{s}'; valid types: claim, question, objection, alternative, evidence, summary, action, risk, assumption")),
         }
     }
 }
@@ -184,9 +165,6 @@ pub struct Event {
     /// Relation type for Link events (e.g. `"implements"`, `"relates-to"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link_rel: Option<String>,
-    /// Run label recorded by Spawn events (e.g. `"RUN-0001"`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub run_label: Option<String>,
     /// Branch scope recorded by Create/Scope events.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
@@ -257,7 +235,6 @@ mod tests {
             approvals: vec![],
             evidence: None,
             link_rel: None,
-            run_label: None,
             branch: None,
         }
     }
@@ -291,6 +268,5 @@ mod tests {
     fn thread_kind_initial_status() {
         assert_eq!(ThreadKind::Issue.initial_status(), "open");
         assert_eq!(ThreadKind::Rfc.initial_status(), "draft");
-        assert_eq!(ThreadKind::Decision.initial_status(), "proposed");
     }
 }

@@ -40,7 +40,6 @@ pub fn say_node(
         approvals: vec![],
         evidence: None,
         link_rel: None,
-        run_label: None,
         branch: None,
     };
     super::event::write_event(git, &ev)
@@ -78,7 +77,6 @@ pub fn revise_node(
         approvals: vec![],
         evidence: None,
         link_rel: None,
-        run_label: None,
         branch: None,
     };
     super::event::write_event(git, &ev)?;
@@ -116,7 +114,6 @@ pub fn retract_node(
         approvals: vec![],
         evidence: None,
         link_rel: None,
-        run_label: None,
         branch: None,
     };
     super::event::write_event(git, &ev)?;
@@ -154,7 +151,6 @@ pub fn resolve_node(
         approvals: vec![],
         evidence: None,
         link_rel: None,
-        run_label: None,
         branch: None,
     };
     super::event::write_event(git, &ev)?;
@@ -192,7 +188,6 @@ pub fn reopen_node(
         approvals: vec![],
         evidence: None,
         link_rel: None,
-        run_label: None,
         branch: None,
     };
     super::event::write_event(git, &ev)?;
@@ -340,7 +335,6 @@ pub fn change_state(
         approvals: plan.approvals,
         evidence: None,
         link_rel: None,
-        run_label: None,
         branch: None,
     };
     super::event::write_event(git, &ev)?;

@@ -3,16 +3,11 @@
 //! All authoritative data is stored under `refs/forum/`.
 
 pub const THREADS_PREFIX: &str = "refs/forum/threads/";
-pub const RUNS_PREFIX: &str = "refs/forum/runs/";
 pub const ACTORS_PREFIX: &str = "refs/forum/actors/";
 pub const INDEX_PREFIX: &str = "refs/forum/index/";
 
 pub fn thread_ref(thread_id: &str) -> String {
     format!("{THREADS_PREFIX}{thread_id}")
-}
-
-pub fn run_ref(run_id: &str) -> String {
-    format!("{RUNS_PREFIX}{run_id}")
 }
 
 pub fn actor_ref(actor_id: &str) -> String {

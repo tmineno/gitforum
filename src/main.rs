@@ -19,7 +19,6 @@ use git_forum::internal::index;
 use git_forum::internal::init;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::reindex;
-use git_forum::internal::run_ops;
 use git_forum::internal::say;
 use git_forum::internal::show;
 use git_forum::internal::thread;
@@ -50,11 +49,6 @@ enum Commands {
     },
     /// RFC sub-commands
     Rfc {
-        #[command(subcommand)]
-        cmd: ThreadCmd,
-    },
-    /// Decision sub-commands
-    Decision {
         #[command(subcommand)]
         cmd: ThreadCmd,
     },
@@ -147,7 +141,7 @@ enum Commands {
     },
     #[command(
         about = "Verify whether the thread currently satisfies guard conditions for its next forward transition",
-        long_about = "Verify whether the thread currently satisfies policy guard conditions for its next forward transition.\n\nCurrent behavior:\n- Issue in `open` is checked as if it were moving to `closed`\n- RFC in `under-review` is checked as if it were moving to `accepted`\n- Decision in `proposed` is checked as if it were moving to `accepted`\n- Other thread kinds or states currently return `ok` because no forward verify target is defined\n\nThis command is read-only. It does not change thread state or attach approvals."
+        long_about = "Verify whether the thread currently satisfies policy guard conditions for its next forward transition.\n\nCurrent behavior:\n- Issue in `open` is checked as if it were moving to `closed`\n- RFC in `under-review` is checked as if it were moving to `accepted`\n- Other thread kinds or states currently return `ok` because no forward verify target is defined\n\nThis command is read-only. It does not change thread state or attach approvals."
     )]
     Verify { thread_id: String },
     /// Policy sub-commands
@@ -168,11 +162,6 @@ enum Commands {
         rel: String,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
-    },
-    /// AI run sub-commands
-    Run {
-        #[command(subcommand)]
-        cmd: RunCmd,
     },
     /// Search threads by title, kind, or status
     Search {
@@ -210,20 +199,6 @@ enum EvidenceCmd {
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
-}
-
-#[derive(Subcommand)]
-enum RunCmd {
-    /// Spawn a new AI run for a thread
-    Spawn {
-        thread_id: String,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-    },
-    /// List all runs
-    Ls,
-    /// Show a single run
-    Show { run_label: String },
 }
 
 #[derive(Subcommand)]
@@ -385,9 +360,6 @@ fn main() -> Result<(), ForumError> {
         Commands::Rfc { cmd } => {
             run_thread_cmd(cmd, ThreadKind::Rfc, &clock, &ids)?;
         }
-        Commands::Decision { cmd } => {
-            run_thread_cmd(cmd, ThreadKind::Decision, &clock, &ids)?;
-        }
 
         Commands::Ls { branch } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
@@ -443,7 +415,6 @@ fn main() -> Result<(), ForumError> {
             let node_id = say::say_node(&git, &thread_id, node_type, &body, &actor, &clock, &ids)?;
             println!("Added {node_type} {node_id}");
         }
-
         Commands::Revise {
             thread_id,
             node_id,
@@ -631,28 +602,6 @@ fn main() -> Result<(), ForumError> {
             println!("{thread_id} -> {target_thread_id} ({rel})");
         }
 
-        Commands::Run { cmd } => match cmd {
-            RunCmd::Spawn {
-                thread_id,
-                as_actor,
-            } => {
-                let (git, _paths) = discover_repo_with_init_warning()?;
-                let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
-                let run_label = run_ops::spawn_run(&git, &thread_id, &actor, &clock)?;
-                println!("Spawned {run_label}");
-            }
-            RunCmd::Ls => {
-                let (git, _paths) = discover_repo_with_init_warning()?;
-                let runs = run_ops::list_runs(&git)?;
-                print!("{}", show::render_run_ls(&runs));
-            }
-            RunCmd::Show { run_label } => {
-                let (git, _paths) = discover_repo_with_init_warning()?;
-                let run = run_ops::read_run(&git, &run_label)?;
-                print!("{}", show::render_run_show(&run));
-            }
-        },
-
         Commands::Policy { cmd } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             match cmd {
@@ -803,9 +752,8 @@ fn parse_thread_kind_filter(kind: Option<&str>) -> Result<Option<ThreadKind>, Fo
         None => Ok(None),
         Some("issue") => Ok(Some(ThreadKind::Issue)),
         Some("rfc") => Ok(Some(ThreadKind::Rfc)),
-        Some("decision") => Ok(Some(ThreadKind::Decision)),
         Some(other) => Err(ForumError::Config(format!(
-            "unknown kind '{other}'; valid: issue, rfc, decision"
+            "unknown kind '{other}'; valid: issue, rfc"
         ))),
     }
 }

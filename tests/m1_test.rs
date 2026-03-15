@@ -35,7 +35,6 @@ fn sample_create(thread_id: &str, kind: ThreadKind, title: &str) -> Event {
         approvals: vec![],
         evidence: None,
         link_rel: None,
-        run_label: None,
     }
 }
 
@@ -58,7 +57,6 @@ fn sample_state(thread_id: &str, new_state: &str) -> Event {
         approvals: vec![],
         evidence: None,
         link_rel: None,
-        run_label: None,
     }
 }
 
@@ -73,11 +71,6 @@ fn init_creates_forum_structure() {
     assert!(paths.dot_forum.join("actors.toml").exists());
     assert!(paths.dot_forum.join("templates").join("issue.md").exists());
     assert!(paths.dot_forum.join("templates").join("rfc.md").exists());
-    assert!(paths
-        .dot_forum
-        .join("templates")
-        .join("decision.md")
-        .exists());
     assert!(paths.git_forum.join("logs").is_dir());
 }
 

@@ -1,5 +1,4 @@
 use super::event::{Event, EventType};
-use super::run::Run;
 use super::thread::{NodeLookup, ThreadState};
 
 /// Render `git forum show` output for a thread.
@@ -71,14 +70,6 @@ pub fn render_show(state: &ThreadState) -> String {
         lines.push(format!("links: {}", state.links.len()));
         for link in &state.links {
             lines.push(format!("  - {}  {}", link.target_thread_id, link.rel));
-        }
-        lines.push(String::new());
-    }
-
-    if !state.run_labels.is_empty() {
-        lines.push(format!("runs: {}", state.run_labels.len()));
-        for label in &state.run_labels {
-            lines.push(format!("  - {label}"));
         }
         lines.push(String::new());
     }
@@ -287,56 +278,6 @@ fn single_line_preview(s: &str, max: usize) -> String {
     truncate_body(&joined, max)
 }
 
-/// Render `git forum run show` output for a single run.
-pub fn render_run_show(run: &Run) -> String {
-    let mut lines: Vec<String> = Vec::new();
-    lines.push(format!("{:<12} {}", run.run_label, run.status));
-    lines.push(format!("thread:   {}", run.thread_id));
-    lines.push(format!("by:       {}", run.actor_id));
-    lines.push(format!(
-        "started:  {}",
-        run.started_at.format("%Y-%m-%dT%H:%M:%SZ")
-    ));
-    if let Some(ended) = run.ended_at {
-        lines.push(format!("ended:    {}", ended.format("%Y-%m-%dT%H:%M:%SZ")));
-    }
-    if let Some(model) = &run.model {
-        lines.push(format!("model:    {} / {}", model.provider, model.name));
-    }
-    if let Some(result) = &run.result {
-        lines.push(format!("result:   {}", result.status));
-        if let Some(conf) = result.confidence {
-            lines.push(format!("confidence: {conf:.2}"));
-        }
-    }
-    lines.push(String::new());
-    lines.join("\n")
-}
-
-/// Render `git forum run ls` output for a list of runs.
-pub fn render_run_ls(runs: &[Run]) -> String {
-    if runs.is_empty() {
-        return "no runs found\n".into();
-    }
-    let mut lines: Vec<String> = Vec::new();
-    lines.push(format!(
-        "{:<12}  {:<12}  {:<10}  {}",
-        "LABEL", "THREAD", "STATUS", "STARTED"
-    ));
-    lines.push("-".repeat(60));
-    for run in runs {
-        lines.push(format!(
-            "{:<12}  {:<12}  {:<10}  {}",
-            run.run_label,
-            run.thread_id,
-            run.status.to_string(),
-            run.started_at.format("%Y-%m-%dT%H:%M:%SZ"),
-        ));
-    }
-    lines.push(String::new());
-    lines.join("\n")
-}
-
 /// Render search results from the local index.
 pub fn render_search_results(rows: &[super::index::SearchRow]) -> String {
     if rows.is_empty() {
@@ -459,13 +400,11 @@ mod tests {
                 approvals: vec![],
                 evidence: None,
                 link_rel: None,
-                run_label: None,
                 branch: None,
             }],
             nodes: vec![],
             evidence_items: vec![],
             links: vec![],
-            run_labels: vec![],
         }
     }
 
@@ -523,7 +462,6 @@ mod tests {
                 approvals: vec![],
                 evidence: None,
                 link_rel: None,
-                run_label: None,
                 branch: None,
             }],
         };

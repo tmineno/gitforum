@@ -361,13 +361,11 @@ mod tests {
                 approvals: vec![],
                 evidence: None,
                 link_rel: None,
-                run_label: None,
                 branch: None,
             }],
             nodes: vec![],
             evidence_items: vec![],
             links: vec![],
-            run_labels: vec![],
         }
     }
 

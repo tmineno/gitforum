@@ -107,7 +107,6 @@ enum LinkFormField {
 enum LinkTargetKind {
     Issue,
     Rfc,
-    Decision,
     Manual,
 }
 
@@ -238,8 +237,8 @@ impl App {
         self.kind_filter = match self.kind_filter.as_deref() {
             None => Some("issue".into()),
             Some("issue") => Some("rfc".into()),
-            Some("rfc") => Some("decision".into()),
-            _ => None,
+            Some("rfc") => None,
+            _ => Some("issue".into()),
         };
         let n = self.visible_threads().len();
         self.table_state.select(if n > 0 { Some(0) } else { None });
@@ -752,23 +751,22 @@ fn node_status(node: &Node) -> &'static str {
     }
 }
 
-fn thread_kind_values() -> [ThreadKind; 3] {
-    [ThreadKind::Issue, ThreadKind::Rfc, ThreadKind::Decision]
+fn thread_kind_values() -> [ThreadKind; 2] {
+    [ThreadKind::Issue, ThreadKind::Rfc]
 }
 
-fn thread_kind_labels() -> [&'static str; 3] {
-    ["issue", "rfc", "decision"]
+fn thread_kind_labels() -> [&'static str; 2] {
+    ["issue", "rfc"]
 }
 
 fn default_thread_kind_index(kind_filter: Option<&str>) -> usize {
     match kind_filter {
         Some("issue") => 0,
-        Some("decision") => 2,
         _ => 1,
     }
 }
 
-fn node_type_values() -> [NodeType; 10] {
+fn node_type_values() -> [NodeType; 9] {
     [
         NodeType::Claim,
         NodeType::Question,
@@ -776,14 +774,13 @@ fn node_type_values() -> [NodeType; 10] {
         NodeType::Alternative,
         NodeType::Evidence,
         NodeType::Summary,
-        NodeType::Decision,
         NodeType::Action,
         NodeType::Risk,
         NodeType::Assumption,
     ]
 }
 
-fn node_type_labels() -> [&'static str; 10] {
+fn node_type_labels() -> [&'static str; 9] {
     [
         "claim",
         "question",
@@ -791,7 +788,6 @@ fn node_type_labels() -> [&'static str; 10] {
         "alternative",
         "evidence",
         "summary",
-        "decision",
         "action",
         "risk",
         "assumption",
@@ -802,24 +798,22 @@ fn link_relation_labels() -> [&'static str; 4] {
     ["implements", "relates-to", "depends-on", "blocks"]
 }
 
-fn link_target_kind_values() -> [LinkTargetKind; 4] {
+fn link_target_kind_values() -> [LinkTargetKind; 3] {
     [
         LinkTargetKind::Issue,
         LinkTargetKind::Rfc,
-        LinkTargetKind::Decision,
         LinkTargetKind::Manual,
     ]
 }
 
-fn link_target_kind_labels() -> [&'static str; 4] {
-    ["issue", "rfc", "decision", "manual"]
+fn link_target_kind_labels() -> [&'static str; 3] {
+    ["issue", "rfc", "manual"]
 }
 
 fn thread_kind_matches_target(kind: &str, target_kind: LinkTargetKind) -> bool {
     match target_kind {
         LinkTargetKind::Issue => kind == "issue",
         LinkTargetKind::Rfc => kind == "rfc",
-        LinkTargetKind::Decision => kind == "decision",
         LinkTargetKind::Manual => false,
     }
 }
@@ -2480,8 +2474,6 @@ mod tests {
         assert_eq!(app.kind_filter.as_deref(), Some("issue"));
         app.cycle_filter();
         assert_eq!(app.kind_filter.as_deref(), Some("rfc"));
-        app.cycle_filter();
-        assert_eq!(app.kind_filter.as_deref(), Some("decision"));
         app.cycle_filter();
         assert_eq!(app.kind_filter, None);
     }

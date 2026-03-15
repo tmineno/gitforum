@@ -42,7 +42,6 @@ pub fn add_evidence(
             locator,
         }),
         link_rel: None,
-        run_label: None,
         branch: None,
     };
     super::event::write_event(git, &ev)
@@ -90,7 +89,6 @@ pub fn add_thread_link(
         approvals: vec![],
         evidence: None,
         link_rel: Some(rel.to_string()),
-        run_label: None,
         branch: None,
     };
     super::event::write_event(git, &ev)

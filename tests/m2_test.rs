@@ -112,23 +112,6 @@ fn create_rfc_initial_status_is_draft() {
 }
 
 #[test]
-fn create_decision_initial_status_is_proposed() {
-    let (_repo, git, _paths) = setup();
-    create::create_thread(
-        &git,
-        ThreadKind::Decision,
-        "Choose algo",
-        None,
-        "human/alice",
-        &fixed_clock(),
-        &seq_ids("e"),
-    )
-    .unwrap();
-    let state = thread::replay_thread(&git, "DEC-0001").unwrap();
-    assert_eq!(state.status, "proposed");
-}
-
-#[test]
 fn create_multiple_threads_of_same_kind() {
     let (_repo, git, _paths) = setup();
     let ids = seq_ids("e");

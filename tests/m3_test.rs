@@ -896,7 +896,6 @@ fn resolve_node_id_in_thread_scopes_prefix_lookup() {
         approvals: vec![],
         evidence: None,
         link_rel: None,
-        run_label: None,
         branch: None,
     };
     let second_event = Event {
@@ -916,7 +915,6 @@ fn resolve_node_id_in_thread_scopes_prefix_lookup() {
         approvals: vec![],
         evidence: None,
         link_rel: None,
-        run_label: None,
         branch: None,
     };
     event::write_event(&git, &first_event).unwrap();

@@ -10,7 +10,7 @@ pub enum ApprovalMechanism {
     Recorded,
 }
 
-/// An approval record attached to a state or decision event (spec §7.7).
+/// An approval record attached to a state event (spec §7.7).
 /// Full implementation in M3.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Approval {
