@@ -180,7 +180,7 @@ The following are out of scope:
 
 ## License
 
-TBD
+MIT — see [LICENSE](./LICENSE).
 
 ## Contributing
 
