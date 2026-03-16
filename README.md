@@ -6,8 +6,8 @@
 objects: `rfc` and `issue`.
 
 It records discussion as typed nodes such as `claim`, `question`, `objection`, `summary`,
-`action`, and `risk`, instead of a plain comment stream. The goal is not to manage AI provenance.
-The goal is to give humans and coding agents the same work protocol.
+`action`, `risk`, and `review`, instead of a plain comment stream. The goal is not to manage AI
+provenance. The goal is to give humans and coding agents the same work protocol.
 
 ```mermaid
 ---
@@ -99,7 +99,7 @@ is no separate `decision` object in the target model.
 ### Structured discussion, not just comments
 
 Discussion is modeled as typed nodes such as `claim`, `question`, `objection`, `summary`,
-`action`, and `risk`.
+`action`, `risk`, and `review`.
 
 ### Human and agent use the same protocol
 
@@ -150,48 +150,33 @@ refs/forum/index/*
 
 ## Status
 
-`git-forum` is currently in the MVP stage. The target MVP is focused on:
+`git-forum` is functional and under active development. The following capabilities are implemented:
 
-- two core objects: `issue` and `rfc`
-- append-only event log
-- typed discussion nodes
-- policy-driven state transitions
-- evidence links and thread links
-- branch binding for implementation issues
-- local search and display
-- a simple TUI
-- minimal GitHub / GitLab import and export
+- Two thread kinds: `rfc` and `issue`, with full state machines (including `rejected` for issues)
+- Append-only event log stored as Git commits
+- Ten typed discussion nodes with shorthand CLI commands
+- Policy-driven state transitions with guard rules
+- Evidence attachment (commits, files, tests, benchmarks) and thread-to-thread links
+- Branch binding for implementation issues
+- Lexical search over a SQLite index
+- TUI with list, detail, create, sort, filter, mouse support, and color coding
+- Reply chains, node revision history, thread body revision with `--incorporates`
+- Concurrency safety via atomic ref updates
 
-Note:
-The implementation now follows the preferred `rfc` + `issue` workflow described here.
+See [doc/ROADMAP.md](./doc/ROADMAP.md) for in-progress and planned work including semantic merge,
+role enforcement, and import/export.
 
-## Non-goals for the MVP
+## Non-goals
 
-The following are intentionally out of scope:
+The following are out of scope:
 
-- heavy Web UI
-- central SaaS server
-- mandatory AI provenance tracking
-- separate high-level agent-only command sets
-- large Jira-style workflow management
-- PM features such as story points or burndown
-- advanced access control
-- fully autonomous patch application
-- complex recommendation systems built around embeddings
-
-## Roadmap
-
-### MVP
-
-A minimal local-first setup with CLI and a simple TUI for RFC-first human-agent coding.
-
-### v0.2
-
-Better semantic merge, import/export, improved search, and more TUI polish.
-
-### v0.3
-
-Richer TUI support, stronger policy features, and better branch-aware workflows.
+- Web UI or central server
+- Mandatory AI provenance tracking
+- Separate agent-only command sets
+- PM-style workflow management (story points, burndown, sprints)
+- Advanced access control beyond role-based policy
+- Automatic patch application
+- Embedding-based recommendation systems
 
 ## License
 
