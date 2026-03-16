@@ -1,0 +1,11 @@
+RFC-0001     Test RFC
+kind:     rfc
+status:   draft
+created:  2026-01-01T00:00:00Z
+by:       human/alice
+body:
+  Initial thread body.
+
+timeline:
+  date                  node_id           event_id          author              type        body
+  2026-01-01T00:00:00Z  -                 evt-0001          human/alice         create      Test RFC

@@ -1,0 +1,15 @@
+node-0001          question
+thread:   RFC-0001 Test RFC
+kind:     rfc
+status:   open
+created:  2026-01-01T00:00:00Z
+by:       ai/reviewer
+body:
+  What is the migration plan?
+
+thread links: 1
+  - ISSUE-0001  implements
+
+history:
+  date                  node_id           event_id          author              type        body
+  2026-01-01T00:00:00Z  node-0001         evt-0010          ai/reviewer         question    What is the migration plan?

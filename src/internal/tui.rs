@@ -990,6 +990,56 @@ fn node_status(node: &Node) -> &'static str {
     }
 }
 
+fn kind_color(kind: &str) -> Color {
+    match kind {
+        "rfc" => Color::Cyan,
+        "issue" => Color::Yellow,
+        _ => Color::Reset,
+    }
+}
+
+fn status_color(status: &str) -> Color {
+    match status {
+        "open" | "draft" => Color::Green,
+        "proposed" | "under-review" => Color::Yellow,
+        "accepted" | "closed" => Color::Magenta,
+        "rejected" => Color::Red,
+        _ => Color::Reset,
+    }
+}
+
+fn node_type_color(node_type: &str) -> Color {
+    match node_type {
+        "objection" => Color::Red,
+        "risk" => Color::Red,
+        "question" => Color::Yellow,
+        "summary" => Color::Green,
+        "action" => Color::Cyan,
+        "claim" => Color::Reset,
+        "review" => Color::Blue,
+        "alternative" => Color::Magenta,
+        _ => Color::Reset,
+    }
+}
+
+fn node_status_color(status: &str) -> Color {
+    match status {
+        "open" => Color::Green,
+        "resolved" => Color::DarkGray,
+        "retracted" => Color::DarkGray,
+        "incorporated" => Color::DarkGray,
+        _ => Color::Reset,
+    }
+}
+
+fn node_row_modifier(node: &Node) -> Modifier {
+    if node.retracted || node.resolved || node.incorporated {
+        Modifier::DIM
+    } else {
+        Modifier::empty()
+    }
+}
+
 fn thread_kind_values() -> [ThreadKind; 2] {
     [ThreadKind::Issue, ThreadKind::Rfc]
 }
@@ -1473,8 +1523,9 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
             .map(|t| {
                 Row::new(vec![
                     Cell::from(t.id.clone()),
-                    Cell::from(t.kind.clone()),
-                    Cell::from(t.status.clone()),
+                    Cell::from(t.kind.clone()).style(Style::default().fg(kind_color(&t.kind))),
+                    Cell::from(t.status.clone())
+                        .style(Style::default().fg(status_color(&t.status))),
                     Cell::from(short_datetime(&t.created_at)),
                     Cell::from(short_datetime(&t.updated_at)),
                     Cell::from(t.title.clone()),
@@ -1608,12 +1659,16 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         .thread_nodes
         .iter()
         .map(|node| {
+            let type_str = node.node_type.to_string();
+            let status_str = node_status(node);
+            let dim = node_row_modifier(node);
             Row::new(vec![
                 Cell::from(short_id(&node.node_id)),
-                Cell::from(node.node_type.to_string()),
-                Cell::from(node_status(node)),
+                Cell::from(type_str.clone()).style(Style::default().fg(node_type_color(&type_str))),
+                Cell::from(status_str).style(Style::default().fg(node_status_color(status_str))),
                 Cell::from(single_line_preview(&node.body, 36)),
             ])
+            .style(Style::default().add_modifier(dim))
         })
         .collect();
     let header = Row::new(["ID", "TYPE", "STATUS", "BODY"])

@@ -124,8 +124,9 @@ Git history.
 - evidence: links to commits, files, tests, benchmarks, docs, and threads
 - actor: a human or AI participant
 
-The detailed target model and MVP boundary are defined in [./doc/spec/MVP_SPEC.md](./doc/spec/MVP_SPEC.md).
+The product specification is in [./doc/spec/SPEC.md](./doc/spec/SPEC.md).
 For current CLI usage, see [./doc/MANUAL.md](./doc/MANUAL.md).
+For future development plans, see [./doc/ROADMAP.md](./doc/ROADMAP.md).
 
 ## Repository layout
 

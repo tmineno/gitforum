@@ -1,5 +1,5 @@
-# git-forum default policy
-# See doc/spec/SPEC.md for details.
+# Default policy fixture for tests.
+# Mirrors .forum/policy.toml as shipped by `git forum init`.
 
 [roles.reviewer]
 can_say = ["question", "objection", "summary", "risk"]
