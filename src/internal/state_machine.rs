@@ -20,7 +20,12 @@ pub fn valid_targets(kind: ThreadKind, from: &str) -> Vec<&'static str> {
 
 fn valid_transitions(kind: ThreadKind) -> &'static [(&'static str, &'static str)] {
     match kind {
-        ThreadKind::Issue => &[("open", "closed"), ("closed", "open")],
+        ThreadKind::Issue => &[
+            ("open", "closed"),
+            ("open", "rejected"),
+            ("closed", "open"),
+            ("rejected", "open"),
+        ],
         ThreadKind::Rfc => &[
             ("draft", "proposed"),
             ("draft", "rejected"),
@@ -86,5 +91,15 @@ mod tests {
     #[test]
     fn bogus_transition_is_invalid() {
         assert!(!is_valid_transition(ThreadKind::Rfc, "draft", "bogus"));
+    }
+
+    #[test]
+    fn issue_open_to_rejected_is_valid() {
+        assert!(is_valid_transition(ThreadKind::Issue, "open", "rejected"));
+    }
+
+    #[test]
+    fn issue_rejected_to_open_is_valid() {
+        assert!(is_valid_transition(ThreadKind::Issue, "rejected", "open"));
     }
 }

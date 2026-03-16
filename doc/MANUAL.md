@@ -20,6 +20,10 @@ If you only want to try it during development:
 cargo run -- --help
 ```
 
+**Note:** `git forum --help` requires `git forum init` to have been run first.
+`init` sets a local git alias (`alias.forum = !git-forum`) so that `--help` is
+passed to the binary instead of triggering Git's man-page lookup.
+
 To print this manual verbatim for an LLM or another tool:
 
 ```bash
@@ -369,6 +373,19 @@ git forum tui
 git forum tui RFC-0001
 ```
 
+### Colors
+
+The TUI uses color to distinguish kinds, statuses, and node types:
+
+- **Thread kind**: cyan = rfc, yellow = issue
+- **Thread status**: green = open/draft, yellow = proposed/under-review, magenta = accepted/closed,
+  red = rejected
+- **Node type**: red = objection/risk, yellow = question, green = summary, cyan = action,
+  blue = review, magenta = alternative
+- **Node status**: green = open, gray = resolved/retracted/incorporated
+
+Resolved, retracted, and incorporated node rows are dimmed.
+
 Current controls:
 
 - list view:
@@ -449,6 +466,8 @@ git forum state bulk --to closed ISSUE-0001 ISSUE-0002 --dry-run
 - for RFCs, `proposed` means the author is declaring the RFC review-ready
 - for RFCs, `under-review` means active review is in progress
 - an accepted RFC is the decision record; there is no separate decision workflow in the preferred model
+- issues support `open`, `closed`, and `rejected` states; `rejected` is for invalid or won't-fix
+  issues, while `closed` means completed
 - if policy requires `no_open_actions`, closing an issue with open `action` nodes fails
 - `--resolve-open-actions` is an explicit escape hatch for issue close; it resolves open `action`
   nodes before writing the closing state event
@@ -510,6 +529,7 @@ requires = ["no_open_actions"]
 - `no_open_actions`
 - `at_least_one_summary`
 - `one_human_approval`
+- `has_commit_evidence`
 
 ### What is enforced today
 

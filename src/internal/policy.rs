@@ -4,6 +4,7 @@ use serde::Deserialize;
 
 use super::approval::Approval;
 use super::error::{ForumError, ForumResult};
+use super::evidence::EvidenceKind;
 use super::thread::ThreadState;
 
 /// A named guard rule.
@@ -14,6 +15,7 @@ pub enum GuardRule {
     NoOpenActions,
     AtLeastOneSummary,
     OneHumanApproval,
+    HasCommitEvidence,
 }
 
 impl std::fmt::Display for GuardRule {
@@ -23,6 +25,7 @@ impl std::fmt::Display for GuardRule {
             Self::NoOpenActions => write!(f, "no_open_actions"),
             Self::AtLeastOneSummary => write!(f, "at_least_one_summary"),
             Self::OneHumanApproval => write!(f, "one_human_approval"),
+            Self::HasCommitEvidence => write!(f, "has_commit_evidence"),
         }
     }
 }
@@ -153,6 +156,20 @@ pub fn evaluate_rule(
                 None
             }
         }
+        GuardRule::HasCommitEvidence => {
+            let has_commit = state
+                .evidence_items
+                .iter()
+                .any(|e| e.kind == EvidenceKind::Commit);
+            if !has_commit {
+                Some(GuardViolation {
+                    rule: rule.to_string(),
+                    reason: "no commit evidence attached".into(),
+                })
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -233,6 +250,10 @@ mod tests {
         assert_eq!(
             GuardRule::OneHumanApproval.to_string(),
             "one_human_approval"
+        );
+        assert_eq!(
+            GuardRule::HasCommitEvidence.to_string(),
+            "has_commit_evidence"
         );
     }
 }

@@ -5,6 +5,8 @@ use git_forum::internal::clock::{Clock, FixedClock};
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
 use git_forum::internal::event::{self, Event, EventType, NodeType, ThreadKind};
+use git_forum::internal::evidence::EvidenceKind;
+use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id::SequentialIdGenerator;
 use git_forum::internal::init;
@@ -951,6 +953,154 @@ fn resolve_node_id_in_thread_scopes_prefix_lookup() {
 
     let resolved = thread::resolve_node_id_in_thread(&git, &first_thread_id, "deadbeef").unwrap();
     assert_eq!(resolved, "deadbeef11111111111111111111111111111111");
+}
+
+// ---- issue rejected state ----
+
+#[test]
+fn change_state_issue_rejected_succeeds() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Invalid issue",
+        None,
+        "human/alice",
+        &fixed_clock(),
+        &SequentialIdGenerator::new("issue"),
+    )
+    .unwrap();
+    let ids = SequentialIdGenerator::new("rej");
+
+    say::change_state(
+        &git,
+        &thread_id,
+        "rejected",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+        &empty_policy(),
+        say::StateChangeOptions::default(),
+    )
+    .unwrap();
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.status, "rejected");
+}
+
+#[test]
+fn change_state_issue_close_fails_guard_has_commit_evidence() {
+    use std::collections::HashMap;
+
+    let (_repo, git, _paths) = setup();
+    let thread_id = create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Needs commit evidence",
+        None,
+        "human/alice",
+        &fixed_clock(),
+        &SequentialIdGenerator::new("issue"),
+    )
+    .unwrap();
+    let ids = SequentialIdGenerator::new("ce");
+
+    let policy = Policy {
+        roles: HashMap::new(),
+        guards: vec![GuardEntry {
+            on: "open->closed".into(),
+            requires: vec![GuardRule::HasCommitEvidence],
+        }],
+    };
+
+    let err = say::change_state(
+        &git,
+        &thread_id,
+        "closed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+        &policy,
+        say::StateChangeOptions::default(),
+    )
+    .unwrap_err();
+
+    assert!(err.to_string().contains("has_commit_evidence"));
+}
+
+#[test]
+fn change_state_issue_close_passes_with_commit_evidence() {
+    use std::collections::HashMap;
+
+    let (repo, git, _paths) = setup();
+    let thread_id = create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Has commit evidence",
+        None,
+        "human/alice",
+        &fixed_clock(),
+        &SequentialIdGenerator::new("issue"),
+    )
+    .unwrap();
+    let ids = SequentialIdGenerator::new("ce");
+
+    // Create a real commit in the test repo to use as evidence
+    std::fs::write(repo.path().join("test.txt"), "hello").unwrap();
+    let add_out = std::process::Command::new("git")
+        .args(["add", "test.txt"])
+        .current_dir(repo.path())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(add_out.status.success());
+    let commit_out = std::process::Command::new("git")
+        .args(["commit", "-m", "test commit"])
+        .current_dir(repo.path())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    assert!(commit_out.status.success());
+
+    // Add commit evidence
+    evidence_ops::add_evidence(
+        &git,
+        &thread_id,
+        EvidenceKind::Commit,
+        "HEAD",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
+    let policy = Policy {
+        roles: HashMap::new(),
+        guards: vec![GuardEntry {
+            on: "open->closed".into(),
+            requires: vec![GuardRule::HasCommitEvidence],
+        }],
+    };
+
+    say::change_state(
+        &git,
+        &thread_id,
+        "closed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+        &policy,
+        say::StateChangeOptions::default(),
+    )
+    .unwrap();
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.status, "closed");
 }
 
 // ---- policy loading from file ----
