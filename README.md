@@ -42,14 +42,14 @@ $ git forum question RFC-0001 "What compatibility risks remain?" \
   --as ai/reviewer
 $ git forum summary RFC-0001 \
   "Direction is plausible, but migration evidence is still missing."
-$ git forum state RFC-0001 proposed
+$ git forum rfc propose RFC-0001
 $ git forum state RFC-0001 under-review
-$ git forum state RFC-0001 accepted --sign human/alice
+$ git forum rfc accept RFC-0001 --sign human/alice
 $ git forum issue new "Implement trait backend" \
   --link-to RFC-0001 --rel implements
 $ git forum branch bind ISSUE-0001 feat/trait-backend
 $ git forum evidence add ISSUE-0001 --kind test --ref tests/backend_trait.rs
-$ git forum state ISSUE-0001 closed
+$ git forum issue close ISSUE-0001 --comment "All tests passing."
 ```
 
 ## Install
@@ -140,7 +140,7 @@ Authoritative data lives in Git refs, while shared rules and templates live in t
     issue.md
     rfc.md
 
-.git/forum/
+<git-dir>/forum/           # <git-dir> = .git/ or worktree git dir
   index.sqlite
   local.toml
 
@@ -156,12 +156,17 @@ refs/forum/index/*
 - Append-only event log stored as Git commits
 - Ten typed discussion nodes with shorthand CLI commands
 - Policy-driven state transitions with guard rules
-- Evidence attachment (commits, files, tests, benchmarks) and thread-to-thread links
+- State transition shorthands: `issue close`, `issue reopen`, `rfc accept`, etc.
+- Combined close + comment + link in one command (`--comment`, `--link-to`)
+- Evidence attachment (commits, files, tests, benchmarks) with bulk `--ref` support
+- Thread-to-thread links
+- Retroactive thread creation from commits (`--from-commit`)
 - Branch binding for implementation issues
 - Lexical search over a SQLite index
 - TUI with list, detail, create, sort, filter, mouse support, and color coding
 - Reply chains, node revision history, thread body revision with `--incorporates`
 - Concurrency safety via atomic ref updates
+- Git worktree support
 
 See [doc/ROADMAP.md](./doc/ROADMAP.md) for in-progress and planned work including semantic merge,
 role enforcement, and import/export.

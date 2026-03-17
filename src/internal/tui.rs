@@ -33,6 +33,153 @@ use super::say;
 use super::show;
 use super::thread;
 
+use ratatui::text::{Line as RLine, Span};
+
+/// Convert a markdown string to styled ratatui Text.
+///
+/// Supports headings (bold), bold/italic inline, code spans (green),
+/// code blocks (green on dark), list items with bullet, and blockquotes.
+fn markdown_to_text(input: &str) -> ratatui::text::Text<'static> {
+    use pulldown_cmark::{Event as MdEvent, Options, Parser, Tag, TagEnd};
+
+    let parser = Parser::new_ext(input, Options::all());
+
+    let mut lines: Vec<RLine<'static>> = Vec::new();
+    let mut current_spans: Vec<Span<'static>> = Vec::new();
+    let mut style_stack: Vec<Style> = vec![Style::default()];
+    let mut in_heading = false;
+    let mut in_code_block = false;
+    let mut list_depth: usize = 0;
+
+    let current_style = |stack: &[Style]| -> Style { stack.last().copied().unwrap_or_default() };
+
+    let flush_line = |lines: &mut Vec<RLine<'static>>, spans: &mut Vec<Span<'static>>| {
+        if !spans.is_empty() {
+            lines.push(RLine::from(std::mem::take(spans)));
+        }
+    };
+
+    for event in parser {
+        match event {
+            MdEvent::Start(Tag::Heading { .. }) => {
+                flush_line(&mut lines, &mut current_spans);
+                in_heading = true;
+                style_stack.push(
+                    current_style(&style_stack)
+                        .add_modifier(Modifier::BOLD)
+                        .fg(Color::Cyan),
+                );
+            }
+            MdEvent::End(TagEnd::Heading(_)) => {
+                flush_line(&mut lines, &mut current_spans);
+                lines.push(RLine::default());
+                in_heading = false;
+                style_stack.pop();
+            }
+            MdEvent::Start(Tag::Emphasis) => {
+                style_stack.push(current_style(&style_stack).add_modifier(Modifier::ITALIC));
+            }
+            MdEvent::End(TagEnd::Emphasis) => {
+                style_stack.pop();
+            }
+            MdEvent::Start(Tag::Strong) => {
+                style_stack.push(current_style(&style_stack).add_modifier(Modifier::BOLD));
+            }
+            MdEvent::End(TagEnd::Strong) => {
+                style_stack.pop();
+            }
+            MdEvent::Start(Tag::CodeBlock(_)) => {
+                flush_line(&mut lines, &mut current_spans);
+                in_code_block = true;
+                style_stack.push(Style::default().fg(Color::Green));
+            }
+            MdEvent::End(TagEnd::CodeBlock) => {
+                flush_line(&mut lines, &mut current_spans);
+                in_code_block = false;
+                style_stack.pop();
+            }
+            MdEvent::Start(Tag::List(_)) => {
+                flush_line(&mut lines, &mut current_spans);
+                list_depth += 1;
+            }
+            MdEvent::End(TagEnd::List(_)) => {
+                flush_line(&mut lines, &mut current_spans);
+                list_depth = list_depth.saturating_sub(1);
+            }
+            MdEvent::Start(Tag::Item) => {
+                flush_line(&mut lines, &mut current_spans);
+                let indent = "  ".repeat(list_depth.saturating_sub(1));
+                current_spans.push(Span::styled(
+                    format!("{indent}• "),
+                    current_style(&style_stack),
+                ));
+            }
+            MdEvent::End(TagEnd::Item) => {
+                flush_line(&mut lines, &mut current_spans);
+            }
+            MdEvent::Start(Tag::BlockQuote(_)) => {
+                flush_line(&mut lines, &mut current_spans);
+                style_stack.push(Style::default().fg(Color::DarkGray));
+            }
+            MdEvent::End(TagEnd::BlockQuote(_)) => {
+                flush_line(&mut lines, &mut current_spans);
+                style_stack.pop();
+            }
+            MdEvent::Start(Tag::Paragraph) => {
+                if !in_heading {
+                    flush_line(&mut lines, &mut current_spans);
+                }
+            }
+            MdEvent::End(TagEnd::Paragraph) => {
+                flush_line(&mut lines, &mut current_spans);
+                if !in_heading {
+                    lines.push(RLine::default());
+                }
+            }
+            MdEvent::Code(code) => {
+                current_spans.push(Span::styled(
+                    code.to_string(),
+                    Style::default().fg(Color::Green),
+                ));
+            }
+            MdEvent::Text(text) => {
+                if in_code_block {
+                    // Preserve newlines in code blocks
+                    for (i, line) in text.split('\n').enumerate() {
+                        if i > 0 {
+                            flush_line(&mut lines, &mut current_spans);
+                        }
+                        if !line.is_empty() {
+                            current_spans
+                                .push(Span::styled(line.to_string(), current_style(&style_stack)));
+                        }
+                    }
+                } else {
+                    current_spans.push(Span::styled(text.to_string(), current_style(&style_stack)));
+                }
+            }
+            MdEvent::SoftBreak => {
+                current_spans.push(Span::raw(" "));
+            }
+            MdEvent::HardBreak => {
+                flush_line(&mut lines, &mut current_spans);
+            }
+            MdEvent::Rule => {
+                flush_line(&mut lines, &mut current_spans);
+                lines.push(RLine::from(Span::styled(
+                    "───────────────────────────────────────",
+                    Style::default().fg(Color::DarkGray),
+                )));
+                lines.push(RLine::default());
+            }
+            _ => {}
+        }
+    }
+    flush_line(&mut lines, &mut current_spans);
+
+    ratatui::text::Text::from(lines)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum View {
     List,
@@ -162,6 +309,17 @@ struct UiRects {
     form_fields: [Option<Rect>; 4],
 }
 
+/// A node in the tree view with depth information.
+#[derive(Debug, Clone)]
+struct TreeEntry {
+    /// Index into `thread_nodes`.
+    node_index: usize,
+    /// Nesting depth (0 = top-level).
+    depth: u16,
+    /// Tree connector prefix for display (e.g. "├─ ", "│  └─ ").
+    prefix: String,
+}
+
 /// Application state for the TUI.
 pub struct App {
     pub view: View,
@@ -171,6 +329,8 @@ pub struct App {
     pub thread_text: String,
     pub thread_scroll: u16,
     pub thread_nodes: Vec<Node>,
+    /// Tree-ordered entries for the nodes panel (may differ from thread_nodes order).
+    tree_entries: Vec<TreeEntry>,
     pub node_table_state: TableState,
     pub node_detail_text: String,
     pub node_detail_scroll: u16,
@@ -182,6 +342,18 @@ pub struct App {
     last_click: Option<(u16, u16, Instant)>,
     sort_column: SortColumn,
     sort_ascending: bool,
+    /// Percentage of horizontal space for the left (body) pane in thread detail (20..80).
+    detail_split: u16,
+    /// Whether the user is currently dragging the pane border.
+    dragging_border: bool,
+    /// Timestamp of last auto-refresh check.
+    last_refresh: Instant,
+    /// Cached tip SHA for the currently viewed thread (for change detection).
+    thread_tip_sha: Option<String>,
+    /// Whether to render the main pane body as markdown.
+    markdown_mode: bool,
+    /// Whether mouse capture is temporarily disabled for text selection.
+    mouse_capture_disabled: bool,
 }
 
 impl App {
@@ -198,6 +370,7 @@ impl App {
             thread_text: String::new(),
             thread_scroll: 0,
             thread_nodes: Vec::new(),
+            tree_entries: Vec::new(),
             node_table_state: TableState::default(),
             node_detail_text: String::new(),
             node_detail_scroll: 0,
@@ -223,6 +396,12 @@ impl App {
             last_click: None,
             sort_column: SortColumn::Updated,
             sort_ascending: false,
+            detail_split: 60,
+            dragging_border: false,
+            last_refresh: Instant::now(),
+            thread_tip_sha: None,
+            markdown_mode: false,
+            mouse_capture_disabled: false,
         }
     }
 
@@ -315,12 +494,12 @@ impl App {
     fn selected_node_id(&self) -> Option<String> {
         self.node_table_state
             .selected()
-            .and_then(|i| self.thread_nodes.get(i))
-            .map(|node| node.node_id.clone())
+            .and_then(|i| self.tree_entries.get(i))
+            .map(|entry| self.thread_nodes[entry.node_index].node_id.clone())
     }
 
     fn move_node_down(&mut self) {
-        let n = self.thread_nodes.len();
+        let n = self.tree_entries.len();
         if n == 0 {
             return;
         }
@@ -333,7 +512,7 @@ impl App {
     }
 
     fn move_node_up(&mut self) {
-        let n = self.thread_nodes.len();
+        let n = self.tree_entries.len();
         if n == 0 {
             return;
         }
@@ -346,10 +525,13 @@ impl App {
     }
 
     fn select_node_by_id(&mut self, node_id: Option<&str>) {
-        let selected =
-            node_id.and_then(|id| self.thread_nodes.iter().position(|n| n.node_id == id));
+        let selected = node_id.and_then(|id| {
+            self.tree_entries
+                .iter()
+                .position(|e| self.thread_nodes[e.node_index].node_id == id)
+        });
         self.node_table_state
-            .select(match (selected, self.thread_nodes.is_empty()) {
+            .select(match (selected, self.tree_entries.is_empty()) {
                 (Some(index), _) => Some(index),
                 (None, false) => Some(0),
                 (None, true) => None,
@@ -451,6 +633,9 @@ pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> For
     result
 }
 
+/// Auto-refresh interval: check for thread changes every 2 seconds.
+const AUTO_REFRESH_INTERVAL_MS: u128 = 2000;
+
 pub(crate) fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
@@ -460,6 +645,12 @@ pub(crate) fn run_app<B: Backend>(
 ) -> ForumResult<()> {
     loop {
         terminal.draw(|f| render(f, app))?;
+
+        // Auto-refresh: check if the viewed thread has changed
+        if app.last_refresh.elapsed().as_millis() >= AUTO_REFRESH_INTERVAL_MS {
+            auto_refresh(app, git, conn, db_path)?;
+            app.last_refresh = Instant::now();
+        }
 
         if event::poll(std::time::Duration::from_millis(100))? {
             match event::read()? {
@@ -479,6 +670,58 @@ pub(crate) fn run_app<B: Backend>(
     }
 }
 
+/// Check if the currently viewed thread or list has changed, and refresh if so.
+fn auto_refresh(
+    app: &mut App,
+    git: &GitOps,
+    conn: &rusqlite::Connection,
+    db_path: &Path,
+) -> ForumResult<()> {
+    match &app.view {
+        View::ThreadDetail(thread_id) => {
+            let ref_name = format!("refs/forum/threads/{thread_id}");
+            if let Ok(Some(current_sha)) = git.resolve_ref(&ref_name) {
+                let changed = app
+                    .thread_tip_sha
+                    .as_ref()
+                    .is_none_or(|prev| *prev != current_sha);
+                if changed {
+                    let selected = app.selected_node_id();
+                    let thread_id = thread_id.clone();
+                    open_thread_detail(app, git, &thread_id, selected.as_deref())?;
+                }
+            }
+        }
+        View::NodeDetail { thread_id, node_id } => {
+            let ref_name = format!("refs/forum/threads/{thread_id}");
+            if let Ok(Some(current_sha)) = git.resolve_ref(&ref_name) {
+                let changed = app
+                    .thread_tip_sha
+                    .as_ref()
+                    .is_none_or(|prev| *prev != current_sha);
+                if changed {
+                    let thread_id = thread_id.clone();
+                    let node_id = node_id.clone();
+                    app.thread_tip_sha = Some(current_sha);
+                    open_node_detail(app, git, &thread_id, &node_id)?;
+                }
+            }
+        }
+        View::List => {
+            // Refresh list by reindexing
+            reindex::run_reindex(git, db_path)?;
+            let threads = index::list_threads(conn)?;
+            let sel = app.table_state.selected().unwrap_or(0);
+            app.threads = threads;
+            let n = app.visible_threads().len();
+            app.table_state
+                .select(if n > 0 { Some(sel.min(n - 1)) } else { None });
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn handle_key(
     app: &mut App,
     key: crossterm::event::KeyEvent,
@@ -489,6 +732,13 @@ fn handle_key(
     // Ctrl-C always quits
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return Ok(true);
+    }
+
+    // Re-enable mouse capture if it was temporarily disabled for text selection
+    if app.mouse_capture_disabled {
+        execute!(std::io::stdout(), EnableMouseCapture).ok();
+        app.mouse_capture_disabled = false;
+        // Don't consume the key — fall through to normal handling
     }
 
     match app.view.clone() {
@@ -520,6 +770,7 @@ fn handle_key(
                 app.thread_text.clear();
                 app.thread_scroll = 0;
                 app.thread_nodes.clear();
+                app.tree_entries.clear();
                 app.node_detail_text.clear();
                 app.node_detail_scroll = 0;
             }
@@ -529,6 +780,11 @@ fn handle_key(
             KeyCode::Up => app.scroll_thread_up(),
             KeyCode::Char('c') => app.begin_create_node(&thread_id),
             KeyCode::Char('l') => app.begin_create_link_from_thread(&thread_id),
+            KeyCode::Char('m') => app.markdown_mode = !app.markdown_mode,
+            KeyCode::Char('S') => {
+                execute!(std::io::stdout(), DisableMouseCapture).ok();
+                app.mouse_capture_disabled = true;
+            }
             KeyCode::Char('r') => {
                 let selected = app.selected_node_id();
                 reindex::run_reindex(git, db_path)?;
@@ -547,6 +803,11 @@ fn handle_key(
             }
             KeyCode::Char('c') => app.begin_create_node(&thread_id),
             KeyCode::Char('l') => app.begin_create_link_from_node(&thread_id, &node_id),
+            KeyCode::Char('m') => app.markdown_mode = !app.markdown_mode,
+            KeyCode::Char('S') => {
+                execute!(std::io::stdout(), DisableMouseCapture).ok();
+                app.mouse_capture_disabled = true;
+            }
             KeyCode::Char('x') => {
                 apply_node_status_action(
                     app,
@@ -673,6 +934,20 @@ fn handle_mouse(
         },
         View::ThreadDetail(thread_id) => match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // Check if clicking on the border between panes
+                if let (Some(body_area), Some(nodes_area)) =
+                    (app.ui_rects.thread_body, app.ui_rects.thread_nodes)
+                {
+                    let border_col = body_area.x + body_area.width;
+                    if mouse.column >= border_col.saturating_sub(1)
+                        && mouse.column <= nodes_area.x
+                        && mouse.row >= body_area.y
+                        && mouse.row < body_area.y + body_area.height
+                    {
+                        app.dragging_border = true;
+                        return Ok(false);
+                    }
+                }
                 let now = Instant::now();
                 let is_double = app.last_click.is_some_and(|(c, r, t)| {
                     c == mouse.column && r == mouse.row && now.duration_since(t).as_millis() < 400
@@ -686,10 +961,11 @@ fn handle_mouse(
                     app.view = View::List;
                     app.thread_text.clear();
                     app.thread_nodes.clear();
+                    app.tree_entries.clear();
                     app.thread_scroll = 0;
                 } else if let Some(area) = app.ui_rects.thread_nodes {
                     if let Some(index) = table_row_at(area, mouse.row) {
-                        if index < app.thread_nodes.len() {
+                        if index < app.tree_entries.len() {
                             app.node_table_state.select(Some(index));
                             if is_double {
                                 if let Some(node_id) = app.selected_node_id() {
@@ -700,6 +976,22 @@ fn handle_mouse(
                     }
                 }
                 app.last_click = Some((mouse.column, mouse.row, now));
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if app.dragging_border {
+                    if let Some(body_area) = app.ui_rects.thread_body {
+                        let total_width = body_area.width
+                            + app.ui_rects.thread_nodes.map(|a| a.width).unwrap_or(0);
+                        if total_width > 0 {
+                            let relative = mouse.column.saturating_sub(body_area.x);
+                            let pct = ((relative as u32 * 100) / total_width as u32) as u16;
+                            app.detail_split = pct.clamp(20, 80);
+                        }
+                    }
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                app.dragging_border = false;
             }
             MouseEventKind::ScrollDown => {
                 if let Some(area) = app.ui_rects.thread_body {
@@ -891,8 +1183,13 @@ fn open_thread_detail(
     app.thread_text = show::render_show(&state);
     app.thread_scroll = 0;
     app.thread_nodes = state.nodes;
+    app.tree_entries = build_tree_entries(&app.thread_nodes);
     app.node_detail_text.clear();
     app.node_detail_scroll = 0;
+    // Cache the tip SHA for auto-refresh change detection
+    let ref_name = format!("refs/forum/threads/{thread_id}");
+    app.thread_tip_sha = git.resolve_ref(&ref_name)?.or(None);
+    app.last_refresh = Instant::now();
     app.select_node_by_id(selected_node_id);
     app.view = View::ThreadDetail(thread_id.to_string());
     Ok(())
@@ -1038,6 +1335,88 @@ fn node_row_modifier(node: &Node) -> Modifier {
     } else {
         Modifier::empty()
     }
+}
+
+/// Build tree-ordered entries from a flat list of nodes using reply_to relationships.
+///
+/// Returns entries in depth-first order with tree connector prefixes.
+fn build_tree_entries(nodes: &[Node]) -> Vec<TreeEntry> {
+    use std::collections::HashMap;
+
+    // Build index: node_id -> position
+    let id_to_idx: HashMap<&str, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.node_id.as_str(), i))
+        .collect();
+
+    // Build children map: parent_id -> [child indices]
+    let mut children: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut has_parent = vec![false; nodes.len()];
+    for (i, node) in nodes.iter().enumerate() {
+        if let Some(ref parent_id) = node.reply_to {
+            if let Some(&parent_idx) = id_to_idx.get(parent_id.as_str()) {
+                children.entry(parent_idx).or_default().push(i);
+                has_parent[i] = true;
+            }
+        }
+    }
+
+    // Roots are nodes without a parent (or whose parent is not in this thread)
+    let roots: Vec<usize> = (0..nodes.len()).filter(|&i| !has_parent[i]).collect();
+
+    let mut entries = Vec::with_capacity(nodes.len());
+
+    // DFS with prefix tracking
+    fn walk(
+        idx: usize,
+        depth: u16,
+        prefix: &str,
+        is_last: bool,
+        children: &HashMap<usize, Vec<usize>>,
+        entries: &mut Vec<TreeEntry>,
+    ) {
+        let connector = if depth == 0 {
+            String::new()
+        } else if is_last {
+            format!("{prefix}└─")
+        } else {
+            format!("{prefix}├─")
+        };
+        entries.push(TreeEntry {
+            node_index: idx,
+            depth,
+            prefix: connector,
+        });
+
+        if let Some(child_indices) = children.get(&idx) {
+            let n = child_indices.len();
+            for (i, &child_idx) in child_indices.iter().enumerate() {
+                let child_prefix = if depth == 0 {
+                    String::new()
+                } else if is_last {
+                    format!("{prefix}  ")
+                } else {
+                    format!("{prefix}│ ")
+                };
+                walk(
+                    child_idx,
+                    depth + 1,
+                    &child_prefix,
+                    i == n - 1,
+                    children,
+                    entries,
+                );
+            }
+        }
+    }
+
+    let n = roots.len();
+    for (i, &root_idx) in roots.iter().enumerate() {
+        walk(root_idx, 0, "", i == n - 1, &children, &mut entries);
+    }
+
+    entries
 }
 
 fn thread_kind_values() -> [ThreadKind; 2] {
@@ -1623,10 +2002,16 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         width: 11, // "[esc/q]back"
         height: 1,
     });
+    let md_indicator = if app.markdown_mode { "md:on" } else { "md:off" };
+    let select_hint = if app.mouse_capture_disabled {
+        " SELECT MODE"
+    } else {
+        ""
+    };
     f.render_widget(
-        Paragraph::new(
-            " [esc/q]back  [enter]node  [c]create node  [l]link  [r]refresh  [j/k]select node  [up/down]scroll body",
-        ),
+        Paragraph::new(format!(
+            " [esc/q]back [enter]node [c]create [l]link [m]{md_indicator} [S]select [r]refresh [j/k]nodes{select_hint}",
+        )),
         chunks[0],
     );
 
@@ -1635,38 +2020,61 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
     } else {
         ""
     };
+    let left_pct = app.detail_split;
+    let right_pct = 100u16.saturating_sub(left_pct);
     let main = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .constraints([
+            Constraint::Percentage(left_pct),
+            Constraint::Percentage(right_pct),
+        ])
         .split(chunks[1]);
 
     app.ui_rects.thread_body = Some(main[0]);
     app.ui_rects.thread_nodes = Some(main[1]);
 
-    f.render_widget(
-        Paragraph::new(app.thread_text.as_str())
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(format!(" {thread_id} ")),
-            )
-            .wrap(Wrap { trim: false })
-            .scroll((app.thread_scroll, 0)),
-        main[0],
-    );
+    let body_block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {thread_id} "));
+    if app.markdown_mode {
+        let md_text = markdown_to_text(app.thread_text.as_str());
+        f.render_widget(
+            Paragraph::new(md_text)
+                .block(body_block)
+                .wrap(Wrap { trim: false })
+                .scroll((app.thread_scroll, 0)),
+            main[0],
+        );
+    } else {
+        f.render_widget(
+            Paragraph::new(app.thread_text.as_str())
+                .block(body_block)
+                .wrap(Wrap { trim: false })
+                .scroll((app.thread_scroll, 0)),
+            main[0],
+        );
+    }
 
     let rows: Vec<Row> = app
-        .thread_nodes
+        .tree_entries
         .iter()
-        .map(|node| {
+        .map(|entry| {
+            let node = &app.thread_nodes[entry.node_index];
             let type_str = node.node_type.to_string();
             let status_str = node_status(node);
             let dim = node_row_modifier(node);
+            // Prefix the type column with tree connectors for replies
+            let type_display = if entry.prefix.is_empty() {
+                type_str.clone()
+            } else {
+                format!("{}{}", entry.prefix, type_str)
+            };
+            let body_max = 36usize.saturating_sub(entry.depth as usize * 2);
             Row::new(vec![
                 Cell::from(short_id(&node.node_id)),
-                Cell::from(type_str.clone()).style(Style::default().fg(node_type_color(&type_str))),
+                Cell::from(type_display).style(Style::default().fg(node_type_color(&type_str))),
                 Cell::from(status_str).style(Style::default().fg(node_status_color(status_str))),
-                Cell::from(single_line_preview(&node.body, 36)),
+                Cell::from(single_line_preview(&node.body, body_max)),
             ])
             .style(Style::default().add_modifier(dim))
         })
@@ -1707,10 +2115,11 @@ pub(crate) fn render_node_detail(f: &mut Frame, area: Rect, app: &mut App) {
         width: 11, // "[esc/q]back"
         height: 1,
     });
+    let md_indicator = if app.markdown_mode { "md:on" } else { "md:off" };
     f.render_widget(
-        Paragraph::new(
-            " [esc/q]back  [c]create node  [l]link  [x]resolve  [o]reopen  [R]retract  [r]refresh  [j/k]scroll",
-        ),
+        Paragraph::new(format!(
+            " [esc/q]back  [c]create  [l]link  [x]resolve  [o]reopen  [R]retract  [m]{md_indicator}  [r]refresh  [j/k]scroll",
+        )),
         chunks[0],
     );
 
@@ -1720,17 +2129,27 @@ pub(crate) fn render_node_detail(f: &mut Frame, area: Rect, app: &mut App) {
         String::new()
     };
     app.ui_rects.node_detail = Some(chunks[1]);
-    f.render_widget(
-        Paragraph::new(app.node_detail_text.as_str())
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(format!(" node {title} ")),
-            )
-            .wrap(Wrap { trim: false })
-            .scroll((app.node_detail_scroll, 0)),
-        chunks[1],
-    );
+    let node_block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" node {title} "));
+    if app.markdown_mode {
+        let md_text = markdown_to_text(app.node_detail_text.as_str());
+        f.render_widget(
+            Paragraph::new(md_text)
+                .block(node_block)
+                .wrap(Wrap { trim: false })
+                .scroll((app.node_detail_scroll, 0)),
+            chunks[1],
+        );
+    } else {
+        f.render_widget(
+            Paragraph::new(app.node_detail_text.as_str())
+                .block(node_block)
+                .wrap(Wrap { trim: false })
+                .scroll((app.node_detail_scroll, 0)),
+            chunks[1],
+        );
+    }
 }
 
 pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &mut App) {
@@ -2440,6 +2859,7 @@ mod tests {
             incorporated: false,
             reply_to: None,
         }];
+        app.tree_entries = build_tree_entries(&app.thread_nodes);
         app.node_table_state.select(Some(0));
         let out = render_to_string(&mut app, 160, 30);
         assert!(out.contains("nodes (1)"));
@@ -3013,6 +3433,7 @@ mod tests {
                 reply_to: None,
             },
         ];
+        app.tree_entries = build_tree_entries(&app.thread_nodes);
         app.node_table_state.select(Some(0));
         app.move_node_down();
         assert_eq!(app.node_table_state.selected(), Some(1));

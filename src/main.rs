@@ -53,6 +53,7 @@ enum Commands {
         cmd: ThreadCmd,
     },
     /// List all threads (optionally filter by kind)
+    #[command(alias = "list")]
     Ls {
         #[arg(long, value_name = "BRANCH")]
         branch: Option<String>,
@@ -249,6 +250,15 @@ enum Commands {
         as_actor: Option<String>,
         #[arg(long)]
         resolve_open_actions: bool,
+        /// Create thread links atomically with the state transition
+        #[arg(long = "link-to", value_name = "THREAD_ID")]
+        link_to: Vec<String>,
+        /// Relation to use with --link-to
+        #[arg(long, requires = "link_to", value_name = "REL")]
+        rel: Option<String>,
+        /// Add a summary node before the state transition
+        #[arg(long)]
+        comment: Option<String>,
     },
     #[command(
         about = "Verify whether the thread currently satisfies guard conditions for its next forward transition",
@@ -300,13 +310,13 @@ enum PolicyCmd {
 
 #[derive(Subcommand)]
 enum EvidenceCmd {
-    /// Add an evidence item to a thread
+    /// Add evidence items to a thread (accepts multiple --ref values)
     Add {
         thread_id: String,
         #[arg(long, value_name = "KIND")]
         kind: EvidenceKind,
-        #[arg(long = "ref", value_name = "REF")]
-        ref_target: String,
+        #[arg(long = "ref", value_name = "REF", num_args = 1..)]
+        ref_targets: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
@@ -369,7 +379,9 @@ enum StateCmd {
 enum ThreadCmd {
     /// Create a new thread
     New {
-        title: String,
+        /// Thread title (omit when using --from-commit)
+        #[arg(allow_hyphen_values = true, required_unless_present = "from_commit")]
+        title: Option<String>,
         /// Initial thread body
         #[arg(long, conflicts_with = "body_file")]
         body: Option<String>,
@@ -388,11 +400,75 @@ enum ThreadCmd {
         /// Override actor ID (default: from git config)
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+        /// Populate title/body from a commit and auto-add it as evidence
+        #[arg(long = "from-commit", value_name = "REV")]
+        from_commit: Option<String>,
     },
     /// List threads of this kind
+    #[command(alias = "list")]
     Ls {
         #[arg(long, value_name = "BRANCH")]
         branch: Option<String>,
+    },
+    /// Close a thread (shorthand for state <ID> closed)
+    Close {
+        thread_id: String,
+        #[arg(long = "sign", value_name = "ACTOR")]
+        sign: Vec<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        #[arg(long)]
+        resolve_open_actions: bool,
+        #[arg(long = "link-to", value_name = "THREAD_ID")]
+        link_to: Vec<String>,
+        #[arg(long, requires = "link_to", value_name = "REL")]
+        rel: Option<String>,
+        /// Add a summary node before closing
+        #[arg(long)]
+        comment: Option<String>,
+    },
+    /// Reopen a closed or rejected thread (shorthand for state <ID> open)
+    #[command(alias = "open")]
+    Reopen {
+        thread_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        /// Add a summary node before reopening
+        #[arg(long)]
+        comment: Option<String>,
+    },
+    /// Reject a thread (shorthand for state <ID> rejected)
+    Reject {
+        thread_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        /// Add a summary node before rejecting
+        #[arg(long)]
+        comment: Option<String>,
+    },
+    /// Accept an RFC (shorthand for state <ID> accepted)
+    Accept {
+        thread_id: String,
+        #[arg(long = "sign", value_name = "ACTOR")]
+        sign: Vec<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        #[arg(long = "link-to", value_name = "THREAD_ID")]
+        link_to: Vec<String>,
+        #[arg(long, requires = "link_to", value_name = "REL")]
+        rel: Option<String>,
+        /// Add a summary node before accepting
+        #[arg(long)]
+        comment: Option<String>,
+    },
+    /// Propose an RFC for review (shorthand for state <ID> proposed)
+    Propose {
+        thread_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        /// Add a summary node before proposing
+        #[arg(long)]
+        comment: Option<String>,
     },
     /// Revise the body of a thread
     ReviseBody {
@@ -409,6 +485,13 @@ enum ThreadCmd {
 }
 
 fn main() -> Result<(), ForumError> {
+    // Check for --help-llm before clap parsing so it works at any subcommand level
+    // (e.g. `git-forum issue --help-llm` where clap would otherwise require a subcommand)
+    if std::env::args().any(|a| a == "--help-llm") {
+        print!("{}", include_str!("../doc/MANUAL.md"));
+        return Ok(());
+    }
+
     let cli = Cli::parse();
     if cli.help_llm {
         print!("{}", include_str!("../doc/MANUAL.md"));
@@ -427,7 +510,8 @@ fn main() -> Result<(), ForumError> {
     match command {
         Commands::Init => {
             let git = GitOps::discover()?;
-            let paths = RepoPaths::from_repo_root(git.root());
+            let git_dir = git.git_dir()?;
+            let paths = RepoPaths::from_repo_root_and_git_dir(git.root(), &git_dir);
             init::init_forum(&paths)?;
             println!("Initialized git-forum in {}", git.root().display());
         }
@@ -762,6 +846,9 @@ fn main() -> Result<(), ForumError> {
             sign,
             as_actor,
             resolve_open_actions,
+            link_to,
+            rel,
+            comment,
         } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
@@ -817,6 +904,19 @@ fn main() -> Result<(), ForumError> {
                         )
                     })?;
                     let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+                    // Add comment (summary node) before state transition if requested
+                    if let Some(comment_text) = &comment {
+                        say::say_node(
+                            &git,
+                            &thread_id,
+                            NodeType::Summary,
+                            comment_text,
+                            &actor,
+                            &clock,
+                            &ids,
+                            None,
+                        )?;
+                    }
                     say::change_state(
                         &git,
                         &thread_id,
@@ -830,6 +930,17 @@ fn main() -> Result<(), ForumError> {
                             resolve_open_actions,
                         },
                     )?;
+                    // Create links after state transition if requested
+                    if !link_to.is_empty() {
+                        let rel = rel.as_deref().ok_or_else(|| {
+                            ForumError::Config("--rel is required when --link-to is used".into())
+                        })?;
+                        for target in &link_to {
+                            evidence_ops::add_thread_link(
+                                &git, &thread_id, target, rel, &actor, &clock,
+                            )?;
+                        }
+                    }
                     println!("{thread_id} -> {new_state}");
                 }
             }
@@ -853,24 +964,29 @@ fn main() -> Result<(), ForumError> {
             EvidenceCmd::Add {
                 thread_id,
                 kind,
-                ref_target,
+                ref_targets,
                 as_actor,
             } => {
+                if ref_targets.is_empty() {
+                    return Err(ForumError::Config("--ref is required".into()));
+                }
                 let (git, _paths) = discover_repo_with_init_warning()?;
                 let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
-                let commit_sha = evidence_ops::add_evidence(
-                    &git,
-                    &thread_id,
-                    kind,
-                    &ref_target,
-                    None,
-                    &actor,
-                    &clock,
-                )?;
-                println!(
-                    "Evidence added ({})",
-                    &commit_sha[..commit_sha.len().min(8)]
-                );
+                for ref_target in &ref_targets {
+                    let commit_sha = evidence_ops::add_evidence(
+                        &git,
+                        &thread_id,
+                        kind.clone(),
+                        ref_target,
+                        None,
+                        &actor,
+                        &clock,
+                    )?;
+                    println!(
+                        "Evidence added ({})",
+                        &commit_sha[..commit_sha.len().min(8)]
+                    );
+                }
             }
         },
 
@@ -1007,15 +1123,41 @@ fn run_thread_cmd(
             link_to,
             rel,
             as_actor,
+            from_commit,
         } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
-            let body = resolve_thread_body(body, body_file)?;
+
+            // Resolve title and body: --from-commit populates both from commit message
+            let (effective_title, effective_body, commit_ref) = if let Some(rev) = from_commit {
+                let commit_sha = git.resolve_commit(&rev)?;
+                let msg = git.run(&["log", "-1", "--format=%B", &commit_sha])?;
+                let mut lines = msg.lines();
+                let subject = lines.next().unwrap_or("").to_string();
+                let body_text: String = lines
+                    .skip_while(|l| l.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let t = title.unwrap_or(subject);
+                let b = resolve_thread_body(body, body_file)?.or(if body_text.is_empty() {
+                    None
+                } else {
+                    Some(body_text)
+                });
+                (t, b, Some(commit_sha))
+            } else {
+                let t = title.ok_or_else(|| {
+                    ForumError::Config("title is required (or use --from-commit)".into())
+                })?;
+                let b = resolve_thread_body(body, body_file)?;
+                (t, b, None)
+            };
+
             let thread_id = create::create_thread_with_branch(
                 &git,
                 kind,
-                &title,
-                body.as_deref(),
+                &effective_title,
+                effective_body.as_deref(),
                 branch.as_deref(),
                 &actor,
                 clock,
@@ -1028,6 +1170,17 @@ fn run_thread_cmd(
                 for target in &link_to {
                     evidence_ops::add_thread_link(&git, &thread_id, target, rel, &actor, clock)?;
                 }
+            }
+            if let Some(sha) = commit_ref {
+                evidence_ops::add_evidence(
+                    &git,
+                    &thread_id,
+                    EvidenceKind::Commit,
+                    &sha,
+                    None,
+                    &actor,
+                    clock,
+                )?;
             }
             println!("Created {thread_id}");
         }
@@ -1058,7 +1211,156 @@ fn run_thread_cmd(
             )?;
             println!("Body revised for {thread_id}");
         }
+        ThreadCmd::Close {
+            thread_id,
+            sign,
+            as_actor,
+            resolve_open_actions,
+            link_to,
+            rel,
+            comment,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "closed",
+                &sign,
+                as_actor,
+                resolve_open_actions,
+                &link_to,
+                rel.as_deref(),
+                comment.as_deref(),
+                clock,
+                ids,
+            )?;
+        }
+        ThreadCmd::Reopen {
+            thread_id,
+            as_actor,
+            comment,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "open",
+                &[],
+                as_actor,
+                false,
+                &[],
+                None,
+                comment.as_deref(),
+                clock,
+                ids,
+            )?;
+        }
+        ThreadCmd::Reject {
+            thread_id,
+            as_actor,
+            comment,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "rejected",
+                &[],
+                as_actor,
+                false,
+                &[],
+                None,
+                comment.as_deref(),
+                clock,
+                ids,
+            )?;
+        }
+        ThreadCmd::Accept {
+            thread_id,
+            sign,
+            as_actor,
+            link_to,
+            rel,
+            comment,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "accepted",
+                &sign,
+                as_actor,
+                false,
+                &link_to,
+                rel.as_deref(),
+                comment.as_deref(),
+                clock,
+                ids,
+            )?;
+        }
+        ThreadCmd::Propose {
+            thread_id,
+            as_actor,
+            comment,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "proposed",
+                &[],
+                as_actor,
+                false,
+                &[],
+                None,
+                comment.as_deref(),
+                clock,
+                ids,
+            )?;
+        }
     }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_state_shorthand(
+    thread_id: &str,
+    new_state: &str,
+    sign: &[String],
+    as_actor: Option<String>,
+    resolve_open_actions: bool,
+    link_to: &[String],
+    rel: Option<&str>,
+    comment: Option<&str>,
+    clock: &dyn git_forum::internal::clock::Clock,
+    ids: &dyn git_forum::internal::id::IdGenerator,
+) -> Result<(), ForumError> {
+    let (git, paths) = discover_repo_with_init_warning()?;
+    let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
+    let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+    if let Some(text) = comment {
+        say::say_node(
+            &git,
+            thread_id,
+            NodeType::Summary,
+            text,
+            &actor,
+            clock,
+            ids,
+            None,
+        )?;
+    }
+    say::change_state(
+        &git,
+        thread_id,
+        new_state,
+        sign,
+        &actor,
+        clock,
+        ids,
+        &policy,
+        say::StateChangeOptions {
+            resolve_open_actions,
+        },
+    )?;
+    if !link_to.is_empty() {
+        let rel = rel
+            .ok_or_else(|| ForumError::Config("--rel is required when --link-to is used".into()))?;
+        for target in link_to {
+            evidence_ops::add_thread_link(&git, thread_id, target, rel, &actor, clock)?;
+        }
+    }
+    println!("{thread_id} -> {new_state}");
     Ok(())
 }
 
@@ -1243,7 +1545,8 @@ fn print_bulk_report(report: &BulkStateReport) {
 
 fn discover_repo_with_init_warning() -> Result<(GitOps, RepoPaths), ForumError> {
     let git = GitOps::discover()?;
-    let paths = RepoPaths::from_repo_root(git.root());
+    let git_dir = git.git_dir()?;
+    let paths = RepoPaths::from_repo_root_and_git_dir(git.root(), &git_dir);
     if !is_forum_initialized(&paths) {
         eprintln!(
             "warning: git-forum is not initialized in this repository; run `git forum init` first"

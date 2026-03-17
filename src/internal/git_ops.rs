@@ -26,6 +26,29 @@ impl GitOps {
         Ok(Self::new(PathBuf::from(root)))
     }
 
+    /// Resolve the actual `.git` directory path.
+    ///
+    /// In a normal repo this returns `<root>/.git`.
+    /// In a worktree this returns the worktree-specific git dir
+    /// (e.g. `/path/to/main/.git/worktrees/<name>`).
+    pub fn git_dir(&self) -> ForumResult<PathBuf> {
+        let output = Command::new("git")
+            .args(["rev-parse", "--git-dir"])
+            .current_dir(&self.root)
+            .output()?;
+        if !output.status.success() {
+            return Err(ForumError::Repo("cannot resolve git directory".into()));
+        }
+        let git_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let path = PathBuf::from(&git_dir);
+        // --git-dir may return a relative path; canonicalize against repo root
+        if path.is_absolute() {
+            Ok(path)
+        } else {
+            Ok(self.root.join(path))
+        }
+    }
+
     pub fn root(&self) -> &Path {
         &self.root
     }

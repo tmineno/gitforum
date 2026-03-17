@@ -1,6 +1,6 @@
 # git-forum Product Specification
 
-Version 1.0 — 2026-03-16
+Version 1.1 — 2026-03-17
 
 ## 1. Overview
 
@@ -231,11 +231,15 @@ refs/forum/index/<THREAD_ID>      # rebuildable materialized snapshot
 ### 5.3 Local files (per-clone, not committed)
 
 ```text
-.git/forum/
+<git-dir>/forum/
   index.sqlite          # search and list index
   local.toml            # local-only settings
   logs/                 # operation logs
 ```
+
+`<git-dir>` is resolved via `git rev-parse --git-dir`. In a normal repository this is `.git/`. In a
+git worktree this is the worktree-specific git directory (e.g.
+`/path/to/main/.git/worktrees/<name>/`). This ensures `git-forum` works correctly in worktrees.
 
 ## 6. Identity scheme
 
@@ -346,25 +350,33 @@ git forum reindex
 ```text
 git forum issue new <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
     [--branch <BRANCH>] [--link-to <THREAD_ID> --rel <REL>]
+    [--from-commit <REV>]
 git forum rfc new <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
     [--link-to <THREAD_ID> --rel <REL>]
+    [--from-commit <REV>]
 ```
 
 Initial states: issue = `open`, RFC = `draft`.
+
+`--from-commit <REV>` populates title from the commit subject, body from the commit message body,
+and auto-adds the commit as evidence. An explicit `<TITLE>` argument overrides the subject.
 
 ### 9.3 Listing and display
 
 ```text
 git forum ls [--branch <BRANCH>]
 git forum issue ls [--branch <BRANCH>]
+git forum issue list                          # alias for ls
 git forum rfc ls
 git forum show <THREAD_ID>
 git forum node show <NODE_ID>
 git forum search <QUERY>
 git forum status <THREAD_ID>
 git forum status --all
-git forum --help-llm
+git-forum --help-llm                          # works at any subcommand level
 ```
+
+Thread listings show `YYYY-MM-DD HH:MM` for created and updated timestamps.
 
 ### 9.4 Structured discussion
 
@@ -402,9 +414,28 @@ git forum revise-body <THREAD_ID> --body <TEXT> [--incorporates <NODE_ID>]...
 
 ### 9.6 State changes
 
+Shorthand commands:
+
+```text
+git forum issue close <THREAD_ID> [--sign <ACTOR_ID>]...
+    [--resolve-open-actions] [--link-to <THREAD_ID> --rel <REL>]
+    [--comment <TEXT>]
+git forum issue reopen <THREAD_ID> [--comment <TEXT>]
+git forum issue reject <THREAD_ID> [--comment <TEXT>]
+git forum rfc propose <THREAD_ID> [--comment <TEXT>]
+git forum rfc accept <THREAD_ID> [--sign <ACTOR_ID>]...
+    [--link-to <THREAD_ID> --rel <REL>] [--comment <TEXT>]
+```
+
+`--comment` adds a summary node before the state transition.
+`--link-to` creates thread links after the state transition.
+
+Generic state command:
+
 ```text
 git forum state <THREAD_ID> <NEW_STATE> [--sign <ACTOR_ID>]...
-    [--resolve-open-actions]
+    [--resolve-open-actions] [--link-to <THREAD_ID> --rel <REL>]
+    [--comment <TEXT>]
 git forum state bulk --to <NEW_STATE> [<THREAD_ID>...] [--branch <BRANCH>]
     [--kind <KIND>] [--status <STATUS>] [--sign <ACTOR_ID>]...
     [--resolve-open-actions] [--dry-run]
@@ -413,11 +444,13 @@ git forum state bulk --to <NEW_STATE> [<THREAD_ID>...] [--branch <BRANCH>]
 ### 9.7 Evidence and links
 
 ```text
-git forum evidence add <THREAD_ID> --kind <KIND> --ref <REF>
+git forum evidence add <THREAD_ID> --kind <KIND> --ref <REF> [<REF>...]
 git forum link <FROM> <TO> --rel <REL>
 git forum branch bind <THREAD_ID> <BRANCH>
 git forum branch clear <THREAD_ID>
 ```
+
+`--ref` accepts multiple values. Each ref creates a separate evidence event.
 
 Common link relations: `implements`, `relates-to`, `depends-on`, `blocks`.
 
@@ -456,6 +489,8 @@ git forum export <THREAD_ID> [--format <FORMAT>]
 - Accept `--body`, `--body-file`, or `--body -` (stdin).
 - Accept `--link-to <THREAD_ID> --rel <REL>`.
 - Accept `--branch <BRANCH>` (issue only).
+- Accept `--from-commit <REV>`: populate title/body from commit message, auto-add commit evidence.
+- Title accepts values starting with hyphens (`allow_hyphen_values`).
 - Allocate a display ID.
 - Assign the initial state.
 - Update the thread ref.
@@ -490,14 +525,17 @@ Display:
 10. Conversations (reply chains grouped by root node).
 11. Timeline in `date node_id event_id author type body` order.
 
-### 10.5 `state`
+### 10.5 `state` and shorthand commands
 
 - Validate the transition against the state machine.
 - Evaluate guard rules from policy.
 - Validate actor role has `can_transition` permission.
+- `--comment <TEXT>` creates a summary node before the state transition.
 - Attach approvals from `--sign`.
 - Append a `state` event.
+- `--link-to <THREAD_ID> --rel <REL>` creates thread links after the state transition.
 - `--resolve-open-actions` resolves open action nodes before the transition.
+- Shorthand commands: `issue close`, `issue reopen`, `issue reject`, `rfc propose`, `rfc accept`.
 
 ### 10.6 `state bulk`
 
@@ -510,6 +548,7 @@ Display:
 ### 10.7 `evidence add` and `link`
 
 - `evidence add` appends a `link` event carrying evidence metadata.
+- `--ref` accepts multiple values; each creates a separate evidence event.
 - `--kind commit --ref <REV>` resolves `<REV>` to a canonical commit OID.
 - `link` records thread-to-thread relations.
 

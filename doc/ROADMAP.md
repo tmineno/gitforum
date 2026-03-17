@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-03-16
+Last updated: 2026-03-17
 
 ## Completed
 
@@ -25,6 +25,17 @@ The following capabilities are implemented and tested:
 - TUI: list, detail, node detail, create thread/node/link, sort, filter, mouse, color
 - Concurrency safety via atomic ref updates (compare-and-swap)
 - Snapshot and integration test infrastructure
+- Git worktree support (ISSUE-0026)
+- State transition shorthand commands: `issue close`, `issue reopen`, `issue reject`, `rfc propose`,
+  `rfc accept` (ISSUE-0033)
+- `--link-to` and `--comment` flags on state transitions (ISSUE-0027, ISSUE-0036)
+- `--from-commit` flag for retroactive thread creation from commits (ISSUE-0030)
+- Bulk evidence add with multiple `--ref` values (ISSUE-0028)
+- `list` alias for `ls` (ISSUE-0032)
+- `--help-llm` works at any subcommand level (ISSUE-0034)
+- Quick-reference cheat sheet in `--help-llm` output (ISSUE-0035)
+- Datetime display (HH:MM) in thread listings (ISSUE-0029)
+- Titles starting with `--` accepted in thread creation (ISSUE-0031)
 
 ## In progress
 
@@ -68,6 +79,19 @@ Interoperability with external systems.
 ### Completion tracking
 
 - ISSUE-0025 — MVP acceptance criteria completion tracker
+
+### Auto-propagate evidence to linked threads
+
+When adding commit evidence to an issue linked to an RFC, automatically propagate the evidence to
+the linked RFC.
+
+- RFC-0001 — Auto-propagate commit evidence to linked threads
+
+### Changelog / release report
+
+Summarize closed/accepted threads since a date or tag for release notes.
+
+- RFC-0002 — Changelog / release report command
 
 ## Future considerations
 

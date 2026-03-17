@@ -522,7 +522,7 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
         .max()
         .unwrap_or(12)
         .max(12);
-    let date_width = 10; // YYYY-MM-DD
+    let date_width = 16; // YYYY-MM-DD HH:MM
     let mut lines: Vec<String> = Vec::new();
     lines.push(format!(
         "{:<id_width$}  {:<kind_width$}  {:<status_width$}  {:<branch_width$}  {:<date_width$}  {:<date_width$}  {}",
@@ -532,11 +532,11 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
         "-".repeat(id_width + kind_width + status_width + branch_width + date_width * 2 + 14),
     );
     for s in states {
-        let created = &s.created_at.format("%Y-%m-%d").to_string();
+        let created = &s.created_at.format("%Y-%m-%d %H:%M").to_string();
         let updated = s
             .events
             .last()
-            .map(|e| e.created_at.format("%Y-%m-%d").to_string())
+            .map(|e| e.created_at.format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_else(|| "-".into());
         lines.push(format!(
             "{:<id_width$}  {:<kind_width$}  {:<status_width$}  {:<branch_width$}  {:<date_width$}  {:<date_width$}  {}",

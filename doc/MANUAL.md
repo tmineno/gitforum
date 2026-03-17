@@ -1,5 +1,24 @@
 # Manual
 
+## Quick Reference
+
+```
+git forum init                                     Initialize forum in repo
+git forum issue new "Title" --body "..."           Create an issue
+git forum issue ls                                 List issues
+git forum show ISSUE-0001                          Show issue details
+git forum say ISSUE-0001 --type comment --body "." Add a comment
+git forum issue close ISSUE-0001                   Close an issue
+git forum issue close ISSUE-0001 --comment "Done"  Close with summary
+git forum rfc new "Title" --body "..."             Create an RFC
+git forum rfc accept RFC-0001 --sign human/alice   Accept an RFC
+git forum evidence add ISSUE-0001 --kind commit --ref HEAD  Add evidence
+git forum status --all                             Check open items
+git forum tui                                      Open interactive TUI
+```
+
+---
+
 This manual describes the preferred `git-forum` workflow:
 
 - start work with `rfc`
@@ -104,10 +123,21 @@ git forum issue new "Implement trait backend" \
 `--link-to <THREAD_ID> --rel <REL>` creates the thread and immediately records one or more links
 from the new thread to existing threads.
 
+### Create from a commit
+
+```bash
+git forum issue new --from-commit HEAD
+git forum issue new --from-commit abc123 --link-to RFC-0001 --rel implements
+```
+
+`--from-commit <REV>` uses the commit subject as the title, the commit body as the thread body,
+and automatically adds the commit as evidence. An explicit title argument overrides the subject.
+
 ### List by kind
 
 ```bash
 git forum issue ls
+git forum issue list              # alias for ls
 git forum issue ls --branch feat/trait-backend
 git forum rfc ls
 ```
@@ -321,9 +351,12 @@ If a prefix is ambiguous, the command fails and prints candidate full IDs.
 git forum evidence add RFC-0001 --kind benchmark --ref bench/result.csv
 git forum evidence add ISSUE-0001 --kind commit --ref HEAD~1
 git forum evidence add ISSUE-0001 --kind commit --ref abc123def456
+git forum evidence add ISSUE-0001 --kind commit --ref abc123 def456 789012
 git forum evidence add ISSUE-0001 --kind file --ref src/lib.rs
 git forum evidence add ISSUE-0001 --kind test --ref tests/backend_trait.rs
 ```
+
+`--ref` accepts multiple values in a single command. Each ref creates its own evidence event.
 
 Valid evidence kinds: `commit`, `file`, `hunk`, `test`, `benchmark`, `doc`, `thread`, `external`.
 
@@ -452,16 +485,44 @@ open items.
 
 ## Change thread state
 
+### Shorthand commands
+
+```bash
+git forum issue close ISSUE-0001
+git forum issue close ISSUE-0001 --comment "Fixed in abc123"
+git forum issue close ISSUE-0001 --link-to RFC-0001 --rel implements
+git forum issue close ISSUE-0001 --resolve-open-actions
+git forum issue reopen ISSUE-0001
+git forum issue reject ISSUE-0001 --comment "Won't fix"
+git forum rfc propose RFC-0001
+git forum rfc accept RFC-0001 --sign human/alice
+```
+
+Shorthand commands combine a state transition with optional `--comment` (adds a summary node before
+transitioning), `--link-to` (creates links after transitioning), and `--sign` (records approvals).
+
+Available shorthands:
+- `issue close` / `rfc close` — transition to `closed`
+- `issue reopen` / `rfc reopen` — transition to `open`
+- `issue reject` — transition to `rejected`
+- `rfc propose` — transition to `proposed`
+- `rfc accept` — transition to `accepted`
+
+### Generic state command
+
 ```bash
 git forum state RFC-0001 proposed
 git forum state RFC-0001 under-review
 git forum state RFC-0001 accepted --sign human/alice
 git forum state ISSUE-0001 closed --resolve-open-actions
+git forum state ISSUE-0001 closed --comment "Done" --link-to RFC-0001 --rel implements
 git forum state bulk --to closed --branch v0.1.0
 git forum state bulk --to closed ISSUE-0001 ISSUE-0002 --dry-run
 ```
 
 - `--sign` is recorded as an approval on the event
+- `--comment` adds a summary node before the state transition
+- `--link-to` and `--rel` create thread links after the state transition
 - whether the transition succeeds depends on the state machine and policy guards
 - for RFCs, `proposed` means the author is declaring the RFC review-ready
 - for RFCs, `under-review` means active review is in progress
