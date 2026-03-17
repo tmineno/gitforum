@@ -11,20 +11,27 @@ use super::scenario::{ActorDef, PhaseDef, ScenarioDef};
 pub struct ClaudeCodeAdapter {
     worktree_path: PathBuf,
     timeout: Duration,
+    actor_name: String,
     child: Option<Child>,
 }
 
 impl ClaudeCodeAdapter {
-    pub fn new(worktree_path: PathBuf, timeout: Duration) -> Self {
+    pub fn new(worktree_path: PathBuf, timeout: Duration, actor_name: &str) -> Self {
         Self {
             worktree_path,
             timeout,
+            actor_name: actor_name.to_string(),
             child: None,
         }
     }
 
     /// Build a prompt for an agent given its role, the scenario, and current phase.
-    pub fn build_prompt(actor: &ActorDef, scenario: &ScenarioDef, phase: &PhaseDef) -> String {
+    pub fn build_prompt(
+        actor: &ActorDef,
+        scenario: &ScenarioDef,
+        phase: &PhaseDef,
+        git_forum_binary: &str,
+    ) -> String {
         let mut prompt = String::new();
 
         // Role context
@@ -37,6 +44,16 @@ impl ClaudeCodeAdapter {
         prompt.push_str(&format!(
             "Project: {} — {}\n\n",
             scenario.name, scenario.description
+        ));
+
+        // Tool context
+        prompt.push_str(&format!(
+            "## Setup\n\n\
+             The git-forum binary is at: {}\n\
+             Your actor identity is already set via GIT_FORUM_ACTOR env var.\n\
+             The forum is already initialized in this repo.\n\
+             Run `{} --help-llm` to see full documentation.\n\n",
+            git_forum_binary, git_forum_binary
         ));
 
         // Phase instructions
@@ -134,9 +151,14 @@ impl ClaudeCodeAdapter {
         }
 
         // Usage hints
-        prompt.push_str("## Available commands:\n");
-        prompt.push_str("Use `git forum` (or `git-forum`) CLI commands.\n");
-        prompt.push_str("Run `git forum --help-llm` for full documentation.\n");
+        prompt.push_str("## Instructions:\n");
+        prompt.push_str(&format!(
+            "Use the git-forum binary at `{}` to execute all commands.\n",
+            git_forum_binary
+        ));
+        prompt.push_str("Execute each task by running the appropriate command via Bash.\n");
+        prompt
+            .push_str("Do NOT create files or run other programs — only use git-forum commands.\n");
 
         prompt
     }
@@ -150,16 +172,13 @@ impl AgentAdapter for ClaudeCodeAdapter {
             .args([
                 "-p",
                 prompt,
-                "--cwd",
-                self.worktree_path.to_str().unwrap_or("."),
-                "--allowedTools",
+                "--allowed-tools",
                 "Bash",
                 "--max-budget-usd",
                 "0.50",
             ])
             .current_dir(&self.worktree_path)
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_FORUM_ACTOR", &self.actor_name)
             .output();
 
         let duration = start.elapsed();

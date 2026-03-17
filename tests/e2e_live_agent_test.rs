@@ -66,6 +66,9 @@ fn e2e_live_agent_calculator_scenario() {
         return;
     }
 
+    // Resolve git-forum binary path for prompts
+    let git_forum_binary = env!("CARGO_BIN_EXE_git-forum");
+
     // 4. Execute phases sequentially
     let mut all_agent_results: Vec<AgentRunResult> = Vec::new();
 
@@ -106,14 +109,15 @@ fn e2e_live_agent_calculator_scenario() {
                 .unwrap();
 
             let (wt_path, _git) = worktrees.get(*actor_name).unwrap();
-            let prompt = ClaudeCodeAdapter::build_prompt(actor_def, &scenario, phase);
+            let prompt =
+                ClaudeCodeAdapter::build_prompt(actor_def, &scenario, phase, git_forum_binary);
 
             println!(
                 "--- Phase '{}': running agent for {} ---",
                 phase.name, actor_name
             );
 
-            let adapter = ClaudeCodeAdapter::new(wt_path.clone(), timeout);
+            let adapter = ClaudeCodeAdapter::new(wt_path.clone(), timeout, actor_name);
             let result = adapter.execute_task(&prompt);
 
             println!(
@@ -122,6 +126,10 @@ fn e2e_live_agent_calculator_scenario() {
                 result.duration.as_secs_f64(),
                 result.success
             );
+            if !result.success {
+                let stderr_preview: String = result.stderr.chars().take(500).collect();
+                println!("  stderr: {stderr_preview}");
+            }
 
             all_agent_results.push(AgentRunResult {
                 actor_name: actor_name.to_string(),
