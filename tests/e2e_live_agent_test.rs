@@ -138,8 +138,22 @@ fn e2e_live_agent_calculator_scenario() {
                 println!("  stderr: {stderr_preview}");
             }
 
+            let command_args = vec![
+                "claude".to_string(),
+                "-p".to_string(),
+                "<prompt>".to_string(),
+                "--allowed-tools".to_string(),
+                "Bash".to_string(),
+                "--model".to_string(),
+                model.clone(),
+                "--max-budget-usd".to_string(),
+                "0.50".to_string(),
+            ];
+
             all_agent_results.push(AgentRunResult {
                 actor_name: actor_name.to_string(),
+                model: model.clone(),
+                command_args,
                 tasks: vec![result],
                 completed: true,
                 error: None,

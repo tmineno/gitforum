@@ -14,6 +14,8 @@ pub struct AgentTaskResult {
 /// Aggregated result of all tasks executed by an agent.
 pub struct AgentRunResult {
     pub actor_name: String,
+    pub model: String,
+    pub command_args: Vec<String>,
     pub tasks: Vec<AgentTaskResult>,
     pub completed: bool,
     pub error: Option<String>,

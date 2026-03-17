@@ -16,6 +16,7 @@ use super::scenario::ExpectedOutcome;
 /// Full scenario report containing all 6 RFC-0003 sections.
 pub struct ScenarioReport {
     pub mode: String,
+    pub run_config: RunConfig,
     pub project_summary: ProjectSummary,
     pub timeline: Vec<TimelineEntry>,
     pub contention: Option<ContentionReport>,
@@ -24,6 +25,18 @@ pub struct ScenarioReport {
     pub recommendations: Vec<String>,
     pub outcome_comparisons: Vec<OutcomeComparison>,
     pub agent_results: Vec<AgentRunResult>,
+}
+
+/// Run configuration metadata.
+pub struct RunConfig {
+    pub agents: Vec<AgentConfig>,
+}
+
+/// Per-agent configuration recorded in the report.
+pub struct AgentConfig {
+    pub actor_name: String,
+    pub model: String,
+    pub command_args: Vec<String>,
 }
 
 /// §1 — Project summary.
@@ -397,6 +410,23 @@ pub fn build_report(
         features_exercised,
     };
 
+    // Build run config from agent results
+    let mut seen_actors: Vec<String> = Vec::new();
+    let mut agent_configs = Vec::new();
+    for ar in agent_results {
+        if !seen_actors.contains(&ar.actor_name) {
+            seen_actors.push(ar.actor_name.clone());
+            agent_configs.push(AgentConfig {
+                actor_name: ar.actor_name.clone(),
+                model: ar.model.clone(),
+                command_args: ar.command_args.clone(),
+            });
+        }
+    }
+    let run_config = RunConfig {
+        agents: agent_configs,
+    };
+
     // Build usability issues (§4) — from agent results
     let usability_issues = detect_usability_issues(agent_results);
 
@@ -406,6 +436,7 @@ pub fn build_report(
     // Build recommendations (§6)
     let mut report = ScenarioReport {
         mode: mode.to_string(),
+        run_config,
         project_summary,
         timeline,
         contention,
@@ -413,7 +444,7 @@ pub fn build_report(
         coverage,
         recommendations: vec![],
         outcome_comparisons,
-        agent_results: vec![], // moved below
+        agent_results: vec![],
     };
 
     report.recommendations = generate_recommendations(&report);
@@ -561,9 +592,11 @@ fn generate_recommendations(report: &ScenarioReport) -> Vec<String> {
         ));
     }
 
-    // Error-severity usability issues
+    // Error-severity usability issues (deduplicate by description)
+    let mut seen_errors: Vec<String> = Vec::new();
     for issue in &report.usability_issues {
-        if issue.severity == Severity::Error {
+        if issue.severity == Severity::Error && !seen_errors.contains(&issue.description) {
+            seen_errors.push(issue.description.clone());
             recs.push(format!(
                 "Agent encountered error: {}. Consider improving error message or CLI affordance.",
                 issue.description
@@ -589,6 +622,69 @@ fn generate_recommendations(report: &ScenarioReport) -> Vec<String> {
         ));
     }
 
+    // --- git-forum usability recommendations (live-agent mode) ---
+    if report.mode == "live-agent" {
+        // Check if agents needed help docs
+        let help_count = report
+            .usability_issues
+            .iter()
+            .filter(|i| i.category == "missing-affordance")
+            .count();
+        if help_count > 0 {
+            recs.push(format!(
+                "Agents consulted --help {help_count} time(s). CLI discoverability may need improvement (clearer error messages, subcommand suggestions)."
+            ));
+        }
+
+        // Check for agents that failed to create expected threads
+        let failed_outcomes = report
+            .outcome_comparisons
+            .iter()
+            .filter(|oc| oc.actual_status == "NOT_FOUND")
+            .count();
+        if failed_outcomes > 0 {
+            recs.push(format!(
+                "{failed_outcomes} expected thread(s) were never created. Agents may struggle with the thread creation workflow. Consider improving `--help-llm` examples or error guidance."
+            ));
+        }
+
+        // Check if agents produced wrong states (thread exists but wrong status)
+        let wrong_states: Vec<&OutcomeComparison> = report
+            .outcome_comparisons
+            .iter()
+            .filter(|oc| !oc.passed && oc.actual_status != "NOT_FOUND")
+            .collect();
+        if !wrong_states.is_empty() {
+            let examples: Vec<String> = wrong_states
+                .iter()
+                .map(|oc| {
+                    format!(
+                        "{} (expected {}, got {})",
+                        oc.thread_ref, oc.expected_status, oc.actual_status
+                    )
+                })
+                .collect();
+            recs.push(format!(
+                "Thread(s) reached wrong state: {}. The state transition workflow may be confusing for agents — consider clearer guard violation messages or multi-step transition shortcuts.",
+                examples.join("; ")
+            ));
+        }
+
+        // Overall success rate
+        let total = report.outcome_comparisons.len();
+        let passed = report
+            .outcome_comparisons
+            .iter()
+            .filter(|oc| oc.passed)
+            .count();
+        if total > 0 {
+            let pct = (passed * 100) / total;
+            recs.push(format!(
+                "Overall outcome accuracy: {passed}/{total} ({pct}%). This reflects how well agents can drive git-forum end-to-end."
+            ));
+        }
+    }
+
     recs
 }
 
@@ -601,6 +697,22 @@ pub fn render_markdown(report: &ScenarioReport) -> String {
     let mut out = String::new();
 
     out.push_str(&format!("# E2E Scenario Report ({})\n\n", report.mode));
+
+    // Run configuration
+    if !report.run_config.agents.is_empty() {
+        out.push_str("## Run Configuration\n\n");
+        out.push_str("| Actor | Model | Command |\n");
+        out.push_str("|---|---|---|\n");
+        for ac in &report.run_config.agents {
+            let cmd = if ac.command_args.is_empty() {
+                "(deterministic — library calls)".to_string()
+            } else {
+                format!("`{}`", ac.command_args.join(" "))
+            };
+            out.push_str(&format!("| {} | {} | {} |\n", ac.actor_name, ac.model, cmd));
+        }
+        out.push('\n');
+    }
 
     // §1 — Project Summary
     out.push_str("## 1. Project Summary\n\n");
