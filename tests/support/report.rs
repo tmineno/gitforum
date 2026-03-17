@@ -23,6 +23,7 @@ pub struct ScenarioReport {
     pub usability_issues: Vec<UsabilityIssue>,
     pub coverage: CoverageReport,
     pub recommendations: Vec<String>,
+    pub ai_usability_analysis: Option<String>,
     pub outcome_comparisons: Vec<OutcomeComparison>,
     pub agent_results: Vec<AgentRunResult>,
 }
@@ -443,6 +444,7 @@ pub fn build_report(
         usability_issues,
         coverage,
         recommendations: vec![],
+        ai_usability_analysis: None,
         outcome_comparisons,
         agent_results: vec![],
     };
@@ -855,13 +857,171 @@ pub fn render_markdown(report: &ScenarioReport) -> String {
 
     // §6 — Recommendations
     out.push_str("## 6. Recommendations\n\n");
-    if report.recommendations.is_empty() {
+    if report.recommendations.is_empty() && report.ai_usability_analysis.is_none() {
         out.push_str("No recommendations.\n");
     } else {
-        for rec in &report.recommendations {
-            out.push_str(&format!("- {rec}\n"));
+        if !report.recommendations.is_empty() {
+            out.push_str("### Structured Findings\n\n");
+            for rec in &report.recommendations {
+                out.push_str(&format!("- {rec}\n"));
+            }
+            out.push('\n');
+        }
+        if let Some(ref analysis) = report.ai_usability_analysis {
+            out.push_str("### AI Usability Analysis\n\n");
+            out.push_str(analysis);
+            out.push('\n');
         }
     }
 
     out
+}
+
+// ---------------------------------------------------------------------------
+// AI-generated usability analysis
+// ---------------------------------------------------------------------------
+
+/// Build a context summary from the report for the AI to analyze.
+fn build_analysis_context(report: &ScenarioReport) -> String {
+    let mut ctx = String::new();
+
+    ctx.push_str("You are analyzing the results of an E2E test where AI agents used a CLI tool called `git-forum` to manage structured discussions (RFCs, issues) in a Git repository.\n\n");
+
+    ctx.push_str("## Agent Configuration\n\n");
+    for ac in &report.run_config.agents {
+        ctx.push_str(&format!("- {} (model: {})\n", ac.actor_name, ac.model));
+    }
+    ctx.push('\n');
+
+    ctx.push_str("## Outcome Comparisons\n\n");
+    for oc in &report.outcome_comparisons {
+        let status = if oc.passed { "PASS" } else { "FAIL" };
+        ctx.push_str(&format!(
+            "- {} expected={} actual={} nodes={} evidence={} links={} [{}]\n",
+            oc.thread_ref,
+            oc.expected_status,
+            oc.actual_status,
+            oc.node_count,
+            oc.evidence_count,
+            oc.link_count,
+            status,
+        ));
+    }
+    ctx.push('\n');
+
+    ctx.push_str("## Detected Issues\n\n");
+    if report.usability_issues.is_empty() {
+        ctx.push_str("No automated usability issues detected.\n");
+    } else {
+        for issue in &report.usability_issues {
+            ctx.push_str(&format!(
+                "- [{}] {} (actor: {}, category: {})\n",
+                issue.severity, issue.description, issue.actor, issue.category
+            ));
+            if !issue.evidence.is_empty() {
+                ctx.push_str(&format!("  evidence: {}\n", issue.evidence));
+            }
+        }
+    }
+    ctx.push('\n');
+
+    ctx.push_str("## Coverage\n\n");
+    ctx.push_str(&format!(
+        "Node types used: {}/{}\n",
+        report.coverage.node_types_used.len(),
+        report.coverage.node_types_used.len() + report.coverage.node_types_missing.len()
+    ));
+    ctx.push_str(&format!(
+        "Transitions used: {}/{}\n",
+        report.coverage.transitions_used.len(),
+        report.coverage.transitions_used.len() + report.coverage.transitions_missing.len()
+    ));
+    if !report.coverage.node_types_missing.is_empty() {
+        ctx.push_str(&format!(
+            "Missing node types: {}\n",
+            report.coverage.node_types_missing.join(", ")
+        ));
+    }
+    if !report.coverage.transitions_missing.is_empty() {
+        ctx.push_str(&format!(
+            "Missing transitions: {}\n",
+            report.coverage.transitions_missing.join(", ")
+        ));
+    }
+    ctx.push('\n');
+
+    if let Some(ref c) = report.contention {
+        ctx.push_str("## Concurrency\n\n");
+        ctx.push_str(&format!(
+            "Successes: {}, Retries: {}\n",
+            c.success_count, c.retry_count
+        ));
+        if !c.conflict_errors.is_empty() {
+            ctx.push_str(&format!("Conflict errors: {}\n", c.conflict_errors.len()));
+        }
+        ctx.push('\n');
+    }
+
+    ctx.push_str("## Agent Outputs (excerpts)\n\n");
+    for ar in &report.agent_results {
+        ctx.push_str(&format!("### {} (model: {})\n", ar.actor_name, ar.model));
+        for (i, task) in ar.tasks.iter().enumerate() {
+            ctx.push_str(&format!(
+                "Task {}: success={} exit={:?} duration={:.1}s\n",
+                i + 1,
+                task.success,
+                task.exit_code,
+                task.duration.as_secs_f64()
+            ));
+            // Include truncated stdout for context
+            let stdout_preview: String = task.stdout.chars().take(1000).collect();
+            if !stdout_preview.is_empty() {
+                ctx.push_str(&format!("stdout:\n```\n{stdout_preview}\n```\n"));
+            }
+            let stderr_preview: String = task.stderr.chars().take(500).collect();
+            if !stderr_preview.is_empty() {
+                ctx.push_str(&format!("stderr:\n```\n{stderr_preview}\n```\n"));
+            }
+        }
+        ctx.push('\n');
+    }
+
+    ctx
+}
+
+/// Call an AI model to generate a usability analysis of the E2E test results.
+///
+/// Returns None if the claude CLI is unavailable or the call fails.
+pub fn generate_ai_usability_analysis(report: &ScenarioReport, model: &str) -> Option<String> {
+    let context = build_analysis_context(report);
+
+    let prompt = format!(
+        "{context}\n\
+        ---\n\n\
+        Based on the E2E test results above, write a usability analysis of `git-forum` as a CLI tool for AI agents. \
+        Address these questions:\n\n\
+        1. **Discoverability**: How easily could agents figure out the right commands? Did any agents struggle with command syntax or subcommand structure?\n\
+        2. **Error messages**: Were error messages clear enough for agents to self-correct? Note any confusing errors.\n\
+        3. **Workflow friction**: Were there multi-step sequences that could be simplified? Any commands that required awkward workarounds?\n\
+        4. **Missing affordances**: What CLI features would help agents succeed more reliably?\n\
+        5. **Overall assessment**: Rate the CLI's agent-friendliness and suggest the top 3 improvements.\n\n\
+        Be specific and reference actual agent behavior from the outputs. Keep the analysis concise (under 500 words). \
+        Write in markdown."
+    );
+
+    let output = std::process::Command::new("claude")
+        .args(["-p", &prompt, "--model", model, "--max-budget-usd", "0.50"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let analysis = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if analysis.is_empty() {
+        None
+    } else {
+        Some(analysis)
+    }
 }

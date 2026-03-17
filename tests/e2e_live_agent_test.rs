@@ -161,9 +161,18 @@ fn e2e_live_agent_calculator_scenario() {
         }
     }
 
-    // 5. Build and print report (all 6 RFC-0003 sections)
+    // 5. Build report (all 6 RFC-0003 sections)
     let git = GitOps::new(repo.path().to_path_buf());
-    let scenario_report = report::build_report(&git, &expected, &all_agent_results, None);
+    let mut scenario_report = report::build_report(&git, &expected, &all_agent_results, None);
+
+    // Populate agent_results so AI analysis can see agent outputs
+    scenario_report.agent_results = all_agent_results;
+
+    // 5b. Generate AI usability analysis
+    println!("--- Generating AI usability analysis ---");
+    scenario_report.ai_usability_analysis =
+        report::generate_ai_usability_analysis(&scenario_report, &model);
+
     let markdown = report::render_markdown(&scenario_report);
     println!("{markdown}");
 
