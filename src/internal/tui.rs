@@ -1854,6 +1854,13 @@ fn submit_create_link(
 /// Render the current app state into `frame`.
 pub fn render(f: &mut Frame, app: &mut App) {
     app.ui_rects = UiRects::default();
+
+    // In select mode, show only the relevant text full-screen for clean selection
+    if app.mouse_capture_disabled {
+        render_select_mode(f, f.area(), app);
+        return;
+    }
+
     match app.view {
         View::List => render_list(f, f.area(), app),
         View::ThreadDetail(_) => render_thread_detail(f, f.area(), app),
@@ -1863,6 +1870,52 @@ pub fn render(f: &mut Frame, app: &mut App) {
         View::CreateNode { .. } => render_create_node(f, f.area(), app),
         View::EditNodeBody { .. } => render_edit_node_body(f, f.area(), app),
         View::CreateLink { .. } => render_create_link(f, f.area(), app),
+    }
+}
+
+/// Render full-screen text for terminal-native selection.
+///
+/// Shows the main pane text without borders or other UI elements so that
+/// terminal drag selection captures only the relevant content.
+fn render_select_mode(f: &mut Frame, area: Rect, app: &mut App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+
+    f.render_widget(
+        Paragraph::new(" SELECT MODE — select text with mouse, press any key to return")
+            .style(Style::default().bg(Color::Yellow).fg(Color::Black)),
+        chunks[0],
+    );
+
+    let text = match &app.view {
+        View::ThreadDetail(_) => &app.thread_text,
+        View::NodeDetail { .. } => &app.node_detail_text,
+        _ => &app.thread_text,
+    };
+
+    let scroll = match &app.view {
+        View::ThreadDetail(_) => app.thread_scroll,
+        View::NodeDetail { .. } => app.node_detail_scroll,
+        _ => 0,
+    };
+
+    if app.markdown_mode {
+        let md_text = markdown_to_text(text);
+        f.render_widget(
+            Paragraph::new(md_text)
+                .wrap(Wrap { trim: false })
+                .scroll((scroll, 0)),
+            chunks[1],
+        );
+    } else {
+        f.render_widget(
+            Paragraph::new(text.as_str())
+                .wrap(Wrap { trim: false })
+                .scroll((scroll, 0)),
+            chunks[1],
+        );
     }
 }
 
@@ -2003,14 +2056,9 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         height: 1,
     });
     let md_indicator = if app.markdown_mode { "md:on" } else { "md:off" };
-    let select_hint = if app.mouse_capture_disabled {
-        " SELECT MODE"
-    } else {
-        ""
-    };
     f.render_widget(
         Paragraph::new(format!(
-            " [esc/q]back [enter]node [c]create [l]link [m]{md_indicator} [S]select [r]refresh [j/k]nodes{select_hint}",
+            " [esc/q]back [enter]node [c]create [l]link [m]{md_indicator} [S]select [r]refresh [j/k]nodes",
         )),
         chunks[0],
     );
