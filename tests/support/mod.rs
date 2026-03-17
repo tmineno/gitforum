@@ -1,3 +1,4 @@
+pub mod agent_adapter;
 pub mod clock;
 pub mod env;
 pub mod ids;
