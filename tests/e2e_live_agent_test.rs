@@ -21,6 +21,11 @@ fn parse_timeout_env() -> Duration {
     Duration::from_secs(secs)
 }
 
+fn parse_model_env() -> String {
+    std::env::var("GIT_FORUM_AGENT_MODEL")
+        .unwrap_or_else(|_| claude_adapter::DEFAULT_MODEL.to_string())
+}
+
 #[test]
 #[ignore]
 fn e2e_live_agent_calculator_scenario() {
@@ -32,6 +37,8 @@ fn e2e_live_agent_calculator_scenario() {
     let scenario = scenario::calculator_scenario();
     let expected = scenario::calculator_expected_outcomes();
     let timeout = parse_timeout_env();
+    let model = parse_model_env();
+    println!("Using model: {model}");
 
     // 1. Setup: repo + init forum + seed commit
     let repo = TestRepo::new();
@@ -117,7 +124,7 @@ fn e2e_live_agent_calculator_scenario() {
                 phase.name, actor_name
             );
 
-            let adapter = ClaudeCodeAdapter::new(wt_path.clone(), timeout, actor_name);
+            let adapter = ClaudeCodeAdapter::new(wt_path.clone(), timeout, actor_name, &model);
             let result = adapter.execute_task(&prompt);
 
             println!(

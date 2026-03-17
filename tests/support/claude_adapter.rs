@@ -7,20 +7,25 @@ use std::time::{Duration, Instant};
 use super::agent_adapter::{AgentAdapter, AgentTaskResult};
 use super::scenario::{ActorDef, PhaseDef, ScenarioDef};
 
+/// Default model for live-agent mode.
+pub const DEFAULT_MODEL: &str = "sonnet";
+
 /// Adapter that executes tasks via the Claude Code CLI (`claude`).
 pub struct ClaudeCodeAdapter {
     worktree_path: PathBuf,
     timeout: Duration,
     actor_name: String,
+    model: String,
     child: Option<Child>,
 }
 
 impl ClaudeCodeAdapter {
-    pub fn new(worktree_path: PathBuf, timeout: Duration, actor_name: &str) -> Self {
+    pub fn new(worktree_path: PathBuf, timeout: Duration, actor_name: &str, model: &str) -> Self {
         Self {
             worktree_path,
             timeout,
             actor_name: actor_name.to_string(),
+            model: model.to_string(),
             child: None,
         }
     }
@@ -174,6 +179,8 @@ impl AgentAdapter for ClaudeCodeAdapter {
                 prompt,
                 "--allowed-tools",
                 "Bash",
+                "--model",
+                &self.model,
                 "--max-budget-usd",
                 "0.50",
             ])
