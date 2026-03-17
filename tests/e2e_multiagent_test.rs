@@ -17,6 +17,7 @@ use git_forum::internal::say;
 use git_forum::internal::thread;
 use git_forum::internal::verify;
 use support::repo::TestRepo;
+use support::report;
 use support::scenario::{self, ScenarioDef};
 
 // ---------------------------------------------------------------------------
@@ -531,21 +532,18 @@ fn phase_verify(agents: &[Agent], rfcs: &RfcIds, issues: &IssueIds, policy: &Pol
 // Phase 4: Contention (concurrent writes)
 // ---------------------------------------------------------------------------
 
-struct ContentionResult {
-    success_count: usize,
-    retry_count: usize,
-}
-
-fn phase_contention(agents: &[Agent], issue_id: &str) -> ContentionResult {
+fn phase_contention(agents: &[Agent], issue_id: &str) -> report::ContentionReport {
     let alice = &agents[0];
     let bob = &agents[1];
 
     let mut success_count = 0usize;
     let mut retry_count = 0usize;
+    let mut conflict_errors: Vec<String> = Vec::new();
 
     std::thread::scope(|s| {
         let h1 = s.spawn(|| {
             let mut retries = 0;
+            let mut errors = Vec::new();
             loop {
                 let result = say::say_node(
                     &alice.git,
@@ -558,11 +556,12 @@ fn phase_contention(agents: &[Agent], issue_id: &str) -> ContentionResult {
                     None,
                 );
                 match result {
-                    Ok(_) => return (true, retries),
-                    Err(_) => {
+                    Ok(_) => return (true, retries, errors),
+                    Err(e) => {
+                        errors.push(format!("alice: {e}"));
                         retries += 1;
                         if retries > 5 {
-                            return (false, retries);
+                            return (false, retries, errors);
                         }
                     }
                 }
@@ -571,6 +570,7 @@ fn phase_contention(agents: &[Agent], issue_id: &str) -> ContentionResult {
 
         let h2 = s.spawn(|| {
             let mut retries = 0;
+            let mut errors = Vec::new();
             loop {
                 let result = say::say_node(
                     &bob.git,
@@ -583,19 +583,20 @@ fn phase_contention(agents: &[Agent], issue_id: &str) -> ContentionResult {
                     None,
                 );
                 match result {
-                    Ok(_) => return (true, retries),
-                    Err(_) => {
+                    Ok(_) => return (true, retries, errors),
+                    Err(e) => {
+                        errors.push(format!("bob: {e}"));
                         retries += 1;
                         if retries > 5 {
-                            return (false, retries);
+                            return (false, retries, errors);
                         }
                     }
                 }
             }
         });
 
-        let (ok1, r1) = h1.join().unwrap();
-        let (ok2, r2) = h2.join().unwrap();
+        let (ok1, r1, e1) = h1.join().unwrap();
+        let (ok2, r2, e2) = h2.join().unwrap();
         if ok1 {
             success_count += 1;
         }
@@ -603,6 +604,8 @@ fn phase_contention(agents: &[Agent], issue_id: &str) -> ContentionResult {
             success_count += 1;
         }
         retry_count = r1 + r2;
+        conflict_errors.extend(e1);
+        conflict_errors.extend(e2);
     });
 
     // Both should eventually succeed (git-forum uses CAS on refs)
@@ -616,68 +619,11 @@ fn phase_contention(agents: &[Agent], issue_id: &str) -> ContentionResult {
         "contention test should have exactly 2 nodes"
     );
 
-    ContentionResult {
+    report::ContentionReport {
         success_count,
         retry_count,
+        conflict_errors,
     }
-}
-
-// ---------------------------------------------------------------------------
-// Phase 5: Report
-// ---------------------------------------------------------------------------
-
-fn generate_report(git: &GitOps, contention: &ContentionResult) -> String {
-    let thread_ids = thread::list_thread_ids(git).unwrap();
-    let mut report = String::new();
-    report.push_str("# E2E Multi-Agent Calculator Scenario Report\n\n");
-
-    // Thread table
-    report.push_str("## Threads\n\n");
-    report.push_str("| ID | Kind | Status | Title | Nodes | Links | Evidence |\n");
-    report.push_str("|---|---|---|---|---|---|---|\n");
-    for id in &thread_ids {
-        let state = thread::replay_thread(git, id).unwrap();
-        report.push_str(&format!(
-            "| {} | {:?} | {} | {} | {} | {} | {} |\n",
-            state.id,
-            state.kind,
-            state.status,
-            state.title,
-            state.nodes.len(),
-            state.links.len(),
-            state.evidence_items.len(),
-        ));
-    }
-
-    // Actor activity
-    report.push_str("\n## Actor Activity\n\n");
-    let mut actor_events: HashMap<String, usize> = HashMap::new();
-    for id in &thread_ids {
-        let state = thread::replay_thread(git, id).unwrap();
-        for ev in &state.events {
-            *actor_events.entry(ev.actor.clone()).or_insert(0) += 1;
-        }
-    }
-    for (actor, count) in &actor_events {
-        report.push_str(&format!("- {actor}: {count} events\n"));
-    }
-
-    // Contention results
-    report.push_str("\n## Concurrency\n\n");
-    report.push_str(&format!(
-        "- Successes: {}\n- Retries: {}\n",
-        contention.success_count, contention.retry_count
-    ));
-
-    // Coverage
-    report.push_str("\n## Coverage\n\n");
-    report.push_str(&format!("- Total threads: {}\n", thread_ids.len()));
-    report.push_str("- Node types exercised: Claim, Question, Objection, Risk, Action, Summary\n");
-    report.push_str("- State transitions exercised: draft->proposed, proposed->under-review, under-review->accepted, draft->rejected, open->closed\n");
-    report.push_str("- Evidence types: Commit\n");
-    report.push_str("- Link rels: implements\n");
-
-    report
 }
 
 // ---------------------------------------------------------------------------
@@ -756,7 +702,7 @@ fn cli_smoke_tests(repo_path: &Path) {
 #[test]
 fn e2e_multiagent_calculator_scenario() {
     let scenario = scenario::calculator_scenario();
-    let _expected = scenario::calculator_expected_outcomes();
+    let expected = scenario::calculator_expected_outcomes();
     let (repo, agents, policy) = setup_scenario(&scenario);
 
     // Phase 1: RFC review
@@ -771,9 +717,10 @@ fn e2e_multiagent_calculator_scenario() {
     // Phase 4: Contention (concurrent writes to ISSUE-0004)
     let contention = phase_contention(&agents, &issues.issue_0004);
 
-    // Phase 5: Report
-    let report = generate_report(&agents[0].git, &contention);
-    println!("{report}");
+    // Phase 5: Report (using shared report module)
+    let scenario_report = report::build_report(&agents[0].git, &expected, &[], Some(contention));
+    let markdown = report::render_markdown(&scenario_report);
+    println!("{markdown}");
 
     // Phase 6: CLI smoke tests
     cli_smoke_tests(repo.path());
