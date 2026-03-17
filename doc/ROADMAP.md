@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-03-17
+Last updated: 2026-03-18
 
 ## Completed
 
@@ -36,6 +36,13 @@ The following capabilities are implemented and tested:
 - Quick-reference cheat sheet in `--help-llm` output (ISSUE-0035)
 - Datetime display (HH:MM) in thread listings (ISSUE-0029)
 - Titles starting with `--` accepted in thread creation (ISSUE-0031)
+- `deprecated` state for RFCs with `rfc deprecate` shorthand (RFC-0003)
+- `--from-thread` flag for creating threads from existing threads (RFC-0003)
+- TUI: markdown rendering toggle (`m`) in thread detail and node detail views
+- TUI: full-screen select mode (`S`) for pane-scoped text selection
+- E2E multi-agent test harness: deterministic scenario + live-agent mode with Claude Code adapter,
+  shared report generation (RFC-0003 §1–§6), worktree-per-actor setup (ISSUE-0042 through
+  ISSUE-0047)
 
 ## In progress
 

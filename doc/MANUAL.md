@@ -133,6 +133,19 @@ git forum issue new --from-commit abc123 --link-to RFC-0001 --rel implements
 `--from-commit <REV>` uses the commit subject as the title, the commit body as the thread body,
 and automatically adds the commit as evidence. An explicit title argument overrides the subject.
 
+### Create from another thread
+
+```bash
+git forum issue new --from-thread RFC-0001
+git forum rfc new --from-thread RFC-0003
+git forum issue new --from-thread RFC-0001 "Custom title"
+```
+
+`--from-thread <THREAD_ID>` copies the title and body from the source thread and auto-adds a
+`relates-to` link to the source. An explicit title argument overrides the source title. This is
+useful for creating implementation issues from accepted RFCs or successor RFCs from deprecated
+ones.
+
 ### List by kind
 
 ```bash
@@ -441,6 +454,8 @@ Current controls:
   - `enter`: open the selected node detail
   - `c`: create a new node in the current thread
   - `l`: create a thread link from the current thread
+  - `m`: toggle markdown rendering for the thread body pane
+  - `S`: enter select mode for pane-scoped text selection (copy with mouse)
   - `r`: refresh the thread from Git
   - `esc` / `q`: go back to the thread list
 - node detail view:
@@ -449,6 +464,7 @@ Current controls:
   - `x`: resolve the current node
   - `o`: reopen the current node if it is resolved or retracted
   - `R`: retract the current node
+  - `m`: toggle markdown rendering for the node body
   - `j` / `k`: scroll
   - mouse wheel: scroll the node detail text
   - `r`: refresh the node from Git
@@ -496,6 +512,8 @@ git forum issue reopen ISSUE-0001
 git forum issue reject ISSUE-0001 --comment "Won't fix"
 git forum rfc propose RFC-0001
 git forum rfc accept RFC-0001 --sign human/alice
+git forum rfc deprecate RFC-0001 --comment "Superseded by RFC-0005"
+git forum rfc deprecate RFC-0001 --link-to RFC-0005 --rel relates-to
 ```
 
 Shorthand commands combine a state transition with optional `--comment` (adds a summary node before
@@ -507,6 +525,7 @@ Available shorthands:
 - `issue reject` — transition to `rejected`
 - `rfc propose` — transition to `proposed`
 - `rfc accept` — transition to `accepted`
+- `rfc deprecate` — transition to `deprecated` (from `accepted` or `rejected`)
 
 ### Generic state command
 
