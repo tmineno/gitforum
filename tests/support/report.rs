@@ -576,13 +576,32 @@ fn build_outcome_comparisons(git: &GitOps, expected: &[ExpectedOutcome]) -> Vec<
 fn generate_recommendations(report: &ScenarioReport) -> Vec<String> {
     let mut recs = Vec::new();
 
-    // Failed outcome comparisons
+    // Failed outcome comparisons — describe the actual failing criterion
     for oc in &report.outcome_comparisons {
         if !oc.passed {
-            recs.push(format!(
-                "Thread {} ended in '{}' instead of expected '{}'. Investigate agent behavior or scenario definition.",
-                oc.thread_ref, oc.actual_status, oc.expected_status
-            ));
+            if oc.actual_status == "NOT_FOUND" {
+                recs.push(format!(
+                    "Thread {} was never created (expected status '{}').",
+                    oc.thread_ref, oc.expected_status
+                ));
+            } else if oc.actual_status != oc.expected_status {
+                recs.push(format!(
+                    "Thread {} ended in '{}' instead of expected '{}'.",
+                    oc.thread_ref, oc.actual_status, oc.expected_status
+                ));
+            } else {
+                // Status matches but a count criterion failed
+                recs.push(format!(
+                    "Thread {} status matches ('{}') but failed a count check \
+                     (nodes={}, evidence={}, links={}). \
+                     Check min_nodes/expected_evidence_count/expected_link_count in scenario.",
+                    oc.thread_ref,
+                    oc.actual_status,
+                    oc.node_count,
+                    oc.evidence_count,
+                    oc.link_count
+                ));
+            }
         }
     }
 
@@ -654,7 +673,11 @@ fn generate_recommendations(report: &ScenarioReport) -> Vec<String> {
         let wrong_states: Vec<&OutcomeComparison> = report
             .outcome_comparisons
             .iter()
-            .filter(|oc| !oc.passed && oc.actual_status != "NOT_FOUND")
+            .filter(|oc| {
+                !oc.passed
+                    && oc.actual_status != "NOT_FOUND"
+                    && oc.actual_status != oc.expected_status
+            })
             .collect();
         if !wrong_states.is_empty() {
             let examples: Vec<String> = wrong_states
@@ -667,7 +690,7 @@ fn generate_recommendations(report: &ScenarioReport) -> Vec<String> {
                 })
                 .collect();
             recs.push(format!(
-                "Thread(s) reached wrong state: {}. The state transition workflow may be confusing for agents — consider clearer guard violation messages or multi-step transition shortcuts.",
+                "Thread(s) reached wrong state: {}. Consider clearer guard violation messages or multi-step transition shortcuts.",
                 examples.join("; ")
             ));
         }
