@@ -693,6 +693,9 @@ fn main() -> Result<(), ForumError> {
                 resolved_reply.as_deref(),
             )?;
             println!("Added {node_type} {node_id}");
+            if let Ok(state) = thread::replay_thread(&git, &thread_id) {
+                eprintln!("{}", show::render_next_actions(&state));
+            }
         }
         Commands::Claim {
             thread_id,
@@ -963,6 +966,9 @@ fn main() -> Result<(), ForumError> {
                         }
                     }
                     println!("{thread_id} -> {new_state}");
+                    if let Ok(state) = thread::replay_thread(&git, &thread_id) {
+                        eprintln!("{}", show::render_next_actions(&state));
+                    }
                 }
             }
         }
@@ -1118,6 +1124,9 @@ fn run_shorthand_say(
         resolved_reply.as_deref(),
     )?;
     println!("Added {node_type} {node_id}");
+    if let Ok(state) = thread::replay_thread(&git, thread_id) {
+        eprintln!("{}", show::render_next_actions(&state));
+    }
     Ok(())
 }
 
@@ -1460,6 +1469,9 @@ fn run_state_shorthand(
         }
     }
     println!("{thread_id} -> {new_state}");
+    if let Ok(state) = thread::replay_thread(&git, thread_id) {
+        eprintln!("{}", show::render_next_actions(&state));
+    }
     Ok(())
 }
 

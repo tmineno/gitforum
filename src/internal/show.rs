@@ -1,4 +1,5 @@
 use super::event::{Event, EventType};
+use super::state_machine;
 use super::thread::{NodeLookup, ThreadState};
 
 /// Render `git forum show` output for a thread.
@@ -128,6 +129,35 @@ pub fn render_show(state: &ThreadState) -> String {
         lines.push(format_timeline_entry(event, &widths));
     }
     lines.push(String::new());
+
+    lines.join("\n")
+}
+
+/// Render a hint showing valid next actions for a thread.
+///
+/// Includes valid state transitions, open item counts, and guidance.
+pub fn render_next_actions(state: &ThreadState) -> String {
+    let mut lines: Vec<String> = Vec::new();
+
+    let targets = state_machine::valid_targets(state.kind, &state.status);
+    if targets.is_empty() {
+        lines.push("  next: (no transitions available)".to_string());
+    } else {
+        lines.push(format!("  next: {}", targets.join(", ")));
+    }
+
+    let obj = state.open_objections().len();
+    let act = state.open_actions().len();
+    if obj > 0 || act > 0 {
+        let mut items = Vec::new();
+        if obj > 0 {
+            items.push(format!("{obj} open objection(s)"));
+        }
+        if act > 0 {
+            items.push(format!("{act} open action(s)"));
+        }
+        lines.push(format!("  open: {}", items.join(", ")));
+    }
 
     lines.join("\n")
 }
