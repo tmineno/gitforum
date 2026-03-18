@@ -59,7 +59,12 @@ enum Commands {
         branch: Option<String>,
     },
     /// Show thread details
-    Show { thread_id: String },
+    Show {
+        thread_id: String,
+        /// Show valid next actions, transitions, and guard check results
+        #[arg(long)]
+        what_next: bool,
+    },
     /// Show unresolved items for a thread or all threads
     Status {
         /// Thread ID (omit for --all)
@@ -596,10 +601,18 @@ fn main() -> Result<(), ForumError> {
             print!("{}", show::render_ls(&refs));
         }
 
-        Commands::Show { thread_id } => {
-            let (git, _paths) = discover_repo_with_init_warning()?;
+        Commands::Show {
+            thread_id,
+            what_next,
+        } => {
+            let (git, paths) = discover_repo_with_init_warning()?;
             let state = thread::replay_thread(&git, &thread_id)?;
-            print!("{}", show::render_show(&state));
+            if what_next {
+                let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
+                print!("{}", show::render_what_next(&state, &policy));
+            } else {
+                print!("{}", show::render_show(&state));
+            }
         }
 
         Commands::Status { thread_id, all } => {

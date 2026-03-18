@@ -1,4 +1,5 @@
 use super::event::{Event, EventType};
+use super::policy::{self, Policy};
 use super::state_machine;
 use super::thread::{NodeLookup, ThreadState};
 
@@ -158,6 +159,58 @@ pub fn render_next_actions(state: &ThreadState) -> String {
         }
         lines.push(format!("  open: {}", items.join(", ")));
     }
+
+    lines.join("\n")
+}
+
+/// Render `git forum show --what-next` output.
+///
+/// Shows valid transitions with guard check results, and open item counts.
+pub fn render_what_next(state: &ThreadState, policy: &Policy) -> String {
+    let mut lines: Vec<String> = Vec::new();
+
+    lines.push(format!("{} ({})", state.id, state.status));
+    lines.push(String::new());
+
+    let targets = state_machine::valid_targets(state.kind, &state.status);
+    if targets.is_empty() {
+        lines.push("valid transitions: (none)".to_string());
+    } else {
+        lines.push(format!("valid transitions: {}", targets.join(", ")));
+    }
+    lines.push(String::new());
+
+    // Guard check for each valid transition
+    for target in &targets {
+        let violations = policy::check_guards(policy, state, &state.status, target, &[]);
+        if violations.is_empty() {
+            lines.push(format!("guard check ({} -> {target}): PASS", state.status));
+        } else {
+            lines.push(format!("guard check ({} -> {target}):", state.status));
+            for v in &violations {
+                lines.push(format!("  [FAIL] {} -- {}", v.rule, v.reason));
+            }
+        }
+    }
+    if !targets.is_empty() {
+        lines.push(String::new());
+    }
+
+    // Open items
+    let obj = state.open_objections().len();
+    let act = state.open_actions().len();
+    lines.push(format!("open objections: {obj}"));
+    lines.push(format!("open actions:    {act}"));
+    lines.push(format!("nodes:           {}", state.nodes.len()));
+    lines.push(format!("evidence:        {}", state.evidence_items.len()));
+    lines.push(format!("links:           {}", state.links.len()));
+
+    let has_summary = state.latest_summary().is_some();
+    lines.push(format!(
+        "has summary:     {}",
+        if has_summary { "yes" } else { "no" }
+    ));
+    lines.push(String::new());
 
     lines.join("\n")
 }
