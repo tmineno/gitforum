@@ -26,6 +26,67 @@ fn parse_model_env() -> String {
         .unwrap_or_else(|_| claude_adapter::DEFAULT_MODEL.to_string())
 }
 
+/// Build a map from expected thread refs to actual thread IDs by matching titles.
+///
+/// The scenario defines threads with expected sequential IDs (RFC-0001, ISSUE-0001, etc.)
+/// but live agents create threads in unpredictable order. This function discovers actual
+/// IDs by replaying all threads and matching their titles to the scenario definitions.
+fn remap_expected_outcomes(
+    git: &GitOps,
+    expected: &[scenario::ExpectedOutcome],
+    scenario: &scenario::ScenarioDef,
+) -> Vec<scenario::ExpectedOutcome> {
+    use std::collections::HashMap;
+
+    // Build expected_ref -> title map from scenario thread definitions
+    // The scenario assumes sequential IDs: first RFC created = RFC-0001, etc.
+    let mut ref_to_title: HashMap<String, String> = HashMap::new();
+    let mut rfc_counter = 0u32;
+    let mut issue_counter = 0u32;
+    for phase in &scenario.phases {
+        for t in &phase.threads {
+            let (prefix, counter) = match t.kind {
+                git_forum::internal::event::ThreadKind::Rfc => ("RFC", &mut rfc_counter),
+                git_forum::internal::event::ThreadKind::Issue => ("ISSUE", &mut issue_counter),
+            };
+            *counter += 1;
+            let expected_ref = format!("{prefix}-{counter:04}");
+            ref_to_title.insert(expected_ref, t.title.clone());
+        }
+    }
+
+    // Build title -> actual_id map from live threads
+    let thread_ids = thread::list_thread_ids(git).unwrap_or_default();
+    let mut title_to_actual: HashMap<String, String> = HashMap::new();
+    for id in &thread_ids {
+        if let Ok(state) = thread::replay_thread(git, id) {
+            title_to_actual
+                .entry(state.title.clone())
+                .or_insert_with(|| id.clone());
+        }
+    }
+
+    // Remap each expected outcome
+    expected
+        .iter()
+        .map(|exp| {
+            let actual_ref = ref_to_title
+                .get(&exp.thread_ref)
+                .and_then(|title| title_to_actual.get(title))
+                .cloned()
+                .unwrap_or_else(|| exp.thread_ref.clone());
+
+            scenario::ExpectedOutcome {
+                thread_ref: actual_ref,
+                expected_status: exp.expected_status.clone(),
+                min_nodes: exp.min_nodes,
+                expected_evidence_count: exp.expected_evidence_count,
+                expected_link_count: exp.expected_link_count,
+            }
+        })
+        .collect()
+}
+
 #[test]
 #[ignore]
 fn e2e_live_agent_calculator_scenario() {
@@ -163,7 +224,19 @@ fn e2e_live_agent_calculator_scenario() {
 
     // 5. Build report (all 6 RFC-0003 sections)
     let git = GitOps::new(repo.path().to_path_buf());
-    let mut scenario_report = report::build_report(&git, &expected, &all_agent_results, None);
+
+    // Remap expected outcomes using title-based discovery (agents create threads in
+    // unpredictable order, so expected IDs like RFC-0001 may not match actual IDs)
+    let remapped_expected = remap_expected_outcomes(&git, &expected, &scenario);
+    println!("--- Thread ID remapping ---");
+    for (orig, remapped) in expected.iter().zip(remapped_expected.iter()) {
+        if orig.thread_ref != remapped.thread_ref {
+            println!("  {} -> {}", orig.thread_ref, remapped.thread_ref);
+        }
+    }
+
+    let mut scenario_report =
+        report::build_report(&git, &remapped_expected, &all_agent_results, None);
 
     // Populate agent_results so AI analysis can see agent outputs
     scenario_report.agent_results = all_agent_results;
