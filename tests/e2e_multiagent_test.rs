@@ -627,6 +627,77 @@ fn phase_contention(agents: &[Agent], issue_id: &str) -> report::ContentionRepor
 }
 
 // ---------------------------------------------------------------------------
+// Phase: Expanded lifecycle (missing transitions)
+// ---------------------------------------------------------------------------
+
+fn phase_expanded_lifecycle(agents: &[Agent], scenario: &ScenarioDef) {
+    let phase = &scenario.phases[2]; // expanded-lifecycle
+
+    // Create RFC-0004 and ISSUE-0005
+    let t0 = &phase.threads[0]; // RFC-0004
+    let bob = agent_by_name(agents, &t0.creator);
+    let rfc_0004 = create::create_thread(
+        &bob.git,
+        t0.kind,
+        &t0.title,
+        Some(&t0.body),
+        &bob.name,
+        &bob.clock,
+        &bob.ids,
+    )
+    .unwrap();
+    assert_eq!(rfc_0004, "RFC-0004");
+
+    let t1 = &phase.threads[1]; // ISSUE-0005
+    let carol = agent_by_name(agents, &t1.creator);
+    let issue_0005 = create::create_thread(
+        &carol.git,
+        t1.kind,
+        &t1.title,
+        Some(&t1.body),
+        &carol.name,
+        &carol.clock,
+        &carol.ids,
+    )
+    .unwrap();
+    assert_eq!(issue_0005, "ISSUE-0005");
+
+    // Execute all transitions in order
+    for trans in &phase.transitions {
+        let agent = agent_by_name(agents, &trans.actor);
+        say::change_state(
+            &agent.git,
+            &trans.thread_ref,
+            &trans.new_state,
+            &trans.sign_actors,
+            &agent.name,
+            &agent.clock,
+            &agent.ids,
+            &empty_policy(),
+            say::StateChangeOptions::default(),
+        )
+        .unwrap();
+    }
+
+    // Verify final states
+    let alice = agent_by_name(agents, "human/alice");
+    let state = thread::replay_thread(&alice.git, "RFC-0003").unwrap();
+    assert_eq!(
+        state.status, "draft",
+        "RFC-0003 should be reverted to draft"
+    );
+
+    let state = thread::replay_thread(&alice.git, &rfc_0004).unwrap();
+    assert_eq!(state.status, "deprecated");
+
+    let state = thread::replay_thread(&alice.git, &issue_0005).unwrap();
+    assert_eq!(state.status, "open", "ISSUE-0005 should be reopened");
+
+    let state = thread::replay_thread(&alice.git, "ISSUE-0001").unwrap();
+    assert_eq!(state.status, "closed", "ISSUE-0001 should be re-closed");
+}
+
+// ---------------------------------------------------------------------------
 // Phase 6: CLI smoke tests
 // ---------------------------------------------------------------------------
 
@@ -714,6 +785,9 @@ fn e2e_multiagent_calculator_scenario() {
     // Phase 3: Verify all threads against policy
     phase_verify(&agents, &rfcs, &issues, &policy);
 
+    // Phase 3b: Expanded lifecycle (missing transitions + node types)
+    phase_expanded_lifecycle(&agents, &scenario);
+
     // Phase 4: Contention (concurrent writes to ISSUE-0004)
     let contention = phase_contention(&agents, &issues.issue_0004);
 
@@ -727,7 +801,7 @@ fn e2e_multiagent_calculator_scenario() {
 
     // Cross-cutting assertions
     let all_ids = thread::list_thread_ids(&agents[0].git).unwrap();
-    assert_eq!(all_ids.len(), 7, "should have 7 threads total");
+    assert_eq!(all_ids.len(), 9, "should have 9 threads total");
 
     // No duplicate event IDs across threads
     let mut all_event_ids: Vec<String> = Vec::new();

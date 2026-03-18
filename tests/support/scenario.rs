@@ -179,6 +179,37 @@ pub fn calculator_scenario() -> ScenarioDef {
                         actor: "human/alice".to_string(),
                         should_resolve: false,
                     },
+                    // Missing node types on RFC-0001
+                    NodeDef {
+                        thread_ref: "RFC-0001".to_string(),
+                        node_type: NodeType::Alternative,
+                        body: "Consider a stack-based approach instead of direct evaluation."
+                            .to_string(),
+                        actor: "human/bob".to_string(),
+                        should_resolve: false,
+                    },
+                    NodeDef {
+                        thread_ref: "RFC-0001".to_string(),
+                        node_type: NodeType::Assumption,
+                        body: "Assumes IEEE 754 double precision floating point.".to_string(),
+                        actor: "ai/copilot".to_string(),
+                        should_resolve: false,
+                    },
+                    NodeDef {
+                        thread_ref: "RFC-0001".to_string(),
+                        node_type: NodeType::Review,
+                        body: "Overall analysis: approach is sound, division handling addressed."
+                            .to_string(),
+                        actor: "human/carol".to_string(),
+                        should_resolve: false,
+                    },
+                    NodeDef {
+                        thread_ref: "RFC-0001".to_string(),
+                        node_type: NodeType::Evidence,
+                        body: "See benchmark results in bench/arithmetic.csv.".to_string(),
+                        actor: "ai/copilot".to_string(),
+                        should_resolve: false,
+                    },
                     // RFC-0002 nodes
                     NodeDef {
                         thread_ref: "RFC-0002".to_string(),
@@ -293,7 +324,98 @@ pub fn calculator_scenario() -> ScenarioDef {
                     },
                 ],
             },
-            // Phase 3: Contention
+            // Phase 3: Expanded lifecycle (missing transitions)
+            PhaseDef {
+                name: "expanded-lifecycle".to_string(),
+                threads: vec![
+                    // RFC-0004: goes through under-review -> rejected -> deprecated
+                    ThreadDef {
+                        kind: ThreadKind::Rfc,
+                        title: "Error reporting format".to_string(),
+                        body: "Standardize error output format for the calculator.".to_string(),
+                        creator: "human/bob".to_string(),
+                        target_status: "deprecated".to_string(),
+                    },
+                    // ISSUE-0005: rejected then reopened
+                    ThreadDef {
+                        kind: ThreadKind::Issue,
+                        title: "Add logging framework".to_string(),
+                        body: "Add structured logging to the calculator.".to_string(),
+                        creator: "human/carol".to_string(),
+                        target_status: "open".to_string(),
+                    },
+                ],
+                nodes: vec![],
+                transitions: vec![
+                    // RFC-0003: draft -> proposed -> draft (revert to draft)
+                    StateTransitionDef {
+                        thread_ref: "RFC-0003".to_string(),
+                        new_state: "proposed".to_string(),
+                        actor: "ai/copilot".to_string(),
+                        sign_actors: vec![],
+                    },
+                    StateTransitionDef {
+                        thread_ref: "RFC-0003".to_string(),
+                        new_state: "draft".to_string(),
+                        actor: "human/alice".to_string(),
+                        sign_actors: vec![],
+                    },
+                    // RFC-0004: draft -> proposed -> under-review -> rejected -> deprecated
+                    StateTransitionDef {
+                        thread_ref: "RFC-0004".to_string(),
+                        new_state: "proposed".to_string(),
+                        actor: "human/bob".to_string(),
+                        sign_actors: vec![],
+                    },
+                    StateTransitionDef {
+                        thread_ref: "RFC-0004".to_string(),
+                        new_state: "under-review".to_string(),
+                        actor: "human/alice".to_string(),
+                        sign_actors: vec![],
+                    },
+                    StateTransitionDef {
+                        thread_ref: "RFC-0004".to_string(),
+                        new_state: "rejected".to_string(),
+                        actor: "human/alice".to_string(),
+                        sign_actors: vec![],
+                    },
+                    StateTransitionDef {
+                        thread_ref: "RFC-0004".to_string(),
+                        new_state: "deprecated".to_string(),
+                        actor: "human/alice".to_string(),
+                        sign_actors: vec![],
+                    },
+                    // ISSUE-0005: open -> rejected -> open (reopen from rejected)
+                    StateTransitionDef {
+                        thread_ref: "ISSUE-0005".to_string(),
+                        new_state: "rejected".to_string(),
+                        actor: "human/alice".to_string(),
+                        sign_actors: vec![],
+                    },
+                    StateTransitionDef {
+                        thread_ref: "ISSUE-0005".to_string(),
+                        new_state: "open".to_string(),
+                        actor: "human/carol".to_string(),
+                        sign_actors: vec![],
+                    },
+                    // ISSUE-0001: closed -> open (reopen, then close again)
+                    StateTransitionDef {
+                        thread_ref: "ISSUE-0001".to_string(),
+                        new_state: "open".to_string(),
+                        actor: "human/alice".to_string(),
+                        sign_actors: vec![],
+                    },
+                    StateTransitionDef {
+                        thread_ref: "ISSUE-0001".to_string(),
+                        new_state: "closed".to_string(),
+                        actor: "human/alice".to_string(),
+                        sign_actors: vec![],
+                    },
+                ],
+                evidence: vec![],
+                links: vec![],
+            },
+            // Phase 4: Contention
             PhaseDef {
                 name: "contention".to_string(),
                 threads: vec![],
@@ -327,7 +449,7 @@ pub fn calculator_expected_outcomes() -> Vec<ExpectedOutcome> {
         ExpectedOutcome {
             thread_ref: "RFC-0001".to_string(),
             expected_status: "accepted".to_string(),
-            min_nodes: 6,
+            min_nodes: 10, // 6 original + 4 new (alternative, assumption, review, evidence)
             expected_evidence_count: 0,
             expected_link_count: 0,
         },
@@ -370,6 +492,20 @@ pub fn calculator_expected_outcomes() -> Vec<ExpectedOutcome> {
             thread_ref: "ISSUE-0004".to_string(),
             expected_status: "open".to_string(),
             min_nodes: 2,
+            expected_evidence_count: 0,
+            expected_link_count: 0,
+        },
+        ExpectedOutcome {
+            thread_ref: "RFC-0004".to_string(),
+            expected_status: "deprecated".to_string(),
+            min_nodes: 0,
+            expected_evidence_count: 0,
+            expected_link_count: 0,
+        },
+        ExpectedOutcome {
+            thread_ref: "ISSUE-0005".to_string(),
+            expected_status: "open".to_string(),
+            min_nodes: 0,
             expected_evidence_count: 0,
             expected_link_count: 0,
         },
