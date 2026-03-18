@@ -403,6 +403,9 @@ enum ThreadCmd {
         /// Populate title/body from a commit and auto-add it as evidence
         #[arg(long = "from-commit", value_name = "REV")]
         from_commit: Option<String>,
+        /// Create from an existing thread (supersede pattern: copies title/body, links both, auto-deprecates source RFC)
+        #[arg(long = "from-thread", value_name = "THREAD_ID")]
+        from_thread: Option<String>,
     },
     /// List threads of this kind
     #[command(alias = "list")]
@@ -424,6 +427,15 @@ enum ThreadCmd {
         #[arg(long, requires = "link_to", value_name = "REL")]
         rel: Option<String>,
         /// Add a summary node before closing
+        #[arg(long)]
+        comment: Option<String>,
+    },
+    /// Mark a thread as pending (shorthand for state <ID> pending)
+    Pend {
+        thread_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        /// Add a summary node before marking pending
         #[arg(long)]
         comment: Option<String>,
     },
@@ -467,6 +479,15 @@ enum ThreadCmd {
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
         /// Add a summary node before proposing
+        #[arg(long)]
+        comment: Option<String>,
+    },
+    /// Deprecate an RFC (shorthand for state <ID> deprecated)
+    Deprecate {
+        thread_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        /// Add a summary node before deprecating
         #[arg(long)]
         comment: Option<String>,
     },
@@ -1124,34 +1145,43 @@ fn run_thread_cmd(
             rel,
             as_actor,
             from_commit,
+            from_thread,
         } => {
-            let (git, _paths) = discover_repo_with_init_warning()?;
+            let (git, paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
 
-            // Resolve title and body: --from-commit populates both from commit message
-            let (effective_title, effective_body, commit_ref) = if let Some(rev) = from_commit {
-                let commit_sha = git.resolve_commit(&rev)?;
-                let msg = git.run(&["log", "-1", "--format=%B", &commit_sha])?;
-                let mut lines = msg.lines();
-                let subject = lines.next().unwrap_or("").to_string();
-                let body_text: String = lines
-                    .skip_while(|l| l.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let t = title.unwrap_or(subject);
-                let b = resolve_thread_body(body, body_file)?.or(if body_text.is_empty() {
-                    None
+            // Resolve title and body from --from-thread, --from-commit, or direct args
+            let (effective_title, effective_body, commit_ref, source_thread) =
+                if let Some(ref source_id) = from_thread {
+                    let source = thread::replay_thread(&git, source_id)?;
+                    let t = title.unwrap_or_else(|| format!("v2: {}", source.title));
+                    let b = resolve_thread_body(body, body_file)?.or(source.body.clone());
+                    (t, b, None, Some(source_id.clone()))
+                } else if let Some(rev) = from_commit {
+                    let commit_sha = git.resolve_commit(&rev)?;
+                    let msg = git.run(&["log", "-1", "--format=%B", &commit_sha])?;
+                    let mut lines = msg.lines();
+                    let subject = lines.next().unwrap_or("").to_string();
+                    let body_text: String = lines
+                        .skip_while(|l| l.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let t = title.unwrap_or(subject);
+                    let b = resolve_thread_body(body, body_file)?.or(if body_text.is_empty() {
+                        None
+                    } else {
+                        Some(body_text)
+                    });
+                    (t, b, Some(commit_sha), None)
                 } else {
-                    Some(body_text)
-                });
-                (t, b, Some(commit_sha))
-            } else {
-                let t = title.ok_or_else(|| {
-                    ForumError::Config("title is required (or use --from-commit)".into())
-                })?;
-                let b = resolve_thread_body(body, body_file)?;
-                (t, b, None)
-            };
+                    let t = title.ok_or_else(|| {
+                        ForumError::Config(
+                            "title is required (or use --from-commit / --from-thread)".into(),
+                        )
+                    })?;
+                    let b = resolve_thread_body(body, body_file)?;
+                    (t, b, None, None)
+                };
 
             let thread_id = create::create_thread_with_branch(
                 &git,
@@ -1182,7 +1212,40 @@ fn run_thread_cmd(
                     clock,
                 )?;
             }
-            println!("Created {thread_id}");
+            // --from-thread: link new→old (supersedes), old→new (superseded-by), auto-deprecate
+            if let Some(source_id) = source_thread {
+                evidence_ops::add_thread_link(
+                    &git,
+                    &thread_id,
+                    &source_id,
+                    "supersedes",
+                    &actor,
+                    clock,
+                )?;
+                evidence_ops::add_thread_link(
+                    &git,
+                    &source_id,
+                    &thread_id,
+                    "superseded-by",
+                    &actor,
+                    clock,
+                )?;
+                let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
+                say::change_state(
+                    &git,
+                    &source_id,
+                    "deprecated",
+                    &[],
+                    &actor,
+                    clock,
+                    ids,
+                    &policy,
+                    say::StateChangeOptions::default(),
+                )?;
+                println!("Created {thread_id} (supersedes {source_id})");
+            } else {
+                println!("Created {thread_id}");
+            }
         }
         ThreadCmd::Ls { branch } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
@@ -1228,6 +1291,24 @@ fn run_thread_cmd(
                 resolve_open_actions,
                 &link_to,
                 rel.as_deref(),
+                comment.as_deref(),
+                clock,
+                ids,
+            )?;
+        }
+        ThreadCmd::Pend {
+            thread_id,
+            as_actor,
+            comment,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "pending",
+                &[],
+                as_actor,
+                false,
+                &[],
+                None,
                 comment.as_deref(),
                 clock,
                 ids,
@@ -1298,6 +1379,24 @@ fn run_thread_cmd(
             run_state_shorthand(
                 &thread_id,
                 "proposed",
+                &[],
+                as_actor,
+                false,
+                &[],
+                None,
+                comment.as_deref(),
+                clock,
+                ids,
+            )?;
+        }
+        ThreadCmd::Deprecate {
+            thread_id,
+            as_actor,
+            comment,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "deprecated",
                 &[],
                 as_actor,
                 false,

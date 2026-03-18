@@ -21,8 +21,11 @@ pub fn valid_targets(kind: ThreadKind, from: &str) -> Vec<&'static str> {
 fn valid_transitions(kind: ThreadKind) -> &'static [(&'static str, &'static str)] {
     match kind {
         ThreadKind::Issue => &[
+            ("open", "pending"),
             ("open", "closed"),
             ("open", "rejected"),
+            ("pending", "closed"),
+            ("pending", "open"),
             ("closed", "open"),
             ("rejected", "open"),
         ],
@@ -34,6 +37,8 @@ fn valid_transitions(kind: ThreadKind) -> &'static [(&'static str, &'static str)
             ("under-review", "accepted"),
             ("under-review", "rejected"),
             ("under-review", "draft"),
+            ("accepted", "deprecated"),
+            ("rejected", "deprecated"),
         ],
     }
 }
@@ -101,5 +106,47 @@ mod tests {
     #[test]
     fn issue_rejected_to_open_is_valid() {
         assert!(is_valid_transition(ThreadKind::Issue, "rejected", "open"));
+    }
+
+    #[test]
+    fn rfc_accepted_to_deprecated_is_valid() {
+        assert!(is_valid_transition(
+            ThreadKind::Rfc,
+            "accepted",
+            "deprecated"
+        ));
+    }
+
+    #[test]
+    fn rfc_rejected_to_deprecated_is_valid() {
+        assert!(is_valid_transition(
+            ThreadKind::Rfc,
+            "rejected",
+            "deprecated"
+        ));
+    }
+
+    #[test]
+    fn issue_open_to_pending_is_valid() {
+        assert!(is_valid_transition(ThreadKind::Issue, "open", "pending"));
+    }
+
+    #[test]
+    fn issue_pending_to_closed_is_valid() {
+        assert!(is_valid_transition(ThreadKind::Issue, "pending", "closed"));
+    }
+
+    #[test]
+    fn issue_pending_to_open_is_valid() {
+        assert!(is_valid_transition(ThreadKind::Issue, "pending", "open"));
+    }
+
+    #[test]
+    fn issue_pending_to_rejected_is_invalid() {
+        assert!(!is_valid_transition(
+            ThreadKind::Issue,
+            "pending",
+            "rejected"
+        ));
     }
 }

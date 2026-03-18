@@ -1298,9 +1298,10 @@ fn kind_color(kind: &str) -> Color {
 fn status_color(status: &str) -> Color {
     match status {
         "open" | "draft" => Color::Green,
-        "proposed" | "under-review" => Color::Yellow,
+        "pending" | "proposed" | "under-review" => Color::Yellow,
         "accepted" | "closed" => Color::Magenta,
         "rejected" => Color::Red,
+        "deprecated" => Color::DarkGray,
         _ => Color::Reset,
     }
 }
