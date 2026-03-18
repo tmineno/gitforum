@@ -203,7 +203,13 @@ pub fn write_event(git: &GitOps, event: &Event) -> ForumResult<String> {
     // Use compare-and-swap to detect concurrent writes
     match &parent_sha {
         Some(old_sha) => git.update_ref_cas(&ref_name, &commit_sha, old_sha)?,
-        None => git.create_ref(&ref_name, &commit_sha)?,
+        None if event.event_type == EventType::Create => git.create_ref(&ref_name, &commit_sha)?,
+        None => {
+            return Err(super::error::ForumError::Repo(format!(
+                "thread {} does not exist (no ref at {})",
+                event.thread_id, ref_name
+            )));
+        }
     }
     Ok(commit_sha)
 }
