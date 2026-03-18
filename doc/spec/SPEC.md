@@ -79,15 +79,19 @@ An approval is a recorded human sign-off attached to a state transition event. T
 ### 3.1 Issue
 
 ```text
+open -> pending
 open -> closed
 open -> rejected
+pending -> closed
+pending -> open
 closed -> open
 rejected -> open
 ```
 
 Initial state: `open`.
 
-`closed` indicates completed work. `rejected` indicates invalid, duplicate, or won't-fix.
+`pending` indicates work-in-progress or waiting. `closed` indicates completed work. `rejected`
+indicates invalid, duplicate, or won't-fix.
 
 ### 3.2 RFC
 

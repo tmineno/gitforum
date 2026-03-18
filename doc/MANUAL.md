@@ -10,8 +10,10 @@ git forum show ISSUE-0001                          Show issue details
 git forum say ISSUE-0001 --type comment --body "." Add a comment
 git forum issue close ISSUE-0001                   Close an issue
 git forum issue close ISSUE-0001 --comment "Done"  Close with summary
+git forum issue pend ISSUE-0001                    Mark issue pending
 git forum rfc new "Title" --body "..."             Create an RFC
 git forum rfc accept RFC-0001 --sign human/alice   Accept an RFC
+git forum show RFC-0001 --what-next                Show valid next actions
 git forum evidence add ISSUE-0001 --kind commit --ref HEAD  Add evidence
 git forum status --all                             Check open items
 git forum tui                                      Open interactive TUI
@@ -46,8 +48,15 @@ passed to the binary instead of triggering Git's man-page lookup.
 To print this manual verbatim for an LLM or another tool:
 
 ```bash
-git-forum --help-llm
+git-forum --help-llm                   # full manual
+git-forum say --help-llm               # node type taxonomy
+git-forum state --help-llm             # state transition map
+git-forum evidence --help-llm          # evidence kinds reference
 ```
+
+Per-subcommand `--help-llm` prints only the relevant reference section. `say` (and all shorthand
+node commands like `claim`, `question`) prints the node type taxonomy. `state` (and shorthand
+commands like `close`, `accept`) prints the state transition map. `evidence` prints evidence kinds.
 
 ## Conventions
 
@@ -116,9 +125,25 @@ git forum issue new "Implement trait backend" --body-file ./tmp/issue.md
 git forum issue new "Implement trait backend" --branch feat/trait-backend
 git forum issue new "Implement trait backend" \
   --link-to RFC-0001 --rel implements
+git forum rfc new "Error handling" \
+  --claim "All errors should be typed" --action "Define error enum"
 ```
 
 `--body -` reads the initial body from standard input, so you can avoid creating a temporary file.
+
+### Inline nodes at creation
+
+Thread creation accepts `--claim`, `--question`, `--objection`, `--action`, `--risk`, and
+`--summary` flags to add nodes immediately after creating the thread. Each flag may be repeated:
+
+```bash
+git forum rfc new "Caching layer" --body "Goal and constraints." \
+  --claim "LRU eviction with 10-min TTL" \
+  --action "Benchmark cache hit ratio" \
+  --risk "Memory pressure under load"
+```
+
+This is equivalent to running `rfc new` followed by separate `claim`, `action`, and `risk` commands.
 `--branch <BRANCH>` binds the new thread to an existing Git branch.
 `--link-to <THREAD_ID> --rel <REL>` creates the thread and immediately records one or more links
 from the new thread to existing threads.
@@ -161,6 +186,7 @@ git forum rfc ls
 git forum ls
 git forum ls --branch feat/trait-backend
 git forum show RFC-0001
+git forum show RFC-0001 --what-next
 ```
 
 `git forum ls` and kind-specific `ls` commands show `ID`, `KIND`, `STATUS`, `BRANCH`, and `TITLE`.
@@ -184,6 +210,24 @@ git forum show RFC-0001
 - links section
 - conversations (reply chains grouped by root node)
 - timeline
+
+`git forum show <THREAD_ID> --what-next` shows valid next actions:
+
+```text
+RFC-0001 (under-review)
+
+valid transitions: accepted, rejected, draft
+
+guard check (under-review -> accepted):
+  [FAIL] no_open_objections -- 1 open objection(s)
+
+open objections: 1
+open actions:    0
+nodes:           6
+evidence:        1
+links:           0
+has summary:     yes
+```
 
 The timeline is displayed in `date node_id event_id author type body` order.
 
@@ -268,11 +312,15 @@ what the thread currently concludes, what objections were addressed, and what is
 forward. The default policy therefore requires at least one `summary` before an RFC can move to
 `accepted`.
 
-On success, the command prints the node ID.
+On success, the command prints the node ID to stdout and a next-actions hint to stderr:
 
 ```text
 Added question 6f1d2c3b4a5e67890123456789abcdef01234567
+  next: proposed, rejected
+  open: 1 open objection(s)
 ```
+
+The hint shows valid state transitions and open items. Suppress with `2>/dev/null`.
 
 ### Revise a node
 
@@ -424,8 +472,8 @@ git forum tui RFC-0001
 The TUI uses color to distinguish kinds, statuses, and node types:
 
 - **Thread kind**: cyan = rfc, yellow = issue
-- **Thread status**: green = open/draft, yellow = proposed/under-review, magenta = accepted/closed,
-  red = rejected
+- **Thread status**: green = open/draft, yellow = pending/proposed/under-review,
+  magenta = accepted/closed, red = rejected, gray = deprecated
 - **Node type**: red = objection/risk, yellow = question, green = summary, cyan = action,
   blue = review, magenta = alternative
 - **Node status**: green = open, gray = resolved/retracted/incorporated
@@ -508,6 +556,8 @@ git forum issue close ISSUE-0001
 git forum issue close ISSUE-0001 --comment "Fixed in abc123"
 git forum issue close ISSUE-0001 --link-to RFC-0001 --rel implements
 git forum issue close ISSUE-0001 --resolve-open-actions
+git forum issue pend ISSUE-0001                        # mark as pending
+git forum issue pend ISSUE-0001 --comment "Waiting on review"
 git forum issue reopen ISSUE-0001
 git forum issue reject ISSUE-0001 --comment "Won't fix"
 git forum rfc propose RFC-0001
@@ -521,6 +571,7 @@ transitioning), `--link-to` (creates links after transitioning), and `--sign` (r
 
 Available shorthands:
 - `issue close` / `rfc close` — transition to `closed`
+- `issue pend` — transition to `pending` (work-in-progress)
 - `issue reopen` / `rfc reopen` — transition to `open`
 - `issue reject` — transition to `rejected`
 - `rfc propose` — transition to `proposed`
@@ -546,8 +597,9 @@ git forum state bulk --to closed ISSUE-0001 ISSUE-0002 --dry-run
 - for RFCs, `proposed` means the author is declaring the RFC review-ready
 - for RFCs, `under-review` means active review is in progress
 - an accepted RFC is the decision record; there is no separate decision workflow in the preferred model
-- issues support `open`, `closed`, and `rejected` states; `rejected` is for invalid or won't-fix
-  issues, while `closed` means completed
+- issues support `open`, `pending`, `closed`, and `rejected` states; `pending` is for
+  work-in-progress or waiting, `rejected` is for invalid or won't-fix issues, `closed` means
+  completed
 - if policy requires `no_open_actions`, closing an issue with open `action` nodes fails
 - `--resolve-open-actions` is an explicit escape hatch for issue close; it resolves open `action`
   nodes before writing the closing state event

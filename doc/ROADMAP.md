@@ -43,6 +43,14 @@ The following capabilities are implemented and tested:
 - E2E multi-agent test harness: deterministic scenario + live-agent mode with Claude Code adapter,
   shared report generation (RFC-0003 §1–§6), worktree-per-actor setup (ISSUE-0042 through
   ISSUE-0047)
+- `pending` status for issues with `issue pend` shorthand: open → pending → closed
+- `show --what-next`: valid transitions, guard check results, open items (ISSUE-0049)
+- Post-action next-actions hints printed to stderr after `state` and `say` commands (ISSUE-0048)
+- Per-subcommand `--help-llm`: node taxonomy for `say`, transition map for `state`,
+  evidence kinds for `evidence` (ISSUE-0050)
+- Inline node flags on thread creation: `--claim`, `--question`, `--objection`, `--action`,
+  `--risk`, `--summary` (ISSUE-0052)
+- E2E scenario expanded to 10/10 node types, 11/13 transitions, 9 threads (ISSUE-0053)
 
 ## In progress
 
