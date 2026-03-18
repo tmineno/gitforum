@@ -18,7 +18,7 @@ pub fn valid_targets(kind: ThreadKind, from: &str) -> Vec<&'static str> {
         .collect()
 }
 
-fn valid_transitions(kind: ThreadKind) -> &'static [(&'static str, &'static str)] {
+pub fn valid_transitions(kind: ThreadKind) -> &'static [(&'static str, &'static str)] {
     match kind {
         ThreadKind::Issue => &[
             ("open", "pending"),

@@ -514,7 +514,35 @@ fn main() -> Result<(), ForumError> {
     // Check for --help-llm before clap parsing so it works at any subcommand level
     // (e.g. `git-forum issue --help-llm` where clap would otherwise require a subcommand)
     if std::env::args().any(|a| a == "--help-llm") {
-        print!("{}", include_str!("../doc/MANUAL.md"));
+        let args: Vec<String> = std::env::args().collect();
+        let context = args
+            .iter()
+            .position(|a| a == "--help-llm")
+            .and_then(|pos| pos.checked_sub(1))
+            .and_then(|prev| args.get(prev))
+            .map(|s| s.as_str());
+
+        use git_forum::internal::help;
+        match context {
+            Some(
+                "say" | "claim" | "question" | "objection" | "summary" | "action" | "risk"
+                | "review",
+            ) => {
+                print!("{}", help::node_type_taxonomy());
+            }
+            Some(
+                "state" | "close" | "reopen" | "reject" | "accept" | "propose" | "deprecate"
+                | "pend",
+            ) => {
+                print!("{}", help::state_transition_map());
+            }
+            Some("evidence") => {
+                print!("{}", help::evidence_kinds_reference());
+            }
+            _ => {
+                print!("{}", include_str!("../doc/MANUAL.md"));
+            }
+        }
         return Ok(());
     }
 
