@@ -1122,3 +1122,176 @@ fn policy_lint_on_default_policy_passes() {
     let diags = git_forum::internal::policy::lint_policy(&policy);
     assert!(diags.is_empty(), "lint diags: {diags:?}");
 }
+
+// ---- RFC deprecated state ----
+
+#[test]
+fn rfc_accepted_then_deprecated() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+    let ids = SequentialIdGenerator::new("d");
+
+    // Move through draft -> proposed -> under-review -> accepted -> deprecated
+    move_rfc_to_under_review(&git, &thread_id, &ids);
+    say::change_state(
+        &git,
+        &thread_id,
+        "accepted",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+        &empty_policy(),
+        say::StateChangeOptions::default(),
+    )
+    .unwrap();
+    say::change_state(
+        &git,
+        &thread_id,
+        "deprecated",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+        &empty_policy(),
+        say::StateChangeOptions::default(),
+    )
+    .unwrap();
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.status, "deprecated");
+}
+
+#[test]
+fn rfc_rejected_then_deprecated() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+    let ids = SequentialIdGenerator::new("d");
+
+    // draft -> rejected -> deprecated
+    say::change_state(
+        &git,
+        &thread_id,
+        "rejected",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+        &empty_policy(),
+        say::StateChangeOptions::default(),
+    )
+    .unwrap();
+    say::change_state(
+        &git,
+        &thread_id,
+        "deprecated",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+        &empty_policy(),
+        say::StateChangeOptions::default(),
+    )
+    .unwrap();
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.status, "deprecated");
+}
+
+#[test]
+fn from_thread_creates_new_rfc_with_links_and_deprecates_source() {
+    let (_repo, git, paths) = setup();
+    let ids = SequentialIdGenerator::new("ft");
+
+    // Create source RFC, accept it
+    let source_id = create::create_thread(
+        &git,
+        ThreadKind::Rfc,
+        "Original design",
+        Some("Body of original RFC"),
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+    )
+    .unwrap();
+    move_rfc_to_under_review(&git, &source_id, &ids);
+    say::change_state(
+        &git,
+        &source_id,
+        "accepted",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+        &empty_policy(),
+        say::StateChangeOptions::default(),
+    )
+    .unwrap();
+
+    // Replay source to get title/body
+    let source_state = thread::replay_thread(&git, &source_id).unwrap();
+
+    // Create new RFC "from" source (simulating --from-thread)
+    let new_title = format!("v2: {}", source_state.title);
+    let new_body = source_state.body.clone();
+    let new_id = create::create_thread(
+        &git,
+        ThreadKind::Rfc,
+        &new_title,
+        new_body.as_deref(),
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+    )
+    .unwrap();
+
+    // Add links: new supersedes source, source superseded-by new
+    evidence_ops::add_thread_link(
+        &git,
+        &new_id,
+        &source_id,
+        "supersedes",
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+    evidence_ops::add_thread_link(
+        &git,
+        &source_id,
+        &new_id,
+        "superseded-by",
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
+    // Auto-deprecate source
+    let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap();
+    say::change_state(
+        &git,
+        &source_id,
+        "deprecated",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &ids,
+        &policy,
+        say::StateChangeOptions::default(),
+    )
+    .unwrap();
+
+    // Verify new RFC
+    let new_state = thread::replay_thread(&git, &new_id).unwrap();
+    assert_eq!(new_state.title, "v2: Original design");
+    assert_eq!(new_state.body.as_deref(), Some("Body of original RFC"));
+    assert_eq!(new_state.links.len(), 1);
+    assert_eq!(new_state.links[0].target_thread_id, source_id);
+    assert_eq!(new_state.links[0].rel, "supersedes");
+
+    // Verify source RFC is deprecated with backlink
+    let source_after = thread::replay_thread(&git, &source_id).unwrap();
+    assert_eq!(source_after.status, "deprecated");
+    assert_eq!(source_after.links.len(), 1);
+    assert_eq!(source_after.links[0].target_thread_id, new_id);
+    assert_eq!(source_after.links[0].rel, "superseded-by");
+}

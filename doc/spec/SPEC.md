@@ -99,13 +99,16 @@ proposed -> draft
 under-review -> accepted
 under-review -> rejected
 under-review -> draft
+accepted -> deprecated
+rejected -> deprecated
 ```
 
 Initial state: `draft`.
 
 `proposed` means the author declares the RFC review-ready. `under-review` means active review is
 in progress. `accepted` is the terminal positive state; an accepted RFC with its latest summary
-serves as the decision record.
+serves as the decision record. `deprecated` indicates a previously accepted or rejected RFC that
+has been superseded or is no longer relevant.
 
 ### 3.3 State derivation
 
@@ -350,16 +353,19 @@ git forum reindex
 ```text
 git forum issue new <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
     [--branch <BRANCH>] [--link-to <THREAD_ID> --rel <REL>]
-    [--from-commit <REV>]
+    [--from-commit <REV>] [--from-thread <THREAD_ID>]
 git forum rfc new <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
     [--link-to <THREAD_ID> --rel <REL>]
-    [--from-commit <REV>]
+    [--from-commit <REV>] [--from-thread <THREAD_ID>]
 ```
 
 Initial states: issue = `open`, RFC = `draft`.
 
 `--from-commit <REV>` populates title from the commit subject, body from the commit message body,
 and auto-adds the commit as evidence. An explicit `<TITLE>` argument overrides the subject.
+
+`--from-thread <THREAD_ID>` populates title and body from the source thread and auto-adds a
+`relates-to` link to the source thread. An explicit `<TITLE>` argument overrides the source title.
 
 ### 9.3 Listing and display
 
@@ -425,6 +431,8 @@ git forum issue reject <THREAD_ID> [--comment <TEXT>]
 git forum rfc propose <THREAD_ID> [--comment <TEXT>]
 git forum rfc accept <THREAD_ID> [--sign <ACTOR_ID>]...
     [--link-to <THREAD_ID> --rel <REL>] [--comment <TEXT>]
+git forum rfc deprecate <THREAD_ID> [--comment <TEXT>]
+    [--link-to <THREAD_ID> --rel <REL>]
 ```
 
 `--comment` adds a summary node before the state transition.
@@ -490,6 +498,8 @@ git forum export <THREAD_ID> [--format <FORMAT>]
 - Accept `--link-to <THREAD_ID> --rel <REL>`.
 - Accept `--branch <BRANCH>` (issue only).
 - Accept `--from-commit <REV>`: populate title/body from commit message, auto-add commit evidence.
+- Accept `--from-thread <THREAD_ID>`: populate title/body from source thread, auto-add `relates-to`
+  link.
 - Title accepts values starting with hyphens (`allow_hyphen_values`).
 - Allocate a display ID.
 - Assign the initial state.
@@ -535,7 +545,8 @@ Display:
 - Append a `state` event.
 - `--link-to <THREAD_ID> --rel <REL>` creates thread links after the state transition.
 - `--resolve-open-actions` resolves open action nodes before the transition.
-- Shorthand commands: `issue close`, `issue reopen`, `issue reject`, `rfc propose`, `rfc accept`.
+- Shorthand commands: `issue close`, `issue reopen`, `issue reject`, `rfc propose`, `rfc accept`,
+  `rfc deprecate`.
 
 ### 10.6 `state bulk`
 
