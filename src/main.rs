@@ -381,6 +381,7 @@ enum StateCmd {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum ThreadCmd {
     /// Create a new thread
     New {
@@ -411,6 +412,24 @@ enum ThreadCmd {
         /// Create from an existing thread (supersede pattern: copies title/body, links both, auto-deprecates source RFC)
         #[arg(long = "from-thread", value_name = "THREAD_ID")]
         from_thread: Option<String>,
+        /// Add a claim node after creation
+        #[arg(long)]
+        claim: Vec<String>,
+        /// Add a question node after creation
+        #[arg(long)]
+        question: Vec<String>,
+        /// Add an objection node after creation
+        #[arg(long)]
+        objection: Vec<String>,
+        /// Add an action node after creation
+        #[arg(long)]
+        action: Vec<String>,
+        /// Add a risk node after creation
+        #[arg(long)]
+        risk: Vec<String>,
+        /// Add a summary node after creation
+        #[arg(long)]
+        summary: Vec<String>,
     },
     /// List threads of this kind
     #[command(alias = "list")]
@@ -1196,6 +1215,12 @@ fn run_thread_cmd(
             as_actor,
             from_commit,
             from_thread,
+            claim,
+            question,
+            objection,
+            action,
+            risk,
+            summary,
         } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
@@ -1295,6 +1320,23 @@ fn run_thread_cmd(
                 println!("Created {thread_id} (supersedes {source_id})");
             } else {
                 println!("Created {thread_id}");
+            }
+            // Add inline nodes
+            let inline_nodes: Vec<(NodeType, &[String])> = vec![
+                (NodeType::Claim, &claim),
+                (NodeType::Question, &question),
+                (NodeType::Objection, &objection),
+                (NodeType::Action, &action),
+                (NodeType::Risk, &risk),
+                (NodeType::Summary, &summary),
+            ];
+            for (node_type, bodies) in &inline_nodes {
+                for body_text in *bodies {
+                    let node_id = say::say_node(
+                        &git, &thread_id, *node_type, body_text, &actor, clock, ids, None,
+                    )?;
+                    println!("Added {node_type} {node_id}");
+                }
             }
         }
         ThreadCmd::Ls { branch } => {
