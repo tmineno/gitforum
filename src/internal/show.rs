@@ -136,28 +136,59 @@ pub fn render_show(state: &ThreadState) -> String {
 
 /// Render a hint showing valid next actions for a thread.
 ///
-/// Includes valid state transitions, open item counts, and guidance.
-pub fn render_next_actions(state: &ThreadState) -> String {
+/// Includes valid state transitions with guard check results, open item counts,
+/// and actionable IDs for open items so agents can construct resolve commands.
+pub fn render_next_actions(state: &ThreadState, policy: &Policy) -> String {
     let mut lines: Vec<String> = Vec::new();
 
     let targets = state_machine::valid_targets(state.kind, &state.status);
     if targets.is_empty() {
         lines.push("  next: (no transitions available)".to_string());
     } else {
-        lines.push(format!("  next: {}", targets.join(", ")));
+        let mut target_parts: Vec<String> = Vec::new();
+        for target in &targets {
+            let violations = policy::check_guards(policy, state, &state.status, target, &[]);
+            if violations.is_empty() {
+                target_parts.push(target.to_string());
+            } else {
+                let blockers: Vec<String> = violations
+                    .iter()
+                    .map(|v| format!("{}: {}", v.rule, v.reason))
+                    .collect();
+                target_parts.push(format!("{target} (blocked: {})", blockers.join("; ")));
+            }
+        }
+        lines.push(format!("  next: {}", target_parts.join(", ")));
     }
 
-    let obj = state.open_objections().len();
-    let act = state.open_actions().len();
-    if obj > 0 || act > 0 {
+    let open_obj = state.open_objections();
+    let open_act = state.open_actions();
+    if !open_obj.is_empty() || !open_act.is_empty() {
         let mut items = Vec::new();
-        if obj > 0 {
-            items.push(format!("{obj} open objection(s)"));
+        if !open_obj.is_empty() {
+            items.push(format!("{} open objection(s)", open_obj.len()));
         }
-        if act > 0 {
-            items.push(format!("{act} open action(s)"));
+        if !open_act.is_empty() {
+            items.push(format!("{} open action(s)", open_act.len()));
         }
         lines.push(format!("  open: {}", items.join(", ")));
+        // List IDs so agents can construct resolve commands
+        for node in &open_obj {
+            lines.push(format!(
+                "    objection {} — resolve with: resolve {} {}",
+                short_oid(&node.node_id),
+                state.id,
+                short_oid(&node.node_id)
+            ));
+        }
+        for node in &open_act {
+            lines.push(format!(
+                "    action {} — resolve with: resolve {} {}",
+                short_oid(&node.node_id),
+                state.id,
+                short_oid(&node.node_id)
+            ));
+        }
     }
 
     lines.join("\n")

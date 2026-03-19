@@ -53,7 +53,7 @@ Defines the data model for E2E scenarios:
 - `LinkDef` — from/to thread refs, relation, actor
 - `PhaseDef` — groups of threads, nodes, transitions, evidence, links
 - `ScenarioDef` — name, description, actors, phases
-- `ExpectedOutcome` — thread ref, expected status, min counts
+- `ExpectedOutcome` — thread ref, expected status, acceptable statuses, min counts
 
 `calculator_scenario()` returns the canonical calculator project scenario with
 4 actors (alice, bob, copilot, carol), 3 phases (RFC review, implementation,
@@ -81,7 +81,9 @@ Key features:
 
 - Per-worktree `--cwd` isolation
 - `--max-budget-usd 0.50` budget cap
-- `build_prompt()` generates role-specific task prompts from ScenarioDef
+- `build_prompt()` generates goal-based prompts that require agents to discover thread IDs,
+  transitions, and command sequences from live repo state
+- Enforces `GIT_FORUM_AGENT_TIMEOUT` with subprocess polling and kill-on-timeout
 - `is_available()` checks if `claude` CLI is on PATH
 
 ### report.rs
@@ -130,13 +132,16 @@ cargo test --test e2e_multiagent_test -- --nocapture
 ### Live-agent mode (`e2e_live_agent_test.rs`)
 
 Spawns real Claude Code agents against the scenario using per-actor worktrees.
+Within each phase, participating actors run concurrently and must discover the
+right git-forum procedure from repo state rather than following hardcoded IDs or
+state transitions.
 Never runs in CI (`#[ignore]` + env var gate). Produces a usability report.
 
 ```bash
 # Run live-agent test (requires claude CLI on PATH)
 GIT_FORUM_LIVE_AGENT=1 cargo test --test e2e_live_agent_test -- --ignored --nocapture
 
-# Custom timeout (default: 300s per phase)
+# Custom timeout (default: 300s per agent task)
 GIT_FORUM_AGENT_TIMEOUT=600 GIT_FORUM_LIVE_AGENT=1 \
   cargo test --test e2e_live_agent_test -- --ignored --nocapture
 ```
@@ -148,6 +153,9 @@ Assertions in live-agent mode are structural only:
 - At least one thread was created
 - All forum refs replay without error
 - No duplicate event IDs
+- Events come from multiple actors
+- At least one thread shows multi-actor collaboration
+- At least one state transition was discovered and executed
 
 Agent behavior is non-deterministic, so no content or status assertions.
 

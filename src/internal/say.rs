@@ -335,7 +335,14 @@ pub fn prepare_state_change(
     if !violations.is_empty() {
         let msgs: Vec<String> = violations
             .iter()
-            .map(|v| format!("{}: {}", v.rule, v.reason))
+            .map(|v| {
+                let hint = remediation_hint(&v.rule, &effective_state, thread_id);
+                if hint.is_empty() {
+                    format!("{}: {}", v.rule, v.reason)
+                } else {
+                    format!("{}: {} — {}", v.rule, v.reason, hint)
+                }
+            })
             .collect();
         return Err(ForumError::Policy(msgs.join("; ")));
     }
@@ -402,4 +409,42 @@ pub fn change_state(
     };
     super::event::write_event(git, &ev)?;
     Ok(())
+}
+
+fn remediation_hint(rule: &str, state: &thread::ThreadState, thread_id: &str) -> String {
+    match rule {
+        "no_open_actions" => {
+            let ids: Vec<String> = state
+                .open_actions()
+                .iter()
+                .map(|n| n.node_id[..n.node_id.len().min(16)].to_string())
+                .collect();
+            if ids.is_empty() {
+                return String::new();
+            }
+            format!(
+                "resolve each with `resolve {thread_id} <NODE_ID>` (open: {}) or use --resolve-open-actions",
+                ids.join(", ")
+            )
+        }
+        "no_open_objections" => {
+            let ids: Vec<String> = state
+                .open_objections()
+                .iter()
+                .map(|n| n.node_id[..n.node_id.len().min(16)].to_string())
+                .collect();
+            if ids.is_empty() {
+                return String::new();
+            }
+            format!(
+                "resolve each with `resolve {thread_id} <NODE_ID>` (open: {})",
+                ids.join(", ")
+            )
+        }
+        "at_least_one_summary" => {
+            format!("add a summary first: `summary {thread_id} \"<text>\"`")
+        }
+        "one_human_approval" => "supply --sign human/<name>".to_string(),
+        _ => String::new(),
+    }
 }

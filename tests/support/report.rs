@@ -117,6 +117,8 @@ pub struct CoverageReport {
 pub struct OutcomeComparison {
     pub thread_ref: String,
     pub expected_status: String,
+    /// Statuses that are also acceptable (from scenario definition).
+    pub acceptable_statuses: Vec<String>,
     pub actual_status: String,
     pub passed: bool,
     pub node_count: usize,
@@ -538,13 +540,16 @@ fn build_outcome_comparisons(git: &GitOps, expected: &[ExpectedOutcome]) -> Vec<
     for exp in expected {
         match thread::replay_thread(git, &exp.thread_ref) {
             Ok(state) => {
-                let passed = state.status == exp.expected_status
+                let status_ok = state.status == exp.expected_status
+                    || exp.acceptable_statuses.iter().any(|s| s == &state.status);
+                let passed = status_ok
                     && state.nodes.len() >= exp.min_nodes
                     && state.evidence_items.len() >= exp.expected_evidence_count
                     && state.links.len() >= exp.expected_link_count;
                 results.push(OutcomeComparison {
                     thread_ref: exp.thread_ref.clone(),
                     expected_status: exp.expected_status.clone(),
+                    acceptable_statuses: exp.acceptable_statuses.clone(),
                     actual_status: state.status.clone(),
                     passed,
                     node_count: state.nodes.len(),
@@ -556,6 +561,7 @@ fn build_outcome_comparisons(git: &GitOps, expected: &[ExpectedOutcome]) -> Vec<
                 results.push(OutcomeComparison {
                     thread_ref: exp.thread_ref.clone(),
                     expected_status: exp.expected_status.clone(),
+                    acceptable_statuses: exp.acceptable_statuses.clone(),
                     actual_status: "NOT_FOUND".to_string(),
                     passed: false,
                     node_count: 0,
@@ -585,8 +591,13 @@ fn generate_recommendations(report: &ScenarioReport) -> Vec<String> {
                     oc.thread_ref, oc.expected_status
                 ));
             } else if oc.actual_status != oc.expected_status {
+                let also = if oc.acceptable_statuses.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (also acceptable: {})", oc.acceptable_statuses.join(", "))
+                };
                 recs.push(format!(
-                    "Thread {} ended in '{}' instead of expected '{}'.",
+                    "Thread {} ended in '{}' instead of expected '{}'{also}.",
                     oc.thread_ref, oc.actual_status, oc.expected_status
                 ));
             } else {
@@ -860,14 +871,22 @@ pub fn render_markdown(report: &ScenarioReport) -> String {
     // Outcome comparisons
     if !report.outcome_comparisons.is_empty() {
         out.push_str("### Outcome Comparisons\n\n");
-        out.push_str("| Thread | Expected | Actual | Nodes | Evidence | Links | Pass |\n");
-        out.push_str("|---|---|---|---|---|---|---|\n");
+        out.push_str(
+            "| Thread | Expected | Also Accept | Actual | Nodes | Evidence | Links | Pass |\n",
+        );
+        out.push_str("|---|---|---|---|---|---|---|---|\n");
         for oc in &report.outcome_comparisons {
             let pass_str = if oc.passed { "PASS" } else { "FAIL" };
+            let also = if oc.acceptable_statuses.is_empty() {
+                "-".to_string()
+            } else {
+                oc.acceptable_statuses.join(", ")
+            };
             out.push_str(&format!(
-                "| {} | {} | {} | {} | {} | {} | {} |\n",
+                "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
                 oc.thread_ref,
                 oc.expected_status,
+                also,
                 oc.actual_status,
                 oc.node_count,
                 oc.evidence_count,

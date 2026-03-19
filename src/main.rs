@@ -738,7 +738,7 @@ fn main() -> Result<(), ForumError> {
             reply_to,
             as_actor,
         } => {
-            let (git, _paths) = discover_repo_with_init_warning()?;
+            let (git, paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
             let body_text = resolve_body_required(body, body_file)?;
             let resolved_reply = resolve_reply_to(&git, &thread_id, reply_to.as_deref())?;
@@ -754,7 +754,8 @@ fn main() -> Result<(), ForumError> {
             )?;
             println!("Added {node_type} {node_id}");
             if let Ok(state) = thread::replay_thread(&git, &thread_id) {
-                eprintln!("{}", show::render_next_actions(&state));
+                let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
+                eprintln!("{}", show::render_next_actions(&state, &policy));
             }
         }
         Commands::Claim {
@@ -1027,7 +1028,7 @@ fn main() -> Result<(), ForumError> {
                     }
                     println!("{thread_id} -> {new_state}");
                     if let Ok(state) = thread::replay_thread(&git, &thread_id) {
-                        eprintln!("{}", show::render_next_actions(&state));
+                        eprintln!("{}", show::render_next_actions(&state, &policy));
                     }
                 }
             }
@@ -1169,7 +1170,7 @@ fn run_shorthand_say(
     clock: &dyn git_forum::internal::clock::Clock,
     ids: &dyn git_forum::internal::id::IdGenerator,
 ) -> Result<(), ForumError> {
-    let (git, _paths) = discover_repo_with_init_warning()?;
+    let (git, paths) = discover_repo_with_init_warning()?;
     let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
     let body_text = resolve_body_required(body, body_file)?;
     let resolved_reply = resolve_reply_to(&git, thread_id, reply_to.as_deref())?;
@@ -1185,7 +1186,8 @@ fn run_shorthand_say(
     )?;
     println!("Added {node_type} {node_id}");
     if let Ok(state) = thread::replay_thread(&git, thread_id) {
-        eprintln!("{}", show::render_next_actions(&state));
+        let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
+        eprintln!("{}", show::render_next_actions(&state, &policy));
     }
     Ok(())
 }
@@ -1553,7 +1555,7 @@ fn run_state_shorthand(
     }
     println!("{thread_id} -> {new_state}");
     if let Ok(state) = thread::replay_thread(&git, thread_id) {
-        eprintln!("{}", show::render_next_actions(&state));
+        eprintln!("{}", show::render_next_actions(&state, &policy));
     }
     Ok(())
 }

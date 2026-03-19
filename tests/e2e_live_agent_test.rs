@@ -3,6 +3,7 @@ mod support;
 use std::time::Duration;
 
 use git_forum::internal::config::RepoPaths;
+use git_forum::internal::event::EventType;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::thread;
@@ -79,6 +80,7 @@ fn remap_expected_outcomes(
             scenario::ExpectedOutcome {
                 thread_ref: actual_ref,
                 expected_status: exp.expected_status.clone(),
+                acceptable_statuses: exp.acceptable_statuses.clone(),
                 min_nodes: exp.min_nodes,
                 expected_evidence_count: exp.expected_evidence_count,
                 expected_link_count: exp.expected_link_count,
@@ -137,10 +139,10 @@ fn e2e_live_agent_calculator_scenario() {
     // Resolve git-forum binary path for prompts
     let git_forum_binary = env!("CARGO_BIN_EXE_git-forum");
 
-    // 4. Execute phases sequentially
+    // 4. Execute phases in order, with participating actors running concurrently per phase
     let mut all_agent_results: Vec<AgentRunResult> = Vec::new();
 
-    for phase in &scenario.phases {
+    for (phase_index, phase) in scenario.phases.iter().enumerate() {
         // Determine which actors participate in this phase
         let mut phase_actors: Vec<&str> = Vec::new();
         for t in &phase.threads {
@@ -169,34 +171,59 @@ fn e2e_live_agent_calculator_scenario() {
             }
         }
 
-        for actor_name in &phase_actors {
-            let actor_def = scenario
-                .actors
-                .iter()
-                .find(|a| a.name == *actor_name)
-                .unwrap();
+        println!(
+            "--- Phase '{}': running {} agent(s) concurrently ---",
+            phase.name,
+            phase_actors.len()
+        );
 
-            let (wt_path, _git) = worktrees.get(*actor_name).unwrap();
-            let prompt =
-                ClaudeCodeAdapter::build_prompt(actor_def, &scenario, phase, git_forum_binary);
+        let phase_results = std::thread::scope(|scope| {
+            let mut handles = Vec::new();
 
+            for actor_name in &phase_actors {
+                let actor_name = (*actor_name).to_string();
+                let actor_def = scenario
+                    .actors
+                    .iter()
+                    .find(|a| a.name == actor_name)
+                    .unwrap();
+                let (wt_path, _git) = worktrees.get(actor_name.as_str()).unwrap();
+                let prompt = ClaudeCodeAdapter::build_prompt(
+                    actor_def,
+                    &scenario,
+                    phase_index,
+                    phase,
+                    git_forum_binary,
+                );
+                let wt_path = wt_path.clone();
+                let model = model.clone();
+
+                handles.push(scope.spawn(move || {
+                    let adapter =
+                        ClaudeCodeAdapter::new(wt_path, timeout, actor_name.as_str(), &model);
+                    let result = adapter.execute_task(&prompt);
+                    (actor_name, model, result)
+                }));
+            }
+
+            let mut results = Vec::new();
+            for handle in handles {
+                results.push(handle.join().unwrap());
+            }
+            results
+        });
+
+        for (actor_name, model, result) in phase_results {
             println!(
-                "--- Phase '{}': running agent for {} ---",
-                phase.name, actor_name
-            );
-
-            let adapter = ClaudeCodeAdapter::new(wt_path.clone(), timeout, actor_name, &model);
-            let result = adapter.execute_task(&prompt);
-
-            println!(
-                "  exit={:?} duration={:.1}s success={}",
+                "  {} exit={:?} duration={:.1}s success={}",
+                actor_name,
                 result.exit_code,
                 result.duration.as_secs_f64(),
                 result.success
             );
             if !result.success {
                 let stderr_preview: String = result.stderr.chars().take(500).collect();
-                println!("  stderr: {stderr_preview}");
+                println!("  {} stderr: {stderr_preview}", actor_name);
             }
 
             let command_args = vec![
@@ -212,8 +239,8 @@ fn e2e_live_agent_calculator_scenario() {
             ];
 
             all_agent_results.push(AgentRunResult {
-                actor_name: actor_name.to_string(),
-                model: model.clone(),
+                actor_name,
+                model,
                 command_args,
                 tasks: vec![result],
                 completed: true,
@@ -270,9 +297,13 @@ fn e2e_live_agent_calculator_scenario() {
     }
 
     // No duplicate event IDs
+    let mut distinct_actors = std::collections::HashSet::new();
+    let mut saw_state_change = false;
+    let mut saw_collaborative_thread = false;
     let mut all_event_ids: Vec<String> = Vec::new();
     for id in &thread_ids {
         let state = thread::replay_thread(&git, id).unwrap();
+        let mut thread_actors = std::collections::HashSet::new();
         for ev in &state.events {
             assert!(
                 !all_event_ids.contains(&ev.event_id),
@@ -280,6 +311,27 @@ fn e2e_live_agent_calculator_scenario() {
                 ev.event_id
             );
             all_event_ids.push(ev.event_id.clone());
+            distinct_actors.insert(ev.actor.clone());
+            thread_actors.insert(ev.actor.clone());
+            if ev.event_type == EventType::State {
+                saw_state_change = true;
+            }
+        }
+        if thread_actors.len() >= 2 {
+            saw_collaborative_thread = true;
         }
     }
+
+    assert!(
+        distinct_actors.len() >= 2,
+        "live run should record events from multiple actors"
+    );
+    assert!(
+        saw_collaborative_thread,
+        "live run should include at least one collaboratively updated thread"
+    );
+    assert!(
+        saw_state_change,
+        "live run should discover and execute at least one state transition"
+    );
 }
