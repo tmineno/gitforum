@@ -115,6 +115,9 @@ fn e2e_live_agent_calculator_scenario() {
         .current_dir(repo.path())
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .unwrap();
     std::process::Command::new("git")
@@ -122,6 +125,9 @@ fn e2e_live_agent_calculator_scenario() {
         .current_dir(repo.path())
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .unwrap();
 

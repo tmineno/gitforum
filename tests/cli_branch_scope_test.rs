@@ -11,6 +11,9 @@ fn git(repo: &support::repo::TestRepo, args: &[&str]) {
     let output = Command::new("git")
         .current_dir(repo.path())
         .args(args)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .expect("failed to run git");
     assert!(
