@@ -1054,6 +1054,9 @@ fn change_state_issue_close_passes_with_commit_evidence() {
         .current_dir(repo.path())
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .unwrap();
     assert!(add_out.status.success());
@@ -1062,6 +1065,9 @@ fn change_state_issue_close_passes_with_commit_evidence() {
         .current_dir(repo.path())
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .unwrap();
     assert!(commit_out.status.success());
