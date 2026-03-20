@@ -10,7 +10,7 @@ use git_forum::internal::event::ThreadKind;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::policy::Policy;
-use git_forum::internal::say;
+use git_forum::internal::state_change;
 use git_forum::internal::thread;
 
 #[test]
@@ -100,8 +100,8 @@ fn from_thread_without_title_uses_default() {
         &clock,
     )
     .unwrap();
-    let opts = say::StateChangeOptions::default();
-    say::change_state(
+    let opts = state_change::StateChangeOptions::default();
+    state_change::change_state(
         &git,
         "RFC-0001",
         "proposed",
@@ -112,7 +112,7 @@ fn from_thread_without_title_uses_default() {
         opts,
     )
     .unwrap();
-    say::change_state(
+    state_change::change_state(
         &git,
         "RFC-0001",
         "under-review",
@@ -123,7 +123,7 @@ fn from_thread_without_title_uses_default() {
         opts,
     )
     .unwrap();
-    say::change_state(
+    state_change::change_state(
         &git,
         "RFC-0001",
         "accepted",

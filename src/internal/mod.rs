@@ -21,6 +21,7 @@ pub mod refs;
 pub mod reindex;
 pub mod say;
 pub mod show;
+pub mod state_change;
 pub mod state_machine;
 pub mod thread;
 pub mod tui;

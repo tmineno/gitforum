@@ -12,6 +12,7 @@ use git_forum::internal::init;
 use git_forum::internal::policy::{GuardEntry, GuardRule, Policy};
 use git_forum::internal::say;
 use git_forum::internal::show;
+use git_forum::internal::state_change;
 use git_forum::internal::thread;
 use git_forum::internal::verify;
 
@@ -42,7 +43,7 @@ fn make_rfc(git: &GitOps) -> String {
 }
 
 fn move_rfc_to_under_review(git: &GitOps, thread_id: &str) {
-    say::change_state(
+    state_change::change_state(
         git,
         thread_id,
         "proposed",
@@ -50,10 +51,10 @@ fn move_rfc_to_under_review(git: &GitOps, thread_id: &str) {
         "human/alice",
         &fixed_clock(),
         &empty_policy(),
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
-    say::change_state(
+    state_change::change_state(
         git,
         thread_id,
         "under-review",
@@ -61,7 +62,7 @@ fn move_rfc_to_under_review(git: &GitOps, thread_id: &str) {
         "human/alice",
         &fixed_clock(),
         &empty_policy(),
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
 }
@@ -303,7 +304,7 @@ fn change_state_valid_transition_no_guards() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    say::change_state(
+    state_change::change_state(
         &git,
         &thread_id,
         "proposed",
@@ -311,11 +312,11 @@ fn change_state_valid_transition_no_guards() {
         "human/alice",
         &fixed_clock(),
         &empty_policy(),
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
 
-    say::change_state(
+    state_change::change_state(
         &git,
         &thread_id,
         "under-review",
@@ -323,7 +324,7 @@ fn change_state_valid_transition_no_guards() {
         "human/alice",
         &fixed_clock(),
         &empty_policy(),
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
 
@@ -336,7 +337,7 @@ fn change_state_invalid_transition_fails() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    let result = say::change_state(
+    let result = state_change::change_state(
         &git,
         &thread_id,
         "accepted", // draft->accepted is not valid
@@ -344,7 +345,7 @@ fn change_state_invalid_transition_fails() {
         "human/alice",
         &fixed_clock(),
         &empty_policy(),
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     );
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -380,7 +381,7 @@ fn change_state_fails_guard_no_open_objections() {
         }],
     };
 
-    let result = say::change_state(
+    let result = state_change::change_state(
         &git,
         &thread_id,
         "accepted",
@@ -388,7 +389,7 @@ fn change_state_fails_guard_no_open_objections() {
         "human/alice",
         &fixed_clock(),
         &policy,
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     );
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
@@ -415,7 +416,7 @@ fn change_state_passes_all_guards() {
     .unwrap();
 
     // All guards satisfied: no open objections, has summary, has human approval
-    say::change_state(
+    state_change::change_state(
         &git,
         &thread_id,
         "accepted",
@@ -423,7 +424,7 @@ fn change_state_passes_all_guards() {
         "human/alice",
         &fixed_clock(),
         &policy_with_guards(),
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
 
@@ -465,7 +466,7 @@ fn change_state_issue_close_fails_guard_no_open_actions() {
         }],
     };
 
-    let err = say::change_state(
+    let err = state_change::change_state(
         &git,
         &thread_id,
         "closed",
@@ -473,7 +474,7 @@ fn change_state_issue_close_fails_guard_no_open_actions() {
         "human/alice",
         &fixed_clock(),
         &policy,
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     )
     .unwrap_err();
 
@@ -514,7 +515,7 @@ fn change_state_issue_close_can_resolve_open_actions() {
         }],
     };
 
-    say::change_state(
+    state_change::change_state(
         &git,
         &thread_id,
         "closed",
@@ -522,7 +523,7 @@ fn change_state_issue_close_can_resolve_open_actions() {
         "human/alice",
         &fixed_clock(),
         &policy,
-        say::StateChangeOptions {
+        state_change::StateChangeOptions {
             resolve_open_actions: true,
         },
     )
@@ -875,7 +876,7 @@ fn change_state_issue_rejected_succeeds() {
     )
     .unwrap();
 
-    say::change_state(
+    state_change::change_state(
         &git,
         &thread_id,
         "rejected",
@@ -883,7 +884,7 @@ fn change_state_issue_rejected_succeeds() {
         "human/alice",
         &fixed_clock(),
         &empty_policy(),
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
 
@@ -914,7 +915,7 @@ fn change_state_issue_close_fails_guard_has_commit_evidence() {
         }],
     };
 
-    let err = say::change_state(
+    let err = state_change::change_state(
         &git,
         &thread_id,
         "closed",
@@ -922,7 +923,7 @@ fn change_state_issue_close_fails_guard_has_commit_evidence() {
         "human/alice",
         &fixed_clock(),
         &policy,
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     )
     .unwrap_err();
 
@@ -989,7 +990,7 @@ fn change_state_issue_close_passes_with_commit_evidence() {
         }],
     };
 
-    say::change_state(
+    state_change::change_state(
         &git,
         &thread_id,
         "closed",
@@ -997,7 +998,7 @@ fn change_state_issue_close_passes_with_commit_evidence() {
         "human/alice",
         &fixed_clock(),
         &policy,
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
 
@@ -1034,7 +1035,7 @@ fn rfc_accepted_then_deprecated() {
 
     // Move through draft -> proposed -> under-review -> accepted -> deprecated
     move_rfc_to_under_review(&git, &thread_id);
-    say::change_state(
+    state_change::change_state(
         &git,
         &thread_id,
         "accepted",
@@ -1042,10 +1043,10 @@ fn rfc_accepted_then_deprecated() {
         "human/alice",
         &fixed_clock(),
         &empty_policy(),
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
-    say::change_state(
+    state_change::change_state(
         &git,
         &thread_id,
         "deprecated",
@@ -1053,7 +1054,7 @@ fn rfc_accepted_then_deprecated() {
         "human/alice",
         &fixed_clock(),
         &empty_policy(),
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
 
@@ -1067,7 +1068,7 @@ fn rfc_rejected_then_deprecated() {
     let thread_id = make_rfc(&git);
 
     // draft -> rejected -> deprecated
-    say::change_state(
+    state_change::change_state(
         &git,
         &thread_id,
         "rejected",
@@ -1075,10 +1076,10 @@ fn rfc_rejected_then_deprecated() {
         "human/alice",
         &fixed_clock(),
         &empty_policy(),
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
-    say::change_state(
+    state_change::change_state(
         &git,
         &thread_id,
         "deprecated",
@@ -1086,7 +1087,7 @@ fn rfc_rejected_then_deprecated() {
         "human/alice",
         &fixed_clock(),
         &empty_policy(),
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
 
@@ -1109,7 +1110,7 @@ fn from_thread_creates_new_rfc_with_links_and_deprecates_source() {
     )
     .unwrap();
     move_rfc_to_under_review(&git, &source_id);
-    say::change_state(
+    state_change::change_state(
         &git,
         &source_id,
         "accepted",
@@ -1117,7 +1118,7 @@ fn from_thread_creates_new_rfc_with_links_and_deprecates_source() {
         "human/alice",
         &fixed_clock(),
         &empty_policy(),
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
 
@@ -1159,7 +1160,7 @@ fn from_thread_creates_new_rfc_with_links_and_deprecates_source() {
 
     // Auto-deprecate source
     let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap();
-    say::change_state(
+    state_change::change_state(
         &git,
         &source_id,
         "deprecated",
@@ -1167,7 +1168,7 @@ fn from_thread_creates_new_rfc_with_links_and_deprecates_source() {
         "human/alice",
         &fixed_clock(),
         &policy,
-        say::StateChangeOptions::default(),
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
 
