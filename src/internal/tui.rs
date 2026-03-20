@@ -14,7 +14,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{
-    Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, TableState, Wrap,
+    Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, TableState, Wrap,
 };
 use ratatui::{Frame, Terminal};
 
@@ -246,6 +246,39 @@ struct NodeForm {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FilterField {
+    Kind,
+    Status,
+}
+
+#[derive(Debug, Clone, Default)]
+struct FilterCriteria {
+    kind: Option<String>,
+    status: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct FilterBar {
+    field: FilterField,
+    kind_index: usize,
+    status_index: usize,
+}
+
+const FILTER_KIND_LABELS: [&str; 3] = ["all", "issue", "rfc"];
+const FILTER_STATUS_LABELS: [&str; 10] = [
+    "all",
+    "open",
+    "draft",
+    "pending",
+    "proposed",
+    "under-review",
+    "accepted",
+    "closed",
+    "rejected",
+    "deprecated",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SortColumn {
     Id,
     Kind,
@@ -303,6 +336,12 @@ struct UiRects {
     column_headers: [Option<Rect>; 6],
     /// Filter label area in list view help line.
     filter_label: Option<Rect>,
+    /// Filter popup area (when open).
+    filter_popup: Option<Rect>,
+    /// Filter kind list area (inside popup).
+    filter_kind_area: Option<Rect>,
+    /// Filter status list area (inside popup).
+    filter_status_area: Option<Rect>,
     /// Help line area (first row) for back navigation clicks.
     help_line: Option<Rect>,
     /// Form field areas for click-to-focus.
@@ -325,7 +364,8 @@ pub struct App {
     pub view: View,
     pub threads: Vec<ThreadRow>,
     pub table_state: TableState,
-    pub kind_filter: Option<String>,
+    filter: FilterCriteria,
+    filter_bar: Option<FilterBar>,
     pub thread_text: String,
     pub thread_scroll: u16,
     pub thread_nodes: Vec<Node>,
@@ -366,7 +406,8 @@ impl App {
             view: View::List,
             threads,
             table_state,
-            kind_filter: None,
+            filter: FilterCriteria::default(),
+            filter_bar: None,
             thread_text: String::new(),
             thread_scroll: 0,
             thread_nodes: Vec::new(),
@@ -410,10 +451,19 @@ impl App {
             .threads
             .iter()
             .filter(|t| {
-                self.kind_filter
+                let kind_ok = self
+                    .filter
+                    .kind
                     .as_deref()
                     .map(|k| t.kind == k)
-                    .unwrap_or(true)
+                    .unwrap_or(true);
+                let status_ok = self
+                    .filter
+                    .status
+                    .as_deref()
+                    .map(|s| t.status == s)
+                    .unwrap_or(true);
+                kind_ok && status_ok
             })
             .collect();
         let asc = self.sort_ascending;
@@ -469,13 +519,49 @@ impl App {
         self.table_state.select(Some(next));
     }
 
-    fn cycle_filter(&mut self) {
-        self.kind_filter = match self.kind_filter.as_deref() {
-            None => Some("issue".into()),
-            Some("issue") => Some("rfc".into()),
-            Some("rfc") => None,
-            _ => Some("issue".into()),
+    fn open_filter_bar(&mut self) {
+        let kind_index = match self.filter.kind.as_deref() {
+            None => 0,
+            Some("issue") => 1,
+            Some("rfc") => 2,
+            _ => 0,
         };
+        let status_index = FILTER_STATUS_LABELS
+            .iter()
+            .position(|&s| Some(s) == self.filter.status.as_deref())
+            .unwrap_or(0);
+        self.filter_bar = Some(FilterBar {
+            field: FilterField::Kind,
+            kind_index,
+            status_index,
+        });
+    }
+
+    fn apply_filter_bar(&mut self) {
+        if let Some(bar) = self.filter_bar.take() {
+            self.filter.kind = if bar.kind_index == 0 {
+                None
+            } else {
+                Some(FILTER_KIND_LABELS[bar.kind_index].to_string())
+            };
+            self.filter.status = if bar.status_index == 0 {
+                None
+            } else {
+                Some(FILTER_STATUS_LABELS[bar.status_index].to_string())
+            };
+            let n = self.visible_threads().len();
+            self.table_state.select(if n > 0 { Some(0) } else { None });
+        }
+    }
+
+    fn cancel_filter_bar(&mut self) {
+        self.filter_bar = None;
+    }
+
+    fn clear_filter_bar(&mut self) {
+        self.filter_bar = None;
+        self.filter.kind = None;
+        self.filter.status = None;
         let n = self.visible_threads().len();
         self.table_state.select(if n > 0 { Some(0) } else { None });
     }
@@ -548,7 +634,7 @@ impl App {
 
     fn begin_create_thread(&mut self) {
         self.thread_form = ThreadForm {
-            kind_index: default_thread_kind_index(self.kind_filter.as_deref()),
+            kind_index: default_thread_kind_index(self.filter.kind.as_deref()),
             title: String::new(),
             body: String::new(),
             field: ThreadFormField::Kind,
@@ -742,28 +828,34 @@ fn handle_key(
     }
 
     match app.view.clone() {
-        View::List => match key.code {
-            KeyCode::Char('q') | KeyCode::Char('Q') => return Ok(true),
-            KeyCode::Char('j') | KeyCode::Down => app.move_down(),
-            KeyCode::Char('k') | KeyCode::Up => app.move_up(),
-            KeyCode::Char('f') => app.cycle_filter(),
-            KeyCode::Char('c') => app.begin_create_thread(),
-            KeyCode::Char('r') => {
-                reindex::run_reindex(git, db_path)?;
-                let threads = index::list_threads(conn)?;
-                let sel = app.table_state.selected().unwrap_or(0);
-                app.threads = threads;
-                let n = app.visible_threads().len();
-                app.table_state
-                    .select(if n > 0 { Some(sel.min(n - 1)) } else { None });
-            }
-            KeyCode::Enter => {
-                if let Some(id) = app.selected_thread_id() {
-                    open_thread_detail(app, git, &id, None)?;
+        View::List => {
+            if app.filter_bar.is_some() {
+                handle_filter_bar_key(app, key);
+            } else {
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Char('Q') => return Ok(true),
+                    KeyCode::Char('j') | KeyCode::Down => app.move_down(),
+                    KeyCode::Char('k') | KeyCode::Up => app.move_up(),
+                    KeyCode::Char('f') => app.open_filter_bar(),
+                    KeyCode::Char('c') => app.begin_create_thread(),
+                    KeyCode::Char('r') => {
+                        reindex::run_reindex(git, db_path)?;
+                        let threads = index::list_threads(conn)?;
+                        let sel = app.table_state.selected().unwrap_or(0);
+                        app.threads = threads;
+                        let n = app.visible_threads().len();
+                        app.table_state
+                            .select(if n > 0 { Some(sel.min(n - 1)) } else { None });
+                    }
+                    KeyCode::Enter => {
+                        if let Some(id) = app.selected_thread_id() {
+                            open_thread_detail(app, git, &id, None)?;
+                        }
+                    }
+                    _ => {}
                 }
             }
-            _ => {}
-        },
+        }
         View::ThreadDetail(thread_id) => match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
                 app.view = View::List;
@@ -893,17 +985,22 @@ fn handle_mouse(
     match app.view.clone() {
         View::List => match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // Filter bar popup takes priority when open
+                if app.filter_bar.is_some() {
+                    handle_filter_bar_mouse(app, mouse);
+                    return Ok(false);
+                }
                 let now = Instant::now();
                 let is_double = app.last_click.is_some_and(|(c, r, t)| {
                     c == mouse.column && r == mouse.row && now.duration_since(t).as_millis() < 400
                 });
-                // Click filter label to cycle
+                // Click filter label to open filter bar
                 if app
                     .ui_rects
                     .filter_label
                     .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
                 {
-                    app.cycle_filter();
+                    app.open_filter_bar();
                 } else if let Some(col) = app.column_header_at(mouse.column, mouse.row) {
                     if col == app.sort_column {
                         app.sort_ascending = !app.sort_ascending;
@@ -1171,6 +1268,45 @@ fn handle_mouse(
         View::EditThreadBody | View::EditNodeBody { .. } => {}
     }
     Ok(false)
+}
+
+fn handle_filter_bar_mouse(app: &mut App, mouse: MouseEvent) {
+    // Click inside kind list
+    if let Some(area) = app.ui_rects.filter_kind_area {
+        if rect_contains(area, mouse.column, mouse.row) {
+            if let Some(index) = dropdown_item_at(area, mouse.row) {
+                if index < FILTER_KIND_LABELS.len() {
+                    if let Some(ref mut bar) = app.filter_bar {
+                        bar.kind_index = index;
+                        bar.field = FilterField::Kind;
+                    }
+                }
+            }
+            return;
+        }
+    }
+    // Click inside status list
+    if let Some(area) = app.ui_rects.filter_status_area {
+        if rect_contains(area, mouse.column, mouse.row) {
+            if let Some(index) = dropdown_item_at(area, mouse.row) {
+                if index < FILTER_STATUS_LABELS.len() {
+                    if let Some(ref mut bar) = app.filter_bar {
+                        bar.status_index = index;
+                        bar.field = FilterField::Status;
+                    }
+                }
+            }
+            return;
+        }
+    }
+    // Click inside popup but not on a list — ignore
+    if let Some(popup) = app.ui_rects.filter_popup {
+        if rect_contains(popup, mouse.column, mouse.row) {
+            return;
+        }
+    }
+    // Click outside popup — cancel
+    app.cancel_filter_bar();
 }
 
 fn open_thread_detail(
@@ -1535,6 +1671,40 @@ fn selected_link_target_label(app: &App, source_thread_id: &str) -> String {
     }
 }
 
+fn handle_filter_bar_key(app: &mut App, key: crossterm::event::KeyEvent) {
+    let Some(ref mut bar) = app.filter_bar else {
+        return;
+    };
+    match key.code {
+        KeyCode::Tab | KeyCode::BackTab => {
+            bar.field = match bar.field {
+                FilterField::Kind => FilterField::Status,
+                FilterField::Status => FilterField::Kind,
+            };
+        }
+        KeyCode::Char('j') | KeyCode::Down => match bar.field {
+            FilterField::Kind => {
+                bar.kind_index = (bar.kind_index + 1).min(FILTER_KIND_LABELS.len() - 1);
+            }
+            FilterField::Status => {
+                bar.status_index = (bar.status_index + 1).min(FILTER_STATUS_LABELS.len() - 1);
+            }
+        },
+        KeyCode::Char('k') | KeyCode::Up => match bar.field {
+            FilterField::Kind => {
+                bar.kind_index = bar.kind_index.saturating_sub(1);
+            }
+            FilterField::Status => {
+                bar.status_index = bar.status_index.saturating_sub(1);
+            }
+        },
+        KeyCode::Enter => app.apply_filter_bar(),
+        KeyCode::Esc => app.cancel_filter_bar(),
+        KeyCode::Char('x') => app.clear_filter_bar(),
+        _ => {}
+    }
+}
+
 fn handle_create_thread_key(
     app: &mut App,
     key: crossterm::event::KeyEvent,
@@ -1863,7 +2033,13 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
 
     match app.view {
-        View::List => render_list(f, f.area(), app),
+        View::List => {
+            let area = f.area();
+            render_list(f, area, app);
+            if app.filter_bar.is_some() {
+                render_filter_bar(f, area, app);
+            }
+        }
         View::ThreadDetail(_) => render_thread_detail(f, f.area(), app),
         View::NodeDetail { .. } => render_node_detail(f, f.area(), app),
         View::CreateThread => render_create_thread(f, f.area(), app),
@@ -1930,14 +2106,15 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
         ])
         .split(area);
 
-    let filter_label = app.kind_filter.as_deref().unwrap_or("all");
+    let kind_label = app.filter.kind.as_deref().unwrap_or("all");
+    let status_label = app.filter.status.as_deref().unwrap_or("all");
     let help_text = format!(
-        " [q]quit  [enter]detail  [c]create thread  [r]refresh  [f]filter:{filter_label}  [j/k]navigate"
+        " [q]quit  [enter]detail  [c]create thread  [r]refresh  [f]filter:{kind_label}/{status_label}  [j/k]navigate"
     );
-    // Track filter label position for mouse click cycling
+    // Track filter label position for mouse click
     let filter_prefix = " [q]quit  [enter]detail  [c]create thread  [r]refresh  ";
     let filter_start = filter_prefix.len() as u16;
-    let filter_len = format!("[f]filter:{filter_label}").len() as u16;
+    let filter_len = format!("[f]filter:{kind_label}/{status_label}").len() as u16;
     app.ui_rects.filter_label = Some(Rect {
         x: chunks[0].x + filter_start,
         y: chunks[0].y,
@@ -2041,6 +2218,103 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_stateful_widget(table, chunks[1], &mut app.table_state);
 
     f.render_widget(Paragraph::new(format!(" {count} threads")), chunks[2]);
+}
+
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let w = width.min(area.width);
+    let h = height.min(area.height);
+    Rect {
+        x: area.x + area.width.saturating_sub(w) / 2,
+        y: area.y + area.height.saturating_sub(h) / 2,
+        width: w,
+        height: h,
+    }
+}
+
+fn render_filter_bar(f: &mut Frame, area: Rect, app: &mut App) {
+    let Some(ref bar) = app.filter_bar else {
+        return;
+    };
+
+    let popup = centered_rect(36, 16, area);
+    app.ui_rects.filter_popup = Some(popup);
+
+    f.render_widget(Clear, popup);
+
+    let block = Block::default().borders(Borders::ALL).title(" filter ");
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(inner);
+
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(chunks[0]);
+
+    // KIND list
+    let kind_items: Vec<ListItem> = FILTER_KIND_LABELS
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let prefix = if i == bar.kind_index { "> " } else { "  " };
+            let style = if bar.field == FilterField::Kind && i == bar.kind_index {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            ListItem::new(format!("{prefix}{label}")).style(style)
+        })
+        .collect();
+    let kind_highlight = if bar.field == FilterField::Kind {
+        " KIND* "
+    } else {
+        " KIND "
+    };
+    let kind_list =
+        List::new(kind_items).block(Block::default().borders(Borders::ALL).title(kind_highlight));
+    app.ui_rects.filter_kind_area = Some(cols[0]);
+    f.render_widget(kind_list, cols[0]);
+
+    // STATUS list
+    let status_items: Vec<ListItem> = FILTER_STATUS_LABELS
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let prefix = if i == bar.status_index { "> " } else { "  " };
+            let style = if bar.field == FilterField::Status && i == bar.status_index {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            ListItem::new(format!("{prefix}{label}")).style(style)
+        })
+        .collect();
+    let status_highlight = if bar.field == FilterField::Status {
+        " STATUS* "
+    } else {
+        " STATUS "
+    };
+    let status_list = List::new(status_items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(status_highlight),
+    );
+    app.ui_rects.filter_status_area = Some(cols[1]);
+    f.render_widget(status_list, cols[1]);
+
+    // Help line
+    f.render_widget(
+        Paragraph::new(" [tab]col [j/k]move [enter]ok [esc]cancel [x]clear"),
+        chunks[1],
+    );
 }
 
 pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
@@ -2836,7 +3110,7 @@ mod tests {
             make_row("RFC-0001", "rfc", "draft", "Proposal"),
         ];
         let mut app = App::new(rows);
-        app.kind_filter = Some("issue".into());
+        app.filter.kind = Some("issue".into());
         let out = render_to_string(&mut app, 80, 20);
         assert!(out.contains("ISSUE-0001"));
         assert!(out.contains("1 threads"));
@@ -3431,15 +3705,89 @@ mod tests {
     }
 
     #[test]
-    fn cycle_filter_cycles_correctly() {
+    fn filter_bar_apply_sets_kind_and_status() {
         let mut app = App::new(vec![]);
-        assert_eq!(app.kind_filter, None);
-        app.cycle_filter();
-        assert_eq!(app.kind_filter.as_deref(), Some("issue"));
-        app.cycle_filter();
-        assert_eq!(app.kind_filter.as_deref(), Some("rfc"));
-        app.cycle_filter();
-        assert_eq!(app.kind_filter, None);
+        assert_eq!(app.filter.kind, None);
+        assert_eq!(app.filter.status, None);
+
+        app.open_filter_bar();
+        assert!(app.filter_bar.is_some());
+
+        // Select "issue" (index 1) for kind
+        if let Some(ref mut bar) = app.filter_bar {
+            bar.kind_index = 1;
+            bar.status_index = 2; // "draft"
+        }
+        app.apply_filter_bar();
+
+        assert_eq!(app.filter.kind.as_deref(), Some("issue"));
+        assert_eq!(app.filter.status.as_deref(), Some("draft"));
+        assert!(app.filter_bar.is_none());
+    }
+
+    #[test]
+    fn filter_bar_cancel_preserves_existing_filter() {
+        let mut app = App::new(vec![]);
+        app.filter.kind = Some("rfc".into());
+        app.open_filter_bar();
+        if let Some(ref mut bar) = app.filter_bar {
+            bar.kind_index = 1; // "issue"
+        }
+        app.cancel_filter_bar();
+        assert_eq!(app.filter.kind.as_deref(), Some("rfc"));
+        assert!(app.filter_bar.is_none());
+    }
+
+    #[test]
+    fn filter_bar_clear_resets_both_dimensions() {
+        let mut app = App::new(vec![]);
+        app.filter.kind = Some("issue".into());
+        app.filter.status = Some("open".into());
+        app.open_filter_bar();
+        app.clear_filter_bar();
+        assert_eq!(app.filter.kind, None);
+        assert_eq!(app.filter.status, None);
+        assert!(app.filter_bar.is_none());
+    }
+
+    #[test]
+    fn filter_bar_open_reflects_current_filter() {
+        let mut app = App::new(vec![]);
+        app.filter.kind = Some("rfc".into());
+        app.filter.status = Some("pending".into());
+        app.open_filter_bar();
+        let bar = app.filter_bar.as_ref().unwrap();
+        assert_eq!(bar.kind_index, 2); // "rfc"
+        assert_eq!(bar.status_index, 3); // "pending"
+    }
+
+    #[test]
+    fn visible_threads_filters_by_status() {
+        let rows = vec![
+            make_row("ISSUE-0001", "issue", "open", "Bug"),
+            make_row("RFC-0001", "rfc", "draft", "Proposal"),
+            make_row("ISSUE-0002", "issue", "closed", "Old bug"),
+        ];
+        let mut app = App::new(rows);
+        app.filter.status = Some("open".into());
+        let visible = app.visible_threads();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id, "ISSUE-0001");
+    }
+
+    #[test]
+    fn visible_threads_filters_by_kind_and_status() {
+        let rows = vec![
+            make_row("ISSUE-0001", "issue", "open", "Bug"),
+            make_row("RFC-0001", "rfc", "open", "Proposal"),
+            make_row("ISSUE-0002", "issue", "closed", "Old bug"),
+        ];
+        let mut app = App::new(rows);
+        app.filter.kind = Some("issue".into());
+        app.filter.status = Some("open".into());
+        let visible = app.visible_threads();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id, "ISSUE-0001");
     }
 
     #[test]
