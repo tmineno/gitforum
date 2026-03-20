@@ -23,6 +23,9 @@ pub(super) fn open_thread_detail(
     selected_node_id: Option<&str>,
 ) -> ForumResult<()> {
     let state = thread::replay_thread(git, thread_id)?;
+    app.thread_title = state.title.clone();
+    app.thread_kind = state.kind.to_string();
+    app.thread_status = state.status.to_string();
     app.thread_text = show::render_show(&state);
     app.thread_scroll = 0;
     app.thread_nodes = state.nodes;
@@ -270,31 +273,27 @@ pub(super) fn default_thread_kind_index(kind_filter: Option<&str>) -> usize {
     }
 }
 
-pub(super) fn node_type_values() -> [NodeType; 9] {
+pub(super) fn node_type_values() -> [NodeType; 7] {
     [
         NodeType::Claim,
         NodeType::Question,
         NodeType::Objection,
-        NodeType::Alternative,
         NodeType::Evidence,
         NodeType::Summary,
         NodeType::Action,
         NodeType::Risk,
-        NodeType::Assumption,
     ]
 }
 
-pub(super) fn node_type_labels() -> [&'static str; 9] {
+pub(super) fn node_type_labels() -> [&'static str; 7] {
     [
         "claim",
         "question",
         "objection",
-        "alternative",
         "evidence",
         "summary",
         "action",
         "risk",
-        "assumption",
     ]
 }
 

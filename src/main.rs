@@ -167,28 +167,6 @@ enum Commands {
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
-    /// Add an alternative node to a thread
-    Alternative {
-        thread_id: String,
-        body: Option<String>,
-        #[arg(long = "body-file", value_name = "PATH")]
-        body_file: Option<PathBuf>,
-        #[arg(long = "reply-to", value_name = "NODE_ID")]
-        reply_to: Option<String>,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-    },
-    /// Add an assumption node to a thread
-    Assumption {
-        thread_id: String,
-        body: Option<String>,
-        #[arg(long = "body-file", value_name = "PATH")]
-        body_file: Option<PathBuf>,
-        #[arg(long = "reply-to", value_name = "NODE_ID")]
-        reply_to: Option<String>,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-    },
     /// Retract a node (soft-delete)
     Retract {
         thread_id: String,
@@ -554,10 +532,7 @@ fn main() -> Result<(), ForumError> {
 
         use git_forum::internal::help;
         match context {
-            Some(
-                "claim" | "question" | "objection" | "summary" | "action" | "risk" | "review"
-                | "alternative" | "assumption",
-            ) => {
+            Some("claim" | "question" | "objection" | "summary" | "action" | "risk" | "review") => {
                 print!("{}", help::node_type_taxonomy());
             }
             Some(
@@ -822,37 +797,6 @@ fn main() -> Result<(), ForumError> {
             reply_to,
             as_actor,
             NodeType::Review,
-            &clock,
-        )?,
-
-        Commands::Alternative {
-            thread_id,
-            body,
-            body_file,
-            reply_to,
-            as_actor,
-        } => run_shorthand_say(
-            &thread_id,
-            body,
-            body_file,
-            reply_to,
-            as_actor,
-            NodeType::Alternative,
-            &clock,
-        )?,
-        Commands::Assumption {
-            thread_id,
-            body,
-            body_file,
-            reply_to,
-            as_actor,
-        } => run_shorthand_say(
-            &thread_id,
-            body,
-            body_file,
-            reply_to,
-            as_actor,
-            NodeType::Assumption,
             &clock,
         )?,
 

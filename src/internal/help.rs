@@ -10,12 +10,10 @@ pub fn node_type_taxonomy() -> String {
 | claim | Assert a fact or position | no |
 | question | Ask for clarification or information | no |
 | objection | Raise a blocking concern (must be resolved before acceptance) | yes |
-| alternative | Propose a competing approach or design | no |
 | evidence | Reference supporting data (distinct from evidence attachment) | no |
 | summary | Consensus digest — what the thread concludes | no |
 | action | A task to be completed (must be resolved before closing) | yes |
 | risk | Flag a potential problem or uncertainty | no |
-| assumption | State an assumption the proposal depends on | no |
 | review | Holistic analysis of the entire thread | no |
 
 ## When to use each
@@ -23,12 +21,10 @@ pub fn node_type_taxonomy() -> String {
 - **claim**: single assertions ("We should use trait objects")
 - **question**: requests for info ("What is the migration plan?")
 - **objection**: blocking issues ("Benchmarks are missing") — blocks acceptance until resolved
-- **alternative**: competing proposals ("Consider a stack-based approach instead")
 - **evidence**: discussion about evidence ("See benchmark results in bench/")
 - **summary**: the human-readable conclusion; required before RFC acceptance
 - **action**: tasks to track ("Add div-by-zero guard") — blocks issue close until resolved
 - **risk**: non-blocking concerns ("Floating-point precision may diverge")
-- **assumption**: dependencies ("Assumes IEEE 754 doubles")
 - **review**: overall thread analysis, distinct from claim (single point) and summary (consensus)
 
 ## Shorthand commands
@@ -41,8 +37,6 @@ git forum summary <THREAD> "body"
 git forum action <THREAD> "body"
 git forum risk <THREAD> "body"
 git forum review <THREAD> "body"
-git forum alternative <THREAD> "body"
-git forum assumption <THREAD> "body"
 ```
 
 All accept a positional body argument, --body-file, --reply-to, and --as.

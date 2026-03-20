@@ -9,8 +9,7 @@ The following capabilities are implemented and tested:
 - Repository init, doctor, reindex
 - RFC and issue thread creation with body, branch binding, and link-at-create
 - Event-sourced thread replay
-- Typed discussion nodes (claim, question, objection, alternative, evidence, summary, action,
-  risk, assumption, review)
+- Typed discussion nodes (claim, question, objection, evidence, summary, action, risk, review)
 - Shorthand CLI commands for common node types (claim, question, objection, summary, action, risk,
   review)
 - Node lifecycle: revise, retract, resolve, reopen, reply chains
