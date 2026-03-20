@@ -20,6 +20,7 @@ use git_forum::internal::policy::Policy;
 use git_forum::internal::reindex;
 use git_forum::internal::say;
 use git_forum::internal::show;
+use git_forum::internal::state_change;
 use git_forum::internal::thread;
 use git_forum::internal::tui as forum_tui;
 use git_forum::internal::verify;
@@ -931,7 +932,7 @@ fn main() -> Result<(), ForumError> {
                         &sign,
                         &actor,
                         &clock,
-                        say::StateChangeOptions {
+                        state_change::StateChangeOptions {
                             resolve_open_actions,
                         },
                         dry_run,
@@ -967,7 +968,7 @@ fn main() -> Result<(), ForumError> {
                             None,
                         )?;
                     }
-                    say::change_state(
+                    state_change::change_state(
                         &git,
                         &thread_id,
                         &new_state,
@@ -975,7 +976,7 @@ fn main() -> Result<(), ForumError> {
                         &actor,
                         &clock,
                         &policy,
-                        say::StateChangeOptions {
+                        state_change::StateChangeOptions {
                             resolve_open_actions,
                         },
                     )?;
@@ -1303,7 +1304,7 @@ fn run_thread_cmd(
                     clock,
                 )?;
                 let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
-                say::change_state(
+                state_change::change_state(
                     &git,
                     &source_id,
                     "deprecated",
@@ -1311,7 +1312,7 @@ fn run_thread_cmd(
                     &actor,
                     clock,
                     &policy,
-                    say::StateChangeOptions::default(),
+                    state_change::StateChangeOptions::default(),
                 )?;
                 println!("Created {thread_id} (supersedes {source_id})");
             } else {
@@ -1498,7 +1499,7 @@ fn run_state_shorthand(
             None,
         )?;
     }
-    say::change_state(
+    state_change::change_state(
         &git,
         thread_id,
         new_state,
@@ -1506,7 +1507,7 @@ fn run_state_shorthand(
         &actor,
         clock,
         &policy,
-        say::StateChangeOptions {
+        state_change::StateChangeOptions {
             resolve_open_actions,
         },
     )?;
@@ -1593,7 +1594,7 @@ fn run_bulk_state_change(
     sign: &[String],
     actor: &str,
     clock: &dyn git_forum::internal::clock::Clock,
-    options: say::StateChangeOptions,
+    options: state_change::StateChangeOptions,
     dry_run: bool,
 ) -> Result<BulkStateReport, ForumError> {
     if explicit_ids.is_empty()
@@ -1634,10 +1635,12 @@ fn run_bulk_state_change(
             continue;
         }
 
-        match say::prepare_state_change(git, &thread_id, new_state, sign, clock, policy, options) {
+        match state_change::prepare_state_change(
+            git, &thread_id, new_state, sign, clock, policy, options,
+        ) {
             Ok(plan) => {
                 if !dry_run {
-                    if let Err(err) = say::change_state(
+                    if let Err(err) = state_change::change_state(
                         git, &thread_id, new_state, sign, actor, clock, policy, options,
                     ) {
                         outcomes.push(BulkStateOutcome {

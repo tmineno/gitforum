@@ -13,6 +13,7 @@ use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::say;
+use git_forum::internal::state_change;
 use git_forum::internal::thread;
 use git_forum::internal::verify;
 use support::repo::TestRepo;
@@ -158,7 +159,7 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
         .filter(|t| t.thread_ref == "RFC-0001")
     {
         let agent = agent_by_name(agents, &trans.actor);
-        say::change_state(
+        state_change::change_state(
             &agent.git,
             &rfc_0001,
             &trans.new_state,
@@ -166,7 +167,7 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
             &agent.name,
             &agent.clock,
             &empty_policy(),
-            say::StateChangeOptions::default(),
+            state_change::StateChangeOptions::default(),
         )
         .unwrap();
     }
@@ -213,7 +214,7 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
         .filter(|t| t.thread_ref == "RFC-0002")
     {
         let agent = agent_by_name(agents, &trans.actor);
-        say::change_state(
+        state_change::change_state(
             &agent.git,
             &rfc_0002,
             &trans.new_state,
@@ -221,7 +222,7 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
             &agent.name,
             &agent.clock,
             &empty_policy(),
-            say::StateChangeOptions::default(),
+            state_change::StateChangeOptions::default(),
         )
         .unwrap();
     }
@@ -311,7 +312,7 @@ fn phase_implementation(
         .filter(|t| t.thread_ref == "ISSUE-0001")
     {
         let agent = agent_by_name(agents, &trans.actor);
-        say::change_state(
+        state_change::change_state(
             &agent.git,
             &issue_0001,
             &trans.new_state,
@@ -319,7 +320,7 @@ fn phase_implementation(
             &agent.name,
             &agent.clock,
             &empty_policy(),
-            say::StateChangeOptions::default(),
+            state_change::StateChangeOptions::default(),
         )
         .unwrap();
     }
@@ -361,7 +362,7 @@ fn phase_implementation(
         .filter(|t| t.thread_ref == "ISSUE-0002")
     {
         let agent = agent_by_name(agents, &trans.actor);
-        say::change_state(
+        state_change::change_state(
             &agent.git,
             &issue_0002,
             &trans.new_state,
@@ -369,7 +370,7 @@ fn phase_implementation(
             &agent.name,
             &agent.clock,
             &empty_policy(),
-            say::StateChangeOptions::default(),
+            state_change::StateChangeOptions::default(),
         )
         .unwrap();
     }
@@ -436,7 +437,7 @@ fn phase_implementation(
         .filter(|t| t.thread_ref == "ISSUE-0003")
     {
         let agent = agent_by_name(agents, &trans.actor);
-        say::change_state(
+        state_change::change_state(
             &agent.git,
             &issue_0003,
             &trans.new_state,
@@ -444,7 +445,7 @@ fn phase_implementation(
             &agent.name,
             &agent.clock,
             &empty_policy(),
-            say::StateChangeOptions::default(),
+            state_change::StateChangeOptions::default(),
         )
         .unwrap();
     }
@@ -648,7 +649,7 @@ fn phase_expanded_lifecycle(agents: &[Agent], scenario: &ScenarioDef) {
     // Execute all transitions in order
     for trans in &phase.transitions {
         let agent = agent_by_name(agents, &trans.actor);
-        say::change_state(
+        state_change::change_state(
             &agent.git,
             &trans.thread_ref,
             &trans.new_state,
@@ -656,7 +657,7 @@ fn phase_expanded_lifecycle(agents: &[Agent], scenario: &ScenarioDef) {
             &agent.name,
             &agent.clock,
             &empty_policy(),
-            say::StateChangeOptions::default(),
+            state_change::StateChangeOptions::default(),
         )
         .unwrap();
     }
