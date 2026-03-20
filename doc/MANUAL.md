@@ -625,20 +625,11 @@ The policy file lives at `.forum/policy.toml`.
 
 It is created automatically by `git forum init`, and it controls two kinds of configuration:
 
-- role declarations under `[roles.<name>]`
 - transition guard rules under `[[guards]]`
 
 A default file looks like this:
 
 ```toml
-[roles.reviewer]
-can_say = ["question", "objection", "summary", "risk"]
-can_transition = []
-
-[roles.maintainer]
-can_say = ["claim", "summary", "action"]
-can_transition = ["draft->proposed", "proposed->under-review", "under-review->accepted"]
-
 [[guards]]
 on = "under-review->accepted"
 requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
@@ -650,8 +641,6 @@ requires = ["no_open_actions"]
 
 ### What the fields mean
 
-- `can_say`: node types that a role is allowed to emit
-- `can_transition`: thread state transitions that a role is allowed to perform
 - `on`: the transition that a guard block applies to, written as `from->to`
 - `requires`: the list of guard rules that must pass for that transition
 
@@ -672,8 +661,6 @@ Current implementation status is narrower than the target spec:
 - `git forum policy lint` currently performs structural validation, mainly checking that guard
   transitions use the `from->to` format
 
-Role sections such as `can_say` and `can_transition` are parsed and preserved, but they are not yet
-fully enforced across all commands.
 
 ### What `git forum verify` actually does
 

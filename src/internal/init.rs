@@ -6,14 +6,6 @@ use super::error::ForumResult;
 const DEFAULT_POLICY: &str = r#"# git-forum default policy
 # See doc/spec/SPEC.md for details.
 
-[roles.reviewer]
-can_say = ["question", "objection", "summary", "risk"]
-can_transition = []
-
-[roles.maintainer]
-can_say = ["claim", "summary", "action"]
-can_transition = ["draft->proposed", "proposed->under-review", "under-review->accepted"]
-
 [[guards]]
 on = "under-review->accepted"
 requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]

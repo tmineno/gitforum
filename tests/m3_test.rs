@@ -68,9 +68,7 @@ fn move_rfc_to_under_review(git: &GitOps, thread_id: &str) {
 }
 
 fn policy_with_guards() -> Policy {
-    use std::collections::HashMap;
     Policy {
-        roles: HashMap::new(),
         guards: vec![GuardEntry {
             on: "under-review->accepted".into(),
             requires: vec![
@@ -83,11 +81,7 @@ fn policy_with_guards() -> Policy {
 }
 
 fn empty_policy() -> Policy {
-    use std::collections::HashMap;
-    Policy {
-        roles: HashMap::new(),
-        guards: vec![],
-    }
+    Policy { guards: vec![] }
 }
 
 // ---- say / node creation ----
@@ -372,9 +366,8 @@ fn change_state_fails_guard_no_open_objections() {
     .unwrap();
 
     // Policy requires no_open_objections
-    use std::collections::HashMap;
+
     let policy = Policy {
-        roles: HashMap::new(),
         guards: vec![GuardEntry {
             on: "under-review->accepted".into(),
             requires: vec![GuardRule::NoOpenObjections],
@@ -434,8 +427,6 @@ fn change_state_passes_all_guards() {
 
 #[test]
 fn change_state_issue_close_fails_guard_no_open_actions() {
-    use std::collections::HashMap;
-
     let (_repo, git, _paths) = setup();
     let thread_id = create::create_thread(
         &git,
@@ -459,7 +450,6 @@ fn change_state_issue_close_fails_guard_no_open_actions() {
     .unwrap();
 
     let policy = Policy {
-        roles: HashMap::new(),
         guards: vec![GuardEntry {
             on: "open->closed".into(),
             requires: vec![GuardRule::NoOpenActions],
@@ -483,8 +473,6 @@ fn change_state_issue_close_fails_guard_no_open_actions() {
 
 #[test]
 fn change_state_issue_close_can_resolve_open_actions() {
-    use std::collections::HashMap;
-
     let (_repo, git, _paths) = setup();
     let thread_id = create::create_thread(
         &git,
@@ -508,7 +496,6 @@ fn change_state_issue_close_can_resolve_open_actions() {
     .unwrap();
 
     let policy = Policy {
-        roles: HashMap::new(),
         guards: vec![GuardEntry {
             on: "open->closed".into(),
             requires: vec![GuardRule::NoOpenActions],
@@ -576,8 +563,6 @@ fn verify_reports_open_objection_violation() {
 
 #[test]
 fn verify_reports_open_action_violation_for_issue_close() {
-    use std::collections::HashMap;
-
     let (_repo, git, _paths) = setup();
     let thread_id = create::create_thread(
         &git,
@@ -601,7 +586,6 @@ fn verify_reports_open_action_violation_for_issue_close() {
     .unwrap();
 
     let policy = Policy {
-        roles: HashMap::new(),
         guards: vec![GuardEntry {
             on: "open->closed".into(),
             requires: vec![GuardRule::NoOpenActions],
@@ -894,8 +878,6 @@ fn change_state_issue_rejected_succeeds() {
 
 #[test]
 fn change_state_issue_close_fails_guard_has_commit_evidence() {
-    use std::collections::HashMap;
-
     let (_repo, git, _paths) = setup();
     let thread_id = create::create_thread(
         &git,
@@ -908,7 +890,6 @@ fn change_state_issue_close_fails_guard_has_commit_evidence() {
     .unwrap();
 
     let policy = Policy {
-        roles: HashMap::new(),
         guards: vec![GuardEntry {
             on: "open->closed".into(),
             requires: vec![GuardRule::HasCommitEvidence],
@@ -932,8 +913,6 @@ fn change_state_issue_close_fails_guard_has_commit_evidence() {
 
 #[test]
 fn change_state_issue_close_passes_with_commit_evidence() {
-    use std::collections::HashMap;
-
     let (repo, git, _paths) = setup();
     let thread_id = create::create_thread(
         &git,
@@ -983,7 +962,6 @@ fn change_state_issue_close_passes_with_commit_evidence() {
     .unwrap();
 
     let policy = Policy {
-        roles: HashMap::new(),
         guards: vec![GuardEntry {
             on: "open->closed".into(),
             requires: vec![GuardRule::HasCommitEvidence],
