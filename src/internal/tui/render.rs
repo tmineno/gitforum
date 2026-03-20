@@ -211,8 +211,20 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
         ])
         .split(area);
 
-    let kind_label = app.filter.kind.as_deref().unwrap_or("all");
-    let status_label = app.filter.status.as_deref().unwrap_or("all");
+    let kind_label = if app.filter.kinds.is_empty() {
+        "all".to_string()
+    } else {
+        let mut v: Vec<&str> = app.filter.kinds.iter().map(|s| s.as_str()).collect();
+        v.sort();
+        v.join(",")
+    };
+    let status_label = if app.filter.statuses.is_empty() {
+        "all".to_string()
+    } else {
+        let mut v: Vec<&str> = app.filter.statuses.iter().map(|s| s.as_str()).collect();
+        v.sort();
+        v.join(",")
+    };
     let help_text = format!(
         " [q]quit  [enter]detail  [c]create thread  [r]refresh  [f]filter:{kind_label}/{status_label}  [j/k]navigate"
     );
@@ -336,12 +348,42 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     }
 }
 
+fn render_filter_checkbox_list<'a>(
+    labels: &[&str],
+    checked: &std::collections::HashSet<String>,
+    cursor: usize,
+    is_active: bool,
+) -> Vec<ListItem<'a>> {
+    labels
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let check = if checked.contains(*label) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            let cursor_mark = if is_active && i == cursor { ">" } else { " " };
+            let style = if is_active && i == cursor {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else if checked.contains(*label) {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default()
+            };
+            ListItem::new(format!("{cursor_mark}{check} {label}")).style(style)
+        })
+        .collect()
+}
+
 fn render_filter_bar(f: &mut Frame, area: Rect, app: &mut App) {
     let Some(ref bar) = app.filter_bar else {
         return;
     };
 
-    let popup = centered_rect(36, 16, area);
+    let popup = centered_rect(40, 18, area);
     app.ui_rects.filter_popup = Some(popup);
 
     f.render_widget(Clear, popup);
@@ -357,67 +399,46 @@ fn render_filter_bar(f: &mut Frame, area: Rect, app: &mut App) {
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
         .split(chunks[0]);
 
-    // KIND list
-    let kind_items: Vec<ListItem> = FILTER_KIND_LABELS
-        .iter()
-        .enumerate()
-        .map(|(i, label)| {
-            let prefix = if i == bar.kind_index { "> " } else { "  " };
-            let style = if bar.field == FilterField::Kind && i == bar.kind_index {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-            ListItem::new(format!("{prefix}{label}")).style(style)
-        })
-        .collect();
-    let kind_highlight = if bar.field == FilterField::Kind {
-        " KIND* "
-    } else {
-        " KIND "
-    };
+    // KIND checkboxes
+    let kind_active = bar.field == FilterField::Kind;
+    let kind_cursor = if kind_active { bar.cursor } else { usize::MAX };
+    let kind_items =
+        render_filter_checkbox_list(&FILTER_KIND_LABELS, &bar.kinds, kind_cursor, kind_active);
+    let kind_title = if kind_active { " KIND* " } else { " KIND " };
     let kind_list =
-        List::new(kind_items).block(Block::default().borders(Borders::ALL).title(kind_highlight));
+        List::new(kind_items).block(Block::default().borders(Borders::ALL).title(kind_title));
     app.ui_rects.filter_kind_area = Some(cols[0]);
     f.render_widget(kind_list, cols[0]);
 
-    // STATUS list
-    let status_items: Vec<ListItem> = FILTER_STATUS_LABELS
-        .iter()
-        .enumerate()
-        .map(|(i, label)| {
-            let prefix = if i == bar.status_index { "> " } else { "  " };
-            let style = if bar.field == FilterField::Status && i == bar.status_index {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-            ListItem::new(format!("{prefix}{label}")).style(style)
-        })
-        .collect();
-    let status_highlight = if bar.field == FilterField::Status {
+    // STATUS checkboxes
+    let status_active = bar.field == FilterField::Status;
+    let status_cursor = if status_active {
+        bar.cursor
+    } else {
+        usize::MAX
+    };
+    let status_items = render_filter_checkbox_list(
+        &FILTER_STATUS_LABELS,
+        &bar.statuses,
+        status_cursor,
+        status_active,
+    );
+    let status_title = if status_active {
         " STATUS* "
     } else {
         " STATUS "
     };
-    let status_list = List::new(status_items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(status_highlight),
-    );
+    let status_list =
+        List::new(status_items).block(Block::default().borders(Borders::ALL).title(status_title));
     app.ui_rects.filter_status_area = Some(cols[1]);
     f.render_widget(status_list, cols[1]);
 
     // Help line
     f.render_widget(
-        Paragraph::new(" [tab]col [j/k]move [enter]ok [esc]cancel [x]clear"),
+        Paragraph::new(" [tab]col [j/k]move [space]toggle [enter]ok [esc]cancel [x]clear"),
         chunks[1],
     );
 }
