@@ -39,39 +39,27 @@ pub fn render_show(state: &ThreadState) -> String {
 
     let incorporated: Vec<&super::node::Node> =
         state.nodes.iter().filter(|n| n.incorporated).collect();
-    if !incorporated.is_empty() {
-        lines.push(format!("incorporated nodes: {}", incorporated.len()));
-        for node in &incorporated {
-            let preview = truncate_body(&node.body, 60);
-            lines.push(format!(
-                "  - {} {} {}",
-                short_oid(&node.node_id),
-                node.node_type,
-                preview
-            ));
-        }
-        lines.push(String::new());
-    }
+    render_item_list(&mut lines, "incorporated nodes", &incorporated, |node| {
+        let preview = truncate_body(&node.body, 60);
+        format!(
+            "  - {} {} {}",
+            short_oid(&node.node_id),
+            node.node_type,
+            preview
+        )
+    });
 
     let open_obj = state.open_objections();
-    if !open_obj.is_empty() {
-        lines.push(format!("open objections: {}", open_obj.len()));
-        for node in &open_obj {
-            let preview = truncate_body(&node.body, 60);
-            lines.push(format!("  - {} {}", short_oid(&node.node_id), preview));
-        }
-        lines.push(String::new());
-    }
+    render_item_list(&mut lines, "open objections", &open_obj, |node| {
+        let preview = truncate_body(&node.body, 60);
+        format!("  - {} {}", short_oid(&node.node_id), preview)
+    });
 
     let open_act = state.open_actions();
-    if !open_act.is_empty() {
-        lines.push(format!("open actions: {}", open_act.len()));
-        for node in &open_act {
-            let preview = truncate_body(&node.body, 60);
-            lines.push(format!("  - {} {}", short_oid(&node.node_id), preview));
-        }
-        lines.push(String::new());
-    }
+    render_item_list(&mut lines, "open actions", &open_act, |node| {
+        let preview = truncate_body(&node.body, 60);
+        format!("  - {} {}", short_oid(&node.node_id), preview)
+    });
 
     if let Some(summary) = state.latest_summary() {
         lines.push("latest summary:".into());
@@ -79,22 +67,14 @@ pub fn render_show(state: &ThreadState) -> String {
         lines.push(String::new());
     }
 
-    if !state.evidence_items.is_empty() {
-        lines.push(format!("evidence: {}", state.evidence_items.len()));
-        for ev in &state.evidence_items {
-            let id_short = &ev.evidence_id[..ev.evidence_id.len().min(8)];
-            lines.push(format!("  - {}  {}  {}", id_short, ev.kind, ev.ref_target));
-        }
-        lines.push(String::new());
-    }
+    render_item_list(&mut lines, "evidence", &state.evidence_items, |ev| {
+        let id_short = &ev.evidence_id[..ev.evidence_id.len().min(8)];
+        format!("  - {}  {}  {}", id_short, ev.kind, ev.ref_target)
+    });
 
-    if !state.links.is_empty() {
-        lines.push(format!("links: {}", state.links.len()));
-        for link in &state.links {
-            lines.push(format!("  - {}  {}", link.target_thread_id, link.rel));
-        }
-        lines.push(String::new());
-    }
+    render_item_list(&mut lines, "links", &state.links, |link| {
+        format!("  - {}  {}", link.target_thread_id, link.rel)
+    });
 
     // Conversation grouping: show reply chains grouped by root node
     let conversations = build_conversations(&state.nodes);
@@ -483,6 +463,21 @@ fn build_conversations(nodes: &[super::node::Node]) -> Vec<Vec<&super::node::Nod
         conversations.push(chain);
     }
     conversations
+}
+
+/// Render a non-empty list with a header, formatted items, and trailing blank line.
+fn render_item_list<T, F>(lines: &mut Vec<String>, label: &str, items: &[T], formatter: F)
+where
+    F: Fn(&T) -> String,
+{
+    if items.is_empty() {
+        return;
+    }
+    lines.push(format!("{}: {}", label, items.len()));
+    for item in items {
+        lines.push(formatter(item));
+    }
+    lines.push(String::new());
 }
 
 fn truncate_body(s: &str, max: usize) -> String {
