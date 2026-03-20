@@ -504,29 +504,31 @@ pub(super) fn handle_mouse(
 }
 
 fn handle_filter_bar_mouse(app: &mut App, mouse: MouseEvent) {
-    // Click inside kind list
+    // Click inside kind list — toggle checkbox
     if let Some(area) = app.ui_rects.filter_kind_area {
         if rect_contains(area, mouse.column, mouse.row) {
             if let Some(index) = dropdown_item_at(area, mouse.row) {
                 if index < FILTER_KIND_LABELS.len() {
                     if let Some(ref mut bar) = app.filter_bar {
-                        bar.kind_index = index;
                         bar.field = FilterField::Kind;
+                        bar.cursor = index;
                     }
+                    app.toggle_filter_checkbox();
                 }
             }
             return;
         }
     }
-    // Click inside status list
+    // Click inside status list — toggle checkbox
     if let Some(area) = app.ui_rects.filter_status_area {
         if rect_contains(area, mouse.column, mouse.row) {
             if let Some(index) = dropdown_item_at(area, mouse.row) {
                 if index < FILTER_STATUS_LABELS.len() {
                     if let Some(ref mut bar) = app.filter_bar {
-                        bar.status_index = index;
                         bar.field = FilterField::Status;
+                        bar.cursor = index;
                     }
+                    app.toggle_filter_checkbox();
                 }
             }
             return;
@@ -546,29 +548,25 @@ pub(super) fn handle_filter_bar_key(app: &mut App, key: crossterm::event::KeyEve
     let Some(ref mut bar) = app.filter_bar else {
         return;
     };
+    let max = match bar.field {
+        FilterField::Kind => FILTER_KIND_LABELS.len(),
+        FilterField::Status => FILTER_STATUS_LABELS.len(),
+    };
     match key.code {
         KeyCode::Tab | KeyCode::BackTab => {
             bar.field = match bar.field {
                 FilterField::Kind => FilterField::Status,
                 FilterField::Status => FilterField::Kind,
             };
+            bar.cursor = 0;
         }
-        KeyCode::Char('j') | KeyCode::Down => match bar.field {
-            FilterField::Kind => {
-                bar.kind_index = (bar.kind_index + 1).min(FILTER_KIND_LABELS.len() - 1);
-            }
-            FilterField::Status => {
-                bar.status_index = (bar.status_index + 1).min(FILTER_STATUS_LABELS.len() - 1);
-            }
-        },
-        KeyCode::Char('k') | KeyCode::Up => match bar.field {
-            FilterField::Kind => {
-                bar.kind_index = bar.kind_index.saturating_sub(1);
-            }
-            FilterField::Status => {
-                bar.status_index = bar.status_index.saturating_sub(1);
-            }
-        },
+        KeyCode::Char('j') | KeyCode::Down => {
+            bar.cursor = (bar.cursor + 1).min(max - 1);
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            bar.cursor = bar.cursor.saturating_sub(1);
+        }
+        KeyCode::Char(' ') => app.toggle_filter_checkbox(),
         KeyCode::Enter => app.apply_filter_bar(),
         KeyCode::Esc => app.cancel_filter_bar(),
         KeyCode::Char('x') => app.clear_filter_bar(),

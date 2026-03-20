@@ -103,20 +103,20 @@ enum FilterField {
 
 #[derive(Debug, Clone, Default)]
 struct FilterCriteria {
-    kind: Option<String>,
-    status: Option<String>,
+    kinds: HashSet<String>,
+    statuses: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
 struct FilterBar {
     field: FilterField,
-    kind_index: usize,
-    status_index: usize,
+    cursor: usize,
+    kinds: HashSet<String>,
+    statuses: HashSet<String>,
 }
 
-const FILTER_KIND_LABELS: [&str; 3] = ["all", "issue", "rfc"];
-const FILTER_STATUS_LABELS: [&str; 10] = [
-    "all",
+const FILTER_KIND_LABELS: [&str; 2] = ["issue", "rfc"];
+const FILTER_STATUS_LABELS: [&str; 9] = [
     "open",
     "draft",
     "pending",
@@ -315,18 +315,9 @@ impl App {
             .threads
             .iter()
             .filter(|t| {
-                let kind_ok = self
-                    .filter
-                    .kind
-                    .as_deref()
-                    .map(|k| t.kind == k)
-                    .unwrap_or(true);
-                let status_ok = self
-                    .filter
-                    .status
-                    .as_deref()
-                    .map(|s| t.status == s)
-                    .unwrap_or(true);
+                let kind_ok = self.filter.kinds.is_empty() || self.filter.kinds.contains(&t.kind);
+                let status_ok =
+                    self.filter.statuses.is_empty() || self.filter.statuses.contains(&t.status);
                 kind_ok && status_ok
             })
             .collect();
@@ -384,35 +375,18 @@ impl App {
     }
 
     fn open_filter_bar(&mut self) {
-        let kind_index = match self.filter.kind.as_deref() {
-            None => 0,
-            Some("issue") => 1,
-            Some("rfc") => 2,
-            _ => 0,
-        };
-        let status_index = FILTER_STATUS_LABELS
-            .iter()
-            .position(|&s| Some(s) == self.filter.status.as_deref())
-            .unwrap_or(0);
         self.filter_bar = Some(FilterBar {
             field: FilterField::Kind,
-            kind_index,
-            status_index,
+            cursor: 0,
+            kinds: self.filter.kinds.clone(),
+            statuses: self.filter.statuses.clone(),
         });
     }
 
     fn apply_filter_bar(&mut self) {
         if let Some(bar) = self.filter_bar.take() {
-            self.filter.kind = if bar.kind_index == 0 {
-                None
-            } else {
-                Some(FILTER_KIND_LABELS[bar.kind_index].to_string())
-            };
-            self.filter.status = if bar.status_index == 0 {
-                None
-            } else {
-                Some(FILTER_STATUS_LABELS[bar.status_index].to_string())
-            };
+            self.filter.kinds = bar.kinds;
+            self.filter.statuses = bar.statuses;
             let n = self.visible_threads().len();
             self.table_state.select(if n > 0 { Some(0) } else { None });
         }
@@ -424,10 +398,34 @@ impl App {
 
     fn clear_filter_bar(&mut self) {
         self.filter_bar = None;
-        self.filter.kind = None;
-        self.filter.status = None;
+        self.filter.kinds.clear();
+        self.filter.statuses.clear();
         let n = self.visible_threads().len();
         self.table_state.select(if n > 0 { Some(0) } else { None });
+    }
+
+    fn toggle_filter_checkbox(&mut self) {
+        let Some(ref mut bar) = self.filter_bar else {
+            return;
+        };
+        match bar.field {
+            FilterField::Kind => {
+                if bar.cursor < FILTER_KIND_LABELS.len() {
+                    let label = FILTER_KIND_LABELS[bar.cursor].to_string();
+                    if !bar.kinds.remove(&label) {
+                        bar.kinds.insert(label);
+                    }
+                }
+            }
+            FilterField::Status => {
+                if bar.cursor < FILTER_STATUS_LABELS.len() {
+                    let label = FILTER_STATUS_LABELS[bar.cursor].to_string();
+                    if !bar.statuses.remove(&label) {
+                        bar.statuses.insert(label);
+                    }
+                }
+            }
+        }
     }
 
     fn column_header_at(&self, column: u16, row: u16) -> Option<SortColumn> {
@@ -548,7 +546,9 @@ impl App {
 
     fn begin_create_thread(&mut self) {
         self.thread_form = ThreadForm {
-            kind_index: default_thread_kind_index(self.filter.kind.as_deref()),
+            kind_index: default_thread_kind_index(
+                self.filter.kinds.iter().next().map(|s| s.as_str()),
+            ),
             title: String::new(),
             body: String::new(),
             field: ThreadFormField::Kind,
@@ -931,7 +931,7 @@ mod tests {
             make_row("RFC-0001", "rfc", "draft", "Proposal"),
         ];
         let mut app = App::new(rows);
-        app.filter.kind = Some("issue".into());
+        app.filter.kinds.insert("issue".into());
         let out = render_to_string(&mut app, 80, 20);
         assert!(out.contains("ISSUE-0001"));
         assert!(out.contains("1 threads"));
@@ -1523,58 +1523,89 @@ mod tests {
     #[test]
     fn filter_bar_apply_sets_kind_and_status() {
         let mut app = App::new(vec![]);
-        assert_eq!(app.filter.kind, None);
-        assert_eq!(app.filter.status, None);
+        assert!(app.filter.kinds.is_empty());
+        assert!(app.filter.statuses.is_empty());
 
         app.open_filter_bar();
         assert!(app.filter_bar.is_some());
 
-        // Select "issue" (index 1) for kind
+        // Toggle "issue" for kind, "draft" for status
         if let Some(ref mut bar) = app.filter_bar {
-            bar.kind_index = 1;
-            bar.status_index = 2; // "draft"
+            bar.kinds.insert("issue".into());
+            bar.statuses.insert("draft".into());
         }
         app.apply_filter_bar();
 
-        assert_eq!(app.filter.kind.as_deref(), Some("issue"));
-        assert_eq!(app.filter.status.as_deref(), Some("draft"));
+        assert!(app.filter.kinds.contains("issue"));
+        assert!(app.filter.statuses.contains("draft"));
         assert!(app.filter_bar.is_none());
     }
 
     #[test]
     fn filter_bar_cancel_preserves_existing_filter() {
         let mut app = App::new(vec![]);
-        app.filter.kind = Some("rfc".into());
+        app.filter.kinds.insert("rfc".into());
         app.open_filter_bar();
+        // Change something in the bar but cancel
         if let Some(ref mut bar) = app.filter_bar {
-            bar.kind_index = 1; // "issue"
+            bar.kinds.clear();
+            bar.kinds.insert("issue".into());
         }
         app.cancel_filter_bar();
-        assert_eq!(app.filter.kind.as_deref(), Some("rfc"));
+        assert!(app.filter.kinds.contains("rfc"));
         assert!(app.filter_bar.is_none());
     }
 
     #[test]
     fn filter_bar_clear_resets_both_dimensions() {
         let mut app = App::new(vec![]);
-        app.filter.kind = Some("issue".into());
-        app.filter.status = Some("open".into());
+        app.filter.kinds.insert("issue".into());
+        app.filter.statuses.insert("open".into());
         app.open_filter_bar();
         app.clear_filter_bar();
-        assert_eq!(app.filter.kind, None);
-        assert_eq!(app.filter.status, None);
+        assert!(app.filter.kinds.is_empty());
+        assert!(app.filter.statuses.is_empty());
         assert!(app.filter_bar.is_none());
     }
 
     #[test]
     fn filter_bar_open_reflects_current_filter() {
         let mut app = App::new(vec![]);
-        app.filter.kind = Some("rfc".into());
-        app.filter.status = Some("pending".into());
+        app.filter.kinds.insert("rfc".into());
+        app.filter.statuses.insert("pending".into());
         app.open_filter_bar();
         let bar = app.filter_bar.as_ref().unwrap();
-        assert_eq!(bar.kind_index, 2); // "rfc"
-        assert_eq!(bar.status_index, 3); // "pending"
+        assert!(bar.kinds.contains("rfc"));
+        assert!(bar.statuses.contains("pending"));
+    }
+
+    #[test]
+    fn filter_bar_toggle_checkbox() {
+        let mut app = App::new(vec![]);
+        app.open_filter_bar();
+        // Toggle "issue" on (cursor 0 = "issue")
+        if let Some(ref mut bar) = app.filter_bar {
+            bar.field = FilterField::Kind;
+            bar.cursor = 0;
+        }
+        app.toggle_filter_checkbox();
+        assert!(app.filter_bar.as_ref().unwrap().kinds.contains("issue"));
+        // Toggle it off
+        app.toggle_filter_checkbox();
+        assert!(!app.filter_bar.as_ref().unwrap().kinds.contains("issue"));
+    }
+
+    #[test]
+    fn filter_multi_select_kinds() {
+        let rows = vec![
+            make_row("ISSUE-0001", "issue", "open", "Bug"),
+            make_row("RFC-0001", "rfc", "draft", "Proposal"),
+        ];
+        let mut app = App::new(rows);
+        app.filter.kinds.insert("issue".into());
+        app.filter.kinds.insert("rfc".into());
+        let visible = app.visible_threads();
+        assert_eq!(visible.len(), 2);
     }
 
     #[test]
@@ -1585,7 +1616,7 @@ mod tests {
             make_row("ISSUE-0002", "issue", "closed", "Old bug"),
         ];
         let mut app = App::new(rows);
-        app.filter.status = Some("open".into());
+        app.filter.statuses.insert("open".into());
         let visible = app.visible_threads();
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].id, "ISSUE-0001");
@@ -1599,8 +1630,8 @@ mod tests {
             make_row("ISSUE-0002", "issue", "closed", "Old bug"),
         ];
         let mut app = App::new(rows);
-        app.filter.kind = Some("issue".into());
-        app.filter.status = Some("open".into());
+        app.filter.kinds.insert("issue".into());
+        app.filter.statuses.insert("open".into());
         let visible = app.visible_threads();
         assert_eq!(visible.len(), 1);
         assert_eq!(visible[0].id, "ISSUE-0001");
