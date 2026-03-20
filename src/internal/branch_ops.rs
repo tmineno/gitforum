@@ -25,27 +25,7 @@ pub fn set_branch(
         }
     }
 
-    let ev = Event {
-        event_id: String::new(),
-        thread_id: thread_id.to_string(),
-        event_type: EventType::Scope,
-        created_at: clock.now(),
-        actor: actor.to_string(),
-        base_rev: None,
-        parents: vec![],
-        title: None,
-        kind: None,
-        body: None,
-        node_type: None,
-        target_node_id: None,
-        new_state: None,
-        approvals: vec![],
-        evidence: None,
-        link_rel: None,
-        branch: branch.map(str::to_string),
-        incorporated_node_ids: vec![],
-        reply_to: None,
-    };
+    let ev = Event::base(thread_id, EventType::Scope, actor, clock).with_branch(branch);
     super::event::write_event(git, &ev)?;
     Ok(())
 }

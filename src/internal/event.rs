@@ -182,6 +182,98 @@ pub struct Event {
     pub reply_to: Option<String>,
 }
 
+impl Event {
+    /// Create an Event with required fields filled and all optional fields set to defaults.
+    pub fn base(
+        thread_id: &str,
+        event_type: EventType,
+        actor: &str,
+        clock: &dyn super::clock::Clock,
+    ) -> Self {
+        Self {
+            event_id: String::new(),
+            thread_id: thread_id.to_string(),
+            event_type,
+            created_at: clock.now(),
+            actor: actor.to_string(),
+            base_rev: None,
+            parents: vec![],
+            title: None,
+            kind: None,
+            body: None,
+            node_type: None,
+            target_node_id: None,
+            new_state: None,
+            approvals: vec![],
+            evidence: None,
+            link_rel: None,
+            branch: None,
+            incorporated_node_ids: vec![],
+            reply_to: None,
+        }
+    }
+
+    pub fn with_body(mut self, body: &str) -> Self {
+        self.body = Some(body.to_string());
+        self
+    }
+
+    pub fn with_node_type(mut self, node_type: NodeType) -> Self {
+        self.node_type = Some(node_type);
+        self
+    }
+
+    pub fn with_target_node_id(mut self, node_id: &str) -> Self {
+        self.target_node_id = Some(node_id.to_string());
+        self
+    }
+
+    pub fn with_reply_to(mut self, reply_to: Option<&str>) -> Self {
+        self.reply_to = reply_to.map(str::to_string);
+        self
+    }
+
+    pub fn with_new_state(mut self, state: &str) -> Self {
+        self.new_state = Some(state.to_string());
+        self
+    }
+
+    pub fn with_approvals(mut self, approvals: Vec<Approval>) -> Self {
+        self.approvals = approvals;
+        self
+    }
+
+    pub fn with_title(mut self, title: &str) -> Self {
+        self.title = Some(title.to_string());
+        self
+    }
+
+    pub fn with_kind(mut self, kind: ThreadKind) -> Self {
+        self.kind = Some(kind);
+        self
+    }
+
+    pub fn with_branch(mut self, branch: Option<&str>) -> Self {
+        self.branch = branch.map(str::to_string);
+        self
+    }
+
+    pub fn with_incorporated_node_ids(mut self, ids: Vec<String>) -> Self {
+        self.incorporated_node_ids = ids;
+        self
+    }
+
+    pub fn with_evidence(mut self, evidence: super::evidence::Evidence) -> Self {
+        self.evidence = Some(evidence);
+        self
+    }
+
+    pub fn with_link_rel(mut self, rel: &str) -> Self {
+        self.link_rel = Some(rel.to_string());
+        self
+    }
+}
+
 /// Write an event as a Git commit and update the thread ref.
 ///
 /// Returns the new commit SHA.

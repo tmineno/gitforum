@@ -26,7 +26,6 @@ use super::error::ForumResult;
 use super::event::{NodeType, ThreadKind};
 use super::evidence_ops;
 use super::git_ops::GitOps;
-use super::id::UlidGenerator;
 use super::index::{self, ThreadRow};
 use super::node::Node;
 use super::reindex;
@@ -1440,19 +1439,18 @@ fn apply_node_status_action(
     let lookup = thread::find_node_in_thread(git, thread_id, node_id)?;
     let actor = actor::current_actor(git);
     let clock = SystemClock;
-    let ids = UlidGenerator;
 
     match action {
         NodeStatusAction::Resolve if !lookup.node.resolved && !lookup.node.retracted => {
-            say::resolve_node(git, thread_id, &lookup.node.node_id, &actor, &clock, &ids)?;
+            say::resolve_node(git, thread_id, &lookup.node.node_id, &actor, &clock)?;
         }
         NodeStatusAction::Reopen
             if lookup.node.resolved || lookup.node.retracted || lookup.node.incorporated =>
         {
-            say::reopen_node(git, thread_id, &lookup.node.node_id, &actor, &clock, &ids)?;
+            say::reopen_node(git, thread_id, &lookup.node.node_id, &actor, &clock)?;
         }
         NodeStatusAction::Retract if !lookup.node.retracted => {
-            say::retract_node(git, thread_id, &lookup.node.node_id, &actor, &clock, &ids)?;
+            say::retract_node(git, thread_id, &lookup.node.node_id, &actor, &clock)?;
         }
         _ => {}
     }
@@ -2050,7 +2048,6 @@ fn submit_create_thread(
 
     let actor = actor::current_actor(git);
     let clock = SystemClock;
-    let ids = UlidGenerator;
     let kind = thread_kind_values()[app.thread_form.kind_index];
     let body = if app.thread_form.body.trim().is_empty() {
         None
@@ -2058,7 +2055,7 @@ fn submit_create_thread(
         Some(app.thread_form.body.trim())
     };
 
-    let thread_id = create::create_thread(git, kind, title, body, &actor, &clock, &ids)?;
+    let thread_id = create::create_thread(git, kind, title, body, &actor, &clock)?;
     reindex::run_reindex(git, db_path)?;
     app.threads = index::list_threads(conn)?;
     if let Some(pos) = app.threads.iter().position(|row| row.id == thread_id) {
@@ -2081,9 +2078,8 @@ fn submit_create_node(
 
     let actor = actor::current_actor(git);
     let clock = SystemClock;
-    let ids = UlidGenerator;
     let node_type = node_type_values()[app.node_form.node_type_index];
-    let node_id = say::say_node(git, thread_id, node_type, body, &actor, &clock, &ids, None)?;
+    let node_id = say::say_node(git, thread_id, node_type, body, &actor, &clock, None)?;
     reindex::run_reindex(git, db_path)?;
     app.threads = index::list_threads(conn)?;
     open_thread_detail(app, git, thread_id, Some(&node_id))
@@ -3164,7 +3160,6 @@ mod tests {
             &crate::internal::clock::FixedClock {
                 instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             },
-            &crate::internal::id::SequentialIdGenerator::new("t"),
         )
         .unwrap();
         reindex::run_reindex(&git, &db_path).unwrap();
@@ -3202,7 +3197,6 @@ mod tests {
             &crate::internal::clock::FixedClock {
                 instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             },
-            &crate::internal::id::SequentialIdGenerator::new("t"),
         )
         .unwrap();
         reindex::run_reindex(&git, &db_path).unwrap();
@@ -3666,7 +3660,6 @@ mod tests {
             &crate::internal::clock::FixedClock {
                 instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             },
-            &crate::internal::id::SequentialIdGenerator::new("t"),
         )
         .unwrap();
         reindex::run_reindex(&git, &db_path).unwrap();
@@ -3705,7 +3698,6 @@ mod tests {
             &crate::internal::clock::FixedClock {
                 instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             },
-            &crate::internal::id::SequentialIdGenerator::new("t"),
         )
         .unwrap();
         crate::internal::create::create_thread(
@@ -3717,7 +3709,6 @@ mod tests {
             &crate::internal::clock::FixedClock {
                 instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
             },
-            &crate::internal::id::SequentialIdGenerator::new("u"),
         )
         .unwrap();
         reindex::run_reindex(&git, &db_path).unwrap();
@@ -3755,7 +3746,6 @@ mod tests {
             &crate::internal::clock::FixedClock {
                 instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             },
-            &crate::internal::id::SequentialIdGenerator::new("t"),
         )
         .unwrap();
         crate::internal::create::create_thread(
@@ -3767,7 +3757,6 @@ mod tests {
             &crate::internal::clock::FixedClock {
                 instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
             },
-            &crate::internal::id::SequentialIdGenerator::new("u"),
         )
         .unwrap();
         let node_id = crate::internal::say::say_node(
@@ -3779,7 +3768,6 @@ mod tests {
             &crate::internal::clock::FixedClock {
                 instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 2, 0).unwrap(),
             },
-            &crate::internal::id::SequentialIdGenerator::new("n"),
             None,
         )
         .unwrap();
@@ -3824,7 +3812,6 @@ mod tests {
             &crate::internal::clock::FixedClock {
                 instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             },
-            &crate::internal::id::SequentialIdGenerator::new("t"),
         )
         .unwrap();
         let node_id = crate::internal::say::say_node(
@@ -3836,7 +3823,6 @@ mod tests {
             &crate::internal::clock::FixedClock {
                 instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
             },
-            &crate::internal::id::SequentialIdGenerator::new("n"),
             None,
         )
         .unwrap();
