@@ -55,6 +55,9 @@ fn setup_scenario(scenario: &ScenarioDef) -> (TestRepo, Vec<Agent>, Policy) {
         .current_dir(repo.path())
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .unwrap();
     std::process::Command::new("git")
@@ -62,6 +65,9 @@ fn setup_scenario(scenario: &ScenarioDef) -> (TestRepo, Vec<Agent>, Policy) {
         .current_dir(repo.path())
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .unwrap();
 
@@ -412,6 +418,9 @@ fn phase_implementation(
         .current_dir(repo_path)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .unwrap();
     std::process::Command::new("git")
@@ -419,6 +428,9 @@ fn phase_implementation(
         .current_dir(repo_path)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .unwrap();
 

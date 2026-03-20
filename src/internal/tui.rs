@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::Instant;
 
@@ -357,6 +358,8 @@ struct TreeEntry {
     depth: u16,
     /// Tree connector prefix for display (e.g. "├─ ", "│  └─ ").
     prefix: String,
+    /// Whether this node has child replies.
+    has_children: bool,
 }
 
 /// Application state for the TUI.
@@ -394,6 +397,14 @@ pub struct App {
     markdown_mode: bool,
     /// Whether mouse capture is temporarily disabled for text selection.
     mouse_capture_disabled: bool,
+    /// Node IDs whose subtrees are collapsed in the tree view.
+    collapsed: HashSet<String>,
+    /// Maps visible row index -> index in `tree_entries` (accounts for collapsed subtrees).
+    visible_tree_indices: Vec<usize>,
+    /// Whether the tree pane is shown full-width (body pane hidden).
+    tree_fullscreen: bool,
+    /// Saved detail_split value to restore when leaving fullscreen tree mode.
+    saved_detail_split: u16,
 }
 
 impl App {
@@ -443,6 +454,10 @@ impl App {
             thread_tip_sha: None,
             markdown_mode: false,
             mouse_capture_disabled: false,
+            collapsed: HashSet::new(),
+            visible_tree_indices: Vec::new(),
+            tree_fullscreen: false,
+            saved_detail_split: 60,
         }
     }
 
@@ -580,12 +595,13 @@ impl App {
     fn selected_node_id(&self) -> Option<String> {
         self.node_table_state
             .selected()
-            .and_then(|i| self.tree_entries.get(i))
+            .and_then(|i| self.visible_tree_indices.get(i))
+            .and_then(|&ti| self.tree_entries.get(ti))
             .map(|entry| self.thread_nodes[entry.node_index].node_id.clone())
     }
 
     fn move_node_down(&mut self) {
-        let n = self.tree_entries.len();
+        let n = self.visible_tree_indices.len();
         if n == 0 {
             return;
         }
@@ -595,10 +611,11 @@ impl App {
             .map(|i| (i + 1).min(n - 1))
             .unwrap_or(0);
         self.node_table_state.select(Some(next));
+        self.thread_scroll = 0;
     }
 
     fn move_node_up(&mut self) {
-        let n = self.tree_entries.len();
+        let n = self.visible_tree_indices.len();
         if n == 0 {
             return;
         }
@@ -608,20 +625,68 @@ impl App {
             .map(|i| i.saturating_sub(1))
             .unwrap_or(0);
         self.node_table_state.select(Some(next));
+        self.thread_scroll = 0;
     }
 
     fn select_node_by_id(&mut self, node_id: Option<&str>) {
         let selected = node_id.and_then(|id| {
-            self.tree_entries
+            self.visible_tree_indices
                 .iter()
-                .position(|e| self.thread_nodes[e.node_index].node_id == id)
+                .position(|&ti| self.thread_nodes[self.tree_entries[ti].node_index].node_id == id)
         });
         self.node_table_state
-            .select(match (selected, self.tree_entries.is_empty()) {
+            .select(match (selected, self.visible_tree_indices.is_empty()) {
                 (Some(index), _) => Some(index),
                 (None, false) => Some(0),
                 (None, true) => None,
             });
+    }
+
+    /// Recompute which tree entries are visible based on collapsed state.
+    fn recompute_visible_tree(&mut self) {
+        let mut visible = Vec::with_capacity(self.tree_entries.len());
+        let mut skip_depth: Option<u16> = None;
+        for (i, entry) in self.tree_entries.iter().enumerate() {
+            if let Some(sd) = skip_depth {
+                if entry.depth > sd {
+                    continue;
+                }
+                skip_depth = None;
+            }
+            let node_id = &self.thread_nodes[entry.node_index].node_id;
+            if entry.has_children && self.collapsed.contains(node_id) {
+                skip_depth = Some(entry.depth);
+            }
+            visible.push(i);
+        }
+        self.visible_tree_indices = visible;
+    }
+
+    /// Toggle collapsed state for the currently selected node.
+    fn toggle_collapse(&mut self) {
+        let node_id = match self.selected_node_id() {
+            Some(id) => id,
+            None => return,
+        };
+        // Only toggle if the node has children
+        let has_children = self
+            .node_table_state
+            .selected()
+            .and_then(|i| self.visible_tree_indices.get(i))
+            .and_then(|&ti| self.tree_entries.get(ti))
+            .map(|e| e.has_children)
+            .unwrap_or(false);
+        if !has_children {
+            return;
+        }
+        if self.collapsed.contains(&node_id) {
+            self.collapsed.remove(&node_id);
+        } else {
+            self.collapsed.insert(node_id.clone());
+        }
+        // Preserve selection on the same node after recompute
+        self.recompute_visible_tree();
+        self.select_node_by_id(Some(&node_id));
     }
 
     fn scroll_thread_down(&mut self) {
@@ -863,6 +928,9 @@ fn handle_key(
                 app.thread_scroll = 0;
                 app.thread_nodes.clear();
                 app.tree_entries.clear();
+                app.visible_tree_indices.clear();
+                app.collapsed.clear();
+                app.tree_fullscreen = false;
                 app.node_detail_text.clear();
                 app.node_detail_scroll = 0;
             }
@@ -876,6 +944,17 @@ fn handle_key(
             KeyCode::Char('S') => {
                 execute!(std::io::stdout(), DisableMouseCapture).ok();
                 app.mouse_capture_disabled = true;
+            }
+            KeyCode::Char('z') => app.toggle_collapse(),
+            KeyCode::Char('t') => {
+                if app.tree_fullscreen {
+                    app.detail_split = app.saved_detail_split;
+                    app.tree_fullscreen = false;
+                } else {
+                    app.saved_detail_split = app.detail_split;
+                    app.detail_split = 0;
+                    app.tree_fullscreen = true;
+                }
             }
             KeyCode::Char('r') => {
                 let selected = app.selected_node_id();
@@ -1059,10 +1138,13 @@ fn handle_mouse(
                     app.thread_text.clear();
                     app.thread_nodes.clear();
                     app.tree_entries.clear();
+                    app.visible_tree_indices.clear();
+                    app.collapsed.clear();
+                    app.tree_fullscreen = false;
                     app.thread_scroll = 0;
                 } else if let Some(area) = app.ui_rects.thread_nodes {
                     if let Some(index) = table_row_at(area, mouse.row) {
-                        if index < app.tree_entries.len() {
+                        if index < app.visible_tree_indices.len() {
                             app.node_table_state.select(Some(index));
                             if is_double {
                                 if let Some(node_id) = app.selected_node_id() {
@@ -1320,6 +1402,7 @@ fn open_thread_detail(
     app.thread_scroll = 0;
     app.thread_nodes = state.nodes;
     app.tree_entries = build_tree_entries(&app.thread_nodes);
+    app.recompute_visible_tree();
     app.node_detail_text.clear();
     app.node_detail_scroll = 0;
     // Cache the tip SHA for auto-refresh change detection
@@ -1524,6 +1607,7 @@ fn build_tree_entries(nodes: &[Node]) -> Vec<TreeEntry> {
             node_index: idx,
             depth,
             prefix: connector,
+            has_children: children.contains_key(&idx),
         });
 
         if let Some(child_indices) = children.get(&idx) {
@@ -2066,8 +2150,29 @@ fn render_select_mode(f: &mut Frame, area: Rect, app: &mut App) {
         chunks[0],
     );
 
-    let text = match &app.view {
-        View::ThreadDetail(_) => &app.thread_text,
+    let selected_node_body: String;
+    let text: &str = match &app.view {
+        View::ThreadDetail(_) => {
+            let node = app
+                .node_table_state
+                .selected()
+                .and_then(|i| app.visible_tree_indices.get(i))
+                .and_then(|&ti| app.tree_entries.get(ti))
+                .map(|entry| &app.thread_nodes[entry.node_index]);
+            if let Some(node) = node {
+                selected_node_body = format!(
+                    "type:     {}\nstatus:   {}\nactor:    {}\ncreated:  {}\nbody:\n{}",
+                    node.node_type,
+                    node_status(node),
+                    node.actor,
+                    node.created_at.format("%Y-%m-%dT%H:%M:%SZ"),
+                    node.body,
+                );
+                &selected_node_body
+            } else {
+                &app.thread_text
+            }
+        }
         View::NodeDetail { .. } => &app.node_detail_text,
         _ => &app.thread_text,
     };
@@ -2088,7 +2193,7 @@ fn render_select_mode(f: &mut Frame, area: Rect, app: &mut App) {
         );
     } else {
         f.render_widget(
-            Paragraph::new(text.as_str())
+            Paragraph::new(text)
                 .wrap(Wrap { trim: false })
                 .scroll((scroll, 0)),
             chunks[1],
@@ -2331,9 +2436,14 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         height: 1,
     });
     let md_indicator = if app.markdown_mode { "md:on" } else { "md:off" };
+    let tree_indicator = if app.tree_fullscreen {
+        "t:full"
+    } else {
+        "t:split"
+    };
     f.render_widget(
         Paragraph::new(format!(
-            " [esc/q]back [enter]node [c]create [l]link [m]{md_indicator} [S]select [r]refresh [j/k]nodes",
+            " [esc/q]back [enter]node [c]create [l]link [m]{md_indicator} [S]select [r]refresh [j/k]nodes [z]fold [{tree_indicator}]",
         )),
         chunks[0],
     );
@@ -2343,54 +2453,104 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
     } else {
         ""
     };
-    let left_pct = app.detail_split;
-    let right_pct = 100u16.saturating_sub(left_pct);
-    let main = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(left_pct),
-            Constraint::Percentage(right_pct),
-        ])
-        .split(chunks[1]);
 
-    app.ui_rects.thread_body = Some(main[0]);
-    app.ui_rects.thread_nodes = Some(main[1]);
-
-    let body_block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" {thread_id} "));
-    if app.markdown_mode {
-        let md_text = markdown_to_text(app.thread_text.as_str());
-        f.render_widget(
-            Paragraph::new(md_text)
-                .block(body_block)
-                .wrap(Wrap { trim: false })
-                .scroll((app.thread_scroll, 0)),
-            main[0],
-        );
+    // Feature 2: full-width tree toggle
+    if app.tree_fullscreen {
+        app.ui_rects.thread_body = None;
+        app.ui_rects.thread_nodes = Some(chunks[1]);
     } else {
-        f.render_widget(
-            Paragraph::new(app.thread_text.as_str())
-                .block(body_block)
-                .wrap(Wrap { trim: false })
-                .scroll((app.thread_scroll, 0)),
-            main[0],
-        );
+        let left_pct = app.detail_split;
+        let right_pct = 100u16.saturating_sub(left_pct);
+        let main = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(left_pct),
+                Constraint::Percentage(right_pct),
+            ])
+            .split(chunks[1]);
+
+        app.ui_rects.thread_body = Some(main[0]);
+        app.ui_rects.thread_nodes = Some(main[1]);
+
+        // Feature 3: show selected node body in left pane
+        let selected_node: Option<&Node> = app
+            .node_table_state
+            .selected()
+            .and_then(|i| app.visible_tree_indices.get(i))
+            .and_then(|&ti| app.tree_entries.get(ti))
+            .map(|entry| &app.thread_nodes[entry.node_index]);
+
+        let (body_title, body_content) = if let Some(node) = selected_node {
+            let title = format!(" {} {} ", short_id(&node.node_id), node.node_type);
+            let mut content = String::new();
+            content.push_str(&format!("type:     {}\n", node.node_type));
+            content.push_str(&format!("status:   {}\n", node_status(node)));
+            content.push_str(&format!("actor:    {}\n", node.actor));
+            content.push_str(&format!(
+                "created:  {}\n",
+                node.created_at.format("%Y-%m-%dT%H:%M:%SZ")
+            ));
+            if let Some(ref reply_to) = node.reply_to {
+                content.push_str(&format!("reply-to: {}\n", short_id(reply_to)));
+            }
+            content.push_str("body:\n");
+            for line in node.body.lines() {
+                content.push_str(&format!("  {line}\n"));
+            }
+            if node.body.is_empty() {
+                content.push_str("  \n");
+            }
+            (title, content)
+        } else {
+            (format!(" {thread_id} "), app.thread_text.clone())
+        };
+
+        let body_block = Block::default().borders(Borders::ALL).title(body_title);
+        if app.markdown_mode {
+            let md_text = markdown_to_text(&body_content);
+            f.render_widget(
+                Paragraph::new(md_text)
+                    .block(body_block)
+                    .wrap(Wrap { trim: false })
+                    .scroll((app.thread_scroll, 0)),
+                main[0],
+            );
+        } else {
+            f.render_widget(
+                Paragraph::new(body_content)
+                    .block(body_block)
+                    .wrap(Wrap { trim: false })
+                    .scroll((app.thread_scroll, 0)),
+                main[0],
+            );
+        }
     }
 
+    // Feature 1: build rows from visible entries only, with collapse indicators
     let rows: Vec<Row> = app
-        .tree_entries
+        .visible_tree_indices
         .iter()
-        .map(|entry| {
+        .map(|&ti| {
+            let entry = &app.tree_entries[ti];
             let node = &app.thread_nodes[entry.node_index];
             let type_str = node.node_type.to_string();
             let status_str = node_status(node);
             let dim = node_row_modifier(node);
-            // Prefix the type column with tree connectors for replies
-            let type_display = if entry.prefix.is_empty() {
-                type_str.clone()
+            let node_id = &node.node_id;
+            // Collapse indicator for nodes with children
+            let fold_indicator = if entry.has_children {
+                if app.collapsed.contains(node_id) {
+                    "▸"
+                } else {
+                    "▾"
+                }
             } else {
-                format!("{}{}", entry.prefix, type_str)
+                " "
+            };
+            let type_display = if entry.prefix.is_empty() {
+                format!("{fold_indicator}{type_str}")
+            } else {
+                format!("{}{fold_indicator}{type_str}", entry.prefix)
             };
             let body_max = 36usize.saturating_sub(entry.depth as usize * 2);
             Row::new(vec![
@@ -2402,6 +2562,13 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
             .style(Style::default().add_modifier(dim))
         })
         .collect();
+    let visible_count = app.visible_tree_indices.len();
+    let total_count = app.thread_nodes.len();
+    let node_title = if visible_count < total_count {
+        format!(" nodes ({}/{}) ", visible_count, total_count)
+    } else {
+        format!(" nodes ({}) ", total_count)
+    };
     let header = Row::new(["ID", "TYPE", "STATUS", "BODY"])
         .style(Style::default().add_modifier(Modifier::BOLD));
     let widths = [
@@ -2412,17 +2579,14 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
     ];
     let table = Table::new(rows, widths)
         .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" nodes ({}) ", app.thread_nodes.len())),
-        )
+        .block(Block::default().borders(Borders::ALL).title(node_title))
         .row_highlight_style(
             Style::default()
                 .bg(Color::Blue)
                 .add_modifier(Modifier::BOLD),
         );
-    f.render_stateful_widget(table, main[1], &mut app.node_table_state);
+    let tree_area = app.ui_rects.thread_nodes.unwrap_or(chunks[1]);
+    f.render_stateful_widget(table, tree_area, &mut app.node_table_state);
 }
 
 pub(crate) fn render_node_detail(f: &mut Frame, area: Rect, app: &mut App) {
@@ -2932,6 +3096,9 @@ mod tests {
             .current_dir(&path)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
             .output()
             .unwrap();
         assert!(init.status.success());
@@ -2945,6 +3112,8 @@ mod tests {
                 .current_dir(&path)
                 .env("GIT_CONFIG_NOSYSTEM", "1")
                 .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
                 .output()
                 .unwrap();
             assert!(status.status.success());
@@ -3183,6 +3352,7 @@ mod tests {
             reply_to: None,
         }];
         app.tree_entries = build_tree_entries(&app.thread_nodes);
+        app.recompute_visible_tree();
         app.node_table_state.select(Some(0));
         let out = render_to_string(&mut app, 160, 30);
         assert!(out.contains("nodes (1)"));
@@ -3831,6 +4001,7 @@ mod tests {
             },
         ];
         app.tree_entries = build_tree_entries(&app.thread_nodes);
+        app.recompute_visible_tree();
         app.node_table_state.select(Some(0));
         app.move_node_down();
         assert_eq!(app.node_table_state.selected(), Some(1));

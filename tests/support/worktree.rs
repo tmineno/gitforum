@@ -21,6 +21,9 @@ pub fn create_actor_worktree(main_repo: &Path, actor: &str, base_dir: &Path) -> 
         .current_dir(main_repo)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .expect("git worktree add failed");
     assert!(
@@ -38,6 +41,9 @@ pub fn commit_forum_config(repo: &Path) {
         .current_dir(repo)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .expect("git add .forum failed");
     assert!(
@@ -51,6 +57,9 @@ pub fn commit_forum_config(repo: &Path) {
         .current_dir(repo)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .expect("git commit .forum failed");
     assert!(
@@ -84,6 +93,9 @@ fn ensure_seed_commit(repo: &Path) {
         .current_dir(repo)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .expect("git rev-parse failed");
     if check.status.success() {
@@ -95,6 +107,9 @@ fn ensure_seed_commit(repo: &Path) {
         .current_dir(repo)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .expect("git commit failed");
     assert!(
