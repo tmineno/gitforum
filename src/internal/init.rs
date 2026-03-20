@@ -61,6 +61,9 @@ pub fn init_forum(paths: &RepoPaths) -> ForumResult<()> {
         let _ = std::process::Command::new("git")
             .args(["config", "--local", "alias.forum", "!git-forum"])
             .current_dir(repo_root)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
             .status();
     }
 

@@ -18,6 +18,11 @@ impl GitOps {
     pub fn discover() -> ForumResult<Self> {
         let output = Command::new("git")
             .args(["rev-parse", "--show-toplevel"])
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
             .output()?;
         if !output.status.success() {
             return Err(ForumError::Repo("not inside a git repository".into()));
@@ -35,6 +40,11 @@ impl GitOps {
         let output = Command::new("git")
             .args(["rev-parse", "--git-dir"])
             .current_dir(&self.root)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
             .output()?;
         if !output.status.success() {
             return Err(ForumError::Repo("cannot resolve git directory".into()));
@@ -58,6 +68,11 @@ impl GitOps {
         let output = Command::new("git")
             .args(args)
             .current_dir(&self.root)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
             .output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -73,6 +88,11 @@ impl GitOps {
         let mut child = Command::new("git")
             .args(args)
             .current_dir(&self.root)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

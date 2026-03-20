@@ -24,6 +24,9 @@ impl TestRepo {
             .args(["init"])
             .current_dir(&path)
             .envs(isolation_env())
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
             .output()
             .expect("git init failed");
         assert!(status.status.success(), "git init failed");
@@ -37,6 +40,8 @@ impl TestRepo {
                 .args(["config", key, val])
                 .current_dir(&path)
                 .envs(isolation_env())
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
                 .output()
                 .expect("git config failed");
             assert!(status.status.success());
