@@ -703,7 +703,7 @@ fn main() -> Result<(), ForumError> {
                 as_actor,
             } => {
                 let (git, _paths) = discover_repo_with_init_warning()?;
-                let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+                let actor = resolve_actor(as_actor, &git);
                 branch_ops::set_branch(&git, &thread_id, Some(&branch), &actor, &clock)?;
                 println!("{thread_id} -> branch {branch}");
             }
@@ -712,7 +712,7 @@ fn main() -> Result<(), ForumError> {
                 as_actor,
             } => {
                 let (git, _paths) = discover_repo_with_init_warning()?;
-                let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+                let actor = resolve_actor(as_actor, &git);
                 branch_ops::set_branch(&git, &thread_id, None, &actor, &clock)?;
                 println!("{thread_id} -> branch <cleared>");
             }
@@ -860,37 +860,40 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             node_id,
             as_actor,
-        } => {
-            let (git, _paths) = discover_repo_with_init_warning()?;
-            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
-            let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
-            say::retract_node(&git, &thread_id, &resolved, &actor, &clock)?;
-            println!("Retracted {resolved}");
-        }
+        } => run_node_lifecycle(
+            &thread_id,
+            &node_id,
+            as_actor,
+            git_forum::internal::event::EventType::Retract,
+            "Retracted",
+            &clock,
+        )?,
 
         Commands::Resolve {
             thread_id,
             node_id,
             as_actor,
-        } => {
-            let (git, _paths) = discover_repo_with_init_warning()?;
-            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
-            let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
-            say::resolve_node(&git, &thread_id, &resolved, &actor, &clock)?;
-            println!("Resolved {resolved}");
-        }
+        } => run_node_lifecycle(
+            &thread_id,
+            &node_id,
+            as_actor,
+            git_forum::internal::event::EventType::Resolve,
+            "Resolved",
+            &clock,
+        )?,
 
         Commands::Reopen {
             thread_id,
             node_id,
             as_actor,
-        } => {
-            let (git, _paths) = discover_repo_with_init_warning()?;
-            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
-            let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
-            say::reopen_node(&git, &thread_id, &resolved, &actor, &clock)?;
-            println!("Reopened {resolved}");
-        }
+        } => run_node_lifecycle(
+            &thread_id,
+            &node_id,
+            as_actor,
+            git_forum::internal::event::EventType::Reopen,
+            "Reopened",
+            &clock,
+        )?,
 
         Commands::State {
             cmd,
@@ -917,7 +920,7 @@ fn main() -> Result<(), ForumError> {
                     resolve_open_actions,
                     dry_run,
                 }) => {
-                    let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+                    let actor = resolve_actor(as_actor, &git);
                     let kind = parse_thread_kind_filter(kind.as_deref())?;
                     let report = run_bulk_state_change(
                         &git,
@@ -955,7 +958,7 @@ fn main() -> Result<(), ForumError> {
                                 .into(),
                         )
                     })?;
-                    let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+                    let actor = resolve_actor(as_actor, &git);
                     // Add comment (summary node) before state transition if requested
                     if let Some(comment_text) = &comment {
                         say::say_node(
@@ -1024,7 +1027,7 @@ fn main() -> Result<(), ForumError> {
                     return Err(ForumError::Config("--ref is required".into()));
                 }
                 let (git, _paths) = discover_repo_with_init_warning()?;
-                let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+                let actor = resolve_actor(as_actor, &git);
                 for ref_target in &ref_targets {
                     let commit_sha = evidence_ops::add_evidence(
                         &git,
@@ -1050,7 +1053,7 @@ fn main() -> Result<(), ForumError> {
             as_actor,
         } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
-            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+            let actor = resolve_actor(as_actor, &git);
             evidence_ops::add_thread_link(
                 &git,
                 &thread_id,
@@ -1137,7 +1140,7 @@ fn run_revise_cmd(
             as_actor,
         } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
-            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+            let actor = resolve_actor(as_actor, &git);
             let body_text = resolve_body_required(body, body_file)?;
             say::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
             println!("Body revised for {thread_id}");
@@ -1150,7 +1153,7 @@ fn run_revise_cmd(
             as_actor,
         } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
-            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+            let actor = resolve_actor(as_actor, &git);
             let body_text = resolve_body_required(body, body_file)?;
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
             say::revise_node(&git, &thread_id, &resolved, &body_text, &actor, clock)?;
@@ -1170,7 +1173,7 @@ fn run_shorthand_say(
     clock: &dyn git_forum::internal::clock::Clock,
 ) -> Result<(), ForumError> {
     let (git, paths) = discover_repo_with_init_warning()?;
-    let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+    let actor = resolve_actor(as_actor, &git);
     let body_text = resolve_body_required(body, body_file)?;
     let resolved_reply = resolve_reply_to(&git, thread_id, reply_to.as_deref())?;
     let node_id = say::say_node(
@@ -1222,7 +1225,7 @@ fn run_thread_cmd(
             summary,
         } => {
             let (git, paths) = discover_repo_with_init_warning()?;
-            let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+            let actor = resolve_actor(as_actor, &git);
 
             // Resolve title and body from --from-thread, --from-commit, or direct args
             let (effective_title, effective_body, commit_ref, source_thread) =
@@ -1487,7 +1490,7 @@ fn run_state_shorthand(
 ) -> Result<(), ForumError> {
     let (git, paths) = discover_repo_with_init_warning()?;
     let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
-    let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
+    let actor = resolve_actor(as_actor, &git);
     if let Some(text) = comment {
         say::say_node(
             &git,
@@ -1703,6 +1706,26 @@ fn print_bulk_report(report: &BulkStateReport) {
             ),
         }
     }
+}
+
+fn resolve_actor(as_actor: Option<String>, git: &GitOps) -> String {
+    as_actor.unwrap_or_else(|| actor::current_actor(git))
+}
+
+fn run_node_lifecycle(
+    thread_id: &str,
+    node_id: &str,
+    as_actor: Option<String>,
+    event_type: git_forum::internal::event::EventType,
+    label: &str,
+    clock: &dyn git_forum::internal::clock::Clock,
+) -> Result<(), ForumError> {
+    let (git, _paths) = discover_repo_with_init_warning()?;
+    let actor = resolve_actor(as_actor, &git);
+    let resolved = thread::resolve_node_id_in_thread(&git, thread_id, node_id)?;
+    say::node_lifecycle(&git, thread_id, &resolved, &actor, clock, event_type)?;
+    println!("{label} {resolved}");
+    Ok(())
 }
 
 fn discover_repo_with_init_warning() -> Result<(GitOps, RepoPaths), ForumError> {
