@@ -177,12 +177,10 @@ Event types:
 | `claim` | Single assertion or statement | open |
 | `question` | Request for information | open |
 | `objection` | Blocking concern | open → resolved / retracted |
-| `alternative` | Alternative approach | open |
 | `evidence` | Supporting evidence reference | open |
 | `summary` | Consensus digest | open |
 | `action` | Work item | open → resolved / retracted |
 | `risk` | Identified risk | open |
-| `assumption` | Stated assumption | open |
 | `review` | Holistic thread analysis | open (informational) |
 
 `objection` and `action` nodes are open when created. `resolve` closes them; `reopen` reopens
@@ -399,8 +397,6 @@ git forum summary <THREAD_ID> <TEXT>
 git forum action <THREAD_ID> <TEXT>
 git forum risk <THREAD_ID> <TEXT>
 git forum review <THREAD_ID> <TEXT>
-git forum alternative <THREAD_ID> <TEXT>
-git forum assumption <THREAD_ID> <TEXT>
 ```
 
 All discussion commands accept a positional body argument (use `"-"` to read from stdin),

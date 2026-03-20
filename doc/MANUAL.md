@@ -55,8 +55,8 @@ git-forum evidence --help-llm          # evidence kinds reference
 ```
 
 Per-subcommand `--help-llm` prints only the relevant reference section. Shorthand node commands
-(`claim`, `question`, `objection`, `summary`, `action`, `risk`, `review`, `alternative`,
-`assumption`) print the node type taxonomy. `state` (and shorthand commands like `close`, `accept`)
+(`claim`, `question`, `objection`, `summary`, `action`, `risk`, `review`)
+print the node type taxonomy. `state` (and shorthand commands like `close`, `accept`)
 prints the state transition map. `evidence` prints evidence kinds.
 
 ## Conventions
@@ -292,20 +292,16 @@ Supported shorthand commands:
 - `git forum action`
 - `git forum risk`
 - `git forum review`
-- `git forum alternative`
-- `git forum assumption`
 
 Valid node types used in the preferred workflow:
 
 - `claim`
 - `question`
 - `objection`
-- `alternative`
 - `evidence`
 - `summary`
 - `action`
 - `risk`
-- `assumption`
 - `review`
 
 `review` is a holistic analysis of the entire thread, distinct from `claim` (single assertion) and
@@ -479,7 +475,7 @@ The TUI uses color to distinguish kinds, statuses, and node types:
 - **Thread status**: green = open/draft, yellow = pending/proposed/under-review,
   magenta = accepted/closed, red = rejected, gray = deprecated
 - **Node type**: red = objection/risk, yellow = question, green = summary, cyan = action,
-  blue = review, magenta = alternative
+  blue = review
 - **Node status**: green = open, gray = resolved/retracted/incorporated
 
 Resolved, retracted, and incorporated node rows are dimmed.

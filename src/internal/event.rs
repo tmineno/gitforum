@@ -88,12 +88,10 @@ pub enum NodeType {
     Claim,
     Question,
     Objection,
-    Alternative,
     Evidence,
     Summary,
     Action,
     Risk,
-    Assumption,
     Review,
 }
 
@@ -103,12 +101,10 @@ impl std::fmt::Display for NodeType {
             Self::Claim => "claim",
             Self::Question => "question",
             Self::Objection => "objection",
-            Self::Alternative => "alternative",
             Self::Evidence => "evidence",
             Self::Summary => "summary",
             Self::Action => "action",
             Self::Risk => "risk",
-            Self::Assumption => "assumption",
             Self::Review => "review",
         };
         f.write_str(s)
@@ -122,14 +118,12 @@ impl std::str::FromStr for NodeType {
             "claim" => Ok(Self::Claim),
             "question" => Ok(Self::Question),
             "objection" => Ok(Self::Objection),
-            "alternative" => Ok(Self::Alternative),
             "evidence" => Ok(Self::Evidence),
             "summary" => Ok(Self::Summary),
             "action" => Ok(Self::Action),
             "risk" => Ok(Self::Risk),
-            "assumption" => Ok(Self::Assumption),
             "review" => Ok(Self::Review),
-            _ => Err(format!("unknown node type '{s}'; valid types: claim, question, objection, alternative, evidence, summary, action, risk, assumption, review")),
+            _ => Err(format!("unknown node type '{s}'; valid types: claim, question, objection, evidence, summary, action, risk, review")),
         }
     }
 }

@@ -295,7 +295,8 @@ pub(super) fn handle_mouse(
                     app.thread_scroll = 0;
                 } else if let Some(area) = app.ui_rects.thread_nodes {
                     if let Some(index) = table_row_at(area, mouse.row) {
-                        if index < app.visible_tree_indices.len() {
+                        // +1 for thread root row at index 0
+                        if index < app.visible_tree_indices.len() + 1 {
                             app.node_table_state.select(Some(index));
                             if is_double {
                                 if let Some(node_id) = app.selected_node_id() {

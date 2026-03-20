@@ -82,12 +82,10 @@ impl ClaudeCodeAdapter {
             NodeType::Claim => "add a concrete claim",
             NodeType::Question => "ask a clarifying question",
             NodeType::Objection => "raise an objection",
-            NodeType::Alternative => "offer an alternative",
             NodeType::Evidence => "record supporting evidence",
             NodeType::Summary => "write a summary",
             NodeType::Action => "record an action item",
             NodeType::Risk => "surface a risk",
-            NodeType::Assumption => "state an assumption",
             NodeType::Review => "add an overall review",
         }
     }

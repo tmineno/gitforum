@@ -135,12 +135,10 @@ fn all_node_types() -> Vec<&'static str> {
         "claim",
         "question",
         "objection",
-        "alternative",
         "evidence",
         "summary",
         "action",
         "risk",
-        "assumption",
         "review",
     ]
 }

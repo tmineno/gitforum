@@ -254,6 +254,10 @@ pub struct App {
     tree_fullscreen: bool,
     /// Saved detail_split value to restore when leaving fullscreen tree mode.
     saved_detail_split: u16,
+    /// Metadata of the currently viewed thread (for display as root row in nodes pane).
+    thread_title: String,
+    thread_kind: String,
+    thread_status: String,
 }
 
 impl App {
@@ -307,6 +311,9 @@ impl App {
             visible_tree_indices: Vec::new(),
             tree_fullscreen: false,
             saved_detail_split: 60,
+            thread_title: String::new(),
+            thread_kind: String::new(),
+            thread_status: String::new(),
         }
     }
 
@@ -439,16 +446,25 @@ impl App {
         None
     }
 
+    /// Returns the node ID of the currently selected row, or None if the thread
+    /// root row (row 0) is selected or nothing is selected.
     fn selected_node_id(&self) -> Option<String> {
         self.node_table_state
             .selected()
-            .and_then(|i| self.visible_tree_indices.get(i))
+            .and_then(|i| {
+                // Row 0 is the thread root; node rows start at index 1
+                if i == 0 {
+                    return None;
+                }
+                self.visible_tree_indices.get(i - 1)
+            })
             .and_then(|&ti| self.tree_entries.get(ti))
             .map(|entry| self.thread_nodes[entry.node_index].node_id.clone())
     }
 
     fn move_node_down(&mut self) {
-        let n = self.visible_tree_indices.len();
+        // +1 for the thread root row at index 0
+        let n = self.visible_tree_indices.len() + 1;
         if n == 0 {
             return;
         }
@@ -462,7 +478,8 @@ impl App {
     }
 
     fn move_node_up(&mut self) {
-        let n = self.visible_tree_indices.len();
+        // +1 for the thread root row at index 0
+        let n = self.visible_tree_indices.len() + 1;
         if n == 0 {
             return;
         }
@@ -480,12 +497,13 @@ impl App {
             self.visible_tree_indices
                 .iter()
                 .position(|&ti| self.thread_nodes[self.tree_entries[ti].node_index].node_id == id)
+                .map(|pos| pos + 1) // +1 for thread root row at index 0
         });
         self.node_table_state
             .select(match (selected, self.visible_tree_indices.is_empty()) {
                 (Some(index), _) => Some(index),
-                (None, false) => Some(0),
-                (None, true) => None,
+                // Default to row 0 (thread root)
+                (None, _) => Some(0),
             });
     }
 
@@ -519,6 +537,7 @@ impl App {
         let has_children = self
             .node_table_state
             .selected()
+            .and_then(|i| i.checked_sub(1)) // offset for thread root row
             .and_then(|i| self.visible_tree_indices.get(i))
             .and_then(|&ti| self.tree_entries.get(ti))
             .map(|e| e.has_children)
@@ -1343,7 +1362,8 @@ mod tests {
         assert_eq!(app.view, View::ThreadDetail(thread_id.clone()));
         assert_eq!(app.thread_nodes.len(), 1);
         assert_eq!(app.thread_nodes[0].body, "Node from TUI\nwith more detail");
-        assert_eq!(app.node_table_state.selected(), Some(0));
+        // Row 0 is thread root; the newly created node is at row 1
+        assert_eq!(app.node_table_state.selected(), Some(1));
     }
 
     #[test]
@@ -1679,10 +1699,13 @@ mod tests {
         ];
         app.tree_entries = build_tree_entries(&app.thread_nodes);
         app.recompute_visible_tree();
+        // Row 0 is thread root; 2 nodes at rows 1 and 2
         app.node_table_state.select(Some(0));
         app.move_node_down();
         assert_eq!(app.node_table_state.selected(), Some(1));
         app.move_node_down();
-        assert_eq!(app.node_table_state.selected(), Some(1));
+        assert_eq!(app.node_table_state.selected(), Some(2));
+        app.move_node_down();
+        assert_eq!(app.node_table_state.selected(), Some(2));
     }
 }

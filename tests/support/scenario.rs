@@ -181,22 +181,6 @@ pub fn calculator_scenario() -> ScenarioDef {
                         actor: "human/alice".to_string(),
                         should_resolve: false,
                     },
-                    // Missing node types on RFC-0001
-                    NodeDef {
-                        thread_ref: "RFC-0001".to_string(),
-                        node_type: NodeType::Alternative,
-                        body: "Consider a stack-based approach instead of direct evaluation."
-                            .to_string(),
-                        actor: "human/bob".to_string(),
-                        should_resolve: false,
-                    },
-                    NodeDef {
-                        thread_ref: "RFC-0001".to_string(),
-                        node_type: NodeType::Assumption,
-                        body: "Assumes IEEE 754 double precision floating point.".to_string(),
-                        actor: "ai/copilot".to_string(),
-                        should_resolve: false,
-                    },
                     NodeDef {
                         thread_ref: "RFC-0001".to_string(),
                         node_type: NodeType::Review,

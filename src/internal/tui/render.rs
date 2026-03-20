@@ -111,7 +111,6 @@ fn node_type_color(node_type: &str) -> Color {
         "action" => Color::Cyan,
         "claim" => Color::Reset,
         "review" => Color::Blue,
-        "alternative" => Color::Magenta,
         _ => Color::Reset,
     }
 }
@@ -494,9 +493,11 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         app.ui_rects.thread_nodes = Some(main[1]);
 
         // Feature 3: show selected node body in left pane
+        // Row 0 is the thread root; node rows start at index 1
         let selected_node: Option<&Node> = app
             .node_table_state
             .selected()
+            .and_then(|i| i.checked_sub(1))
             .and_then(|i| app.visible_tree_indices.get(i))
             .and_then(|&ti| app.tree_entries.get(ti))
             .map(|entry| &app.thread_nodes[entry.node_index]);
@@ -547,42 +548,51 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         }
     }
 
+    // Thread root row: shows the RFC/issue itself as the first entry
+    let root_row = Row::new(vec![
+        Cell::from(thread_id.to_string()),
+        Cell::from(app.thread_kind.clone())
+            .style(Style::default().fg(kind_color(&app.thread_kind))),
+        Cell::from(app.thread_status.clone())
+            .style(Style::default().fg(status_color(&app.thread_status))),
+        Cell::from(single_line_preview(&app.thread_title, 36)),
+    ])
+    .style(Style::default().add_modifier(Modifier::BOLD));
+
     // Feature 1: build rows from visible entries only, with collapse indicators
-    let rows: Vec<Row> = app
-        .visible_tree_indices
-        .iter()
-        .map(|&ti| {
-            let entry = &app.tree_entries[ti];
-            let node = &app.thread_nodes[entry.node_index];
-            let type_str = node.node_type.to_string();
-            let status_str = node_status(node);
-            let dim = node_row_modifier(node);
-            let node_id = &node.node_id;
-            // Collapse indicator for nodes with children
-            let fold_indicator = if entry.has_children {
-                if app.collapsed.contains(node_id) {
-                    "▸"
-                } else {
-                    "▾"
-                }
+    let node_rows = app.visible_tree_indices.iter().map(|&ti| {
+        let entry = &app.tree_entries[ti];
+        let node = &app.thread_nodes[entry.node_index];
+        let type_str = node.node_type.to_string();
+        let status_str = node_status(node);
+        let dim = node_row_modifier(node);
+        let node_id = &node.node_id;
+        // Collapse indicator for nodes with children
+        let fold_indicator = if entry.has_children {
+            if app.collapsed.contains(node_id) {
+                "▸"
             } else {
-                " "
-            };
-            let type_display = if entry.prefix.is_empty() {
-                format!("{fold_indicator}{type_str}")
-            } else {
-                format!("{}{fold_indicator}{type_str}", entry.prefix)
-            };
-            let body_max = 36usize.saturating_sub(entry.depth as usize * 2);
-            Row::new(vec![
-                Cell::from(short_id(&node.node_id)),
-                Cell::from(type_display).style(Style::default().fg(node_type_color(&type_str))),
-                Cell::from(status_str).style(Style::default().fg(node_status_color(status_str))),
-                Cell::from(single_line_preview(&node.body, body_max)),
-            ])
-            .style(Style::default().add_modifier(dim))
-        })
-        .collect();
+                "▾"
+            }
+        } else {
+            " "
+        };
+        let type_display = if entry.prefix.is_empty() {
+            format!("{fold_indicator}{type_str}")
+        } else {
+            format!("{}{fold_indicator}{type_str}", entry.prefix)
+        };
+        let body_max = 36usize.saturating_sub(entry.depth as usize * 2);
+        Row::new(vec![
+            Cell::from(short_id(&node.node_id)),
+            Cell::from(type_display).style(Style::default().fg(node_type_color(&type_str))),
+            Cell::from(status_str).style(Style::default().fg(node_status_color(status_str))),
+            Cell::from(single_line_preview(&node.body, body_max)),
+        ])
+        .style(Style::default().add_modifier(dim))
+    });
+
+    let rows: Vec<Row> = std::iter::once(root_row).chain(node_rows).collect();
     let visible_count = app.visible_tree_indices.len();
     let total_count = app.thread_nodes.len();
     let node_title = if visible_count < total_count {
