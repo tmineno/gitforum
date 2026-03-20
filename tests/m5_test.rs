@@ -6,7 +6,6 @@ use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
 use git_forum::internal::event::ThreadKind;
 use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::id::SequentialIdGenerator;
 use git_forum::internal::index;
 use git_forum::internal::init;
 use git_forum::internal::reindex;
@@ -27,16 +26,7 @@ fn fixed_clock() -> FixedClock {
 }
 
 fn make_thread(git: &GitOps, kind: ThreadKind, title: &str) -> String {
-    create::create_thread(
-        git,
-        kind,
-        title,
-        None,
-        "human/alice",
-        &fixed_clock(),
-        &SequentialIdGenerator::new("t"),
-    )
-    .unwrap()
+    create::create_thread(git, kind, title, None, "human/alice", &fixed_clock()).unwrap()
 }
 
 fn add_node(
@@ -54,7 +44,6 @@ fn add_node(
         &FixedClock {
             instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
         },
-        &SequentialIdGenerator::new("n"),
         None,
     )
     .unwrap();

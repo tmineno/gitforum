@@ -3,7 +3,6 @@ use super::clock::Clock;
 use super::error::{ForumError, ForumResult};
 use super::event::{Event, EventType, NodeType};
 use super::git_ops::GitOps;
-use super::id::IdGenerator;
 use super::policy::Policy;
 use super::state_machine;
 use super::thread;
@@ -14,7 +13,6 @@ use super::thread;
 /// Postconditions: a Say event is written and the thread ref updated.
 /// Failure modes: ForumError::Git on subprocess failure.
 /// Side effects: writes git objects, updates ref.
-#[allow(clippy::too_many_arguments)]
 pub fn say_node(
     git: &GitOps,
     thread_id: &str,
@@ -22,30 +20,12 @@ pub fn say_node(
     body: &str,
     actor: &str,
     clock: &dyn Clock,
-    _ids: &dyn IdGenerator,
     reply_to: Option<&str>,
 ) -> ForumResult<String> {
-    let ev = Event {
-        event_id: String::new(),
-        thread_id: thread_id.to_string(),
-        event_type: EventType::Say,
-        created_at: clock.now(),
-        actor: actor.to_string(),
-        base_rev: None,
-        parents: vec![],
-        title: None,
-        kind: None,
-        body: Some(body.to_string()),
-        node_type: Some(node_type),
-        target_node_id: None,
-        new_state: None,
-        approvals: vec![],
-        evidence: None,
-        link_rel: None,
-        branch: None,
-        incorporated_node_ids: vec![],
-        reply_to: reply_to.map(str::to_string),
-    };
+    let ev = Event::base(thread_id, EventType::Say, actor, clock)
+        .with_body(body)
+        .with_node_type(node_type)
+        .with_reply_to(reply_to);
     super::event::write_event(git, &ev)
 }
 
@@ -63,7 +43,6 @@ pub fn revise_body(
     incorporates: &[String],
     actor: &str,
     clock: &dyn Clock,
-    _ids: &dyn IdGenerator,
 ) -> ForumResult<()> {
     let resolved_ids: Vec<String> = if incorporates.is_empty() {
         vec![]
@@ -73,27 +52,9 @@ pub fn revise_body(
             .map(|id| thread::resolve_node_id_in_thread(git, thread_id, id))
             .collect::<Result<Vec<_>, _>>()?
     };
-    let ev = Event {
-        event_id: String::new(),
-        thread_id: thread_id.to_string(),
-        event_type: EventType::ReviseBody,
-        created_at: clock.now(),
-        actor: actor.to_string(),
-        base_rev: None,
-        parents: vec![],
-        title: None,
-        kind: None,
-        body: Some(body.to_string()),
-        node_type: None,
-        target_node_id: None,
-        new_state: None,
-        approvals: vec![],
-        evidence: None,
-        link_rel: None,
-        branch: None,
-        incorporated_node_ids: resolved_ids,
-        reply_to: None,
-    };
+    let ev = Event::base(thread_id, EventType::ReviseBody, actor, clock)
+        .with_body(body)
+        .with_incorporated_node_ids(resolved_ids);
     super::event::write_event(git, &ev)?;
     Ok(())
 }
@@ -111,148 +72,64 @@ pub fn revise_node(
     body: &str,
     actor: &str,
     clock: &dyn Clock,
-    _ids: &dyn IdGenerator,
 ) -> ForumResult<()> {
-    let ev = Event {
-        event_id: String::new(),
-        thread_id: thread_id.to_string(),
-        event_type: EventType::Edit,
-        created_at: clock.now(),
-        actor: actor.to_string(),
-        base_rev: None,
-        parents: vec![],
-        title: None,
-        kind: None,
-        body: Some(body.to_string()),
-        node_type: None,
-        target_node_id: Some(node_id.to_string()),
-        new_state: None,
-        approvals: vec![],
-        evidence: None,
-        link_rel: None,
-        branch: None,
-        incorporated_node_ids: vec![],
-        reply_to: None,
-    };
+    let ev = Event::base(thread_id, EventType::Edit, actor, clock)
+        .with_body(body)
+        .with_target_node_id(node_id);
+    super::event::write_event(git, &ev)?;
+    Ok(())
+}
+
+/// Apply a lifecycle event (Retract, Resolve, or Reopen) to a node.
+///
+/// Preconditions: thread_id and node_id exist; event_type is Retract, Resolve, or Reopen.
+/// Postconditions: the corresponding event is written.
+/// Failure modes: ForumError::Git on subprocess failure.
+/// Side effects: writes git objects, updates ref.
+pub fn node_lifecycle(
+    git: &GitOps,
+    thread_id: &str,
+    node_id: &str,
+    actor: &str,
+    clock: &dyn Clock,
+    event_type: EventType,
+) -> ForumResult<()> {
+    let ev = Event::base(thread_id, event_type, actor, clock).with_target_node_id(node_id);
     super::event::write_event(git, &ev)?;
     Ok(())
 }
 
 /// Retract a node (soft-delete: marks retracted in replay).
-///
-/// Preconditions: thread_id and node_id exist.
-/// Postconditions: a Retract event is written.
-/// Failure modes: ForumError::Git on subprocess failure.
-/// Side effects: writes git objects, updates ref.
 pub fn retract_node(
     git: &GitOps,
     thread_id: &str,
     node_id: &str,
     actor: &str,
     clock: &dyn Clock,
-    _ids: &dyn IdGenerator,
 ) -> ForumResult<()> {
-    let ev = Event {
-        event_id: String::new(),
-        thread_id: thread_id.to_string(),
-        event_type: EventType::Retract,
-        created_at: clock.now(),
-        actor: actor.to_string(),
-        base_rev: None,
-        parents: vec![],
-        title: None,
-        kind: None,
-        body: None,
-        node_type: None,
-        target_node_id: Some(node_id.to_string()),
-        new_state: None,
-        approvals: vec![],
-        evidence: None,
-        link_rel: None,
-        branch: None,
-        incorporated_node_ids: vec![],
-        reply_to: None,
-    };
-    super::event::write_event(git, &ev)?;
-    Ok(())
+    node_lifecycle(git, thread_id, node_id, actor, clock, EventType::Retract)
 }
 
 /// Resolve a node (marks it addressed, e.g. an objection that has been answered).
-///
-/// Preconditions: thread_id and node_id exist.
-/// Postconditions: a Resolve event is written.
-/// Failure modes: ForumError::Git on subprocess failure.
-/// Side effects: writes git objects, updates ref.
 pub fn resolve_node(
     git: &GitOps,
     thread_id: &str,
     node_id: &str,
     actor: &str,
     clock: &dyn Clock,
-    _ids: &dyn IdGenerator,
 ) -> ForumResult<()> {
-    let ev = Event {
-        event_id: String::new(),
-        thread_id: thread_id.to_string(),
-        event_type: EventType::Resolve,
-        created_at: clock.now(),
-        actor: actor.to_string(),
-        base_rev: None,
-        parents: vec![],
-        title: None,
-        kind: None,
-        body: None,
-        node_type: None,
-        target_node_id: Some(node_id.to_string()),
-        new_state: None,
-        approvals: vec![],
-        evidence: None,
-        link_rel: None,
-        branch: None,
-        incorporated_node_ids: vec![],
-        reply_to: None,
-    };
-    super::event::write_event(git, &ev)?;
-    Ok(())
+    node_lifecycle(git, thread_id, node_id, actor, clock, EventType::Resolve)
 }
 
 /// Reopen a resolved or retracted node.
-///
-/// Preconditions: thread_id and node_id exist.
-/// Postconditions: a Reopen event is written.
-/// Failure modes: ForumError::Git on subprocess failure.
-/// Side effects: writes git objects, updates ref.
 pub fn reopen_node(
     git: &GitOps,
     thread_id: &str,
     node_id: &str,
     actor: &str,
     clock: &dyn Clock,
-    _ids: &dyn IdGenerator,
 ) -> ForumResult<()> {
-    let ev = Event {
-        event_id: String::new(),
-        thread_id: thread_id.to_string(),
-        event_type: EventType::Reopen,
-        created_at: clock.now(),
-        actor: actor.to_string(),
-        base_rev: None,
-        parents: vec![],
-        title: None,
-        kind: None,
-        body: None,
-        node_type: None,
-        target_node_id: Some(node_id.to_string()),
-        new_state: None,
-        approvals: vec![],
-        evidence: None,
-        link_rel: None,
-        branch: None,
-        incorporated_node_ids: vec![],
-        reply_to: None,
-    };
-    super::event::write_event(git, &ev)?;
-    Ok(())
+    node_lifecycle(git, thread_id, node_id, actor, clock, EventType::Reopen)
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -267,7 +144,6 @@ pub struct StateChangePlan {
     pub resolve_action_ids: Vec<String>,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn prepare_state_change(
     git: &GitOps,
     thread_id: &str,
@@ -368,7 +244,6 @@ pub fn change_state(
     sign_actors: &[String],
     actor: &str,
     clock: &dyn Clock,
-    _ids: &dyn IdGenerator,
     policy: &Policy,
     options: StateChangeOptions,
 ) -> ForumResult<()> {
@@ -383,30 +258,12 @@ pub fn change_state(
     )?;
 
     for node_id in &plan.resolve_action_ids {
-        resolve_node(git, thread_id, node_id, actor, clock, _ids)?;
+        resolve_node(git, thread_id, node_id, actor, clock)?;
     }
 
-    let ev = Event {
-        event_id: String::new(),
-        thread_id: thread_id.to_string(),
-        event_type: EventType::State,
-        created_at: clock.now(),
-        actor: actor.to_string(),
-        base_rev: None,
-        parents: vec![],
-        title: None,
-        kind: None,
-        body: None,
-        node_type: None,
-        target_node_id: None,
-        new_state: Some(new_state.to_string()),
-        approvals: plan.approvals,
-        evidence: None,
-        link_rel: None,
-        branch: None,
-        incorporated_node_ids: vec![],
-        reply_to: None,
-    };
+    let ev = Event::base(thread_id, EventType::State, actor, clock)
+        .with_new_state(new_state)
+        .with_approvals(plan.approvals);
     super::event::write_event(git, &ev)?;
     Ok(())
 }

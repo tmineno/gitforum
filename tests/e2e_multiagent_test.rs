@@ -10,7 +10,6 @@ use git_forum::internal::create;
 use git_forum::internal::event::NodeType;
 use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::id::SequentialIdGenerator;
 use git_forum::internal::init;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::say;
@@ -28,7 +27,6 @@ struct Agent {
     name: String,
     git: GitOps,
     clock: StepClock,
-    ids: SequentialIdGenerator,
 }
 
 impl Agent {
@@ -38,7 +36,6 @@ impl Agent {
             name: name.to_string(),
             git,
             clock: StepClock::new(base, chrono::Duration::seconds(10)),
-            ids: SequentialIdGenerator::new(&name.replace('/', "-")),
         }
     }
 }
@@ -117,7 +114,6 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
         Some(&t0.body),
         &alice.name,
         &alice.clock,
-        &alice.ids,
     )
     .unwrap();
     assert_eq!(rfc_0001, "RFC-0001");
@@ -141,7 +137,6 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
             &node_def.body,
             &agent.name,
             &agent.clock,
-            &agent.ids,
             None,
         )
         .unwrap();
@@ -153,15 +148,7 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
 
     // Resolve nodes that need resolving (alice resolves them)
     for node_id in &resolve_ids {
-        say::resolve_node(
-            &alice.git,
-            &rfc_0001,
-            node_id,
-            &alice.name,
-            &alice.clock,
-            &alice.ids,
-        )
-        .unwrap();
+        say::resolve_node(&alice.git, &rfc_0001, node_id, &alice.name, &alice.clock).unwrap();
     }
 
     // State transitions for RFC-0001
@@ -178,7 +165,6 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
             &trans.sign_actors,
             &agent.name,
             &agent.clock,
-            &agent.ids,
             &empty_policy(),
             say::StateChangeOptions::default(),
         )
@@ -201,7 +187,6 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
         Some(&t1.body),
         &bob.name,
         &bob.clock,
-        &bob.ids,
     )
     .unwrap();
     assert_eq!(rfc_0002, "RFC-0002");
@@ -216,7 +201,6 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
             &node_def.body,
             &agent.name,
             &agent.clock,
-            &agent.ids,
             None,
         )
         .unwrap();
@@ -236,7 +220,6 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
             &trans.sign_actors,
             &agent.name,
             &agent.clock,
-            &agent.ids,
             &empty_policy(),
             say::StateChangeOptions::default(),
         )
@@ -256,7 +239,6 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
         Some(&t2.body),
         &copilot.name,
         &copilot.clock,
-        &copilot.ids,
     )
     .unwrap();
     assert_eq!(rfc_0003, "RFC-0003");
@@ -300,7 +282,6 @@ fn phase_implementation(
         Some(&t0.body),
         &alice.name,
         &alice.clock,
-        &alice.ids,
     )
     .unwrap();
     assert_eq!(issue_0001, "ISSUE-0001");
@@ -337,7 +318,6 @@ fn phase_implementation(
             &trans.sign_actors,
             &agent.name,
             &agent.clock,
-            &agent.ids,
             &empty_policy(),
             say::StateChangeOptions::default(),
         )
@@ -354,7 +334,6 @@ fn phase_implementation(
         Some(&t1.body),
         &bob.name,
         &bob.clock,
-        &bob.ids,
     )
     .unwrap();
     assert_eq!(issue_0002, "ISSUE-0002");
@@ -389,7 +368,6 @@ fn phase_implementation(
             &trans.sign_actors,
             &agent.name,
             &agent.clock,
-            &agent.ids,
             &empty_policy(),
             say::StateChangeOptions::default(),
         )
@@ -406,7 +384,6 @@ fn phase_implementation(
         Some(&t2.body),
         &carol.name,
         &carol.clock,
-        &carol.ids,
     )
     .unwrap();
     assert_eq!(issue_0003, "ISSUE-0003");
@@ -466,7 +443,6 @@ fn phase_implementation(
             &trans.sign_actors,
             &agent.name,
             &agent.clock,
-            &agent.ids,
             &empty_policy(),
             say::StateChangeOptions::default(),
         )
@@ -483,7 +459,6 @@ fn phase_implementation(
         Some(&t3.body),
         &issue_creator.name,
         &issue_creator.clock,
-        &issue_creator.ids,
     )
     .unwrap();
     assert_eq!(issue_0004, "ISSUE-0004");
@@ -564,7 +539,6 @@ fn phase_contention(agents: &[Agent], issue_id: &str) -> report::ContentionRepor
                     "Alice's concurrent note",
                     &alice.name,
                     &alice.clock,
-                    &alice.ids,
                     None,
                 );
                 match result {
@@ -591,7 +565,6 @@ fn phase_contention(agents: &[Agent], issue_id: &str) -> report::ContentionRepor
                     "Bob's concurrent note",
                     &bob.name,
                     &bob.clock,
-                    &bob.ids,
                     None,
                 );
                 match result {
@@ -655,7 +628,6 @@ fn phase_expanded_lifecycle(agents: &[Agent], scenario: &ScenarioDef) {
         Some(&t0.body),
         &bob.name,
         &bob.clock,
-        &bob.ids,
     )
     .unwrap();
     assert_eq!(rfc_0004, "RFC-0004");
@@ -669,7 +641,6 @@ fn phase_expanded_lifecycle(agents: &[Agent], scenario: &ScenarioDef) {
         Some(&t1.body),
         &carol.name,
         &carol.clock,
-        &carol.ids,
     )
     .unwrap();
     assert_eq!(issue_0005, "ISSUE-0005");
@@ -684,7 +655,6 @@ fn phase_expanded_lifecycle(agents: &[Agent], scenario: &ScenarioDef) {
             &trans.sign_actors,
             &agent.name,
             &agent.clock,
-            &agent.ids,
             &empty_policy(),
             say::StateChangeOptions::default(),
         )

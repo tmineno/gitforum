@@ -8,7 +8,6 @@ use git_forum::internal::event::{self, Event, EventType, NodeType, ThreadKind};
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::id::SequentialIdGenerator;
 use git_forum::internal::init;
 use git_forum::internal::policy::{GuardEntry, GuardRule, Policy};
 use git_forum::internal::say;
@@ -31,7 +30,6 @@ fn fixed_clock() -> FixedClock {
 }
 
 fn make_rfc(git: &GitOps) -> String {
-    let ids = SequentialIdGenerator::new("e");
     create::create_thread(
         git,
         ThreadKind::Rfc,
@@ -39,12 +37,11 @@ fn make_rfc(git: &GitOps) -> String {
         None,
         "human/alice",
         &fixed_clock(),
-        &ids,
     )
     .unwrap()
 }
 
-fn move_rfc_to_under_review(git: &GitOps, thread_id: &str, ids: &SequentialIdGenerator) {
+fn move_rfc_to_under_review(git: &GitOps, thread_id: &str) {
     say::change_state(
         git,
         thread_id,
@@ -52,7 +49,6 @@ fn move_rfc_to_under_review(git: &GitOps, thread_id: &str, ids: &SequentialIdGen
         &[],
         "human/alice",
         &fixed_clock(),
-        ids,
         &empty_policy(),
         say::StateChangeOptions::default(),
     )
@@ -64,7 +60,6 @@ fn move_rfc_to_under_review(git: &GitOps, thread_id: &str, ids: &SequentialIdGen
         &[],
         "human/alice",
         &fixed_clock(),
-        ids,
         &empty_policy(),
         say::StateChangeOptions::default(),
     )
@@ -100,7 +95,6 @@ fn empty_policy() -> Policy {
 fn say_creates_node_in_replay() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
     let node_id = say::say_node(
         &git,
@@ -109,7 +103,6 @@ fn say_creates_node_in_replay() {
         "This is needed for compatibility.",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -132,7 +125,6 @@ fn say_creates_node_in_replay() {
 fn objection_appears_in_open_objections() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
     say::say_node(
         &git,
@@ -141,7 +133,6 @@ fn objection_appears_in_open_objections() {
         "Benchmarks are missing.",
         "human/bob",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -156,7 +147,6 @@ fn objection_appears_in_open_objections() {
 fn resolve_removes_from_open_objections() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
     let node_id = say::say_node(
         &git,
@@ -165,20 +155,11 @@ fn resolve_removes_from_open_objections() {
         "Benchmarks are missing.",
         "human/bob",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
 
-    say::resolve_node(
-        &git,
-        &thread_id,
-        &node_id,
-        "human/alice",
-        &fixed_clock(),
-        &ids,
-    )
-    .unwrap();
+    say::resolve_node(&git, &thread_id, &node_id, "human/alice", &fixed_clock()).unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert!(state.open_objections().is_empty());
@@ -190,7 +171,6 @@ fn resolve_removes_from_open_objections() {
 fn reopen_restores_to_open_objections() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
     let node_id = say::say_node(
         &git,
@@ -199,29 +179,12 @@ fn reopen_restores_to_open_objections() {
         "Performance concern.",
         "human/bob",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
 
-    say::resolve_node(
-        &git,
-        &thread_id,
-        &node_id,
-        "human/alice",
-        &fixed_clock(),
-        &ids,
-    )
-    .unwrap();
-    say::reopen_node(
-        &git,
-        &thread_id,
-        &node_id,
-        "human/bob",
-        &fixed_clock(),
-        &ids,
-    )
-    .unwrap();
+    say::resolve_node(&git, &thread_id, &node_id, "human/alice", &fixed_clock()).unwrap();
+    say::reopen_node(&git, &thread_id, &node_id, "human/bob", &fixed_clock()).unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(state.open_objections().len(), 1);
@@ -232,7 +195,6 @@ fn reopen_restores_to_open_objections() {
 fn retract_removes_node_from_open() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
     let node_id = say::say_node(
         &git,
@@ -241,20 +203,11 @@ fn retract_removes_node_from_open() {
         "Withdrawn concern.",
         "human/bob",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
 
-    say::retract_node(
-        &git,
-        &thread_id,
-        &node_id,
-        "human/bob",
-        &fixed_clock(),
-        &ids,
-    )
-    .unwrap();
+    say::retract_node(&git, &thread_id, &node_id, "human/bob", &fixed_clock()).unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert!(state.open_objections().is_empty());
@@ -265,7 +218,6 @@ fn retract_removes_node_from_open() {
 fn revise_updates_node_body() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
     let node_id = say::say_node(
         &git,
@@ -274,7 +226,6 @@ fn revise_updates_node_body() {
         "Initial claim.",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -286,7 +237,6 @@ fn revise_updates_node_body() {
         "Revised claim with more detail.",
         "human/alice",
         &fixed_clock(),
-        &ids,
     )
     .unwrap();
 
@@ -298,7 +248,6 @@ fn revise_updates_node_body() {
 fn latest_summary_tracks_most_recent() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
     say::say_node(
         &git,
@@ -307,7 +256,6 @@ fn latest_summary_tracks_most_recent() {
         "First summary.",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -319,7 +267,6 @@ fn latest_summary_tracks_most_recent() {
         "Second summary.",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -333,7 +280,6 @@ fn latest_summary_tracks_most_recent() {
 fn open_actions_tracks_unresolved_actions() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
     say::say_node(
         &git,
@@ -342,7 +288,6 @@ fn open_actions_tracks_unresolved_actions() {
         "Run benchmarks.",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -357,7 +302,6 @@ fn open_actions_tracks_unresolved_actions() {
 fn change_state_valid_transition_no_guards() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
     say::change_state(
         &git,
@@ -366,7 +310,6 @@ fn change_state_valid_transition_no_guards() {
         &[],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &empty_policy(),
         say::StateChangeOptions::default(),
     )
@@ -379,7 +322,6 @@ fn change_state_valid_transition_no_guards() {
         &[],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &empty_policy(),
         say::StateChangeOptions::default(),
     )
@@ -393,7 +335,6 @@ fn change_state_valid_transition_no_guards() {
 fn change_state_invalid_transition_fails() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
     let result = say::change_state(
         &git,
@@ -402,7 +343,6 @@ fn change_state_invalid_transition_fails() {
         &[],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &empty_policy(),
         say::StateChangeOptions::default(),
     );
@@ -415,9 +355,8 @@ fn change_state_invalid_transition_fails() {
 fn change_state_fails_guard_no_open_objections() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
-    move_rfc_to_under_review(&git, &thread_id, &ids);
+    move_rfc_to_under_review(&git, &thread_id);
 
     // Add an open objection
     say::say_node(
@@ -427,7 +366,6 @@ fn change_state_fails_guard_no_open_objections() {
         "Missing benchmarks.",
         "human/bob",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -449,7 +387,6 @@ fn change_state_fails_guard_no_open_objections() {
         &["human/alice".to_string()],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &policy,
         say::StateChangeOptions::default(),
     );
@@ -462,9 +399,8 @@ fn change_state_fails_guard_no_open_objections() {
 fn change_state_passes_all_guards() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
-    move_rfc_to_under_review(&git, &thread_id, &ids);
+    move_rfc_to_under_review(&git, &thread_id);
 
     // Add a summary (satisfies at_least_one_summary)
     say::say_node(
@@ -474,7 +410,6 @@ fn change_state_passes_all_guards() {
         "Consensus reached.",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -487,7 +422,6 @@ fn change_state_passes_all_guards() {
         &["human/alice".to_string()],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &policy_with_guards(),
         say::StateChangeOptions::default(),
     )
@@ -509,10 +443,8 @@ fn change_state_issue_close_fails_guard_no_open_actions() {
         None,
         "human/alice",
         &fixed_clock(),
-        &SequentialIdGenerator::new("issue"),
     )
     .unwrap();
-    let ids = SequentialIdGenerator::new("issue-action");
 
     say::say_node(
         &git,
@@ -521,7 +453,6 @@ fn change_state_issue_close_fails_guard_no_open_actions() {
         "Implement parser",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -541,7 +472,6 @@ fn change_state_issue_close_fails_guard_no_open_actions() {
         &[],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &policy,
         say::StateChangeOptions::default(),
     )
@@ -562,10 +492,8 @@ fn change_state_issue_close_can_resolve_open_actions() {
         None,
         "human/alice",
         &fixed_clock(),
-        &SequentialIdGenerator::new("issue"),
     )
     .unwrap();
-    let ids = SequentialIdGenerator::new("issue-action");
 
     say::say_node(
         &git,
@@ -574,7 +502,6 @@ fn change_state_issue_close_can_resolve_open_actions() {
         "Implement parser",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -594,7 +521,6 @@ fn change_state_issue_close_can_resolve_open_actions() {
         &[],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &policy,
         say::StateChangeOptions {
             resolve_open_actions: true,
@@ -613,9 +539,8 @@ fn change_state_issue_close_can_resolve_open_actions() {
 fn verify_passes_no_guards_configured() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
-    move_rfc_to_under_review(&git, &thread_id, &ids);
+    move_rfc_to_under_review(&git, &thread_id);
 
     let report = verify::verify_thread(&git, &thread_id, &empty_policy()).unwrap();
     assert!(report.passed());
@@ -625,9 +550,8 @@ fn verify_passes_no_guards_configured() {
 fn verify_reports_open_objection_violation() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
-    move_rfc_to_under_review(&git, &thread_id, &ids);
+    move_rfc_to_under_review(&git, &thread_id);
 
     // Add open objection
     say::say_node(
@@ -637,7 +561,6 @@ fn verify_reports_open_objection_violation() {
         "Not ready.",
         "human/bob",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -662,10 +585,8 @@ fn verify_reports_open_action_violation_for_issue_close() {
         None,
         "human/alice",
         &fixed_clock(),
-        &SequentialIdGenerator::new("issue"),
     )
     .unwrap();
-    let ids = SequentialIdGenerator::new("issue-action");
 
     say::say_node(
         &git,
@@ -674,7 +595,6 @@ fn verify_reports_open_action_violation_for_issue_close() {
         "Implement parser",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -701,7 +621,6 @@ fn verify_reports_open_action_violation_for_issue_close() {
 fn show_includes_open_objections_section() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
     say::say_node(
         &git,
@@ -710,7 +629,6 @@ fn show_includes_open_objections_section() {
         "Concern about performance.",
         "human/bob",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -726,7 +644,6 @@ fn show_includes_open_objections_section() {
 fn show_includes_latest_summary_section() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
     say::say_node(
         &git,
@@ -735,7 +652,6 @@ fn show_includes_latest_summary_section() {
         "This is the consensus.",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -764,7 +680,6 @@ fn show_no_extra_sections_when_no_nodes() {
 fn show_timeline_includes_say_events() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
     let node_id = say::say_node(
         &git,
@@ -773,7 +688,6 @@ fn show_timeline_includes_say_events() {
         "This is important.",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -790,7 +704,6 @@ fn show_timeline_includes_say_events() {
 fn find_node_returns_current_body_and_history() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("n");
 
     let node_id = say::say_node(
         &git,
@@ -799,7 +712,6 @@ fn find_node_returns_current_body_and_history() {
         "What is this?",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -810,7 +722,6 @@ fn find_node_returns_current_body_and_history() {
         "What is this object?",
         "human/alice",
         &fixed_clock(),
-        &ids,
     )
     .unwrap();
 
@@ -834,7 +745,6 @@ fn find_node_returns_current_body_and_history() {
 fn find_node_accepts_unique_global_prefix() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("nodeprefix");
 
     let node_id = say::say_node(
         &git,
@@ -843,7 +753,6 @@ fn find_node_accepts_unique_global_prefix() {
         "What is this?",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -857,7 +766,6 @@ fn find_node_accepts_unique_global_prefix() {
 fn resolve_node_id_rejects_short_prefix() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("nodeprefix");
 
     say::say_node(
         &git,
@@ -866,7 +774,6 @@ fn resolve_node_id_rejects_short_prefix() {
         "What is this?",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -878,7 +785,6 @@ fn resolve_node_id_rejects_short_prefix() {
         "What is this?",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();
@@ -899,7 +805,6 @@ fn resolve_node_id_in_thread_scopes_prefix_lookup() {
         None,
         "human/bob",
         &fixed_clock(),
-        &SequentialIdGenerator::new("e2"),
     )
     .unwrap();
 
@@ -967,10 +872,8 @@ fn change_state_issue_rejected_succeeds() {
         None,
         "human/alice",
         &fixed_clock(),
-        &SequentialIdGenerator::new("issue"),
     )
     .unwrap();
-    let ids = SequentialIdGenerator::new("rej");
 
     say::change_state(
         &git,
@@ -979,7 +882,6 @@ fn change_state_issue_rejected_succeeds() {
         &[],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &empty_policy(),
         say::StateChangeOptions::default(),
     )
@@ -1001,10 +903,8 @@ fn change_state_issue_close_fails_guard_has_commit_evidence() {
         None,
         "human/alice",
         &fixed_clock(),
-        &SequentialIdGenerator::new("issue"),
     )
     .unwrap();
-    let ids = SequentialIdGenerator::new("ce");
 
     let policy = Policy {
         roles: HashMap::new(),
@@ -1021,7 +921,6 @@ fn change_state_issue_close_fails_guard_has_commit_evidence() {
         &[],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &policy,
         say::StateChangeOptions::default(),
     )
@@ -1042,10 +941,8 @@ fn change_state_issue_close_passes_with_commit_evidence() {
         None,
         "human/alice",
         &fixed_clock(),
-        &SequentialIdGenerator::new("issue"),
     )
     .unwrap();
-    let ids = SequentialIdGenerator::new("ce");
 
     // Create a real commit in the test repo to use as evidence
     std::fs::write(repo.path().join("test.txt"), "hello").unwrap();
@@ -1099,7 +996,6 @@ fn change_state_issue_close_passes_with_commit_evidence() {
         &[],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &policy,
         say::StateChangeOptions::default(),
     )
@@ -1135,10 +1031,9 @@ fn policy_lint_on_default_policy_passes() {
 fn rfc_accepted_then_deprecated() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("d");
 
     // Move through draft -> proposed -> under-review -> accepted -> deprecated
-    move_rfc_to_under_review(&git, &thread_id, &ids);
+    move_rfc_to_under_review(&git, &thread_id);
     say::change_state(
         &git,
         &thread_id,
@@ -1146,7 +1041,6 @@ fn rfc_accepted_then_deprecated() {
         &[],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &empty_policy(),
         say::StateChangeOptions::default(),
     )
@@ -1158,7 +1052,6 @@ fn rfc_accepted_then_deprecated() {
         &[],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &empty_policy(),
         say::StateChangeOptions::default(),
     )
@@ -1172,7 +1065,6 @@ fn rfc_accepted_then_deprecated() {
 fn rfc_rejected_then_deprecated() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
-    let ids = SequentialIdGenerator::new("d");
 
     // draft -> rejected -> deprecated
     say::change_state(
@@ -1182,7 +1074,6 @@ fn rfc_rejected_then_deprecated() {
         &[],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &empty_policy(),
         say::StateChangeOptions::default(),
     )
@@ -1194,7 +1085,6 @@ fn rfc_rejected_then_deprecated() {
         &[],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &empty_policy(),
         say::StateChangeOptions::default(),
     )
@@ -1207,7 +1097,6 @@ fn rfc_rejected_then_deprecated() {
 #[test]
 fn from_thread_creates_new_rfc_with_links_and_deprecates_source() {
     let (_repo, git, paths) = setup();
-    let ids = SequentialIdGenerator::new("ft");
 
     // Create source RFC, accept it
     let source_id = create::create_thread(
@@ -1217,10 +1106,9 @@ fn from_thread_creates_new_rfc_with_links_and_deprecates_source() {
         Some("Body of original RFC"),
         "human/alice",
         &fixed_clock(),
-        &ids,
     )
     .unwrap();
-    move_rfc_to_under_review(&git, &source_id, &ids);
+    move_rfc_to_under_review(&git, &source_id);
     say::change_state(
         &git,
         &source_id,
@@ -1228,7 +1116,6 @@ fn from_thread_creates_new_rfc_with_links_and_deprecates_source() {
         &[],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &empty_policy(),
         say::StateChangeOptions::default(),
     )
@@ -1247,7 +1134,6 @@ fn from_thread_creates_new_rfc_with_links_and_deprecates_source() {
         new_body.as_deref(),
         "human/alice",
         &fixed_clock(),
-        &ids,
     )
     .unwrap();
 
@@ -1280,7 +1166,6 @@ fn from_thread_creates_new_rfc_with_links_and_deprecates_source() {
         &[],
         "human/alice",
         &fixed_clock(),
-        &ids,
         &policy,
         say::StateChangeOptions::default(),
     )

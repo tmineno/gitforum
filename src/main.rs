@@ -14,7 +14,6 @@ use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::id::UlidGenerator;
 use git_forum::internal::index;
 use git_forum::internal::init;
 use git_forum::internal::policy::Policy;
@@ -589,7 +588,6 @@ fn main() -> Result<(), ForumError> {
     };
 
     let clock = SystemClock;
-    let ids = UlidGenerator;
 
     match command {
         Commands::Init => {
@@ -646,10 +644,10 @@ fn main() -> Result<(), ForumError> {
         }
 
         Commands::Issue { cmd } => {
-            run_thread_cmd(cmd, ThreadKind::Issue, &clock, &ids)?;
+            run_thread_cmd(cmd, ThreadKind::Issue, &clock)?;
         }
         Commands::Rfc { cmd } => {
-            run_thread_cmd(cmd, ThreadKind::Rfc, &clock, &ids)?;
+            run_thread_cmd(cmd, ThreadKind::Rfc, &clock)?;
         }
 
         Commands::Ls { branch } => {
@@ -719,7 +717,7 @@ fn main() -> Result<(), ForumError> {
             }
         },
 
-        Commands::Revise { cmd } => run_revise_cmd(cmd, &clock, &ids)?,
+        Commands::Revise { cmd } => run_revise_cmd(cmd, &clock)?,
         Commands::Claim {
             thread_id,
             body,
@@ -734,7 +732,6 @@ fn main() -> Result<(), ForumError> {
             as_actor,
             NodeType::Claim,
             &clock,
-            &ids,
         )?,
         Commands::Question {
             thread_id,
@@ -750,7 +747,6 @@ fn main() -> Result<(), ForumError> {
             as_actor,
             NodeType::Question,
             &clock,
-            &ids,
         )?,
         Commands::Objection {
             thread_id,
@@ -766,7 +762,6 @@ fn main() -> Result<(), ForumError> {
             as_actor,
             NodeType::Objection,
             &clock,
-            &ids,
         )?,
         Commands::Summary {
             thread_id,
@@ -782,7 +777,6 @@ fn main() -> Result<(), ForumError> {
             as_actor,
             NodeType::Summary,
             &clock,
-            &ids,
         )?,
         Commands::Action {
             thread_id,
@@ -798,7 +792,6 @@ fn main() -> Result<(), ForumError> {
             as_actor,
             NodeType::Action,
             &clock,
-            &ids,
         )?,
         Commands::Risk {
             thread_id,
@@ -814,7 +807,6 @@ fn main() -> Result<(), ForumError> {
             as_actor,
             NodeType::Risk,
             &clock,
-            &ids,
         )?,
         Commands::Review {
             thread_id,
@@ -830,7 +822,6 @@ fn main() -> Result<(), ForumError> {
             as_actor,
             NodeType::Review,
             &clock,
-            &ids,
         )?,
 
         Commands::Alternative {
@@ -847,7 +838,6 @@ fn main() -> Result<(), ForumError> {
             as_actor,
             NodeType::Alternative,
             &clock,
-            &ids,
         )?,
         Commands::Assumption {
             thread_id,
@@ -863,7 +853,6 @@ fn main() -> Result<(), ForumError> {
             as_actor,
             NodeType::Assumption,
             &clock,
-            &ids,
         )?,
 
         Commands::Retract {
@@ -874,7 +863,7 @@ fn main() -> Result<(), ForumError> {
             let (git, _paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
-            say::retract_node(&git, &thread_id, &resolved, &actor, &clock, &ids)?;
+            say::retract_node(&git, &thread_id, &resolved, &actor, &clock)?;
             println!("Retracted {resolved}");
         }
 
@@ -886,7 +875,7 @@ fn main() -> Result<(), ForumError> {
             let (git, _paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
-            say::resolve_node(&git, &thread_id, &resolved, &actor, &clock, &ids)?;
+            say::resolve_node(&git, &thread_id, &resolved, &actor, &clock)?;
             println!("Resolved {resolved}");
         }
 
@@ -898,7 +887,7 @@ fn main() -> Result<(), ForumError> {
             let (git, _paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
-            say::reopen_node(&git, &thread_id, &resolved, &actor, &clock, &ids)?;
+            say::reopen_node(&git, &thread_id, &resolved, &actor, &clock)?;
             println!("Reopened {resolved}");
         }
 
@@ -942,7 +931,6 @@ fn main() -> Result<(), ForumError> {
                         &sign,
                         &actor,
                         &clock,
-                        &ids,
                         say::StateChangeOptions {
                             resolve_open_actions,
                         },
@@ -976,7 +964,6 @@ fn main() -> Result<(), ForumError> {
                             comment_text,
                             &actor,
                             &clock,
-                            &ids,
                             None,
                         )?;
                     }
@@ -987,7 +974,6 @@ fn main() -> Result<(), ForumError> {
                         &sign,
                         &actor,
                         &clock,
-                        &ids,
                         &policy,
                         say::StateChangeOptions {
                             resolve_open_actions,
@@ -1137,11 +1123,9 @@ fn resolve_reply_to(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_revise_cmd(
     cmd: ReviseCmd,
     clock: &dyn git_forum::internal::clock::Clock,
-    ids: &dyn git_forum::internal::id::IdGenerator,
 ) -> Result<(), ForumError> {
     match cmd {
         ReviseCmd::Body {
@@ -1154,15 +1138,7 @@ fn run_revise_cmd(
             let (git, _paths) = discover_repo_with_init_warning()?;
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
             let body_text = resolve_body_required(body, body_file)?;
-            say::revise_body(
-                &git,
-                &thread_id,
-                &body_text,
-                &incorporates,
-                &actor,
-                clock,
-                ids,
-            )?;
+            say::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
             println!("Body revised for {thread_id}");
         }
         ReviseCmd::Node {
@@ -1176,14 +1152,13 @@ fn run_revise_cmd(
             let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
             let body_text = resolve_body_required(body, body_file)?;
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
-            say::revise_node(&git, &thread_id, &resolved, &body_text, &actor, clock, ids)?;
+            say::revise_node(&git, &thread_id, &resolved, &body_text, &actor, clock)?;
             println!("Revised {resolved}");
         }
     }
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_shorthand_say(
     thread_id: &str,
     body: Option<String>,
@@ -1192,7 +1167,6 @@ fn run_shorthand_say(
     as_actor: Option<String>,
     node_type: NodeType,
     clock: &dyn git_forum::internal::clock::Clock,
-    ids: &dyn git_forum::internal::id::IdGenerator,
 ) -> Result<(), ForumError> {
     let (git, paths) = discover_repo_with_init_warning()?;
     let actor = as_actor.unwrap_or_else(|| actor::current_actor(&git));
@@ -1205,7 +1179,6 @@ fn run_shorthand_say(
         &body_text,
         &actor,
         clock,
-        ids,
         resolved_reply.as_deref(),
     )?;
     println!("Added {node_type} {node_id}");
@@ -1228,7 +1201,6 @@ fn run_thread_cmd(
     cmd: ThreadCmd,
     kind: ThreadKind,
     clock: &dyn git_forum::internal::clock::Clock,
-    ids: &dyn git_forum::internal::id::IdGenerator,
 ) -> Result<(), ForumError> {
     match cmd {
         ThreadCmd::New {
@@ -1292,7 +1264,6 @@ fn run_thread_cmd(
                 branch.as_deref(),
                 &actor,
                 clock,
-                ids,
             )?;
             if !link_to.is_empty() {
                 let rel = rel.as_deref().ok_or_else(|| {
@@ -1339,7 +1310,6 @@ fn run_thread_cmd(
                     &[],
                     &actor,
                     clock,
-                    ids,
                     &policy,
                     say::StateChangeOptions::default(),
                 )?;
@@ -1359,7 +1329,7 @@ fn run_thread_cmd(
             for (node_type, bodies) in &inline_nodes {
                 for body_text in *bodies {
                     let node_id = say::say_node(
-                        &git, &thread_id, *node_type, body_text, &actor, clock, ids, None,
+                        &git, &thread_id, *node_type, body_text, &actor, clock, None,
                     )?;
                     println!("Added {node_type} {node_id}");
                 }
@@ -1371,7 +1341,7 @@ fn run_thread_cmd(
             let refs: Vec<&thread::ThreadState> = states.iter().collect();
             print!("{}", show::render_ls(&refs));
         }
-        ThreadCmd::Revise { cmd } => run_revise_cmd(cmd, clock, ids)?,
+        ThreadCmd::Revise { cmd } => run_revise_cmd(cmd, clock)?,
         ThreadCmd::Close {
             thread_id,
             sign,
@@ -1391,7 +1361,6 @@ fn run_thread_cmd(
                 rel.as_deref(),
                 comment.as_deref(),
                 clock,
-                ids,
             )?;
         }
         ThreadCmd::Pend {
@@ -1409,7 +1378,6 @@ fn run_thread_cmd(
                 None,
                 comment.as_deref(),
                 clock,
-                ids,
             )?;
         }
         ThreadCmd::Reopen {
@@ -1427,7 +1395,6 @@ fn run_thread_cmd(
                 None,
                 comment.as_deref(),
                 clock,
-                ids,
             )?;
         }
         ThreadCmd::Reject {
@@ -1445,7 +1412,6 @@ fn run_thread_cmd(
                 None,
                 comment.as_deref(),
                 clock,
-                ids,
             )?;
         }
         ThreadCmd::Accept {
@@ -1466,7 +1432,6 @@ fn run_thread_cmd(
                 rel.as_deref(),
                 comment.as_deref(),
                 clock,
-                ids,
             )?;
         }
         ThreadCmd::Propose {
@@ -1484,7 +1449,6 @@ fn run_thread_cmd(
                 None,
                 comment.as_deref(),
                 clock,
-                ids,
             )?;
         }
         ThreadCmd::Deprecate {
@@ -1502,7 +1466,6 @@ fn run_thread_cmd(
                 None,
                 comment.as_deref(),
                 clock,
-                ids,
             )?;
         }
     }
@@ -1520,7 +1483,6 @@ fn run_state_shorthand(
     rel: Option<&str>,
     comment: Option<&str>,
     clock: &dyn git_forum::internal::clock::Clock,
-    ids: &dyn git_forum::internal::id::IdGenerator,
 ) -> Result<(), ForumError> {
     let (git, paths) = discover_repo_with_init_warning()?;
     let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
@@ -1533,7 +1495,6 @@ fn run_state_shorthand(
             text,
             &actor,
             clock,
-            ids,
             None,
         )?;
     }
@@ -1544,7 +1505,6 @@ fn run_state_shorthand(
         sign,
         &actor,
         clock,
-        ids,
         &policy,
         say::StateChangeOptions {
             resolve_open_actions,
@@ -1633,7 +1593,6 @@ fn run_bulk_state_change(
     sign: &[String],
     actor: &str,
     clock: &dyn git_forum::internal::clock::Clock,
-    ids: &dyn git_forum::internal::id::IdGenerator,
     options: say::StateChangeOptions,
     dry_run: bool,
 ) -> Result<BulkStateReport, ForumError> {
@@ -1679,7 +1638,7 @@ fn run_bulk_state_change(
             Ok(plan) => {
                 if !dry_run {
                     if let Err(err) = say::change_state(
-                        git, &thread_id, new_state, sign, actor, clock, ids, policy, options,
+                        git, &thread_id, new_state, sign, actor, clock, policy, options,
                     ) {
                         outcomes.push(BulkStateOutcome {
                             thread_id,

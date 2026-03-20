@@ -8,7 +8,6 @@ use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
 use git_forum::internal::event::ThreadKind;
 use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::id::UlidGenerator;
 use git_forum::internal::init;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::say;
@@ -91,7 +90,6 @@ fn from_thread_without_title_uses_default() {
     // Create source RFC and move to accepted (so auto-deprecation works)
     let git = GitOps::new(repo.path().to_path_buf());
     let clock = SystemClock;
-    let ids = UlidGenerator;
     let empty_policy = Policy::default();
     create::create_thread(
         &git,
@@ -100,7 +98,6 @@ fn from_thread_without_title_uses_default() {
         Some("Body of original RFC"),
         "human/alice",
         &clock,
-        &ids,
     )
     .unwrap();
     let opts = say::StateChangeOptions::default();
@@ -111,7 +108,6 @@ fn from_thread_without_title_uses_default() {
         &[],
         "human/alice",
         &clock,
-        &ids,
         &empty_policy,
         opts,
     )
@@ -123,7 +119,6 @@ fn from_thread_without_title_uses_default() {
         &[],
         "human/alice",
         &clock,
-        &ids,
         &empty_policy,
         opts,
     )
@@ -135,7 +130,6 @@ fn from_thread_without_title_uses_default() {
         &[],
         "human/alice",
         &clock,
-        &ids,
         &empty_policy,
         opts,
     )

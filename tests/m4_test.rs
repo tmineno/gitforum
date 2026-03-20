@@ -9,7 +9,6 @@ use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::id::SequentialIdGenerator;
 use git_forum::internal::say;
 use git_forum::internal::show;
 use git_forum::internal::thread;
@@ -34,7 +33,6 @@ fn make_thread(git: &GitOps) -> String {
         None,
         "human/alice",
         &fixed_clock(),
-        &SequentialIdGenerator::new("t"),
     )
     .unwrap()
 }
@@ -190,7 +188,6 @@ fn show_includes_links_section() {
 fn node_show_includes_parent_thread_links() {
     let (_repo, git) = setup();
     let thread_id = make_thread(&git);
-    let ids = SequentialIdGenerator::new("linknode");
 
     let node_id = say::say_node(
         &git,
@@ -199,7 +196,6 @@ fn node_show_includes_parent_thread_links() {
         "How is this tracked?",
         "human/alice",
         &fixed_clock(),
-        &ids,
         None,
     )
     .unwrap();

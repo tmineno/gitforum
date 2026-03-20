@@ -20,32 +20,12 @@ pub fn add_evidence(
     clock: &dyn Clock,
 ) -> ForumResult<String> {
     let ref_target = canonicalize_evidence_ref(git, &kind, ref_target)?;
-    let ev = Event {
-        event_id: String::new(),
-        thread_id: thread_id.to_string(),
-        event_type: EventType::Link,
-        created_at: clock.now(),
-        actor: actor.to_string(),
-        base_rev: None,
-        parents: vec![],
-        title: None,
-        kind: None,
-        body: None,
-        node_type: None,
-        target_node_id: None,
-        new_state: None,
-        approvals: vec![],
-        evidence: Some(Evidence {
-            evidence_id: String::new(),
-            kind,
-            ref_target,
-            locator,
-        }),
-        link_rel: None,
-        branch: None,
-        incorporated_node_ids: vec![],
-        reply_to: None,
-    };
+    let ev = Event::base(thread_id, EventType::Link, actor, clock).with_evidence(Evidence {
+        evidence_id: String::new(),
+        kind,
+        ref_target,
+        locator,
+    });
     super::event::write_event(git, &ev)
 }
 
@@ -74,26 +54,8 @@ pub fn add_thread_link(
     actor: &str,
     clock: &dyn Clock,
 ) -> ForumResult<String> {
-    let ev = Event {
-        event_id: String::new(),
-        thread_id: thread_id.to_string(),
-        event_type: EventType::Link,
-        created_at: clock.now(),
-        actor: actor.to_string(),
-        base_rev: None,
-        parents: vec![],
-        title: None,
-        kind: None,
-        body: None,
-        node_type: None,
-        target_node_id: Some(target_thread_id.to_string()),
-        new_state: None,
-        approvals: vec![],
-        evidence: None,
-        link_rel: Some(rel.to_string()),
-        branch: None,
-        incorporated_node_ids: vec![],
-        reply_to: None,
-    };
+    let ev = Event::base(thread_id, EventType::Link, actor, clock)
+        .with_target_node_id(target_thread_id)
+        .with_link_rel(rel);
     super::event::write_event(git, &ev)
 }

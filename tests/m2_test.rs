@@ -6,7 +6,6 @@ use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
 use git_forum::internal::event::ThreadKind;
 use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::id::SequentialIdGenerator;
 use git_forum::internal::id_alloc;
 use git_forum::internal::init;
 use git_forum::internal::show;
@@ -24,10 +23,6 @@ fn fixed_clock() -> FixedClock {
     FixedClock {
         instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
     }
-}
-
-fn seq_ids(prefix: &str) -> SequentialIdGenerator {
-    SequentialIdGenerator::new(prefix)
 }
 
 // ---- ID allocation ----
@@ -49,7 +44,6 @@ fn alloc_second_rfc_id() {
         None,
         "human/alice",
         &fixed_clock(),
-        &seq_ids("e"),
     )
     .unwrap();
     let id = id_alloc::alloc_thread_id(&git, ThreadKind::Rfc).unwrap();
@@ -66,7 +60,6 @@ fn alloc_ids_per_kind_are_independent() {
         None,
         "human/alice",
         &fixed_clock(),
-        &seq_ids("e"),
     )
     .unwrap();
     // RFC counter starts at 0001 regardless of Issue counter
@@ -86,7 +79,6 @@ fn create_issue_returns_id() {
         None,
         "human/alice",
         &fixed_clock(),
-        &seq_ids("e"),
     )
     .unwrap();
     assert_eq!(id, "ISSUE-0001");
@@ -102,7 +94,6 @@ fn create_rfc_initial_status_is_draft() {
         None,
         "human/alice",
         &fixed_clock(),
-        &seq_ids("e"),
     )
     .unwrap();
     let state = thread::replay_thread(&git, "RFC-0001").unwrap();
@@ -114,7 +105,6 @@ fn create_rfc_initial_status_is_draft() {
 #[test]
 fn create_multiple_threads_of_same_kind() {
     let (_repo, git, _paths) = setup();
-    let ids = seq_ids("e");
     create::create_thread(
         &git,
         ThreadKind::Rfc,
@@ -122,7 +112,6 @@ fn create_multiple_threads_of_same_kind() {
         None,
         "human/alice",
         &fixed_clock(),
-        &ids,
     )
     .unwrap();
     create::create_thread(
@@ -132,7 +121,6 @@ fn create_multiple_threads_of_same_kind() {
         None,
         "human/alice",
         &fixed_clock(),
-        &ids,
     )
     .unwrap();
     create::create_thread(
@@ -142,7 +130,6 @@ fn create_multiple_threads_of_same_kind() {
         None,
         "human/alice",
         &fixed_clock(),
-        &ids,
     )
     .unwrap();
     let all = thread::list_thread_ids(&git).unwrap();
@@ -154,7 +141,6 @@ fn create_multiple_threads_of_same_kind() {
 #[test]
 fn ls_shows_all_kinds() {
     let (_repo, git, _paths) = setup();
-    let ids = seq_ids("e");
     create::create_thread(
         &git,
         ThreadKind::Issue,
@@ -162,7 +148,6 @@ fn ls_shows_all_kinds() {
         None,
         "human/alice",
         &fixed_clock(),
-        &ids,
     )
     .unwrap();
     create::create_thread(
@@ -172,7 +157,6 @@ fn ls_shows_all_kinds() {
         None,
         "human/alice",
         &fixed_clock(),
-        &ids,
     )
     .unwrap();
     let all_ids = thread::list_thread_ids(&git).unwrap();
@@ -191,7 +175,6 @@ fn ls_shows_all_kinds() {
 #[test]
 fn ls_filtered_by_kind() {
     let (_repo, git, _paths) = setup();
-    let ids = seq_ids("e");
     create::create_thread(
         &git,
         ThreadKind::Issue,
@@ -199,7 +182,6 @@ fn ls_filtered_by_kind() {
         None,
         "human/alice",
         &fixed_clock(),
-        &ids,
     )
     .unwrap();
     create::create_thread(
@@ -209,7 +191,6 @@ fn ls_filtered_by_kind() {
         None,
         "human/alice",
         &fixed_clock(),
-        &ids,
     )
     .unwrap();
     let all_ids = thread::list_thread_ids(&git).unwrap();
@@ -238,7 +219,6 @@ fn show_contains_all_required_fields() {
         Some("Initial thread body.\nSecond line."),
         "human/alice",
         &fixed_clock(),
-        &seq_ids("e"),
     )
     .unwrap();
     let state = thread::replay_thread(&git, "RFC-0001").unwrap();
@@ -282,7 +262,6 @@ fn show_replay_consistency() {
         None,
         "human/alice",
         &fixed_clock(),
-        &seq_ids("e"),
     )
     .unwrap();
     let state1 = thread::replay_thread(&git, "RFC-0001").unwrap();
@@ -301,7 +280,6 @@ fn show_snapshot_stable() {
         Some("Initial thread body."),
         "human/alice",
         &fixed_clock(),
-        &seq_ids("e"),
     )
     .unwrap();
     let state = thread::replay_thread(&git, "RFC-0001").unwrap();
@@ -350,7 +328,6 @@ fn create_thread_body_roundtrips_in_replay() {
         Some("Problem statement and context."),
         "human/alice",
         &fixed_clock(),
-        &seq_ids("e"),
     )
     .unwrap();
     let state = thread::replay_thread(&git, "RFC-0001").unwrap();
