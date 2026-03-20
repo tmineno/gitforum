@@ -48,14 +48,7 @@ fn state_bulk_partial_apply_reports_failures() {
 
     let action = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args([
-            "say",
-            "ISSUE-0002",
-            "--type",
-            "action",
-            "--body",
-            "Implement evaluator",
-        ])
+        .args(["action", "ISSUE-0002", "Implement evaluator"])
         .output()
         .expect("failed to add action");
     assert!(action.status.success());
@@ -96,14 +89,7 @@ fn state_bulk_can_resolve_open_actions_before_close() {
 
     let action = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args([
-            "say",
-            "ISSUE-0001",
-            "--type",
-            "action",
-            "--body",
-            "Implement evaluator",
-        ])
+        .args(["action", "ISSUE-0001", "Implement evaluator"])
         .output()
         .expect("failed to add action");
     assert!(action.status.success());

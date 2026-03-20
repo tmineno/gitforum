@@ -390,15 +390,6 @@ Thread listings show `YYYY-MM-DD HH:MM` for created and updated timestamps.
 
 ### 9.4 Structured discussion
 
-Primitive:
-
-```text
-git forum say <THREAD_ID> --type <NODE_TYPE> --body <TEXT>
-    [--reply-to <NODE_ID>] [--as <ACTOR>]
-```
-
-Shorthand commands:
-
 ```text
 git forum claim <THREAD_ID> <TEXT>
 git forum question <THREAD_ID> <TEXT>
@@ -407,6 +398,8 @@ git forum summary <THREAD_ID> <TEXT>
 git forum action <THREAD_ID> <TEXT>
 git forum risk <THREAD_ID> <TEXT>
 git forum review <THREAD_ID> <TEXT>
+git forum alternative <THREAD_ID> <TEXT>
+git forum assumption <THREAD_ID> <TEXT>
 ```
 
 All discussion commands accept `--body`, `--body-file`, `--body -` (stdin), `--reply-to`, and
@@ -415,11 +408,11 @@ All discussion commands accept `--body`, `--body-file`, `--body -` (stdin), `--r
 ### 9.5 Node lifecycle
 
 ```text
-git forum revise <THREAD_ID> <NODE_ID> --body <TEXT>
+git forum revise node <THREAD_ID> <NODE_ID> --body <TEXT>
+git forum revise body <THREAD_ID> --body <TEXT> [--incorporates <NODE_ID>]...
 git forum retract <THREAD_ID> <NODE_ID>
 git forum resolve <THREAD_ID> <NODE_ID>
 git forum reopen <THREAD_ID> <NODE_ID>
-git forum revise-body <THREAD_ID> --body <TEXT> [--incorporates <NODE_ID>]...
 ```
 
 ### 9.6 State changes
@@ -509,7 +502,7 @@ git forum export <THREAD_ID> [--format <FORMAT>]
 - Assign the initial state.
 - Update the thread ref.
 
-### 10.2 `say` and shorthand commands
+### 10.2 Node commands
 
 - Append a `say` event.
 - Validate node type against policy role restrictions.

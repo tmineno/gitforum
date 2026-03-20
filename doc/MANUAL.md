@@ -7,7 +7,7 @@ git forum init                                     Initialize forum in repo
 git forum issue new "Title" --body "..."           Create an issue
 git forum issue ls                                 List issues
 git forum show ISSUE-0001                          Show issue details
-git forum say ISSUE-0001 --type comment --body "." Add a comment
+git forum claim ISSUE-0001 "Implemented X"       Add a claim node
 git forum issue close ISSUE-0001                   Close an issue
 git forum issue close ISSUE-0001 --comment "Done"  Close with summary
 git forum issue pend ISSUE-0001                    Mark issue pending
@@ -49,26 +49,27 @@ To print this manual verbatim for an LLM or another tool:
 
 ```bash
 git-forum --help-llm                   # full manual
-git-forum say --help-llm               # node type taxonomy
+git-forum claim --help-llm             # node type taxonomy
 git-forum state --help-llm             # state transition map
 git-forum evidence --help-llm          # evidence kinds reference
 ```
 
-Per-subcommand `--help-llm` prints only the relevant reference section. `say` (and all shorthand
-node commands like `claim`, `question`) prints the node type taxonomy. `state` (and shorthand
-commands like `close`, `accept`) prints the state transition map. `evidence` prints evidence kinds.
+Per-subcommand `--help-llm` prints only the relevant reference section. Shorthand node commands
+(`claim`, `question`, `objection`, `summary`, `action`, `risk`, `review`, `alternative`,
+`assumption`) print the node type taxonomy. `state` (and shorthand commands like `close`, `accept`)
+prints the state transition map. `evidence` prints evidence kinds.
 
 ## Conventions
 
 - thread kinds: `issue`, `rfc`
 - thread IDs: `ISSUE-0001`, `RFC-0001`
-- node IDs: printed by `git forum say`; canonical IDs are Git commit OIDs of the `say` event
+- node IDs: printed by shorthand node commands (e.g. `claim`, `question`); canonical IDs are Git commit OIDs of the say event
 - CLI/TUI displays of node and event OIDs usually show the first 16 characters
 - node IDs in CLI arguments:
   - full IDs always work
   - if there is no exact match, a unique prefix of at least 8 characters is accepted
   - `git forum node show` resolves prefixes globally
-  - `revise`, `retract`, `resolve`, and `reopen` resolve prefixes inside the specified thread
+  - `revise node`, `retract`, `resolve`, and `reopen` resolve prefixes inside the specified thread
 - actor:
   - resolution order: `--as` flag → `GIT_FORUM_ACTOR` env var → Git config `user.name`
   - `--as human/alice` or `--as ai/reviewer` overrides everything
@@ -265,7 +266,7 @@ matching node under the thread row.
 
 ### Add a node
 
-Use shorthand commands for common node types. `say --type` remains the primitive fallback.
+Each node type has a dedicated shorthand command.
 All node commands accept `--body`, `--body-file`, and `--body -` (stdin) in addition to a
 positional body argument.
 
@@ -325,13 +326,13 @@ The hint shows valid state transitions and open items. Suppress with `2>/dev/nul
 ### Revise a node
 
 ```bash
-git forum revise RFC-0001 6f1d2c3b4a5e67890123456789abcdef01234567 \
+git forum revise node RFC-0001 6f1d2c3b4a5e67890123456789abcdef01234567 \
   --body "What is the migration and rollback plan?"
-git forum revise RFC-0001 6f1d2c3b \
+git forum revise node RFC-0001 6f1d2c3b \
   --body "What is the migration and rollback plan?"
 ```
 
-Use `revise` to update an existing node when the intent is the same but the content needs
+Use `revise node` to update an existing node when the intent is the same but the content needs
 correction. For example, revise a summary to incorporate new objections rather than adding a
 second summary node. The revision history is preserved and visible in `git forum node show`.
 
@@ -357,23 +358,23 @@ git forum claim RFC-0001 "Tests added, benchmark in bench/result.csv" \
 git forum question RFC-0001 "Can you clarify X?" --reply-to <CLAIM_NODE_ID>
 ```
 
-`--reply-to` is accepted on `say` and all shorthand commands. Reply chains of arbitrary depth are
+`--reply-to` is accepted on all shorthand node commands. Reply chains of arbitrary depth are
 supported. `git forum show` groups reply chains into conversations for readability.
 
 ### Revise thread body
 
 ```bash
-git forum revise-body RFC-0001 --body "Updated body text"
-git forum revise-body RFC-0001 --body-file ./tmp/body.md
-git forum revise-body RFC-0001 --body -
-git forum rfc revise-body RFC-0001 --body "Updated body"
-git forum issue revise-body ISSUE-0001 --body "Updated body"
+git forum revise body RFC-0001 --body "Updated body text"
+git forum revise body RFC-0001 --body-file ./tmp/body.md
+git forum revise body RFC-0001 --body -
+git forum rfc revise body RFC-0001 --body "Updated body"
+git forum issue revise body ISSUE-0001 --body "Updated body"
 ```
 
 `--incorporates` marks referenced nodes as incorporated into this revision:
 
 ```bash
-git forum revise-body RFC-0001 --body "Revised body" \
+git forum revise body RFC-0001 --body "Revised body" \
   --incorporates 6f1d2c3b --incorporates a1b2c3d4
 ```
 
@@ -694,11 +695,11 @@ In practice, this means `verify` is most useful right before an acceptance-like 
 git forum init
 git forum rfc new "Switch solver backend to trait objects" \
   --body "Goal, constraints, and acceptance."
-git forum say RFC-0001 --type claim --body "Needed for compatibility."
-git forum say RFC-0001 --type question --body "What is the migration plan?" --as ai/reviewer
-git forum say RFC-0001 --type objection --body "Benchmarks are missing."
+git forum claim RFC-0001 "Needed for compatibility."
+git forum question RFC-0001 "What is the migration plan?" --as ai/reviewer
+git forum objection RFC-0001 "Benchmarks are missing."
 git forum evidence add RFC-0001 --kind benchmark --ref bench/result.csv
-git forum say RFC-0001 --type summary --body "Benchmarks added; objection addressed."
+git forum summary RFC-0001 "Benchmarks added; objection addressed."
 git forum resolve RFC-0001 <OBJECTION_NODE_ID>
 git forum state RFC-0001 proposed
 git forum state RFC-0001 under-review
@@ -706,7 +707,7 @@ git forum verify RFC-0001
 git forum state RFC-0001 accepted --sign human/alice
 git forum issue new "Implement trait backend" --link-to RFC-0001 --rel implements
 git forum branch bind ISSUE-0001 feat/trait-backend
-git forum say ISSUE-0001 --type action --body "Wire trait backend behind feature flag."
+git forum action ISSUE-0001 "Wire trait backend behind feature flag."
 git forum evidence add ISSUE-0001 --kind test --ref tests/backend_trait.rs
 git forum state ISSUE-0001 closed
 ```
@@ -795,8 +796,9 @@ This manual currently covers:
 - thread show
 - node show
 - search
-- say / revise / retract / resolve / reopen (with --reply-to)
-- revise-body (with --incorporates)
+- node commands (claim, question, objection, etc.) with --reply-to
+- revise body / revise node
+- retract / resolve / reopen
 - status
 - state
 - verify
