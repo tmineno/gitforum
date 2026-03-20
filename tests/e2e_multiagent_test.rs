@@ -1,6 +1,5 @@
 mod support;
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use chrono::{TimeZone, Utc};
@@ -86,10 +85,7 @@ fn agent_by_name<'a>(agents: &'a [Agent], name: &str) -> &'a Agent {
 }
 
 fn empty_policy() -> Policy {
-    Policy {
-        roles: HashMap::new(),
-        guards: vec![],
-    }
+    Policy { guards: vec![] }
 }
 
 // ---------------------------------------------------------------------------

@@ -53,15 +53,6 @@ The following capabilities are implemented and tested:
 
 ## In progress
 
-### Role-based policy enforcement
-
-Guard rules on transitions are enforced, but `can_say` and `can_transition` role restrictions
-defined in `.forum/policy.toml` are parsed without being checked at runtime.
-
-- ISSUE-0002 — Enforce role-based can_say and can_transition policy rules
-- ISSUE-0023 — Enforce can_say role policy in say and shorthand commands
-- ISSUE-0024 — Enforce can_transition role policy in state command
-
 ### Semantic merge
 
 Concurrent writes to the same thread currently fail with a compare-and-swap error. Semantic merge

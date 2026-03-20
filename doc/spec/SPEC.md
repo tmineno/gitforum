@@ -273,21 +273,11 @@ Allocated sequentially per kind by scanning existing refs.
 
 Policy is defined in `.forum/policy.toml` and controls:
 
-- **Roles**: which node types an actor may emit (`can_say`) and which state transitions an actor
-  may perform (`can_transition`).
 - **Guards**: rules that must pass for a given state transition.
 
 ### 7.1 Policy file format
 
 ```toml
-[roles.reviewer]
-can_say = ["question", "objection", "summary", "risk"]
-can_transition = []
-
-[roles.maintainer]
-can_say = ["claim", "summary", "action"]
-can_transition = ["draft->proposed", "proposed->under-review", "under-review->accepted"]
-
 [[guards]]
 on = "under-review->accepted"
 requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
@@ -310,8 +300,6 @@ requires = ["no_open_actions"]
 ### 7.3 Enforcement
 
 - **Guard evaluation**: enforced on `state` command and evaluated read-only by `verify`.
-- **Role enforcement**: `can_say` and `can_transition` restrictions are defined in the policy
-  schema. Full enforcement is tracked in ISSUE-0023 and ISSUE-0024.
 
 ## 8. Concurrency
 
@@ -535,7 +523,6 @@ Display:
 
 - Validate the transition against the state machine.
 - Evaluate guard rules from policy.
-- Validate actor role has `can_transition` permission.
 - `--comment <TEXT>` creates a summary node before the state transition.
 - Attach approvals from `--sign`.
 - Append a `state` event.

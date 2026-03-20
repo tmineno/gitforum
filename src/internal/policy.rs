@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use serde::Deserialize;
 
 use super::approval::Approval;
@@ -37,25 +35,14 @@ pub struct GuardEntry {
     pub requires: Vec<GuardRule>,
 }
 
-/// Role definition from `policy.toml`.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct PolicyRole {
-    #[serde(default)]
-    pub can_say: Vec<String>,
-    #[serde(default)]
-    pub can_transition: Vec<String>,
-}
-
 /// Parsed policy loaded from `.forum/policy.toml`.
 ///
 /// Preconditions: none (loaded from file).
-/// Postconditions: guards and roles are populated from TOML.
+/// Postconditions: guards are populated from TOML.
 /// Failure modes: ForumError::Config on parse failure.
 /// Side effects: none (read-only after load).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Policy {
-    #[serde(default)]
-    pub roles: HashMap<String, PolicyRole>,
     #[serde(default, rename = "guards")]
     pub guards: Vec<GuardEntry>,
 }
@@ -198,7 +185,6 @@ mod tests {
 
     fn minimal_policy() -> Policy {
         Policy {
-            roles: HashMap::new(),
             guards: vec![GuardEntry {
                 on: "under-review->accepted".into(),
                 requires: vec![
@@ -227,7 +213,6 @@ mod tests {
     #[test]
     fn lint_invalid_transition_reports_diag() {
         let policy = Policy {
-            roles: HashMap::new(),
             guards: vec![GuardEntry {
                 on: "badvalue".into(),
                 requires: vec![],

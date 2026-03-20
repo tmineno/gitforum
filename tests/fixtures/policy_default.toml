@@ -1,14 +1,6 @@
 # Default policy fixture for tests.
 # Mirrors .forum/policy.toml as shipped by `git forum init`.
 
-[roles.reviewer]
-can_say = ["question", "objection", "summary", "risk"]
-can_transition = []
-
-[roles.maintainer]
-can_say = ["claim", "summary", "action"]
-can_transition = ["draft->proposed", "proposed->under-review", "under-review->accepted"]
-
 [[guards]]
 on = "under-review->accepted"
 requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
