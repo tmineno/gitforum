@@ -41,9 +41,12 @@ git forum summary <THREAD> "body"
 git forum action <THREAD> "body"
 git forum risk <THREAD> "body"
 git forum review <THREAD> "body"
+git forum alternative <THREAD> "body"
+git forum assumption <THREAD> "body"
 ```
 
-All accept --body, --body-file, --body -, --reply-to, --as.
+All accept a positional body argument, --body-file, --reply-to, and --as.
+Pass "-" as the positional body to read from stdin.
 "#
     .to_string()
 }
@@ -73,7 +76,9 @@ pub fn state_transition_map() -> String {
     out.push_str("git forum rfc accept <ID>        # under-review -> accepted\n");
     out.push_str("git forum rfc deprecate <ID>     # accepted/rejected -> deprecated\n");
     out.push_str("```\n\n");
-    out.push_str("All accept --sign, --comment, --link-to, --rel, --resolve-open-actions.\n");
+    out.push_str("All accept --as and --comment.\n");
+    out.push_str("issue close and rfc accept also accept --sign, --link-to, --rel.\n");
+    out.push_str("issue close also accepts --resolve-open-actions.\n");
     out.push_str(
         "Use `git forum show <ID> --what-next` to see valid transitions and guard status.\n",
     );

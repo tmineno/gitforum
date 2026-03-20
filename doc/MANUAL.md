@@ -167,10 +167,10 @@ git forum rfc new --from-thread RFC-0003
 git forum issue new --from-thread RFC-0001 "Custom title"
 ```
 
-`--from-thread <THREAD_ID>` copies the title and body from the source thread and auto-adds a
-`relates-to` link to the source. An explicit title argument overrides the source title. This is
-useful for creating implementation issues from accepted RFCs or successor RFCs from deprecated
-ones.
+`--from-thread <THREAD_ID>` copies the title (prefixed with `v2: `) and body from the source
+thread, creates bidirectional `supersedes` / `superseded-by` links, and auto-deprecates the source
+thread if it is an RFC. An explicit title argument overrides the default title. This is useful for
+creating successor RFCs from deprecated ones or implementation issues from accepted RFCs.
 
 ### List by kind
 
@@ -190,7 +190,8 @@ git forum show RFC-0001
 git forum show RFC-0001 --what-next
 ```
 
-`git forum ls` and kind-specific `ls` commands show `ID`, `KIND`, `STATUS`, `BRANCH`, and `TITLE`.
+`git forum ls` and kind-specific `ls` commands show `ID`, `KIND`, `STATUS`, `BRANCH`, `CREATED`,
+`UPDATED`, and `TITLE`.
 `--branch <BRANCH>` filters the listing to threads currently bound to that branch.
 
 `git forum show <THREAD_ID>` shows:
@@ -267,8 +268,8 @@ matching node under the thread row.
 ### Add a node
 
 Each node type has a dedicated shorthand command.
-All node commands accept `--body`, `--body-file`, and `--body -` (stdin) in addition to a
-positional body argument.
+All node commands accept a positional body argument, `--body-file`, and `--as`. Pass `"-"` as the
+positional body to read from stdin.
 
 ```bash
 git forum claim RFC-0001 "Need a stable plugin-facing boundary."
@@ -291,6 +292,8 @@ Supported shorthand commands:
 - `git forum action`
 - `git forum risk`
 - `git forum review`
+- `git forum alternative`
+- `git forum assumption`
 
 Valid node types used in the preferred workflow:
 
@@ -564,19 +567,19 @@ git forum issue reject ISSUE-0001 --comment "Won't fix"
 git forum rfc propose RFC-0001
 git forum rfc accept RFC-0001 --sign human/alice
 git forum rfc deprecate RFC-0001 --comment "Superseded by RFC-0005"
-git forum rfc deprecate RFC-0001 --link-to RFC-0005 --rel relates-to
+git forum state RFC-0001 deprecated --link-to RFC-0005 --rel relates-to
 ```
 
 Shorthand commands combine a state transition with optional `--comment` (adds a summary node before
 transitioning), `--link-to` (creates links after transitioning), and `--sign` (records approvals).
 
 Available shorthands:
-- `issue close` / `rfc close` — transition to `closed`
+- `issue close` — transition to `closed` (also accepts `--sign`, `--link-to`, `--rel`, `--resolve-open-actions`)
 - `issue pend` — transition to `pending` (work-in-progress)
-- `issue reopen` / `rfc reopen` — transition to `open`
+- `issue reopen` — transition to `open`
 - `issue reject` — transition to `rejected`
 - `rfc propose` — transition to `proposed`
-- `rfc accept` — transition to `accepted`
+- `rfc accept` — transition to `accepted` (also accepts `--sign`, `--link-to`, `--rel`)
 - `rfc deprecate` — transition to `deprecated` (from `accepted` or `rejected`)
 
 ### Generic state command

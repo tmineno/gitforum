@@ -401,7 +401,10 @@ enum ThreadCmd {
     /// Create a new thread
     New {
         /// Thread title (omit when using --from-commit)
-        #[arg(allow_hyphen_values = true, required_unless_present = "from_commit")]
+        #[arg(
+            allow_hyphen_values = true,
+            required_unless_present_any = ["from_commit", "from_thread"]
+        )]
         title: Option<String>,
         /// Initial thread body
         #[arg(long, conflicts_with = "body_file")]

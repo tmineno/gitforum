@@ -24,7 +24,7 @@ impl ThreadKind {
         }
     }
 
-    /// Display ID prefix (e.g. "ISSUE", "RFC", "DEC").
+    /// Display ID prefix (e.g. "ISSUE", "RFC").
     pub fn id_prefix(self) -> &'static str {
         match self {
             Self::Issue => "ISSUE",

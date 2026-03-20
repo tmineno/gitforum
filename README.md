@@ -154,7 +154,7 @@ refs/forum/index/*
 
 - Two thread kinds: `rfc` and `issue`, with full state machines (including `rejected` for issues)
 - Append-only event log stored as Git commits
-- Ten typed discussion nodes with shorthand CLI commands
+- Ten typed discussion nodes, nine with shorthand CLI commands
 - Policy-driven state transitions with guard rules
 - State transition shorthands: `issue close`, `issue reopen`, `rfc accept`, etc.
 - Combined close + comment + link in one command (`--comment`, `--link-to`)

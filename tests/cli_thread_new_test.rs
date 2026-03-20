@@ -3,9 +3,15 @@ mod support;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+use git_forum::internal::clock::SystemClock;
 use git_forum::internal::config::RepoPaths;
+use git_forum::internal::create;
+use git_forum::internal::event::ThreadKind;
 use git_forum::internal::git_ops::GitOps;
+use git_forum::internal::id::UlidGenerator;
 use git_forum::internal::init;
+use git_forum::internal::policy::Policy;
+use git_forum::internal::say;
 use git_forum::internal::thread;
 
 #[test]
@@ -74,4 +80,80 @@ fn thread_new_can_create_link_immediately() {
     assert_eq!(state.links.len(), 1);
     assert_eq!(state.links[0].target_thread_id, "RFC-0001");
     assert_eq!(state.links[0].rel, "implements");
+}
+
+#[test]
+fn from_thread_without_title_uses_default() {
+    let repo = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(repo.path());
+    init::init_forum(&paths).unwrap();
+
+    // Create source RFC and move to accepted (so auto-deprecation works)
+    let git = GitOps::new(repo.path().to_path_buf());
+    let clock = SystemClock;
+    let ids = UlidGenerator;
+    let empty_policy = Policy::default();
+    create::create_thread(
+        &git,
+        ThreadKind::Rfc,
+        "Original design",
+        Some("Body of original RFC"),
+        "human/alice",
+        &clock,
+        &ids,
+    )
+    .unwrap();
+    let opts = say::StateChangeOptions::default();
+    say::change_state(
+        &git,
+        "RFC-0001",
+        "proposed",
+        &[],
+        "human/alice",
+        &clock,
+        &ids,
+        &empty_policy,
+        opts,
+    )
+    .unwrap();
+    say::change_state(
+        &git,
+        "RFC-0001",
+        "under-review",
+        &[],
+        "human/alice",
+        &clock,
+        &ids,
+        &empty_policy,
+        opts,
+    )
+    .unwrap();
+    say::change_state(
+        &git,
+        "RFC-0001",
+        "accepted",
+        &[],
+        "human/alice",
+        &clock,
+        &ids,
+        &empty_policy,
+        opts,
+    )
+    .unwrap();
+
+    // Create new RFC from source without explicit title (regression for finding #2)
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["rfc", "new", "--from-thread", "RFC-0001"])
+        .output()
+        .expect("failed to run git-forum rfc new --from-thread");
+    assert!(
+        output.status.success(),
+        "from-thread without title should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let state = thread::replay_thread(&git, "RFC-0002").unwrap();
+    assert_eq!(state.title, "v2: Original design");
+    assert_eq!(state.body.as_deref(), Some("Body of original RFC"));
 }

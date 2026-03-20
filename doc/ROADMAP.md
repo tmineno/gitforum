@@ -72,11 +72,11 @@ would automatically resolve non-conflicting concurrent writes and surface true c
 - ISSUE-0021 — Auto-merge concurrent non-conflicting events (say, evidence, summaries)
 - ISSUE-0022 — Detect and surface conflicting concurrent events (state changes, resolve/reopen)
 
-### Remaining shorthand commands
+### Remaining shorthand command
 
-Three node types lack dedicated shorthand commands.
+One node type (`evidence`) lacks a dedicated shorthand command; it uses `evidence add` instead.
 
-- ISSUE-0001 — Add shorthand commands for alternative, evidence, and assumption node types
+- ISSUE-0001 — Add shorthand command for evidence node type
 
 ### Documentation alignment
 

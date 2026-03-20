@@ -168,7 +168,7 @@ Conditionally required fields:
 Event types:
 
 `create`, `say`, `edit`, `retract`, `resolve`, `reopen`, `link`, `state`, `scope`, `verify`,
-`merge`.
+`merge`, `revise-body`.
 
 ### 4.3 Node types
 
@@ -368,8 +368,9 @@ Initial states: issue = `open`, RFC = `draft`.
 `--from-commit <REV>` populates title from the commit subject, body from the commit message body,
 and auto-adds the commit as evidence. An explicit `<TITLE>` argument overrides the subject.
 
-`--from-thread <THREAD_ID>` populates title and body from the source thread and auto-adds a
-`relates-to` link to the source thread. An explicit `<TITLE>` argument overrides the source title.
+`--from-thread <THREAD_ID>` populates title (prefixed with `v2: `) and body from the source thread,
+creates bidirectional `supersedes` / `superseded-by` links, and auto-deprecates the source thread
+if it is an RFC. An explicit `<TITLE>` argument overrides the default title.
 
 ### 9.3 Listing and display
 
@@ -402,8 +403,8 @@ git forum alternative <THREAD_ID> <TEXT>
 git forum assumption <THREAD_ID> <TEXT>
 ```
 
-All discussion commands accept `--body`, `--body-file`, `--body -` (stdin), `--reply-to`, and
-`--as`.
+All discussion commands accept a positional body argument (use `"-"` to read from stdin),
+`--body-file`, `--reply-to`, and `--as`.
 
 ### 9.5 Node lifecycle
 
@@ -423,13 +424,13 @@ Shorthand commands:
 git forum issue close <THREAD_ID> [--sign <ACTOR_ID>]...
     [--resolve-open-actions] [--link-to <THREAD_ID> --rel <REL>]
     [--comment <TEXT>]
+git forum issue pend <THREAD_ID> [--comment <TEXT>]
 git forum issue reopen <THREAD_ID> [--comment <TEXT>]
 git forum issue reject <THREAD_ID> [--comment <TEXT>]
 git forum rfc propose <THREAD_ID> [--comment <TEXT>]
 git forum rfc accept <THREAD_ID> [--sign <ACTOR_ID>]...
     [--link-to <THREAD_ID> --rel <REL>] [--comment <TEXT>]
 git forum rfc deprecate <THREAD_ID> [--comment <TEXT>]
-    [--link-to <THREAD_ID> --rel <REL>]
 ```
 
 `--comment` adds a summary node before the state transition.
@@ -478,7 +479,9 @@ git forum policy check <THREAD_ID> --transition <TRANSITION>
 git forum tui [<THREAD_ID>]
 ```
 
-### 9.10 Import / export
+### 9.10 Import / export (planned)
+
+Import and export commands are planned but not yet implemented:
 
 ```text
 git forum import github-issue <SOURCE>
@@ -542,8 +545,8 @@ Display:
 - Append a `state` event.
 - `--link-to <THREAD_ID> --rel <REL>` creates thread links after the state transition.
 - `--resolve-open-actions` resolves open action nodes before the transition.
-- Shorthand commands: `issue close`, `issue reopen`, `issue reject`, `rfc propose`, `rfc accept`,
-  `rfc deprecate`.
+- Shorthand commands: `issue close`, `issue pend`, `issue reopen`, `issue reject`, `rfc propose`,
+  `rfc accept`, `rfc deprecate`.
 
 ### 10.6 `state bulk`
 
