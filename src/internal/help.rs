@@ -96,6 +96,10 @@ pub fn state_transition_map() -> String {
     out.push_str(
         "Use `git forum show <ID> --what-next` to see valid transitions and guard status.\n",
     );
+    out.push_str(
+        "`git forum show <ID> --compact` truncates all sections to single-line previews.\n",
+    );
+    out.push_str("`git forum show <ID> --no-timeline` omits the timeline section.\n");
 
     out
 }
