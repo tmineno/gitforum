@@ -491,15 +491,15 @@ git forum reindex
 ### 9.2 Thread creation
 
 ```text
-git forum new issue <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
+git forum new issue <TITLE> [--body <TEXT> | --body-file <PATH> | --body - | --edit]
     [--branch <BRANCH>] [--link-to <THREAD_ID> --rel <REL>]
     [--from-commit <REV>] [--from-thread <THREAD_ID>] [--force]
-git forum new rfc <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
+git forum new rfc <TITLE> [--body <TEXT> | --body-file <PATH> | --body - | --edit]
     [--link-to <THREAD_ID> --rel <REL>]
     [--from-commit <REV>] [--from-thread <THREAD_ID>] [--force]
-git forum new dec <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
+git forum new dec <TITLE> [--body <TEXT> | --body-file <PATH> | --body - | --edit]
     [--link-to <THREAD_ID> --rel <REL>] [--force]
-git forum new task <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
+git forum new task <TITLE> [--body <TEXT> | --body-file <PATH> | --body - | --edit]
     [--branch <BRANCH>] [--link-to <THREAD_ID> --rel <REL>] [--force]
 ```
 
@@ -540,18 +540,18 @@ Thread listings show `YYYY-MM-DD HH:MM` for created and updated timestamps.
 ### 9.4 Structured discussion
 
 ```text
-git forum claim <THREAD_ID> <TEXT> [--force]
-git forum question <THREAD_ID> <TEXT> [--force]
-git forum objection <THREAD_ID> <TEXT> [--force]
-git forum summary <THREAD_ID> <TEXT> [--force]
-git forum action <THREAD_ID> <TEXT> [--force]
-git forum risk <THREAD_ID> <TEXT> [--force]
-git forum review <THREAD_ID> <TEXT> [--force]
-git forum node add <THREAD_ID> --type <TYPE> <TEXT> [--force]
+git forum claim <THREAD_ID> <TEXT> [--edit] [--force]
+git forum question <THREAD_ID> <TEXT> [--edit] [--force]
+git forum objection <THREAD_ID> <TEXT> [--edit] [--force]
+git forum summary <THREAD_ID> <TEXT> [--edit] [--force]
+git forum action <THREAD_ID> <TEXT> [--edit] [--force]
+git forum risk <THREAD_ID> <TEXT> [--edit] [--force]
+git forum review <THREAD_ID> <TEXT> [--edit] [--force]
+git forum node add <THREAD_ID> --type <TYPE> <TEXT> [--edit] [--force]
 ```
 
 All discussion commands accept a positional body argument (use `"-"` to read from stdin),
-`--body-file`, `--reply-to`, `--as`, and `--force`.
+`--body-file`, `--edit`, `--reply-to`, `--as`, and `--force`.
 
 `node add` is a generic interface for all node types, including `alternative` and `assumption` which
 have no dedicated shorthand.
@@ -559,9 +559,9 @@ have no dedicated shorthand.
 ### 9.5 Node lifecycle
 
 ```text
-git forum revise <THREAD_ID> --body <TEXT> [--incorporates <NODE_ID>]... [--force]
-git forum revise body <THREAD_ID> --body <TEXT> [--incorporates <NODE_ID>]... [--force]
-git forum revise node <THREAD_ID> <NODE_ID> --body <TEXT> [--force]
+git forum revise <THREAD_ID> [--body <TEXT> | --body-file <PATH> | --edit] [--incorporates <NODE_ID>]... [--force]
+git forum revise body <THREAD_ID> [--body <TEXT> | --body-file <PATH> | --edit] [--incorporates <NODE_ID>]... [--force]
+git forum revise node <THREAD_ID> <NODE_ID> [--body <TEXT> | --body-file <PATH> | --edit] [--force]
 git forum retract <THREAD_ID> <NODE_ID>...
 git forum resolve <THREAD_ID> <NODE_ID>...
 git forum reopen <THREAD_ID> <NODE_ID>...      # node reopen (with node IDs)
@@ -682,7 +682,9 @@ Scope: GitHub issue interoperability only. RFC import/export is not planned.
 ### 10.1 `new issue` and `new rfc`
 
 - Create a `create` event.
-- Accept `--body`, `--body-file`, or `--body -` (stdin).
+- Accept `--body`, `--body-file`, `--body -` (stdin), or `--edit` (open `$EDITOR`).
+- `--edit` opens `$VISUAL` / `$EDITOR` / `vi` for interactive composition; conflicts with `--body`
+  and `--body-file`. Empty content aborts the command.
 - Accept `--link-to <THREAD_ID> --rel <REL>`.
 - Accept `--branch <BRANCH>` (issue only).
 - Accept `--from-commit <REV>`: populate title/body from commit message, auto-add commit evidence.
@@ -700,6 +702,8 @@ Scope: GitHub issue interoperability only. RFC import/export is not planned.
 - Append a `say` event.
 - Evaluate `check_say` against `[node_rules]` policy before committing.
 - Accept `--force`: bypass warning-level operation check violations (does not bypass errors).
+- Accept `--edit`: open `$EDITOR` for interactive body composition; conflicts with positional body,
+  `--body`, and `--body-file`.
 - `--reply-to <NODE_ID>` links the new node as a response.
 - Actor resolution: `--as` flag > `GIT_FORUM_ACTOR` env var > Git config `user.name`.
 
@@ -709,6 +713,8 @@ Scope: GitHub issue interoperability only. RFC import/export is not planned.
   The explicit `revise body` and `revise node` forms continue to work.
 - `revise` evaluates `check_revise` against `[revise_rules]` policy before committing.
 - `revise` accepts `--force`: bypass warning-level operation check violations (does not bypass errors).
+- `revise` accepts `--edit`: open `$EDITOR` for interactive body composition; conflicts with
+  `--body` and `--body-file`.
 - `retract` appends a `retract` event.
 - `resolve` and `reopen` operate primarily on `objection` and `action` nodes.
 - `retract`, `resolve`, and `reopen` accept one or more node IDs. Each node is processed
