@@ -145,7 +145,6 @@ Authoritative data lives in Git refs, while shared rules and templates live in t
   local.toml
 
 refs/forum/threads/*
-refs/forum/index/*
 ```
 
 ## Status

@@ -4,18 +4,12 @@
 
 pub const THREADS_PREFIX: &str = "refs/forum/threads/";
 pub const ACTORS_PREFIX: &str = "refs/forum/actors/";
-pub const INDEX_PREFIX: &str = "refs/forum/index/";
-
 pub fn thread_ref(thread_id: &str) -> String {
     format!("{THREADS_PREFIX}{thread_id}")
 }
 
 pub fn actor_ref(actor_id: &str) -> String {
     format!("{ACTORS_PREFIX}{actor_id}")
-}
-
-pub fn index_ref(thread_id: &str) -> String {
-    format!("{INDEX_PREFIX}{thread_id}")
 }
 
 /// Extract thread ID from a full ref name.

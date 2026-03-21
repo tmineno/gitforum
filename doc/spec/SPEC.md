@@ -219,7 +219,6 @@ Authoritative data:
 
 ```text
 refs/forum/threads/<THREAD_ID>    # tip of thread event chain
-refs/forum/index/<THREAD_ID>      # rebuildable materialized snapshot
 ```
 
 ### 5.2 Repository files (shared, committed)
