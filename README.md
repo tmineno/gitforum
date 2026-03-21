@@ -141,7 +141,7 @@ Authoritative data lives in Git refs, while shared rules and templates live in t
     rfc.md
 
 <git-dir>/forum/           # <git-dir> = .git/ or worktree git dir
-  index.sqlite
+  index.db
   local.toml
 
 refs/forum/threads/*
