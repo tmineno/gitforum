@@ -280,6 +280,11 @@ impl Event {
         self.link_rel = Some(rel.to_string());
         self
     }
+
+    pub fn with_created_at(mut self, created_at: DateTime<Utc>) -> Self {
+        self.created_at = created_at;
+        self
+    }
 }
 
 /// Write an event as a Git commit and update the thread ref.
