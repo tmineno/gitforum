@@ -54,7 +54,13 @@ fn thread_new_can_create_link_immediately() {
 
     let create_rfc = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["rfc", "new", "Switch backend"])
+        .args([
+            "rfc",
+            "new",
+            "Switch backend",
+            "--body",
+            "## Goal\nSwitch to a new backend.",
+        ])
         .output()
         .expect("failed to create rfc");
     assert!(create_rfc.status.success());
