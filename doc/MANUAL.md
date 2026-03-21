@@ -4,7 +4,7 @@
 
 ```
 git forum init                                     Initialize forum in repo
-git forum new issue "Title" --body "..."           Create an issue
+git forum new issue "Title" --body "..."           Create an issue (or --edit)
 git forum ls --kind issue                          List issues
 git forum show ISSUE-0001                          Show issue details
 git forum claim ISSUE-0001 "Implemented X"       Add a claim node
@@ -142,6 +142,7 @@ git forum new rfc "Switch solver backend to trait objects" \
   --body "Goal, constraints, and acceptance."
 git forum new rfc "Switch solver backend to trait objects" --body -
 git forum new rfc "Switch solver backend to trait objects" --body-file ./tmp/rfc.md
+git forum new rfc "Switch solver backend to trait objects" --edit
 ```
 
 ### DEC (Decision Record)
@@ -186,6 +187,7 @@ git forum new issue "Implement trait backend"
 git forum new issue "Implement trait backend" --body "Initial implementation checklist"
 git forum new issue "Implement trait backend" --body -
 git forum new issue "Implement trait backend" --body-file ./tmp/issue.md
+git forum new issue "Implement trait backend" --edit
 git forum new issue "Implement trait backend" --branch feat/trait-backend
 git forum new issue "Implement trait backend" \
   --link-to RFC-0001 --rel implements
@@ -194,6 +196,9 @@ git forum new rfc "Error handling" \
 ```
 
 `--body -` reads the initial body from standard input, so you can avoid creating a temporary file.
+`--edit` opens `$VISUAL` / `$EDITOR` / `vi` for interactive body composition. Lines starting with
+`#` are stripped. Empty content aborts the command. `--edit` conflicts with `--body` and
+`--body-file`.
 
 ### Inline nodes at creation
 
@@ -341,8 +346,8 @@ matching node under the thread row.
 ### Add a node
 
 Each node type has a dedicated shorthand command.
-All node commands accept a positional body argument, `--body-file`, and `--as`. Pass `"-"` as the
-positional body to read from stdin.
+All node commands accept a positional body argument, `--body-file`, `--edit`, and `--as`. Pass `"-"` as the
+positional body to read from stdin. Use `--edit` to compose in `$EDITOR`.
 
 ```bash
 git forum claim RFC-0001 "Need a stable plugin-facing boundary."
@@ -354,6 +359,7 @@ git forum risk ISSUE-0001 "Parser behavior may diverge under edge inputs."
 git forum review RFC-0001 "Overall analysis of the RFC."
 git forum objection RFC-0001 --body-file ./tmp/detailed-objection.md
 git forum claim RFC-0001 --body -
+git forum review RFC-0001 --edit
 ```
 
 Supported shorthand commands:
@@ -411,6 +417,7 @@ git forum revise node RFC-0001 6f1d2c3b4a5e67890123456789abcdef01234567 \
   --body "What is the migration and rollback plan?"
 git forum revise node RFC-0001 6f1d2c3b \
   --body "What is the migration and rollback plan?"
+git forum revise node RFC-0001 6f1d2c3b --edit
 ```
 
 Use `revise node` to update an existing node when the intent is the same but the content needs
@@ -456,6 +463,7 @@ supported. `git forum show` groups reply chains into conversations for readabili
 git forum revise RFC-0001 --body "Updated body text"
 git forum revise RFC-0001 --body-file ./tmp/body.md
 git forum revise RFC-0001 --body -
+git forum revise RFC-0001 --edit
 git forum revise body RFC-0001 --body "Updated body text"   # explicit, still works
 ```
 

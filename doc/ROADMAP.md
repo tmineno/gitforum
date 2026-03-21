@@ -61,6 +61,9 @@ The following capabilities are implemented and tested:
 - Operation checks: validate write commands (`new`, node commands, `revise`, `evidence add`) against
   policy rules before committing. Configurable creation rules, node rules, revise rules, evidence
   rules. Error/warning severity model with `--force` flag and strict mode (RFC-0018)
+- `--edit` flag: open `$VISUAL` / `$EDITOR` / `vi` for interactive body composition on `new`,
+  node commands, and `revise`. Explicit opt-in only; strips `#` comment lines; empty content
+  aborts (ISSUE-0072)
 
 ## In progress
 
