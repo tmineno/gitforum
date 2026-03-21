@@ -40,6 +40,29 @@ pub fn valid_transitions(kind: ThreadKind) -> &'static [(&'static str, &'static 
             ("accepted", "deprecated"),
             ("rejected", "deprecated"),
         ],
+        ThreadKind::Dec => &[
+            ("proposed", "accepted"),
+            ("proposed", "rejected"),
+            ("proposed", "deprecated"),
+            ("accepted", "deprecated"),
+            ("rejected", "deprecated"),
+        ],
+        ThreadKind::Task => &[
+            ("open", "designing"),
+            ("open", "rejected"),
+            ("open", "closed"),
+            ("designing", "implementing"),
+            ("designing", "rejected"),
+            ("designing", "open"),
+            ("implementing", "reviewing"),
+            ("implementing", "rejected"),
+            ("implementing", "designing"),
+            ("reviewing", "closed"),
+            ("reviewing", "rejected"),
+            ("reviewing", "implementing"),
+            ("closed", "open"),
+            ("rejected", "open"),
+        ],
     }
 }
 
@@ -148,5 +171,131 @@ mod tests {
             "pending",
             "rejected"
         ));
+    }
+
+    // --- DEC transitions ---
+
+    #[test]
+    fn dec_proposed_to_accepted_is_valid() {
+        assert!(is_valid_transition(ThreadKind::Dec, "proposed", "accepted"));
+    }
+
+    #[test]
+    fn dec_proposed_to_rejected_is_valid() {
+        assert!(is_valid_transition(ThreadKind::Dec, "proposed", "rejected"));
+    }
+
+    #[test]
+    fn dec_proposed_to_deprecated_is_valid() {
+        assert!(is_valid_transition(
+            ThreadKind::Dec,
+            "proposed",
+            "deprecated"
+        ));
+    }
+
+    #[test]
+    fn dec_accepted_to_deprecated_is_valid() {
+        assert!(is_valid_transition(
+            ThreadKind::Dec,
+            "accepted",
+            "deprecated"
+        ));
+    }
+
+    #[test]
+    fn dec_rejected_to_deprecated_is_valid() {
+        assert!(is_valid_transition(
+            ThreadKind::Dec,
+            "rejected",
+            "deprecated"
+        ));
+    }
+
+    #[test]
+    fn dec_accepted_to_proposed_is_invalid() {
+        assert!(!is_valid_transition(
+            ThreadKind::Dec,
+            "accepted",
+            "proposed"
+        ));
+    }
+
+    #[test]
+    fn dec_valid_targets_from_proposed() {
+        let targets = valid_targets(ThreadKind::Dec, "proposed");
+        assert_eq!(targets, vec!["accepted", "rejected", "deprecated"]);
+    }
+
+    // --- TASK transitions ---
+
+    #[test]
+    fn task_open_to_designing_is_valid() {
+        assert!(is_valid_transition(ThreadKind::Task, "open", "designing"));
+    }
+
+    #[test]
+    fn task_fast_track_open_to_closed_is_valid() {
+        assert!(is_valid_transition(ThreadKind::Task, "open", "closed"));
+    }
+
+    #[test]
+    fn task_full_lifecycle() {
+        assert!(is_valid_transition(ThreadKind::Task, "open", "designing"));
+        assert!(is_valid_transition(
+            ThreadKind::Task,
+            "designing",
+            "implementing"
+        ));
+        assert!(is_valid_transition(
+            ThreadKind::Task,
+            "implementing",
+            "reviewing"
+        ));
+        assert!(is_valid_transition(ThreadKind::Task, "reviewing", "closed"));
+    }
+
+    #[test]
+    fn task_back_transitions() {
+        assert!(is_valid_transition(
+            ThreadKind::Task,
+            "implementing",
+            "designing"
+        ));
+        assert!(is_valid_transition(
+            ThreadKind::Task,
+            "reviewing",
+            "implementing"
+        ));
+    }
+
+    #[test]
+    fn task_reopen_from_closed() {
+        assert!(is_valid_transition(ThreadKind::Task, "closed", "open"));
+    }
+
+    #[test]
+    fn task_reopen_from_rejected() {
+        assert!(is_valid_transition(ThreadKind::Task, "rejected", "open"));
+    }
+
+    #[test]
+    fn task_open_to_reviewing_is_invalid() {
+        assert!(!is_valid_transition(ThreadKind::Task, "open", "reviewing"));
+    }
+
+    #[test]
+    fn task_reviewing_to_designing_is_invalid() {
+        assert!(!is_valid_transition(
+            ThreadKind::Task,
+            "reviewing",
+            "designing"
+        ));
+    }
+
+    #[test]
+    fn task_valid_targets_from_open() {
+        let targets = valid_targets(ThreadKind::Task, "open");
+        assert_eq!(targets, vec!["designing", "rejected", "closed"]);
     }
 }

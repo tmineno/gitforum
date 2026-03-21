@@ -1,12 +1,12 @@
 # git-forum Product Specification
 
-Version 1.1 — 2026-03-17
+Version 1.2 — 2026-03-21
 
 ## 1. Overview
 
 `git-forum` is a Git-native structured discussion and work-tracking tool for human-agent software
-development. It stores RFCs, issues, typed discussion, evidence, and state transitions as
-append-only events inside a Git repository.
+development. It stores RFCs, decision records, tasks, issues, typed discussion, evidence, and state
+transitions as append-only events inside a Git repository.
 
 ### 1.1 Design principles
 
@@ -34,18 +34,23 @@ append-only events inside a Git repository.
 
 ### 2.1 Thread kinds
 
-Two thread kinds:
+Four thread kinds:
 
-- **rfc** — proposals, designs, and decisions. Lifecycle: `draft` through `accepted` or
+- **rfc** — cross-cutting proposals and designs. Lifecycle: `draft` through `accepted` or
   `rejected`.
-- **issue** — implementation work items. Lifecycle: `open` through `closed` or `rejected`.
+- **dec** — local design decisions worth recording. Lifecycle: `proposed` through `accepted` or
+  `rejected`.
+- **task** — implementable work units with phase discipline. Lifecycle: `open` through `closed` or
+  `rejected`, with `designing`, `implementing`, and `reviewing` phases.
+- **issue** — bug reports and feature requests. Lifecycle: `open` through `closed` or `rejected`.
 
 ### 2.2 Workflow model
 
-- New projects, features, and design changes start as an RFC.
-- Implementation work happens in linked issue threads.
-- An accepted RFC, together with its latest summary node, acts as the decision record.
-- There is no separate first-class decision object.
+- Cross-cutting design decisions start as an RFC.
+- Local design decisions that need to survive beyond a PR are recorded as DECs.
+- Implementable work is tracked as TASKs with phase discipline.
+- Bugs and feature requests are tracked as ISSUEs.
+- Agents are participants, not a separate control plane.
 
 ### 2.3 Event
 
@@ -114,7 +119,50 @@ in progress. `accepted` is the terminal positive state; an accepted RFC with its
 serves as the decision record. `deprecated` indicates a previously accepted or rejected RFC that
 has been superseded or is no longer relevant.
 
-### 3.3 State derivation
+### 3.3 DEC
+
+```text
+proposed -> accepted
+proposed -> rejected
+proposed -> deprecated
+accepted -> deprecated
+rejected -> deprecated
+```
+
+Initial state: `proposed`.
+
+`proposed` means the decision is under consideration. `accepted` means the decision is ratified.
+`rejected` means the decision was not adopted. `deprecated` indicates a decision that has been
+superseded or is no longer relevant. `proposed -> deprecated` allows archiving a decision that
+becomes moot before acceptance or rejection.
+
+### 3.4 TASK
+
+```text
+open -> designing
+open -> rejected
+open -> closed
+designing -> implementing
+designing -> rejected
+designing -> open
+implementing -> reviewing
+implementing -> rejected
+implementing -> designing
+reviewing -> closed
+reviewing -> rejected
+reviewing -> implementing
+closed -> open
+rejected -> open
+```
+
+Initial state: `open`.
+
+`designing`, `implementing`, and `reviewing` are phase states that track progress. `open -> closed`
+is a fast-track for trivial tasks that need no design/review phase. Back-transitions skip at most
+one phase (e.g., `reviewing -> implementing` is valid but `reviewing -> designing` is not).
+`rejected` can be reached from any active phase. Reopen always returns to `open`.
+
+### 3.5 State derivation
 
 State is derived from event replay. The event stream is the authoritative source of truth;
 materialized state is a cache.
@@ -127,8 +175,8 @@ Required fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Display ID (`RFC-0001`, `ISSUE-0001`) |
-| `kind` | enum | `rfc` or `issue` |
+| `id` | string | Display ID (`RFC-0001`, `ISSUE-0001`, `DEC-0001`, `TASK-0001`) |
+| `kind` | enum | `rfc`, `issue`, `dec`, or `task` |
 | `title` | string | Human-readable title |
 | `status` | string | Current state (derived from events) |
 | `created_at` | datetime | Creation timestamp |
@@ -182,6 +230,8 @@ Event types:
 | `action` | Work item | open → resolved / retracted |
 | `risk` | Identified risk | open |
 | `review` | Holistic thread analysis | open (informational) |
+| `alternative` | Considered alternative approach | open |
+| `assumption` | Design dependency or assumption | open |
 
 `objection` and `action` nodes are open when created. `resolve` closes them; `reopen` reopens
 them. `retract` marks any node inactive while preserving history. `incorporated` marks a node as
@@ -230,6 +280,8 @@ refs/forum/threads/<THREAD_ID>    # tip of thread event chain
   templates/
     issue.md            # issue body template
     rfc.md              # RFC body template
+    dec.md              # DEC body template
+    task.md             # TASK body template
 ```
 
 ### 5.3 Local files (per-clone, not committed)
@@ -251,6 +303,8 @@ git worktree this is the worktree-specific git directory (e.g.
 
 - Issue: `ISSUE-0001`, `ISSUE-0002`, ...
 - RFC: `RFC-0001`, `RFC-0002`, ...
+- DEC: `DEC-0001`, `DEC-0002`, ...
+- TASK: `TASK-0001`, `TASK-0002`, ...
 
 Allocated sequentially per kind by scanning existing refs.
 
@@ -288,6 +342,14 @@ requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
 on = "open->closed"
 requires = ["no_open_actions"]
 
+[[guards]]
+on = "proposed->accepted"
+requires = ["no_open_objections"]
+
+[[guards]]
+on = "reviewing->closed"
+requires = ["no_open_actions"]
+
 [checks]
 strict = false
 
@@ -299,12 +361,20 @@ body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
 required_body = false
 body_sections = []
 
+[creation_rules.dec]
+required_body = true
+body_sections = ["Context", "Decision", "Rationale", "Impact"]
+
+[creation_rules.task]
+required_body = false
+body_sections = ["Background", "Acceptance criteria", "Exceptions"]
+
 [revise_rules]
-allow_body_revise = ["draft", "proposed", "open", "pending"]
-allow_node_revise = ["draft", "proposed", "under-review", "open", "pending"]
+allow_body_revise = ["draft", "proposed", "open", "pending", "designing", "implementing"]
+allow_node_revise = ["draft", "proposed", "under-review", "open", "pending", "designing", "implementing", "reviewing"]
 
 [evidence_rules]
-allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "closed", "accepted", "deprecated"]
+allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "designing", "implementing", "reviewing", "closed", "accepted", "rejected", "deprecated"]
 ```
 
 ### 7.2 Guard rules
@@ -427,12 +497,16 @@ git forum new issue <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
 git forum new rfc <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
     [--link-to <THREAD_ID> --rel <REL>]
     [--from-commit <REV>] [--from-thread <THREAD_ID>] [--force]
+git forum new dec <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
+    [--link-to <THREAD_ID> --rel <REL>] [--force]
+git forum new task <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
+    [--branch <BRANCH>] [--link-to <THREAD_ID> --rel <REL>] [--force]
 ```
 
-The old forms `git forum issue new` and `git forum rfc new` remain as hidden aliases for backward
+The old forms `git forum issue new`, `git forum rfc new`, etc. remain as hidden aliases for backward
 compatibility.
 
-Initial states: issue = `open`, RFC = `draft`.
+Initial states: issue = `open`, RFC = `draft`, DEC = `proposed`, TASK = `open`.
 
 `--from-commit <REV>` populates title from the commit subject, body from the commit message body,
 and auto-adds the commit as evidence. An explicit `<TITLE>` argument overrides the subject.
@@ -457,8 +531,9 @@ git forum status <THREAD_ID>
 git-forum --help-llm                          # works at any subcommand level
 ```
 
-`--kind rfc` or `--kind issue` filters the listing by thread kind. The old forms `git forum issue ls`
-and `git forum rfc ls` remain as hidden aliases for backward compatibility.
+`--kind rfc`, `--kind issue`, `--kind dec`, or `--kind task` filters the listing by thread kind. The
+old forms `git forum issue ls`, `git forum rfc ls`, etc. remain as hidden aliases for backward
+compatibility.
 
 Thread listings show `YYYY-MM-DD HH:MM` for created and updated timestamps.
 
@@ -472,10 +547,14 @@ git forum summary <THREAD_ID> <TEXT> [--force]
 git forum action <THREAD_ID> <TEXT> [--force]
 git forum risk <THREAD_ID> <TEXT> [--force]
 git forum review <THREAD_ID> <TEXT> [--force]
+git forum node add <THREAD_ID> --type <TYPE> <TEXT> [--force]
 ```
 
 All discussion commands accept a positional body argument (use `"-"` to read from stdin),
 `--body-file`, `--reply-to`, `--as`, and `--force`.
+
+`node add` is a generic interface for all node types, including `alternative` and `assumption` which
+have no dedicated shorthand.
 
 ### 9.5 Node lifecycle
 
@@ -559,6 +638,8 @@ git forum policy check <THREAD_ID> --transition <TRANSITION>
 
 - RFC in `under-review` → checks `under-review->accepted` guards.
 - Issue in `open` → checks `open->closed` guards.
+- DEC in `proposed` → checks `proposed->accepted` guards.
+- TASK in `reviewing` → checks `reviewing->closed` guards.
 
 ### 9.9 TUI
 
@@ -575,7 +656,7 @@ git forum hook check-commit-msg <FILE>
 ```
 
 `git forum init` auto-installs the commit-msg hook. The hook validates that thread IDs referenced
-in commit messages (`ISSUE-NNNN`, `RFC-NNNN`) exist as git-forum refs. Comment lines (respecting
+in commit messages (`ISSUE-NNNN`, `RFC-NNNN`, `DEC-NNNN`, `TASK-NNNN`) exist as git-forum refs. Comment lines (respecting
 `core.commentChar`) and scissors sections are stripped before scanning.
 
 - No thread IDs found: warn, exit 0 (non-blocking).
@@ -696,7 +777,7 @@ Read-only guard evaluation:
 - `hook uninstall` removes the hook only if it matches the git-forum template.
 - `hook check-commit-msg <FILE>`:
   - Query `core.commentChar` (default `#`), strip comment lines and scissors sections.
-  - Extract thread IDs matching known prefixes (`ISSUE`, `RFC`) with 4-digit suffixes.
+  - Extract thread IDs matching known prefixes (`ISSUE`, `RFC`, `DEC`, `TASK`) with 4-digit suffixes.
   - Validate each ID against `refs/forum/threads/<ID>`.
   - No IDs found: warn, exit 0. All valid: exit 0. Any missing: warn, exit 1.
 
@@ -783,7 +864,7 @@ cargo test
 
 The following are explicitly out of scope:
 
-- A separate `decision` thread kind.
+- A separate heavyweight decision workflow (DEC is lightweight by design).
 - Mandatory AI provenance tracking.
 - AI-only high-level command sets.
 - A Web UI.

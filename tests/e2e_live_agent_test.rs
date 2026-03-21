@@ -49,6 +49,8 @@ fn remap_expected_outcomes(
             let (prefix, counter) = match t.kind {
                 git_forum::internal::event::ThreadKind::Rfc => ("RFC", &mut rfc_counter),
                 git_forum::internal::event::ThreadKind::Issue => ("ISSUE", &mut issue_counter),
+                git_forum::internal::event::ThreadKind::Dec => ("DEC", &mut rfc_counter),
+                git_forum::internal::event::ThreadKind::Task => ("TASK", &mut issue_counter),
             };
             *counter += 1;
             let expected_ref = format!("{prefix}-{counter:04}");

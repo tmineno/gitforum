@@ -40,6 +40,8 @@ fn forward_target(kind: ThreadKind, status: &str) -> Option<&'static str> {
     match (kind, status) {
         (ThreadKind::Issue, "open") => Some("closed"),
         (ThreadKind::Rfc, "under-review") => Some("accepted"),
+        (ThreadKind::Dec, "proposed") => Some("accepted"),
+        (ThreadKind::Task, "reviewing") => Some("closed"),
         _ => None,
     }
 }

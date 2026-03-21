@@ -49,10 +49,18 @@ impl ClaudeCodeAdapter {
                         issue_counter += 1;
                         "ISSUE"
                     }
+                    ThreadKind::Dec => {
+                        rfc_counter += 1;
+                        "DEC"
+                    }
+                    ThreadKind::Task => {
+                        issue_counter += 1;
+                        "TASK"
+                    }
                 };
                 let counter = match thread.kind {
-                    ThreadKind::Rfc => rfc_counter,
-                    ThreadKind::Issue => issue_counter,
+                    ThreadKind::Rfc | ThreadKind::Dec => rfc_counter,
+                    ThreadKind::Issue | ThreadKind::Task => issue_counter,
                 };
                 refs.insert(
                     format!("{prefix}-{counter:04}"),
@@ -87,6 +95,8 @@ impl ClaudeCodeAdapter {
             NodeType::Action => "record an action item",
             NodeType::Risk => "surface a risk",
             NodeType::Review => "add an overall review",
+            NodeType::Alternative => "record a considered alternative",
+            NodeType::Assumption => "record an assumption",
         }
     }
 

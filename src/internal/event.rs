@@ -13,6 +13,8 @@ use super::refs;
 pub enum ThreadKind {
     Issue,
     Rfc,
+    Dec,
+    Task,
 }
 
 impl ThreadKind {
@@ -21,6 +23,8 @@ impl ThreadKind {
         match self {
             Self::Issue => "open",
             Self::Rfc => "draft",
+            Self::Dec => "proposed",
+            Self::Task => "open",
         }
     }
 
@@ -29,6 +33,8 @@ impl ThreadKind {
         match self {
             Self::Issue => "ISSUE",
             Self::Rfc => "RFC",
+            Self::Dec => "DEC",
+            Self::Task => "TASK",
         }
     }
 }
@@ -38,6 +44,8 @@ impl std::fmt::Display for ThreadKind {
         match self {
             Self::Issue => write!(f, "issue"),
             Self::Rfc => write!(f, "rfc"),
+            Self::Dec => write!(f, "dec"),
+            Self::Task => write!(f, "task"),
         }
     }
 }
@@ -93,6 +101,8 @@ pub enum NodeType {
     Action,
     Risk,
     Review,
+    Alternative,
+    Assumption,
 }
 
 impl std::fmt::Display for NodeType {
@@ -106,6 +116,8 @@ impl std::fmt::Display for NodeType {
             Self::Action => "action",
             Self::Risk => "risk",
             Self::Review => "review",
+            Self::Alternative => "alternative",
+            Self::Assumption => "assumption",
         };
         f.write_str(s)
     }
@@ -123,7 +135,9 @@ impl std::str::FromStr for NodeType {
             "action" => Ok(Self::Action),
             "risk" => Ok(Self::Risk),
             "review" => Ok(Self::Review),
-            _ => Err(format!("unknown node type '{s}'; valid types: claim, question, objection, evidence, summary, action, risk, review")),
+            "alternative" => Ok(Self::Alternative),
+            "assumption" => Ok(Self::Assumption),
+            _ => Err(format!("unknown node type '{s}'; valid types: claim, question, objection, evidence, summary, action, risk, review, alternative, assumption")),
         }
     }
 }
@@ -378,5 +392,7 @@ mod tests {
     fn thread_kind_initial_status() {
         assert_eq!(ThreadKind::Issue.initial_status(), "open");
         assert_eq!(ThreadKind::Rfc.initial_status(), "draft");
+        assert_eq!(ThreadKind::Dec.initial_status(), "proposed");
+        assert_eq!(ThreadKind::Task.initial_status(), "open");
     }
 }

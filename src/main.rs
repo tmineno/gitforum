@@ -56,6 +56,18 @@ enum Commands {
         #[command(subcommand)]
         cmd: ThreadCmd,
     },
+    /// DEC sub-commands
+    #[command(hide = true)]
+    Dec {
+        #[command(subcommand)]
+        cmd: ThreadCmd,
+    },
+    /// TASK sub-commands
+    #[command(hide = true)]
+    Task {
+        #[command(subcommand)]
+        cmd: ThreadCmd,
+    },
     /// Create a new thread
     New {
         /// Thread kind: rfc or issue
@@ -535,6 +547,35 @@ enum NodeCmd {
         )]
         node_id: String,
     },
+    /// Add a typed node to a thread
+    Add {
+        thread_id: String,
+        /// Node type (claim, question, objection, evidence, summary, action, risk, review, alternative, assumption)
+        #[arg(long = "type", value_name = "TYPE")]
+        node_type: NodeType,
+        /// Node body (positional)
+        #[arg(allow_hyphen_values = true)]
+        body_positional: Option<String>,
+        /// Node body (flag)
+        #[arg(long = "body", value_name = "TEXT", conflicts_with = "body_positional")]
+        body_flag: Option<String>,
+        /// Read body from file
+        #[arg(
+            long = "body-file",
+            value_name = "PATH",
+            conflicts_with_all = ["body_positional", "body_flag"]
+        )]
+        body_file: Option<PathBuf>,
+        /// Reply to a specific node
+        #[arg(long = "reply-to", value_name = "NODE_ID")]
+        reply_to: Option<String>,
+        /// Override actor identity
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -795,7 +836,10 @@ fn main() -> Result<(), ForumError> {
 
         use git_forum::internal::help;
         match context {
-            Some("claim" | "question" | "objection" | "summary" | "action" | "risk" | "review") => {
+            Some(
+                "claim" | "question" | "objection" | "summary" | "action" | "risk" | "review"
+                | "alternative" | "assumption" | "node",
+            ) => {
                 print!("{}", help::node_type_taxonomy());
             }
             Some("state" | "close" | "reject" | "accept" | "propose" | "deprecate" | "pend") => {
@@ -886,6 +930,12 @@ fn main() -> Result<(), ForumError> {
         }
         Commands::Rfc { cmd } => {
             run_thread_cmd(cmd, ThreadKind::Rfc, &clock)?;
+        }
+        Commands::Dec { cmd } => {
+            run_thread_cmd(cmd, ThreadKind::Dec, &clock)?;
+        }
+        Commands::Task { cmd } => {
+            run_thread_cmd(cmd, ThreadKind::Task, &clock)?;
         }
 
         Commands::New {
@@ -1107,6 +1157,26 @@ fn main() -> Result<(), ForumError> {
                 let lookup = thread::find_node(&git, &node_id)?;
                 print!("{}", show::render_node_show(&lookup));
             }
+            NodeCmd::Add {
+                thread_id,
+                node_type,
+                body_positional,
+                body_flag,
+                body_file,
+                reply_to,
+                as_actor,
+                force,
+            } => run_shorthand_say(
+                &thread_id,
+                body_positional,
+                body_flag,
+                body_file,
+                reply_to,
+                as_actor,
+                node_type,
+                force,
+                &clock,
+            )?,
         },
 
         Commands::Branch { cmd } => match cmd {
@@ -2135,8 +2205,10 @@ fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
     match kind {
         "issue" => Ok(ThreadKind::Issue),
         "rfc" => Ok(ThreadKind::Rfc),
+        "dec" => Ok(ThreadKind::Dec),
+        "task" => Ok(ThreadKind::Task),
         other => Err(ForumError::Config(format!(
-            "unknown kind '{other}'; valid: issue, rfc"
+            "unknown kind '{other}'; valid: issue, rfc, dec, task"
         ))),
     }
 }
@@ -2146,8 +2218,10 @@ fn parse_thread_kind_filter(kind: Option<&str>) -> Result<Option<ThreadKind>, Fo
         None => Ok(None),
         Some("issue") => Ok(Some(ThreadKind::Issue)),
         Some("rfc") => Ok(Some(ThreadKind::Rfc)),
+        Some("dec") => Ok(Some(ThreadKind::Dec)),
+        Some("task") => Ok(Some(ThreadKind::Task)),
         Some(other) => Err(ForumError::Config(format!(
-            "unknown kind '{other}'; valid: issue, rfc"
+            "unknown kind '{other}'; valid: issue, rfc, dec, task"
         ))),
     }
 }
