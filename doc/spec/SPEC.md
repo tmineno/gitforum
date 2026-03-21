@@ -273,8 +273,11 @@ Allocated sequentially per kind by scanning existing refs.
 Policy is defined in `.forum/policy.toml` and controls:
 
 - **Guards**: rules that must pass for a given state transition.
+- **Operation checks**: rules that validate write operations before committing events.
 
 ### 7.1 Policy file format
+
+The default policy shipped by `git forum init`:
 
 ```toml
 [[guards]]
@@ -284,6 +287,24 @@ requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
 [[guards]]
 on = "open->closed"
 requires = ["no_open_actions"]
+
+[checks]
+strict = false
+
+[creation_rules.rfc]
+required_body = true
+body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
+
+[creation_rules.issue]
+required_body = false
+body_sections = []
+
+[revise_rules]
+allow_body_revise = ["draft", "proposed", "open", "pending"]
+allow_node_revise = ["draft", "proposed", "under-review", "open", "pending"]
+
+[evidence_rules]
+allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "closed", "accepted", "deprecated"]
 ```
 
 ### 7.2 Guard rules
@@ -358,6 +379,7 @@ Missing policy file or missing sections apply no restrictions (`#[serde(default)
 - **Guard evaluation**: enforced on `state` command and evaluated read-only by `verify`.
 - **Operation checks**: enforced on `new`, node commands (`claim`, `question`, etc.), `revise`,
   and `evidence add`. All write commands accept `--force` to bypass warning-level violations.
+  See `doc/spec/operation-checks.md` for details.
 
 ## 8. Concurrency
 

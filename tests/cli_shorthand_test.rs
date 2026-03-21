@@ -16,7 +16,13 @@ fn question_command_creates_question_node() {
 
     let create_rfc = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["rfc", "new", "Parser rewrite"])
+        .args([
+            "rfc",
+            "new",
+            "Parser rewrite",
+            "--body",
+            "## Goal\nRewrite the parser.",
+        ])
         .output()
         .expect("failed to create rfc");
     assert!(create_rfc.status.success());

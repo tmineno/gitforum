@@ -676,10 +676,10 @@ git forum policy check RFC-0001 --transition under-review->accepted
 
 The policy file lives at `.forum/policy.toml`.
 
-It is created automatically by `git forum init`, and it controls two kinds of configuration:
+It is created automatically by `git forum init`, and it controls:
 
-- transition guard rules under `[[guards]]`
-- operation checks for write commands (creation rules, node rules, revise rules, evidence rules)
+- **Transition guards** (`[[guards]]`): rules that must pass for a state transition.
+- **Operation checks** (`creation_rules`, `node_rules`, `revise_rules`, `evidence_rules`, `checks`): rules that validate write operations before committing events.
 
 A full example:
 
@@ -692,35 +692,47 @@ requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
 on = "open->closed"
 requires = ["no_open_actions"]
 
+[checks]
+strict = false
+
 [creation_rules.rfc]
 required_body = true
-body_sections = ["Goal", "Non-goals", "Design", "Failure modes", "Acceptance tests"]
+body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
 
 [creation_rules.issue]
 required_body = false
 body_sections = []
-
-[node_rules]
-"draft" = ["claim", "question", "objection", "evidence", "summary", "action", "risk", "review"]
-"accepted" = []
 
 [revise_rules]
 allow_body_revise = ["draft", "proposed", "open", "pending"]
 allow_node_revise = ["draft", "proposed", "under-review", "open", "pending"]
 
 [evidence_rules]
-allow_evidence = ["draft", "proposed", "under-review", "open", "pending"]
-
-[checks]
-strict = false
+allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "closed", "accepted", "deprecated"]
 ```
 
 ### Guard rules
 
+#### Guard fields
+
 - `on`: the transition that a guard block applies to, written as `from->to`
 - `requires`: the list of guard rules that must pass for that transition
 
-Guard rules currently understood by the implementation:
+#### Operation check fields
+
+- `[checks]`: global check settings
+  - `strict`: when `true`, warnings become errors (unless `--force` is used). Default: `false`.
+- `[creation_rules.<kind>]`: rules for creating threads of a given kind (e.g., `rfc`, `issue`)
+  - `required_body`: if `true`, the thread must have a non-empty body (Error if missing)
+  - `body_sections`: list of section headings to check for in the body (Warning if missing)
+- `[node_rules]`: maps state names to lists of allowed node types in that state (Error if violated). An absent state means all node types are allowed.
+- `[revise_rules]`: controls in which states revision is allowed
+  - `allow_body_revise`: list of states where body revision is allowed (Error if violated)
+  - `allow_node_revise`: list of states where node revision is allowed (Error if violated)
+- `[evidence_rules]`: controls in which states evidence can be attached
+  - `allow_evidence`: list of states where evidence attachment is allowed (Error if violated)
+
+### Guard rules currently understood by the implementation
 
 - `no_open_objections`
 - `no_open_actions`
