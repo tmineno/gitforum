@@ -98,7 +98,7 @@ git forum reindex
 ```
 
 - `init`: creates `.forum/` and `.git/forum/`, installs the commit-msg hook
-- `doctor`: checks policy, templates, local index, and ref namespace health
+- `doctor`: checks `.forum/` and `.git/forum/` directories exist, validates `policy.toml` syntax, and replays every thread's event log to verify integrity
 - `reindex`: rebuilds the local index from Git refs
 
 ## Create threads
