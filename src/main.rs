@@ -306,37 +306,39 @@ enum Commands {
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
-    /// Retract a node (soft-delete)
+    /// Retract one or more nodes (soft-delete)
     Retract {
         thread_id: String,
         #[arg(
+            num_args = 1..,
             value_name = "NODE_ID",
-            help = "Full node ID or unique prefix within the thread (8+ chars unless exact match)"
+            help = "Full node ID(s) or unique prefix within the thread (8+ chars unless exact match)"
         )]
-        node_id: String,
+        node_ids: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
-    /// Resolve a node (mark as addressed)
+    /// Resolve one or more nodes (mark as addressed)
     Resolve {
         thread_id: String,
         #[arg(
+            num_args = 1..,
             value_name = "NODE_ID",
-            help = "Full node ID or unique prefix within the thread (8+ chars unless exact match)"
+            help = "Full node ID(s) or unique prefix within the thread (8+ chars unless exact match)"
         )]
-        node_id: String,
+        node_ids: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
-    /// Reopen a resolved/retracted node, or reopen a closed/rejected thread
+    /// Reopen resolved/retracted node(s), or reopen a closed/rejected thread
     Reopen {
         thread_id: String,
-        /// Node ID to reopen (omit to reopen the thread itself)
+        /// Node ID(s) to reopen (omit to reopen the thread itself)
         #[arg(
             value_name = "NODE_ID",
-            help = "Full node ID or unique prefix (omit to reopen the thread state)"
+            help = "Full node ID(s) or unique prefix (omit to reopen the thread state)"
         )]
-        node_id: Option<String>,
+        node_ids: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
         /// Attach a comment to the state-change event (only for thread reopen)
@@ -1183,11 +1185,11 @@ fn main() -> Result<(), ForumError> {
 
         Commands::Retract {
             thread_id,
-            node_id,
+            node_ids,
             as_actor,
-        } => run_node_lifecycle(
+        } => run_node_lifecycle_bulk(
             &thread_id,
-            &node_id,
+            &node_ids,
             as_actor,
             git_forum::internal::event::EventType::Retract,
             "Retracted",
@@ -1196,11 +1198,11 @@ fn main() -> Result<(), ForumError> {
 
         Commands::Resolve {
             thread_id,
-            node_id,
+            node_ids,
             as_actor,
-        } => run_node_lifecycle(
+        } => run_node_lifecycle_bulk(
             &thread_id,
-            &node_id,
+            &node_ids,
             as_actor,
             git_forum::internal::event::EventType::Resolve,
             "Resolved",
@@ -1209,12 +1211,12 @@ fn main() -> Result<(), ForumError> {
 
         Commands::Reopen {
             thread_id,
-            node_id: Some(node_id),
+            node_ids,
             as_actor,
             ..
-        } => run_node_lifecycle(
+        } if !node_ids.is_empty() => run_node_lifecycle_bulk(
             &thread_id,
-            &node_id,
+            &node_ids,
             as_actor,
             git_forum::internal::event::EventType::Reopen,
             "Reopened",
@@ -1222,9 +1224,9 @@ fn main() -> Result<(), ForumError> {
         )?,
         Commands::Reopen {
             thread_id,
-            node_id: None,
             as_actor,
             comment,
+            ..
         } => {
             run_state_shorthand(
                 &thread_id,
@@ -2140,9 +2142,9 @@ fn resolve_actor(as_actor: Option<String>, git: &GitOps) -> String {
     as_actor.unwrap_or_else(|| actor::current_actor(git))
 }
 
-fn run_node_lifecycle(
+fn run_node_lifecycle_bulk(
     thread_id: &str,
-    node_id: &str,
+    node_ids: &[String],
     as_actor: Option<String>,
     event_type: git_forum::internal::event::EventType,
     label: &str,
@@ -2150,9 +2152,27 @@ fn run_node_lifecycle(
 ) -> Result<(), ForumError> {
     let (git, _paths) = discover_repo_with_init_warning()?;
     let actor = resolve_actor(as_actor, &git);
-    let resolved = thread::resolve_node_id_in_thread(&git, thread_id, node_id)?;
-    say::node_lifecycle(&git, thread_id, &resolved, &actor, clock, event_type)?;
-    println!("{label} {resolved}");
+    let mut failures = 0usize;
+    for node_id in node_ids {
+        let resolved = match thread::resolve_node_id_in_thread(&git, thread_id, node_id) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("error: {node_id}: {e}");
+                failures += 1;
+                continue;
+            }
+        };
+        match say::node_lifecycle(&git, thread_id, &resolved, &actor, clock, event_type) {
+            Ok(()) => println!("{label} {resolved}"),
+            Err(e) => {
+                eprintln!("error: {resolved}: {e}");
+                failures += 1;
+            }
+        }
+    }
+    if failures > 0 {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
