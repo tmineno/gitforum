@@ -43,20 +43,126 @@ enum Commands {
     /// Rebuild local index from Git refs
     Reindex,
     /// Issue sub-commands
+    #[command(hide = true)]
     Issue {
         #[command(subcommand)]
         cmd: ThreadCmd,
     },
     /// RFC sub-commands
+    #[command(hide = true)]
     Rfc {
         #[command(subcommand)]
         cmd: ThreadCmd,
+    },
+    /// Create a new thread
+    New {
+        /// Thread kind: rfc or issue
+        kind: String,
+        /// Thread title (omit when using --from-commit)
+        #[arg(
+            allow_hyphen_values = true,
+            required_unless_present_any = ["from_commit", "from_thread"]
+        )]
+        title: Option<String>,
+        #[arg(long, conflicts_with = "body_file")]
+        body: Option<String>,
+        #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        #[arg(long, value_name = "BRANCH")]
+        branch: Option<String>,
+        #[arg(long = "link-to", value_name = "THREAD_ID")]
+        link_to: Vec<String>,
+        #[arg(long, requires = "link_to", value_name = "REL")]
+        rel: Option<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        #[arg(long = "from-commit", value_name = "REV")]
+        from_commit: Option<String>,
+        #[arg(long = "from-thread", value_name = "THREAD_ID")]
+        from_thread: Option<String>,
+        #[arg(long)]
+        claim: Vec<String>,
+        #[arg(long)]
+        question: Vec<String>,
+        #[arg(long)]
+        objection: Vec<String>,
+        #[arg(long)]
+        action: Vec<String>,
+        #[arg(long)]
+        risk: Vec<String>,
+        #[arg(long)]
+        summary: Vec<String>,
     },
     /// List all threads (optionally filter by kind)
     #[command(alias = "list")]
     Ls {
         #[arg(long, value_name = "BRANCH")]
         branch: Option<String>,
+        /// Filter by thread kind (rfc or issue)
+        #[arg(long, value_name = "KIND")]
+        kind: Option<String>,
+    },
+    /// Close a thread (issue shorthand)
+    Close {
+        thread_id: String,
+        #[arg(long = "sign", value_name = "ACTOR")]
+        sign: Vec<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        #[arg(long)]
+        resolve_open_actions: bool,
+        #[arg(long = "link-to", value_name = "THREAD_ID")]
+        link_to: Vec<String>,
+        #[arg(long, requires = "link_to", value_name = "REL")]
+        rel: Option<String>,
+        #[arg(long)]
+        comment: Option<String>,
+    },
+    /// Mark a thread as pending (issue shorthand)
+    Pend {
+        thread_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        #[arg(long)]
+        comment: Option<String>,
+    },
+    /// Accept an RFC (shorthand for state <ID> accepted)
+    Accept {
+        thread_id: String,
+        #[arg(long = "sign", value_name = "ACTOR")]
+        sign: Vec<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        #[arg(long = "link-to", value_name = "THREAD_ID")]
+        link_to: Vec<String>,
+        #[arg(long, requires = "link_to", value_name = "REL")]
+        rel: Option<String>,
+        #[arg(long)]
+        comment: Option<String>,
+    },
+    /// Propose an RFC for review (shorthand for state <ID> proposed)
+    Propose {
+        thread_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        #[arg(long)]
+        comment: Option<String>,
+    },
+    /// Deprecate an RFC (shorthand for state <ID> deprecated)
+    Deprecate {
+        thread_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        #[arg(long)]
+        comment: Option<String>,
+    },
+    /// Reject a thread (shorthand for state <ID> rejected)
+    Reject {
+        thread_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        #[arg(long)]
+        comment: Option<String>,
     },
     /// Show thread details
     Show {
@@ -91,9 +197,10 @@ enum Commands {
     /// Add a claim node to a thread
     Claim {
         thread_id: String,
-        /// Node body (positional or use --body/--body-file)
-        body: Option<String>,
-        /// Read node body from a file
+        /// Node body (positional; use --body or --body-file for named alternatives)
+        body_positional: Option<String>,
+        #[arg(long = "body", value_name = "TEXT")]
+        body_flag: Option<String>,
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
         #[arg(long = "reply-to", value_name = "NODE_ID")]
@@ -104,7 +211,9 @@ enum Commands {
     /// Add a question node to a thread
     Question {
         thread_id: String,
-        body: Option<String>,
+        body_positional: Option<String>,
+        #[arg(long = "body", value_name = "TEXT")]
+        body_flag: Option<String>,
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
         #[arg(long = "reply-to", value_name = "NODE_ID")]
@@ -115,7 +224,9 @@ enum Commands {
     /// Add an objection node to a thread
     Objection {
         thread_id: String,
-        body: Option<String>,
+        body_positional: Option<String>,
+        #[arg(long = "body", value_name = "TEXT")]
+        body_flag: Option<String>,
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
         #[arg(long = "reply-to", value_name = "NODE_ID")]
@@ -126,7 +237,9 @@ enum Commands {
     /// Add a summary node to a thread
     Summary {
         thread_id: String,
-        body: Option<String>,
+        body_positional: Option<String>,
+        #[arg(long = "body", value_name = "TEXT")]
+        body_flag: Option<String>,
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
         #[arg(long = "reply-to", value_name = "NODE_ID")]
@@ -137,7 +250,9 @@ enum Commands {
     /// Add an action node to a thread
     Action {
         thread_id: String,
-        body: Option<String>,
+        body_positional: Option<String>,
+        #[arg(long = "body", value_name = "TEXT")]
+        body_flag: Option<String>,
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
         #[arg(long = "reply-to", value_name = "NODE_ID")]
@@ -148,7 +263,9 @@ enum Commands {
     /// Add a risk node to a thread
     Risk {
         thread_id: String,
-        body: Option<String>,
+        body_positional: Option<String>,
+        #[arg(long = "body", value_name = "TEXT")]
+        body_flag: Option<String>,
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
         #[arg(long = "reply-to", value_name = "NODE_ID")]
@@ -159,7 +276,9 @@ enum Commands {
     /// Add a review node to a thread
     Review {
         thread_id: String,
-        body: Option<String>,
+        body_positional: Option<String>,
+        #[arg(long = "body", value_name = "TEXT")]
+        body_flag: Option<String>,
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
         #[arg(long = "reply-to", value_name = "NODE_ID")]
@@ -189,16 +308,20 @@ enum Commands {
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
-    /// Reopen a resolved or retracted node
+    /// Reopen a resolved/retracted node, or reopen a closed/rejected thread
     Reopen {
         thread_id: String,
+        /// Node ID to reopen (omit to reopen the thread itself)
         #[arg(
             value_name = "NODE_ID",
-            help = "Full node ID or unique prefix within the thread (8+ chars unless exact match)"
+            help = "Full node ID or unique prefix (omit to reopen the thread state)"
         )]
-        node_id: String,
+        node_id: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+        /// Add a summary node before reopening the thread (only for thread reopen)
+        #[arg(long)]
+        comment: Option<String>,
     },
     /// Transition a thread to a new state
     State {
@@ -626,9 +749,162 @@ fn main() -> Result<(), ForumError> {
             run_thread_cmd(cmd, ThreadKind::Rfc, &clock)?;
         }
 
-        Commands::Ls { branch } => {
+        Commands::New {
+            kind,
+            title,
+            body,
+            body_file,
+            branch,
+            link_to,
+            rel,
+            as_actor,
+            from_commit,
+            from_thread,
+            claim,
+            question,
+            objection,
+            action,
+            risk,
+            summary,
+        } => {
+            let thread_kind = parse_thread_kind(&kind)?;
+            run_thread_cmd(
+                ThreadCmd::New {
+                    title,
+                    body,
+                    body_file,
+                    branch,
+                    link_to,
+                    rel,
+                    as_actor,
+                    from_commit,
+                    from_thread,
+                    claim,
+                    question,
+                    objection,
+                    action,
+                    risk,
+                    summary,
+                },
+                thread_kind,
+                &clock,
+            )?;
+        }
+
+        Commands::Close {
+            thread_id,
+            sign,
+            as_actor,
+            resolve_open_actions,
+            link_to,
+            rel,
+            comment,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "closed",
+                &sign,
+                as_actor,
+                resolve_open_actions,
+                &link_to,
+                rel.as_deref(),
+                comment.as_deref(),
+                &clock,
+            )?;
+        }
+        Commands::Pend {
+            thread_id,
+            as_actor,
+            comment,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "pending",
+                &[],
+                as_actor,
+                false,
+                &[],
+                None,
+                comment.as_deref(),
+                &clock,
+            )?;
+        }
+        Commands::Accept {
+            thread_id,
+            sign,
+            as_actor,
+            link_to,
+            rel,
+            comment,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "accepted",
+                &sign,
+                as_actor,
+                false,
+                &link_to,
+                rel.as_deref(),
+                comment.as_deref(),
+                &clock,
+            )?;
+        }
+        Commands::Propose {
+            thread_id,
+            as_actor,
+            comment,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "proposed",
+                &[],
+                as_actor,
+                false,
+                &[],
+                None,
+                comment.as_deref(),
+                &clock,
+            )?;
+        }
+        Commands::Deprecate {
+            thread_id,
+            as_actor,
+            comment,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "deprecated",
+                &[],
+                as_actor,
+                false,
+                &[],
+                None,
+                comment.as_deref(),
+                &clock,
+            )?;
+        }
+        Commands::Reject {
+            thread_id,
+            as_actor,
+            comment,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "rejected",
+                &[],
+                as_actor,
+                false,
+                &[],
+                None,
+                comment.as_deref(),
+                &clock,
+            )?;
+        }
+
+        Commands::Ls { branch, kind } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
-            let states = list_thread_states(&git, None, branch.as_deref())?;
+            let kind_filter = kind.as_deref().and_then(|k| parse_thread_kind(k).ok());
+            let states = list_thread_states(&git, kind_filter, branch.as_deref())?;
             let refs: Vec<&thread::ThreadState> = states.iter().collect();
             print!("{}", show::render_ls(&refs));
         }
@@ -696,13 +972,15 @@ fn main() -> Result<(), ForumError> {
         Commands::Revise { cmd } => run_revise_cmd(cmd, &clock)?,
         Commands::Claim {
             thread_id,
-            body,
+            body_positional,
+            body_flag,
             body_file,
             reply_to,
             as_actor,
         } => run_shorthand_say(
             &thread_id,
-            body,
+            body_positional,
+            body_flag,
             body_file,
             reply_to,
             as_actor,
@@ -711,13 +989,15 @@ fn main() -> Result<(), ForumError> {
         )?,
         Commands::Question {
             thread_id,
-            body,
+            body_positional,
+            body_flag,
             body_file,
             reply_to,
             as_actor,
         } => run_shorthand_say(
             &thread_id,
-            body,
+            body_positional,
+            body_flag,
             body_file,
             reply_to,
             as_actor,
@@ -726,13 +1006,15 @@ fn main() -> Result<(), ForumError> {
         )?,
         Commands::Objection {
             thread_id,
-            body,
+            body_positional,
+            body_flag,
             body_file,
             reply_to,
             as_actor,
         } => run_shorthand_say(
             &thread_id,
-            body,
+            body_positional,
+            body_flag,
             body_file,
             reply_to,
             as_actor,
@@ -741,13 +1023,15 @@ fn main() -> Result<(), ForumError> {
         )?,
         Commands::Summary {
             thread_id,
-            body,
+            body_positional,
+            body_flag,
             body_file,
             reply_to,
             as_actor,
         } => run_shorthand_say(
             &thread_id,
-            body,
+            body_positional,
+            body_flag,
             body_file,
             reply_to,
             as_actor,
@@ -756,13 +1040,15 @@ fn main() -> Result<(), ForumError> {
         )?,
         Commands::Action {
             thread_id,
-            body,
+            body_positional,
+            body_flag,
             body_file,
             reply_to,
             as_actor,
         } => run_shorthand_say(
             &thread_id,
-            body,
+            body_positional,
+            body_flag,
             body_file,
             reply_to,
             as_actor,
@@ -771,13 +1057,15 @@ fn main() -> Result<(), ForumError> {
         )?,
         Commands::Risk {
             thread_id,
-            body,
+            body_positional,
+            body_flag,
             body_file,
             reply_to,
             as_actor,
         } => run_shorthand_say(
             &thread_id,
-            body,
+            body_positional,
+            body_flag,
             body_file,
             reply_to,
             as_actor,
@@ -786,13 +1074,15 @@ fn main() -> Result<(), ForumError> {
         )?,
         Commands::Review {
             thread_id,
-            body,
+            body_positional,
+            body_flag,
             body_file,
             reply_to,
             as_actor,
         } => run_shorthand_say(
             &thread_id,
-            body,
+            body_positional,
+            body_flag,
             body_file,
             reply_to,
             as_actor,
@@ -828,8 +1118,9 @@ fn main() -> Result<(), ForumError> {
 
         Commands::Reopen {
             thread_id,
-            node_id,
+            node_id: Some(node_id),
             as_actor,
+            ..
         } => run_node_lifecycle(
             &thread_id,
             &node_id,
@@ -838,6 +1129,24 @@ fn main() -> Result<(), ForumError> {
             "Reopened",
             &clock,
         )?,
+        Commands::Reopen {
+            thread_id,
+            node_id: None,
+            as_actor,
+            comment,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "open",
+                &[],
+                as_actor,
+                false,
+                &[],
+                None,
+                comment.as_deref(),
+                &clock,
+            )?;
+        }
 
         Commands::State {
             cmd,
@@ -1107,9 +1416,11 @@ fn run_revise_cmd(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_shorthand_say(
     thread_id: &str,
-    body: Option<String>,
+    body_positional: Option<String>,
+    body_flag: Option<String>,
     body_file: Option<PathBuf>,
     reply_to: Option<String>,
     as_actor: Option<String>,
@@ -1118,6 +1429,7 @@ fn run_shorthand_say(
 ) -> Result<(), ForumError> {
     let (git, paths) = discover_repo_with_init_warning()?;
     let actor = resolve_actor(as_actor, &git);
+    let body = body_positional.or(body_flag);
     let body_text = resolve_body_required(body, body_file)?;
     let resolved_reply = resolve_reply_to(&git, thread_id, reply_to.as_deref())?;
     let node_id = say::say_node(
@@ -1518,6 +1830,16 @@ fn thread_matches_filters(
     kind.is_none_or(|kind| state.kind == kind)
         && branch.is_none_or(|branch| state.branch.as_deref() == Some(branch))
         && status.is_none_or(|status| state.status == status)
+}
+
+fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
+    match kind {
+        "issue" => Ok(ThreadKind::Issue),
+        "rfc" => Ok(ThreadKind::Rfc),
+        other => Err(ForumError::Config(format!(
+            "unknown kind '{other}'; valid: issue, rfc"
+        ))),
+    }
 }
 
 fn parse_thread_kind_filter(kind: Option<&str>) -> Result<Option<ThreadKind>, ForumError> {

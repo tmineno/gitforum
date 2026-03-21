@@ -39,8 +39,8 @@ git forum risk <THREAD> "body"
 git forum review <THREAD> "body"
 ```
 
-All accept a positional body argument, --body-file, --reply-to, and --as.
-Pass "-" as the positional body to read from stdin.
+All accept a positional body argument, --body, --body-file, --reply-to, and --as.
+Priority: positional > --body > --body-file. Pass "-" as the positional body to read from stdin.
 "#
     .to_string()
 }
@@ -62,17 +62,17 @@ pub fn state_transition_map() -> String {
 
     out.push_str("## Shorthand commands\n\n");
     out.push_str("```\n");
-    out.push_str("git forum issue close <ID>       # open/pending -> closed\n");
-    out.push_str("git forum issue pend <ID>        # open -> pending\n");
-    out.push_str("git forum issue reopen <ID>      # closed/rejected -> open\n");
-    out.push_str("git forum issue reject <ID>      # open -> rejected\n");
-    out.push_str("git forum rfc propose <ID>       # draft -> proposed\n");
-    out.push_str("git forum rfc accept <ID>        # under-review -> accepted\n");
-    out.push_str("git forum rfc deprecate <ID>     # accepted/rejected -> deprecated\n");
+    out.push_str("git forum close <ID>       # open/pending -> closed\n");
+    out.push_str("git forum pend <ID>        # open -> pending\n");
+    out.push_str("git forum reopen <ID>      # closed/rejected -> open\n");
+    out.push_str("git forum reject <ID>      # open -> rejected\n");
+    out.push_str("git forum propose <ID>     # draft -> proposed\n");
+    out.push_str("git forum accept <ID>      # under-review -> accepted\n");
+    out.push_str("git forum deprecate <ID>   # accepted/rejected -> deprecated\n");
     out.push_str("```\n\n");
     out.push_str("All accept --as and --comment.\n");
-    out.push_str("issue close and rfc accept also accept --sign, --link-to, --rel.\n");
-    out.push_str("issue close also accepts --resolve-open-actions.\n");
+    out.push_str("close and accept also accept --sign, --link-to, --rel.\n");
+    out.push_str("close also accepts --resolve-open-actions.\n");
     out.push_str(
         "Use `git forum show <ID> --what-next` to see valid transitions and guard status.\n",
     );
