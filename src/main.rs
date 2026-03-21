@@ -127,8 +127,8 @@ enum Commands {
     /// Close a thread (issue shorthand)
     Close {
         thread_id: String,
-        #[arg(long = "sign", value_name = "ACTOR")]
-        sign: Vec<String>,
+        #[arg(long = "approve", value_name = "ACTOR")]
+        approve: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
         #[arg(long)]
@@ -139,6 +139,9 @@ enum Commands {
         rel: Option<String>,
         #[arg(long)]
         comment: Option<String>,
+        /// Walk through intermediate states to reach the target
+        #[arg(long)]
+        fast_track: bool,
         /// Bypass warning-level operation checks (does not bypass errors)
         #[arg(long)]
         force: bool,
@@ -150,6 +153,9 @@ enum Commands {
         as_actor: Option<String>,
         #[arg(long)]
         comment: Option<String>,
+        /// Walk through intermediate states to reach the target
+        #[arg(long)]
+        fast_track: bool,
         /// Bypass warning-level operation checks (does not bypass errors)
         #[arg(long)]
         force: bool,
@@ -157,8 +163,8 @@ enum Commands {
     /// Accept an RFC (shorthand for state <ID> accepted)
     Accept {
         thread_id: String,
-        #[arg(long = "sign", value_name = "ACTOR")]
-        sign: Vec<String>,
+        #[arg(long = "approve", value_name = "ACTOR")]
+        approve: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
         #[arg(long = "link-to", value_name = "THREAD_ID")]
@@ -167,6 +173,9 @@ enum Commands {
         rel: Option<String>,
         #[arg(long)]
         comment: Option<String>,
+        /// Walk through intermediate states to reach the target
+        #[arg(long)]
+        fast_track: bool,
         /// Bypass warning-level operation checks (does not bypass errors)
         #[arg(long)]
         force: bool,
@@ -178,6 +187,9 @@ enum Commands {
         as_actor: Option<String>,
         #[arg(long)]
         comment: Option<String>,
+        /// Walk through intermediate states to reach the target
+        #[arg(long)]
+        fast_track: bool,
         /// Bypass warning-level operation checks (does not bypass errors)
         #[arg(long)]
         force: bool,
@@ -189,6 +201,9 @@ enum Commands {
         as_actor: Option<String>,
         #[arg(long)]
         comment: Option<String>,
+        /// Walk through intermediate states to reach the target
+        #[arg(long)]
+        fast_track: bool,
         /// Bypass warning-level operation checks (does not bypass errors)
         #[arg(long)]
         force: bool,
@@ -200,6 +215,9 @@ enum Commands {
         as_actor: Option<String>,
         #[arg(long)]
         comment: Option<String>,
+        /// Walk through intermediate states to reach the target
+        #[arg(long)]
+        fast_track: bool,
         /// Bypass warning-level operation checks (does not bypass errors)
         #[arg(long)]
         force: bool,
@@ -407,8 +425,8 @@ enum Commands {
         thread_id: Option<String>,
         new_state: Option<String>,
         /// Actor IDs to record as approvals (may be repeated)
-        #[arg(long = "sign", value_name = "ACTOR")]
-        sign: Vec<String>,
+        #[arg(long = "approve", value_name = "ACTOR")]
+        approve: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
         #[arg(long)]
@@ -422,6 +440,9 @@ enum Commands {
         /// Attach a comment to the state-change event
         #[arg(long)]
         comment: Option<String>,
+        /// Walk through intermediate states to reach the target
+        #[arg(long)]
+        fast_track: bool,
         /// Bypass warning-level operation checks (does not bypass errors)
         #[arg(long)]
         force: bool,
@@ -625,8 +646,8 @@ enum StateCmd {
         kind: Option<String>,
         #[arg(long, value_name = "STATUS")]
         status: Option<String>,
-        #[arg(long = "sign", value_name = "ACTOR")]
-        sign: Vec<String>,
+        #[arg(long = "approve", value_name = "ACTOR")]
+        approve: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
         #[arg(long)]
@@ -702,8 +723,8 @@ enum ThreadCmd {
     /// Close a thread (shorthand for state <ID> closed)
     Close {
         thread_id: String,
-        #[arg(long = "sign", value_name = "ACTOR")]
-        sign: Vec<String>,
+        #[arg(long = "approve", value_name = "ACTOR")]
+        approve: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
         #[arg(long)]
@@ -747,8 +768,8 @@ enum ThreadCmd {
     /// Accept an RFC (shorthand for state <ID> accepted)
     Accept {
         thread_id: String,
-        #[arg(long = "sign", value_name = "ACTOR")]
-        sign: Vec<String>,
+        #[arg(long = "approve", value_name = "ACTOR")]
+        approve: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
         #[arg(long = "link-to", value_name = "THREAD_ID")]
@@ -984,23 +1005,25 @@ fn main() -> Result<(), ForumError> {
 
         Commands::Close {
             thread_id,
-            sign,
+            approve,
             as_actor,
             resolve_open_actions,
             link_to,
             rel,
             comment,
+            fast_track,
             force,
         } => {
             run_state_shorthand(
                 &thread_id,
                 "closed",
-                &sign,
+                &approve,
                 as_actor,
                 resolve_open_actions,
                 &link_to,
                 rel.as_deref(),
                 comment.as_deref(),
+                fast_track,
                 force,
                 &clock,
             )?;
@@ -1009,6 +1032,7 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             as_actor,
             comment,
+            fast_track,
             force,
         } => {
             run_state_shorthand(
@@ -1020,28 +1044,31 @@ fn main() -> Result<(), ForumError> {
                 &[],
                 None,
                 comment.as_deref(),
+                fast_track,
                 force,
                 &clock,
             )?;
         }
         Commands::Accept {
             thread_id,
-            sign,
+            approve,
             as_actor,
             link_to,
             rel,
             comment,
+            fast_track,
             force,
         } => {
             run_state_shorthand(
                 &thread_id,
                 "accepted",
-                &sign,
+                &approve,
                 as_actor,
                 false,
                 &link_to,
                 rel.as_deref(),
                 comment.as_deref(),
+                fast_track,
                 force,
                 &clock,
             )?;
@@ -1050,6 +1077,7 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             as_actor,
             comment,
+            fast_track,
             force,
         } => {
             run_state_shorthand(
@@ -1061,6 +1089,7 @@ fn main() -> Result<(), ForumError> {
                 &[],
                 None,
                 comment.as_deref(),
+                fast_track,
                 force,
                 &clock,
             )?;
@@ -1069,6 +1098,7 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             as_actor,
             comment,
+            fast_track,
             force,
         } => {
             run_state_shorthand(
@@ -1080,6 +1110,7 @@ fn main() -> Result<(), ForumError> {
                 &[],
                 None,
                 comment.as_deref(),
+                fast_track,
                 force,
                 &clock,
             )?;
@@ -1088,6 +1119,7 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             as_actor,
             comment,
+            fast_track,
             force,
         } => {
             run_state_shorthand(
@@ -1099,6 +1131,7 @@ fn main() -> Result<(), ForumError> {
                 &[],
                 None,
                 comment.as_deref(),
+                fast_track,
                 force,
                 &clock,
             )?;
@@ -1396,12 +1429,13 @@ fn main() -> Result<(), ForumError> {
             cmd,
             thread_id,
             new_state,
-            sign,
+            approve,
             as_actor,
             resolve_open_actions,
             link_to,
             rel,
             comment,
+            fast_track,
             force: _force,
         } => {
             let (git, paths) = discover_repo_with_init_warning()?;
@@ -1413,7 +1447,7 @@ fn main() -> Result<(), ForumError> {
                     branch,
                     kind,
                     status,
-                    sign,
+                    approve,
                     as_actor,
                     resolve_open_actions,
                     dry_run,
@@ -1430,7 +1464,7 @@ fn main() -> Result<(), ForumError> {
                             status: status.as_deref(),
                         },
                         &new_state,
-                        &sign,
+                        &approve,
                         &actor,
                         &clock,
                         state_change::StateChangeOptions {
@@ -1447,30 +1481,41 @@ fn main() -> Result<(), ForumError> {
                 None => {
                     let thread_id = thread_id.ok_or_else(|| {
                         ForumError::Config(
-                            "usage: git forum state <THREAD_ID> <NEW_STATE> [--sign <ACTOR_ID>]... [--resolve-open-actions]"
+                            "usage: git forum state <THREAD_ID> <NEW_STATE> [--approve <ACTOR_ID>]... [--resolve-open-actions]"
                                 .into(),
                         )
                     })?;
                     let new_state = new_state.ok_or_else(|| {
                         ForumError::Config(
-                            "usage: git forum state <THREAD_ID> <NEW_STATE> [--sign <ACTOR_ID>]... [--resolve-open-actions]"
+                            "usage: git forum state <THREAD_ID> <NEW_STATE> [--approve <ACTOR_ID>]... [--resolve-open-actions]"
                                 .into(),
                         )
                     })?;
                     let actor = resolve_actor(as_actor, &git);
-                    state_change::change_state(
-                        &git,
-                        &thread_id,
-                        &new_state,
-                        &sign,
-                        &actor,
-                        &clock,
-                        &policy,
-                        state_change::StateChangeOptions {
-                            resolve_open_actions,
-                            comment,
-                        },
-                    )?;
+                    let options = state_change::StateChangeOptions {
+                        resolve_open_actions,
+                        comment,
+                    };
+                    if fast_track {
+                        let walked = state_change::fast_track_state(
+                            &git, &thread_id, &new_state, &approve, &actor, &clock, &policy,
+                            options,
+                        )?;
+                        for (i, step) in walked.iter().enumerate() {
+                            let is_final = i == walked.len() - 1;
+                            if is_final {
+                                println!("{thread_id} -> {step}");
+                            } else {
+                                eprintln!("  {thread_id}: -> {step}");
+                            }
+                        }
+                    } else {
+                        state_change::change_state(
+                            &git, &thread_id, &new_state, &approve, &actor, &clock, &policy,
+                            options,
+                        )?;
+                        println!("{thread_id} -> {new_state}");
+                    }
                     // Create links after state transition if requested
                     if !link_to.is_empty() {
                         let rel = rel.as_deref().ok_or_else(|| {
@@ -1482,7 +1527,6 @@ fn main() -> Result<(), ForumError> {
                             )?;
                         }
                     }
-                    println!("{thread_id} -> {new_state}");
                     if let Ok(state) = thread::replay_thread(&git, &thread_id) {
                         eprintln!("{}", show::render_next_actions(&state, &policy));
                     }
@@ -1975,7 +2019,7 @@ fn run_thread_cmd(
         )?,
         ThreadCmd::Close {
             thread_id,
-            sign,
+            approve,
             as_actor,
             resolve_open_actions,
             link_to,
@@ -1985,12 +2029,13 @@ fn run_thread_cmd(
             run_state_shorthand(
                 &thread_id,
                 "closed",
-                &sign,
+                &approve,
                 as_actor,
                 resolve_open_actions,
                 &link_to,
                 rel.as_deref(),
                 comment.as_deref(),
+                false,
                 false,
                 clock,
             )?;
@@ -2010,6 +2055,7 @@ fn run_thread_cmd(
                 None,
                 comment.as_deref(),
                 false,
+                false,
                 clock,
             )?;
         }
@@ -2027,6 +2073,7 @@ fn run_thread_cmd(
                 &[],
                 None,
                 comment.as_deref(),
+                false,
                 false,
                 clock,
             )?;
@@ -2046,12 +2093,13 @@ fn run_thread_cmd(
                 None,
                 comment.as_deref(),
                 false,
+                false,
                 clock,
             )?;
         }
         ThreadCmd::Accept {
             thread_id,
-            sign,
+            approve,
             as_actor,
             link_to,
             rel,
@@ -2060,12 +2108,13 @@ fn run_thread_cmd(
             run_state_shorthand(
                 &thread_id,
                 "accepted",
-                &sign,
+                &approve,
                 as_actor,
                 false,
                 &link_to,
                 rel.as_deref(),
                 comment.as_deref(),
+                false,
                 false,
                 clock,
             )?;
@@ -2085,6 +2134,7 @@ fn run_thread_cmd(
                 None,
                 comment.as_deref(),
                 false,
+                false,
                 clock,
             )?;
         }
@@ -2103,6 +2153,7 @@ fn run_thread_cmd(
                 None,
                 comment.as_deref(),
                 false,
+                false,
                 clock,
             )?;
         }
@@ -2111,34 +2162,45 @@ fn run_thread_cmd(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn run_state_shorthand(
     thread_id: &str,
     new_state: &str,
-    sign: &[String],
+    approve: &[String],
     as_actor: Option<String>,
     resolve_open_actions: bool,
     link_to: &[String],
     rel: Option<&str>,
     comment: Option<&str>,
+    fast_track: bool,
     _force: bool,
     clock: &dyn git_forum::internal::clock::Clock,
 ) -> Result<(), ForumError> {
     let (git, paths) = discover_repo_with_init_warning()?;
     let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
     let actor = resolve_actor(as_actor, &git);
-    state_change::change_state(
-        &git,
-        thread_id,
-        new_state,
-        sign,
-        &actor,
-        clock,
-        &policy,
-        state_change::StateChangeOptions {
-            resolve_open_actions,
-            comment: comment.map(|s| s.to_string()),
-        },
-    )?;
+    let options = state_change::StateChangeOptions {
+        resolve_open_actions,
+        comment: comment.map(|s| s.to_string()),
+    };
+    if fast_track {
+        let walked = state_change::fast_track_state(
+            &git, thread_id, new_state, approve, &actor, clock, &policy, options,
+        )?;
+        for (i, step) in walked.iter().enumerate() {
+            let is_final = i == walked.len() - 1;
+            if is_final {
+                println!("{thread_id} -> {step}");
+            } else {
+                eprintln!("  {thread_id}: -> {step}");
+            }
+        }
+    } else {
+        state_change::change_state(
+            &git, thread_id, new_state, approve, &actor, clock, &policy, options,
+        )?;
+        println!("{thread_id} -> {new_state}");
+    }
     if !link_to.is_empty() {
         let rel = rel
             .ok_or_else(|| ForumError::Config("--rel is required when --link-to is used".into()))?;
@@ -2146,7 +2208,6 @@ fn run_state_shorthand(
             evidence_ops::add_thread_link(&git, thread_id, target, rel, &actor, clock)?;
         }
     }
-    println!("{thread_id} -> {new_state}");
     if let Ok(state) = thread::replay_thread(&git, thread_id) {
         eprintln!("{}", show::render_next_actions(&state, &policy));
     }
@@ -2233,7 +2294,7 @@ fn run_bulk_state_change(
     explicit_ids: &[String],
     selectors: BulkSelectors<'_>,
     new_state: &str,
-    sign: &[String],
+    approve: &[String],
     actor: &str,
     clock: &dyn git_forum::internal::clock::Clock,
     options: state_change::StateChangeOptions,
@@ -2281,7 +2342,7 @@ fn run_bulk_state_change(
             git,
             &thread_id,
             new_state,
-            sign,
+            approve,
             clock,
             policy,
             options.clone(),
@@ -2292,7 +2353,7 @@ fn run_bulk_state_change(
                         git,
                         &thread_id,
                         new_state,
-                        sign,
+                        approve,
                         actor,
                         clock,
                         policy,

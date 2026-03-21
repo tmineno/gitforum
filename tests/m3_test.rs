@@ -1177,6 +1177,192 @@ fn from_thread_creates_new_rfc_with_links_and_deprecates_source() {
     assert_eq!(source_after.links[0].rel, "superseded-by");
 }
 
+// --- fast_track_state tests ---
+
+#[test]
+fn fast_track_rfc_draft_to_accepted() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+
+    // Add a summary (needed for guard at under-review->accepted in default policy)
+    say::say_node(
+        &git,
+        &thread_id,
+        NodeType::Summary,
+        "Consensus reached.",
+        "human/alice",
+        &fixed_clock(),
+        None,
+    )
+    .unwrap();
+
+    let walked = state_change::fast_track_state(
+        &git,
+        &thread_id,
+        "accepted",
+        &["human/alice".to_string()],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+
+    assert_eq!(walked, vec!["proposed", "under-review", "accepted"]);
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.status, "accepted");
+}
+
+#[test]
+fn fast_track_emits_separate_events_per_step() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+
+    state_change::fast_track_state(
+        &git,
+        &thread_id,
+        "accepted",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    // Create + 3 state events = 4 events total
+    assert_eq!(state.events.len(), 4);
+}
+
+#[test]
+fn fast_track_stops_on_guard_failure() {
+    let (_repo, git, paths) = setup();
+    let thread_id = make_rfc(&git);
+
+    // Add an open objection — will fail no_open_objections guard at under-review->accepted
+    say::say_node(
+        &git,
+        &thread_id,
+        NodeType::Objection,
+        "Not ready.",
+        "human/bob",
+        &fixed_clock(),
+        None,
+    )
+    .unwrap();
+
+    let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap();
+    let result = state_change::fast_track_state(
+        &git,
+        &thread_id,
+        "accepted",
+        &["human/alice".to_string()],
+        "human/alice",
+        &fixed_clock(),
+        &policy,
+        state_change::StateChangeOptions::default(),
+    );
+
+    assert!(result.is_err());
+
+    // Thread should be at under-review (stopped before accepted)
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.status, "under-review");
+}
+
+#[test]
+fn fast_track_no_path_returns_error() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+
+    // Move to accepted first — accepted has no path to draft
+    state_change::fast_track_state(
+        &git,
+        &thread_id,
+        "accepted",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+
+    let result = state_change::fast_track_state(
+        &git,
+        &thread_id,
+        "draft",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    );
+
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("no path"), "unexpected error: {err}");
+}
+
+#[test]
+fn fast_track_already_at_target_is_noop() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+
+    let walked = state_change::fast_track_state(
+        &git,
+        &thread_id,
+        "draft",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+
+    assert!(walked.is_empty());
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.status, "draft");
+}
+
+#[test]
+fn fast_track_sign_and_comment_only_on_final_step() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+
+    state_change::fast_track_state(
+        &git,
+        &thread_id,
+        "accepted",
+        &["human/alice".to_string()],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions {
+            comment: Some("Done!".to_string()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.status, "accepted");
+    // Only the final event (accepted) should have approvals
+    let state_events: Vec<_> = state
+        .events
+        .iter()
+        .filter(|e| e.event_type == EventType::State)
+        .collect();
+    assert_eq!(state_events.len(), 3); // proposed, under-review, accepted
+    assert!(state_events[0].approvals.is_empty()); // proposed: no approvals
+    assert!(state_events[1].approvals.is_empty()); // under-review: no approvals
+    assert_eq!(state_events[2].approvals.len(), 1); // accepted: signed
+    assert_eq!(state_events[2].approvals[0].actor_id, "human/alice");
+}
+
 #[test]
 fn state_change_with_comment_attaches_body_no_summary_node() {
     let (_repo, git, _paths) = setup();

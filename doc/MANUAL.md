@@ -14,7 +14,7 @@ git forum pend ISSUE-0001                          Mark issue pending
 git forum new rfc "Title" --body "..."             Create an RFC
 git forum new dec "Title" --body "..."             Create a decision record
 git forum new task "Title"                         Create a task
-git forum accept RFC-0001 --sign human/alice       Accept an RFC
+git forum accept RFC-0001 --approve human/alice       Accept an RFC
 git forum show RFC-0001 --what-next                Show valid next actions
 git forum node add DEC-0001 --type alternative "Use Memcached"  Add typed node
 git forum evidence add ISSUE-0001 --kind commit --ref HEAD  Add evidence
@@ -683,22 +683,22 @@ git forum pend ISSUE-0001 --comment "Waiting on review"
 git forum issue reopen ISSUE-0001                     # thread state reopen
 git forum reject ISSUE-0001 --comment "Won't fix"
 git forum propose RFC-0001
-git forum accept RFC-0001 --sign human/alice
+git forum accept RFC-0001 --approve human/alice
 git forum deprecate RFC-0001 --comment "Superseded by RFC-0005"
 git forum state RFC-0001 deprecated --link-to RFC-0005 --rel relates-to
 ```
 
 Shorthand commands combine a state transition with optional `--comment` (attaches comment text to
-the state-change event's body), `--link-to` (creates links after transitioning), and `--sign`
+the state-change event's body), `--link-to` (creates links after transitioning), and `--approve`
 (records approvals).
 
 Available shorthands:
-- `close` — transition to `closed` (also accepts `--sign`, `--link-to`, `--rel`, `--resolve-open-actions`)
+- `close` — transition to `closed` (also accepts `--approve`, `--link-to`, `--rel`, `--resolve-open-actions`)
 - `pend` — transition to `pending` (work-in-progress)
 - `reopen` — reopen resolved/retracted nodes (requires node IDs; for thread state reopen use `git forum {issue,rfc,dec,task} reopen`)
 - `reject` — transition to `rejected`
 - `propose` — transition to `proposed`
-- `accept` — transition to `accepted` (also accepts `--sign`, `--link-to`, `--rel`)
+- `accept` — transition to `accepted` (also accepts `--approve`, `--link-to`, `--rel`)
 - `deprecate` — transition to `deprecated` (from `accepted` or `rejected`)
 
 The old kind-prefixed forms (`git forum issue close`, `git forum rfc accept`, etc.) remain as hidden
@@ -709,14 +709,14 @@ aliases for backward compatibility. The same applies to `git forum dec` and `git
 ```bash
 git forum state RFC-0001 proposed
 git forum state RFC-0001 under-review
-git forum state RFC-0001 accepted --sign human/alice
+git forum state RFC-0001 accepted --approve human/alice
 git forum state ISSUE-0001 closed --resolve-open-actions
 git forum state ISSUE-0001 closed --comment "Done" --link-to RFC-0001 --rel implements
 git forum state bulk --to closed --branch v0.1.0
 git forum state bulk --to closed ISSUE-0001 ISSUE-0002 --dry-run
 ```
 
-- `--sign` is recorded as an approval on the event
+- `--approve` is recorded as an approval on the event
 - `--comment` attaches comment text to the state-change event's body (visible in the timeline)
 - `--link-to` and `--rel` create thread links after the state transition
 - whether the transition succeeds depends on the state machine and policy guards
@@ -907,7 +907,7 @@ git forum resolve RFC-0001 <OBJECTION_NODE_ID>
 git forum propose RFC-0001
 git forum state RFC-0001 under-review
 git forum verify RFC-0001
-git forum accept RFC-0001 --sign human/alice
+git forum accept RFC-0001 --approve human/alice
 git forum new issue "Implement trait backend" --link-to RFC-0001 --rel implements
 git forum branch bind ISSUE-0001 feat/trait-backend
 git forum action ISSUE-0001 "Wire trait backend behind feature flag."
@@ -943,7 +943,7 @@ git forum resolve RFC-0001 <OBJECTION_NODE_ID>
 git forum summary RFC-0001 "Caching with LRU eviction approved."
 git forum propose RFC-0001
 git forum state RFC-0001 under-review
-git forum accept RFC-0001 --sign human/alice
+git forum accept RFC-0001 --approve human/alice
 ```
 
 ## Linking implementation commits as evidence
@@ -1015,5 +1015,5 @@ This manual currently covers:
 
 Still out of scope:
 
-- import / export
+- GitHub issue import / export
 - merge conflict resolution UX

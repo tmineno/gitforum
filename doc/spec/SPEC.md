@@ -581,14 +581,14 @@ performs a thread state reopen (see section 9.6).
 Shorthand commands (top-level, verb-first):
 
 ```text
-git forum close <THREAD_ID> [--sign <ACTOR_ID>]...
+git forum close <THREAD_ID> [--approve <ACTOR_ID>]...
     [--resolve-open-actions] [--link-to <THREAD_ID> --rel <REL>]
     [--comment <TEXT>]
 git forum pend <THREAD_ID> [--comment <TEXT>]
 git forum reopen <THREAD_ID> [--comment <TEXT>]
 git forum reject <THREAD_ID> [--comment <TEXT>]
 git forum propose <THREAD_ID> [--comment <TEXT>]
-git forum accept <THREAD_ID> [--sign <ACTOR_ID>]...
+git forum accept <THREAD_ID> [--approve <ACTOR_ID>]...
     [--link-to <THREAD_ID> --rel <REL>] [--comment <TEXT>]
 git forum deprecate <THREAD_ID> [--comment <TEXT>]
 ```
@@ -605,11 +605,11 @@ aliases for backward compatibility.
 Generic state command:
 
 ```text
-git forum state <THREAD_ID> <NEW_STATE> [--sign <ACTOR_ID>]...
+git forum state <THREAD_ID> <NEW_STATE> [--approve <ACTOR_ID>]...
     [--resolve-open-actions] [--link-to <THREAD_ID> --rel <REL>]
     [--comment <TEXT>]
 git forum state bulk --to <NEW_STATE> [<THREAD_ID>...] [--branch <BRANCH>]
-    [--kind <KIND>] [--status <STATUS>] [--sign <ACTOR_ID>]...
+    [--kind <KIND>] [--status <STATUS>] [--approve <ACTOR_ID>]...
     [--resolve-open-actions] [--dry-run]
 ```
 
@@ -671,10 +671,11 @@ Hook path is resolved via `git rev-parse --git-path hooks/commit-msg` (worktree 
 Import and export commands are planned but not yet implemented:
 
 ```text
-git forum import github-issue <SOURCE>
-git forum import markdown-rfc <PATH>
-git forum export <THREAD_ID> [--format <FORMAT>]
+git forum import github-issue --repo <OWNER/REPO> --issue <NUMBER>
+git forum export github-issue <THREAD_ID> --repo <OWNER/REPO>
 ```
+
+Scope: GitHub issue interoperability only. RFC import/export is not planned.
 
 ## 10. Command requirements
 
@@ -735,7 +736,7 @@ Display:
 - Validate the transition against the state machine.
 - Evaluate guard rules from policy.
 - `--comment <TEXT>` attaches comment text to the state-change event's body.
-- Attach approvals from `--sign`.
+- Attach approvals from `--approve`.
 - Append a `state` event.
 - `--link-to <THREAD_ID> --rel <REL>` creates thread links after the state transition.
 - `--resolve-open-actions` resolves open action nodes before the transition.

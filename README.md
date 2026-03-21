@@ -44,7 +44,7 @@ $ git forum summary RFC-0001 \
   "Direction is plausible, but migration evidence is still missing."
 $ git forum rfc propose RFC-0001
 $ git forum state RFC-0001 under-review
-$ git forum rfc accept RFC-0001 --sign human/alice
+$ git forum rfc accept RFC-0001 --approve human/alice
 $ git forum issue new "Implement trait backend" \
   --link-to RFC-0001 --rel implements
 $ git forum branch bind ISSUE-0001 feat/trait-backend
@@ -168,8 +168,8 @@ refs/forum/threads/*
 - Git worktree support
 - Advisory commit-msg hook (validates thread ID references, auto-installed on init)
 
-See [doc/ROADMAP.md](./doc/ROADMAP.md) for in-progress and planned work including semantic merge,
-role enforcement, and import/export.
+See [doc/ROADMAP.md](./doc/ROADMAP.md) for in-progress and planned work including
+role enforcement and GitHub issue import/export.
 
 ## Non-goals
 
