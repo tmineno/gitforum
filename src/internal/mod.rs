@@ -17,6 +17,7 @@ pub mod id_alloc;
 pub mod index;
 pub mod init;
 pub mod node;
+pub mod operation_check;
 pub mod policy;
 pub mod refs;
 pub mod reindex;
