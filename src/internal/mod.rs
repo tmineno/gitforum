@@ -5,6 +5,7 @@ pub mod clock;
 pub mod config;
 pub mod create;
 pub mod doctor;
+pub mod editor;
 pub mod error;
 pub mod event;
 pub mod evidence;

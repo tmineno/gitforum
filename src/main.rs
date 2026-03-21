@@ -9,6 +9,7 @@ use git_forum::internal::clock::SystemClock;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
 use git_forum::internal::doctor;
+use git_forum::internal::editor;
 use git_forum::internal::error::ForumError;
 use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::evidence::EvidenceKind;
@@ -85,6 +86,9 @@ enum Commands {
         body: Option<String>,
         #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
         body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body", "body_file"])]
+        edit: bool,
         #[arg(long, value_name = "BRANCH")]
         branch: Option<String>,
         #[arg(long = "link-to", value_name = "THREAD_ID")]
@@ -261,6 +265,9 @@ enum Commands {
         /// Read new thread body from a file
         #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
         body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body", "body_file"])]
+        edit: bool,
         /// Node IDs to mark as incorporated into this body revision
         #[arg(long = "incorporates", value_name = "NODE_ID")]
         incorporates: Vec<String>,
@@ -281,6 +288,9 @@ enum Commands {
         body_flag: Option<String>,
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body_positional", "body_flag", "body_file"])]
+        edit: bool,
         #[arg(long = "reply-to", value_name = "NODE_ID")]
         reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
@@ -297,6 +307,9 @@ enum Commands {
         body_flag: Option<String>,
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body_positional", "body_flag", "body_file"])]
+        edit: bool,
         #[arg(long = "reply-to", value_name = "NODE_ID")]
         reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
@@ -313,6 +326,9 @@ enum Commands {
         body_flag: Option<String>,
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body_positional", "body_flag", "body_file"])]
+        edit: bool,
         #[arg(long = "reply-to", value_name = "NODE_ID")]
         reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
@@ -329,6 +345,9 @@ enum Commands {
         body_flag: Option<String>,
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body_positional", "body_flag", "body_file"])]
+        edit: bool,
         #[arg(long = "reply-to", value_name = "NODE_ID")]
         reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
@@ -345,6 +364,9 @@ enum Commands {
         body_flag: Option<String>,
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body_positional", "body_flag", "body_file"])]
+        edit: bool,
         #[arg(long = "reply-to", value_name = "NODE_ID")]
         reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
@@ -361,6 +383,9 @@ enum Commands {
         body_flag: Option<String>,
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body_positional", "body_flag", "body_file"])]
+        edit: bool,
         #[arg(long = "reply-to", value_name = "NODE_ID")]
         reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
@@ -377,6 +402,9 @@ enum Commands {
         body_flag: Option<String>,
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body_positional", "body_flag", "body_file"])]
+        edit: bool,
         #[arg(long = "reply-to", value_name = "NODE_ID")]
         reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
@@ -527,6 +555,9 @@ enum ReviseCmd {
         /// Read new thread body from a file
         #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
         body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body", "body_file"])]
+        edit: bool,
         /// Node IDs to mark as incorporated into this body revision
         #[arg(long = "incorporates", value_name = "NODE_ID")]
         incorporates: Vec<String>,
@@ -549,6 +580,9 @@ enum ReviseCmd {
         /// Read revised body from a file
         #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
         body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body", "body_file"])]
+        edit: bool,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
         /// Bypass warning-level operation checks (does not bypass errors)
@@ -603,6 +637,9 @@ enum NodeCmd {
             conflicts_with_all = ["body_positional", "body_flag"]
         )]
         body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body_positional", "body_flag", "body_file"])]
+        edit: bool,
         /// Reply to a specific node
         #[arg(long = "reply-to", value_name = "NODE_ID")]
         reply_to: Option<String>,
@@ -730,6 +767,9 @@ enum ThreadCmd {
         /// Read initial thread body from a file
         #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
         body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body", "body_file"])]
+        edit: bool,
         /// Bind the new thread to an existing Git branch
         #[arg(long, value_name = "BRANCH")]
         branch: Option<String>,
@@ -865,6 +905,9 @@ enum ThreadCmd {
         /// Read new thread body from a file
         #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
         body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body", "body_file"])]
+        edit: bool,
         /// Node IDs to mark as incorporated into this body revision
         #[arg(long = "incorporates", value_name = "NODE_ID")]
         incorporates: Vec<String>,
@@ -1098,6 +1141,7 @@ fn main() -> Result<(), ForumError> {
             title,
             body,
             body_file,
+            edit,
             branch,
             link_to,
             rel,
@@ -1118,6 +1162,7 @@ fn main() -> Result<(), ForumError> {
                     title,
                     body,
                     body_file,
+                    edit,
                     branch,
                     link_to,
                     rel,
@@ -1340,6 +1385,7 @@ fn main() -> Result<(), ForumError> {
                 body_positional,
                 body_flag,
                 body_file,
+                edit,
                 reply_to,
                 as_actor,
                 force,
@@ -1348,6 +1394,7 @@ fn main() -> Result<(), ForumError> {
                 body_positional,
                 body_flag,
                 body_file,
+                edit,
                 reply_to,
                 as_actor,
                 node_type,
@@ -1382,6 +1429,7 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             body,
             body_file,
+            edit,
             incorporates,
             as_actor,
             force,
@@ -1391,6 +1439,7 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             body,
             body_file,
+            edit,
             incorporates,
             as_actor,
             force,
@@ -1401,6 +1450,7 @@ fn main() -> Result<(), ForumError> {
             body_positional,
             body_flag,
             body_file,
+            edit,
             reply_to,
             as_actor,
             force,
@@ -1409,6 +1459,7 @@ fn main() -> Result<(), ForumError> {
             body_positional,
             body_flag,
             body_file,
+            edit,
             reply_to,
             as_actor,
             NodeType::Claim,
@@ -1420,6 +1471,7 @@ fn main() -> Result<(), ForumError> {
             body_positional,
             body_flag,
             body_file,
+            edit,
             reply_to,
             as_actor,
             force,
@@ -1428,6 +1480,7 @@ fn main() -> Result<(), ForumError> {
             body_positional,
             body_flag,
             body_file,
+            edit,
             reply_to,
             as_actor,
             NodeType::Question,
@@ -1439,6 +1492,7 @@ fn main() -> Result<(), ForumError> {
             body_positional,
             body_flag,
             body_file,
+            edit,
             reply_to,
             as_actor,
             force,
@@ -1447,6 +1501,7 @@ fn main() -> Result<(), ForumError> {
             body_positional,
             body_flag,
             body_file,
+            edit,
             reply_to,
             as_actor,
             NodeType::Objection,
@@ -1458,6 +1513,7 @@ fn main() -> Result<(), ForumError> {
             body_positional,
             body_flag,
             body_file,
+            edit,
             reply_to,
             as_actor,
             force,
@@ -1466,6 +1522,7 @@ fn main() -> Result<(), ForumError> {
             body_positional,
             body_flag,
             body_file,
+            edit,
             reply_to,
             as_actor,
             NodeType::Summary,
@@ -1477,6 +1534,7 @@ fn main() -> Result<(), ForumError> {
             body_positional,
             body_flag,
             body_file,
+            edit,
             reply_to,
             as_actor,
             force,
@@ -1485,6 +1543,7 @@ fn main() -> Result<(), ForumError> {
             body_positional,
             body_flag,
             body_file,
+            edit,
             reply_to,
             as_actor,
             NodeType::Action,
@@ -1496,6 +1555,7 @@ fn main() -> Result<(), ForumError> {
             body_positional,
             body_flag,
             body_file,
+            edit,
             reply_to,
             as_actor,
             force,
@@ -1504,6 +1564,7 @@ fn main() -> Result<(), ForumError> {
             body_positional,
             body_flag,
             body_file,
+            edit,
             reply_to,
             as_actor,
             NodeType::Risk,
@@ -1515,6 +1576,7 @@ fn main() -> Result<(), ForumError> {
             body_positional,
             body_flag,
             body_file,
+            edit,
             reply_to,
             as_actor,
             force,
@@ -1523,6 +1585,7 @@ fn main() -> Result<(), ForumError> {
             body_positional,
             body_flag,
             body_file,
+            edit,
             reply_to,
             as_actor,
             NodeType::Review,
@@ -1852,6 +1915,7 @@ fn run_revise_cmd(
             thread_id,
             body,
             body_file,
+            edit,
             incorporates,
             as_actor,
             force,
@@ -1859,7 +1923,12 @@ fn run_revise_cmd(
             let (git, paths) = discover_repo_with_init_warning()?;
             let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
             let actor = resolve_actor(as_actor, &git);
-            let body_text = resolve_body_required(body, body_file)?;
+            let body_text = resolve_body_required(
+                body,
+                body_file,
+                edit,
+                &format!("Revise body for {thread_id}"),
+            )?;
 
             let state = thread::replay_thread(&git, &thread_id)?;
             let violations = operation_check::check_revise(&policy, &state.status, true);
@@ -1873,13 +1942,19 @@ fn run_revise_cmd(
             node_id,
             body,
             body_file,
+            edit,
             as_actor,
             force,
         } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
             let actor = resolve_actor(as_actor, &git);
-            let body_text = resolve_body_required(body, body_file)?;
+            let body_text = resolve_body_required(
+                body,
+                body_file,
+                edit,
+                &format!("Revise node {node_id} in {thread_id}"),
+            )?;
 
             let state = thread::replay_thread(&git, &thread_id)?;
             let violations = operation_check::check_revise(&policy, &state.status, false);
@@ -1899,6 +1974,7 @@ fn run_revise_dispatch(
     thread_id: Option<String>,
     body: Option<String>,
     body_file: Option<PathBuf>,
+    edit: bool,
     incorporates: Vec<String>,
     as_actor: Option<String>,
     force: bool,
@@ -1909,13 +1985,18 @@ fn run_revise_dispatch(
         None => {
             let thread_id = thread_id.ok_or_else(|| {
                 ForumError::Config(
-                    "usage: git forum revise <THREAD_ID> --body <TEXT> | --body-file <PATH>".into(),
+                    "usage: git forum revise <THREAD_ID> --body <TEXT> | --body-file <PATH> | --edit".into(),
                 )
             })?;
             let (git, paths) = discover_repo_with_init_warning()?;
             let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
             let actor = resolve_actor(as_actor, &git);
-            let body_text = resolve_body_required(body, body_file)?;
+            let body_text = resolve_body_required(
+                body,
+                body_file,
+                edit,
+                &format!("Revise body for {thread_id}"),
+            )?;
 
             let state = thread::replay_thread(&git, &thread_id)?;
             let violations = operation_check::check_revise(&policy, &state.status, true);
@@ -1934,6 +2015,7 @@ fn run_shorthand_say(
     body_positional: Option<String>,
     body_flag: Option<String>,
     body_file: Option<PathBuf>,
+    edit: bool,
     reply_to: Option<String>,
     as_actor: Option<String>,
     node_type: NodeType,
@@ -1944,7 +2026,12 @@ fn run_shorthand_say(
     let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
     let actor = resolve_actor(as_actor, &git);
     let body = body_positional.or(body_flag);
-    let body_text = resolve_body_required(body, body_file)?;
+    let body_text = resolve_body_required(
+        body,
+        body_file,
+        edit,
+        &format!("Compose a {node_type} node"),
+    )?;
 
     // Operation check: is this node type allowed in the current state?
     let state = thread::replay_thread(&git, thread_id)?;
@@ -1971,9 +2058,11 @@ fn run_shorthand_say(
 fn resolve_body_required(
     body: Option<String>,
     body_file: Option<PathBuf>,
+    edit: bool,
+    edit_hint: &str,
 ) -> Result<String, ForumError> {
-    resolve_thread_body(body, body_file)?
-        .ok_or_else(|| ForumError::Config("--body or --body-file is required".into()))
+    resolve_thread_body(body, body_file, edit, edit_hint)?
+        .ok_or_else(|| ForumError::Config("--body, --body-file, or --edit is required".into()))
 }
 
 fn run_thread_cmd(
@@ -1986,6 +2075,7 @@ fn run_thread_cmd(
             title,
             body,
             body_file,
+            edit,
             branch,
             link_to,
             rel,
@@ -2004,6 +2094,7 @@ fn run_thread_cmd(
             let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
             let actor = resolve_actor(as_actor, &git);
 
+            let edit_hint = format!("Compose body for new {kind} thread");
             // Resolve title and body from --from-thread, --from-commit, or direct args
             let (effective_title, effective_body, commit_ref, source_thread) = if let Some(
                 ref source_id,
@@ -2017,7 +2108,8 @@ fn run_thread_cmd(
                         ));
                 }
                 let t = title.unwrap_or_else(|| format!("v2: {}", source.title));
-                let b = resolve_thread_body(body, body_file)?.or(source.body.clone());
+                let b =
+                    resolve_thread_body(body, body_file, edit, &edit_hint)?.or(source.body.clone());
                 (t, b, None, Some((source_id.clone(), source.kind)))
             } else if let Some(rev) = from_commit {
                 let commit_sha = git.resolve_commit(&rev)?;
@@ -2029,11 +2121,13 @@ fn run_thread_cmd(
                     .collect::<Vec<_>>()
                     .join("\n");
                 let t = title.unwrap_or(subject);
-                let b = resolve_thread_body(body, body_file)?.or(if body_text.is_empty() {
-                    None
-                } else {
-                    Some(body_text)
-                });
+                let b = resolve_thread_body(body, body_file, edit, &edit_hint)?.or(
+                    if body_text.is_empty() {
+                        None
+                    } else {
+                        Some(body_text)
+                    },
+                );
                 (t, b, Some(commit_sha), None)
             } else {
                 let t = title.ok_or_else(|| {
@@ -2041,7 +2135,7 @@ fn run_thread_cmd(
                         "title is required (or use --from-commit / --from-thread)".into(),
                     )
                 })?;
-                let b = resolve_thread_body(body, body_file)?;
+                let b = resolve_thread_body(body, body_file, edit, &edit_hint)?;
                 (t, b, None, None)
             };
             // source_thread is now Option<(String, ThreadKind)>
@@ -2147,6 +2241,7 @@ fn run_thread_cmd(
             thread_id,
             body,
             body_file,
+            edit,
             incorporates,
             as_actor,
             force,
@@ -2156,6 +2251,7 @@ fn run_thread_cmd(
             thread_id,
             body,
             body_file,
+            edit,
             incorporates,
             as_actor,
             force,
@@ -2622,7 +2718,12 @@ fn is_forum_initialized(paths: &RepoPaths) -> bool {
 fn resolve_thread_body(
     body: Option<String>,
     body_file: Option<PathBuf>,
+    edit: bool,
+    edit_hint: &str,
 ) -> Result<Option<String>, ForumError> {
+    if edit {
+        return Ok(Some(editor::edit_body(edit_hint)?));
+    }
     match (body, body_file) {
         (Some(body), None) if body == "-" => {
             let mut buf = String::new();
