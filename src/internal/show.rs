@@ -3,15 +3,37 @@ use super::policy::{self, Policy};
 use super::state_machine;
 use super::thread::{NodeLookup, ThreadState};
 
+#[derive(Debug, Clone, Default)]
+pub struct ShowOptions {
+    /// Truncate node bodies and conversation details to single-line previews.
+    pub compact: bool,
+    /// Omit the timeline section entirely.
+    pub no_timeline: bool,
+}
+
 /// Render `git forum show` output for a thread.
 ///
 /// When `compact` is true, node bodies and timeline details are truncated
 /// to single-line previews. When false (default), full bodies are shown.
+/// Timeline event bodies are always summarized (single-line preview);
+/// `revise-body` events show a size summary instead of full body text.
+/// When `no_timeline` is true, the timeline section is omitted entirely.
 ///
 /// Output is deterministic given deterministic event timestamps and IDs.
 /// Snapshot strategy: tests use fixed synthetic events where needed;
 /// integration tests should avoid asserting exact Git OIDs.
 pub fn render_show(state: &ThreadState, compact: bool) -> String {
+    render_show_with_options(
+        state,
+        &ShowOptions {
+            compact,
+            no_timeline: false,
+        },
+    )
+}
+
+pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> String {
+    let compact = options.compact;
     let mut lines: Vec<String> = Vec::new();
 
     lines.push(format!("{:<12} {}", state.id, state.title));
@@ -112,13 +134,15 @@ pub fn render_show(state: &ThreadState, compact: bool) -> String {
         lines.push(String::new());
     }
 
-    lines.push("timeline:".into());
-    let widths = timeline_widths(&state.events);
-    lines.push(format_timeline_header(&widths));
-    for event in &state.events {
-        lines.push(format_timeline_entry(event, &widths, compact));
+    if !options.no_timeline {
+        lines.push("timeline:".into());
+        let widths = timeline_widths(&state.events);
+        lines.push(format_timeline_header(&widths));
+        for event in &state.events {
+            lines.push(format_timeline_entry(event, &widths, compact));
+        }
+        lines.push(String::new());
     }
-    lines.push(String::new());
 
     lines.join("\n")
 }
@@ -352,12 +376,29 @@ fn event_display_type(event: &Event) -> String {
     }
 }
 
-fn timeline_body(event: &Event, compact: bool) -> String {
+fn timeline_body(event: &Event, _compact: bool) -> String {
+    // ReviseBody events get a size summary instead of full body text
+    if event.event_type == EventType::ReviseBody {
+        return revise_body_summary(event);
+    }
+    // All other events: single-line preview to keep timeline scannable
     let detail = event_detail(event);
-    if compact {
-        single_line_preview(&detail, 80)
+    single_line_preview(&detail, 80)
+}
+
+fn revise_body_summary(event: &Event) -> String {
+    let body = event.body.as_deref().unwrap_or("");
+    let size = body.len();
+    let size_str = if size >= 1024 {
+        format!("{:.1} KB", size as f64 / 1024.0)
     } else {
-        detail
+        format!("{size} B")
+    };
+    let inc_count = event.incorporated_node_ids.len();
+    if inc_count > 0 {
+        format!("({size_str}, incorporated {inc_count} node(s))")
+    } else {
+        format!("({size_str})")
     }
 }
 
@@ -833,20 +874,49 @@ mod tests {
     }
 
     #[test]
-    fn show_full_mode_does_not_truncate_timeline() {
+    fn show_timeline_always_summarizes_bodies() {
         let mut state = fixed_state();
-        let long_body = "First line of a multi-paragraph body\n\nSecond paragraph with more detail";
+        let long_body = "First line of a multi-paragraph body\n\nSecond paragraph with more detail that is long enough to exceed the eighty character limit for preview";
         state.events[0].body = Some(long_body.into());
         state.events[0].event_type = EventType::Say;
         state.events[0].node_type = Some(crate::internal::event::NodeType::Claim);
         state.events[0].target_node_id = Some("node-0001".into());
-        let full = render_show(&state, false);
-        let compact = render_show(&state, true);
-        // Full mode preserves the full event detail
-        assert!(full.contains("First line of a multi-paragraph body"));
-        assert!(full.contains("Second paragraph with more detail"));
-        // Compact mode truncates with " / " joining
-        assert!(compact.contains(" / "));
+        let out = render_show(&state, false);
+        // Timeline always uses single-line preview — long body is truncated
+        assert!(out.contains("First line of a multi-paragraph body"));
+        assert!(out.contains("..."));
+        // Full body text beyond preview is NOT in the timeline
+        assert!(!out.contains("eighty character limit for preview"));
+    }
+
+    #[test]
+    fn show_revise_body_timeline_shows_size_summary() {
+        let mut state = fixed_state();
+        state.events[0].body = Some("x".repeat(2048));
+        state.events[0].event_type = EventType::ReviseBody;
+        state.events[0].incorporated_node_ids = vec!["node-001".into(), "node-002".into()];
+        let out = render_show(&state, false);
+        assert!(out.contains("(2.0 KB, incorporated 2 node(s))"));
+        // Full body text is NOT in the timeline
+        assert!(!out.contains(&"x".repeat(100)));
+    }
+
+    #[test]
+    fn show_no_timeline_omits_timeline_section() {
+        let state = fixed_state();
+        let with_timeline = render_show(&state, false);
+        let without_timeline = render_show_with_options(
+            &state,
+            &ShowOptions {
+                compact: false,
+                no_timeline: true,
+            },
+        );
+        assert!(with_timeline.contains("timeline:"));
+        assert!(!without_timeline.contains("timeline:"));
+        // Non-timeline content is preserved
+        assert!(without_timeline.contains("status:"));
+        assert!(without_timeline.contains("body:"));
     }
 
     #[test]

@@ -231,6 +231,9 @@ enum Commands {
         /// Truncate node bodies and timeline details to single-line previews
         #[arg(long)]
         compact: bool,
+        /// Omit the timeline section
+        #[arg(long)]
+        no_timeline: bool,
     },
     /// Show unresolved items for a thread
     Status { thread_id: String },
@@ -1167,6 +1170,7 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             what_next,
             compact,
+            no_timeline,
         } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             let state = thread::replay_thread(&git, &thread_id)?;
@@ -1174,7 +1178,16 @@ fn main() -> Result<(), ForumError> {
                 let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
                 print!("{}", show::render_what_next(&state, &policy));
             } else {
-                print!("{}", show::render_show(&state, compact));
+                print!(
+                    "{}",
+                    show::render_show_with_options(
+                        &state,
+                        &show::ShowOptions {
+                            compact,
+                            no_timeline,
+                        }
+                    )
+                );
             }
         }
 
