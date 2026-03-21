@@ -58,6 +58,9 @@ The following capabilities are implemented and tested:
   still work (ISSUE-0063)
 - `retract`, `resolve`, `reopen` accept multiple node IDs with inline failure reporting
   (ISSUE-0068)
+- Operation checks: validate write commands (`new`, node commands, `revise`, `evidence add`) against
+  policy rules before committing. Configurable creation rules, node rules, revise rules, evidence
+  rules. Error/warning severity model with `--force` flag and strict mode (RFC-0018)
 
 ## In progress
 
