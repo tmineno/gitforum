@@ -9,7 +9,7 @@ git forum ls --kind issue                          List issues
 git forum show ISSUE-0001                          Show issue details
 git forum claim ISSUE-0001 "Implemented X"       Add a claim node
 git forum close ISSUE-0001                         Close an issue
-git forum close ISSUE-0001 --comment "Done"        Close with summary
+git forum close ISSUE-0001 --comment "Done"        Close with comment
 git forum pend ISSUE-0001                          Mark issue pending
 git forum new rfc "Title" --body "..."             Create an RFC
 git forum accept RFC-0001 --sign human/alice       Accept an RFC
@@ -340,15 +340,21 @@ second summary node. The revision history is preserved and visible in `git forum
 
 ### Retract / resolve / reopen a node
 
+All three commands accept one or more node IDs:
+
 ```bash
 git forum retract RFC-0001 6f1d2c3b4a5e67890123456789abcdef01234567
 git forum resolve RFC-0001 6f1d2c3b4a5e67890123456789abcdef01234567
 git forum reopen RFC-0001 6f1d2c3b4a5e67890123456789abcdef01234567
 git forum resolve RFC-0001 6f1d2c3b
+git forum retract RFC-0001 node1 node2 node3    # retract multiple nodes
+git forum resolve RFC-0001 node1 node2          # resolve multiple nodes
 ```
 
 - `resolve` / `reopen` are mainly for `objection` and `action`
 - `retract` keeps history while marking the node inactive
+- when multiple node IDs are given, each node is processed independently; failures are reported
+  inline on stderr and the command exits non-zero if any fail
 
 ### Reply to a node
 
@@ -365,16 +371,19 @@ supported. `git forum show` groups reply chains into conversations for readabili
 
 ### Revise thread body
 
+`body` is the default target for `revise` — the `body` keyword is optional:
+
 ```bash
-git forum revise body RFC-0001 --body "Updated body text"
-git forum revise body RFC-0001 --body-file ./tmp/body.md
-git forum revise body RFC-0001 --body -
+git forum revise RFC-0001 --body "Updated body text"
+git forum revise RFC-0001 --body-file ./tmp/body.md
+git forum revise RFC-0001 --body -
+git forum revise body RFC-0001 --body "Updated body text"   # explicit, still works
 ```
 
 `--incorporates` marks referenced nodes as incorporated into this revision:
 
 ```bash
-git forum revise body RFC-0001 --body "Revised body" \
+git forum revise RFC-0001 --body "Revised body" \
   --incorporates 6f1d2c3b --incorporates a1b2c3d4
 ```
 
@@ -604,8 +613,9 @@ git forum deprecate RFC-0001 --comment "Superseded by RFC-0005"
 git forum state RFC-0001 deprecated --link-to RFC-0005 --rel relates-to
 ```
 
-Shorthand commands combine a state transition with optional `--comment` (adds a summary node before
-transitioning), `--link-to` (creates links after transitioning), and `--sign` (records approvals).
+Shorthand commands combine a state transition with optional `--comment` (attaches comment text to
+the state-change event's body), `--link-to` (creates links after transitioning), and `--sign`
+(records approvals).
 
 Available shorthands:
 - `close` — transition to `closed` (also accepts `--sign`, `--link-to`, `--rel`, `--resolve-open-actions`)
@@ -632,7 +642,7 @@ git forum state bulk --to closed ISSUE-0001 ISSUE-0002 --dry-run
 ```
 
 - `--sign` is recorded as an approval on the event
-- `--comment` adds a summary node before the state transition
+- `--comment` attaches comment text to the state-change event's body (visible in the timeline)
 - `--link-to` and `--rel` create thread links after the state transition
 - whether the transition succeeds depends on the state machine and policy guards
 - for RFCs, `proposed` means the author is declaring the RFC review-ready

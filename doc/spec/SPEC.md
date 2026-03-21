@@ -396,15 +396,22 @@ All discussion commands accept a positional body argument (use `"-"` to read fro
 ### 9.5 Node lifecycle
 
 ```text
-git forum revise node <THREAD_ID> <NODE_ID> --body <TEXT>
+git forum revise <THREAD_ID> --body <TEXT> [--incorporates <NODE_ID>]...
 git forum revise body <THREAD_ID> --body <TEXT> [--incorporates <NODE_ID>]...
-git forum retract <THREAD_ID> <NODE_ID>
-git forum resolve <THREAD_ID> <NODE_ID>
-git forum reopen <THREAD_ID> <NODE_ID>         # node reopen (2 args)
+git forum revise node <THREAD_ID> <NODE_ID> --body <TEXT>
+git forum retract <THREAD_ID> <NODE_ID>...
+git forum resolve <THREAD_ID> <NODE_ID>...
+git forum reopen <THREAD_ID> <NODE_ID>...      # node reopen (with node IDs)
 ```
 
-`git forum reopen` with two arguments (thread ID + node ID) reopens a node. With one argument
-(thread ID only) it performs a thread state reopen (see section 9.6).
+`git forum revise` without a subcommand defaults to body revision. The explicit `revise body`
+form continues to work.
+
+`git forum retract`, `resolve`, and `reopen` accept one or more node IDs. Each node is processed
+independently; failures are reported inline on stderr and the command exits non-zero if any fail.
+
+`git forum reopen` with node IDs reopens those nodes. Without node IDs (thread ID only) it
+performs a thread state reopen (see section 9.6).
 
 ### 9.6 State changes
 
@@ -426,7 +433,7 @@ git forum deprecate <THREAD_ID> [--comment <TEXT>]
 `git forum reopen` with one argument (thread ID only) performs a thread state reopen. With two
 arguments (thread ID + node ID) it reopens a node (see section 9.5).
 
-`--comment` adds a summary node before the state transition.
+`--comment` attaches comment text to the state-change event's body (visible in the timeline).
 `--link-to` creates thread links after the state transition.
 
 The old kind-prefixed forms (`git forum issue close`, `git forum rfc accept`, etc.) remain as hidden
@@ -529,9 +536,12 @@ git forum export <THREAD_ID> [--format <FORMAT>]
 
 ### 10.3 `revise`, `retract`, `resolve`, `reopen`
 
-- `revise` appends an `edit` event.
+- `revise` appends an `edit` event. Without a subcommand, `revise` defaults to body revision.
+  The explicit `revise body` and `revise node` forms continue to work.
 - `retract` appends a `retract` event.
 - `resolve` and `reopen` operate primarily on `objection` and `action` nodes.
+- `retract`, `resolve`, and `reopen` accept one or more node IDs. Each node is processed
+  independently; failures are reported inline and the command exits non-zero if any fail.
 - Node commands accept full canonical IDs and unique prefixes (minimum 8 characters).
 
 ### 10.4 `show`
@@ -554,7 +564,7 @@ Display:
 
 - Validate the transition against the state machine.
 - Evaluate guard rules from policy.
-- `--comment <TEXT>` creates a summary node before the state transition.
+- `--comment <TEXT>` attaches comment text to the state-change event's body.
 - Attach approvals from `--sign`.
 - Append a `state` event.
 - `--link-to <THREAD_ID> --rel <REL>` creates thread links after the state transition.

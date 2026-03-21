@@ -52,6 +52,12 @@ The following capabilities are implemented and tested:
 - E2E scenario expanded to 10/10 node types, 11/13 transitions, 9 threads (ISSUE-0053)
 - Advisory commit-msg hook: validates thread ID references in commit messages, auto-installed
   during `init`, respects `core.commentChar` and `core.hooksPath` (RFC-0020)
+- `--comment` on state transitions attaches text to the state-change event body instead of
+  creating a separate summary node (ISSUE-0066)
+- `revise` defaults to body revision when no subcommand given; `revise body` and `revise node`
+  still work (ISSUE-0063)
+- `retract`, `resolve`, `reopen` accept multiple node IDs with inline failure reporting
+  (ISSUE-0068)
 
 ## In progress
 
