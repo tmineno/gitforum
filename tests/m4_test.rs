@@ -130,7 +130,7 @@ fn show_includes_evidence_section() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    let out = show::render_show(&state);
+    let out = show::render_show(&state, false);
     assert!(out.contains("evidence: 1"));
     assert!(out.contains("benchmark"));
     assert!(out.contains("bench/result.csv"));
@@ -177,7 +177,7 @@ fn show_includes_links_section() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    let out = show::render_show(&state);
+    let out = show::render_show(&state, false);
     assert!(out.contains("links: 1"));
     assert!(out.contains("ISSUE-0001"));
     assert!(out.contains("implements"));

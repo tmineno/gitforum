@@ -620,7 +620,7 @@ fn show_includes_open_objections_section() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    let out = show::render_show(&state);
+    let out = show::render_show(&state, false);
 
     assert!(out.contains("open objections: 1"));
     assert!(out.contains("Concern about performance."));
@@ -643,7 +643,7 @@ fn show_includes_latest_summary_section() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    let out = show::render_show(&state);
+    let out = show::render_show(&state, false);
 
     assert!(out.contains("latest summary:"));
     assert!(out.contains("This is the consensus."));
@@ -655,7 +655,7 @@ fn show_no_extra_sections_when_no_nodes() {
     let thread_id = make_rfc(&git);
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    let out = show::render_show(&state);
+    let out = show::render_show(&state, false);
 
     assert!(!out.contains("open objections:"));
     assert!(!out.contains("open actions:"));
@@ -679,7 +679,7 @@ fn show_timeline_includes_say_events() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    let out = show::render_show(&state);
+    let out = show::render_show(&state, false);
 
     assert!(out.contains(&node_id[..node_id.len().min(16)]));
     assert!(out.contains("claim"));
@@ -1211,6 +1211,6 @@ fn state_change_with_comment_attaches_body_no_summary_node() {
     assert!(state.nodes.is_empty());
 
     // Timeline should show the comment in the state event detail
-    let out = show::render_show(&state);
+    let out = show::render_show(&state, false);
     assert!(out.contains("closed — closing because resolved"));
 }

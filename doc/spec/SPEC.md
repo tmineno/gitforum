@@ -357,9 +357,14 @@ Initial states: issue = `open`, RFC = `draft`.
 `--from-commit <REV>` populates title from the commit subject, body from the commit message body,
 and auto-adds the commit as evidence. An explicit `<TITLE>` argument overrides the subject.
 
-`--from-thread <THREAD_ID>` populates title (prefixed with `v2: `) and body from the source thread,
-creates bidirectional `supersedes` / `superseded-by` links, and auto-deprecates the source thread
-if it is an RFC. An explicit `<TITLE>` argument overrides the default title.
+`--from-thread <THREAD_ID>` populates title (prefixed with `v2: `) and body from the source thread
+and creates bidirectional `supersedes` / `superseded-by` links. An explicit `<TITLE>` argument
+overrides the default title. Allowed combinations:
+
+- **RFC → new RFC**: source RFC is auto-deprecated.
+- **Issue → new issue**: source issue state is unchanged.
+- **Issue → new RFC**: source issue state is unchanged.
+- **RFC → new issue**: rejected with an error (use `link --rel implements` instead).
 
 ### 9.3 Listing and display
 
@@ -520,8 +525,8 @@ git forum export <THREAD_ID> [--format <FORMAT>]
 - Accept `--link-to <THREAD_ID> --rel <REL>`.
 - Accept `--branch <BRANCH>` (issue only).
 - Accept `--from-commit <REV>`: populate title/body from commit message, auto-add commit evidence.
-- Accept `--from-thread <THREAD_ID>`: populate title/body from source thread, auto-add `relates-to`
-  link.
+- Accept `--from-thread <THREAD_ID>`: populate title/body from source thread, add bidirectional
+  `supersedes` / `superseded-by` links, auto-deprecate source only if RFC→RFC. Reject RFC→issue.
 - Title accepts values starting with hyphens (`allow_hyphen_values`).
 - Allocate a display ID.
 - Assign the initial state.

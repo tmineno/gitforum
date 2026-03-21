@@ -151,14 +151,14 @@ fn rich_state() -> ThreadState {
 #[test]
 fn show_basic_rfc() {
     let state = base_state();
-    let out = show::render_show(&state);
+    let out = show::render_show(&state, false);
     assert_snapshot("show_basic_rfc", &out);
 }
 
 #[test]
 fn show_rich_rfc() {
     let state = rich_state();
-    let out = show::render_show(&state);
+    let out = show::render_show(&state, false);
     assert_snapshot("show_rich_rfc", &out);
 }
 
