@@ -1,7 +1,10 @@
+use std::collections::HashMap;
+
 use serde::Deserialize;
 
 use super::approval::Approval;
 use super::error::{ForumError, ForumResult};
+use super::event::NodeType;
 use super::evidence::EvidenceKind;
 use super::thread::ThreadState;
 
@@ -35,6 +38,38 @@ pub struct GuardEntry {
     pub requires: Vec<GuardRule>,
 }
 
+/// Creation rules for a specific thread kind (e.g. rfc, issue).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CreationRules {
+    #[serde(default)]
+    pub required_body: bool,
+    #[serde(default)]
+    pub body_sections: Vec<String>,
+}
+
+/// Rules controlling which states allow body/node revisions.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ReviseRules {
+    #[serde(default)]
+    pub allow_body_revise: Vec<String>,
+    #[serde(default)]
+    pub allow_node_revise: Vec<String>,
+}
+
+/// Rules controlling which states allow evidence addition.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct EvidenceRules {
+    #[serde(default)]
+    pub allow_evidence: Vec<String>,
+}
+
+/// Global check settings.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ChecksConfig {
+    #[serde(default)]
+    pub strict: bool,
+}
+
 /// Parsed policy loaded from `.forum/policy.toml`.
 ///
 /// Preconditions: none (loaded from file).
@@ -45,6 +80,16 @@ pub struct GuardEntry {
 pub struct Policy {
     #[serde(default, rename = "guards")]
     pub guards: Vec<GuardEntry>,
+    #[serde(default)]
+    pub creation_rules: HashMap<String, CreationRules>,
+    #[serde(default)]
+    pub node_rules: HashMap<String, Vec<NodeType>>,
+    #[serde(default)]
+    pub revise_rules: Option<ReviseRules>,
+    #[serde(default)]
+    pub evidence_rules: Option<EvidenceRules>,
+    #[serde(default)]
+    pub checks: ChecksConfig,
 }
 
 impl Policy {
@@ -194,6 +239,7 @@ mod tests {
                     GuardRule::OneHumanApproval,
                 ],
             }],
+            ..Default::default()
         }
     }
 
@@ -217,6 +263,7 @@ mod tests {
                 on: "badvalue".into(),
                 requires: vec![],
             }],
+            ..Default::default()
         };
         assert!(!lint_policy(&policy).is_empty());
     }
