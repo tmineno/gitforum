@@ -1,4 +1,49 @@
+use std::collections::VecDeque;
+
 use super::event::ThreadKind;
+
+/// Find the shortest path from `from` to `to` via BFS over valid transitions.
+///
+/// Preconditions: from and to are non-empty strings.
+/// Postconditions: returns Some(vec of intermediate + final states) if reachable, None otherwise.
+///   The returned path excludes `from` and includes `to`.
+/// Failure modes: none (returns Option).
+/// Side effects: none.
+pub fn find_path(kind: ThreadKind, from: &str, to: &str) -> Option<Vec<&'static str>> {
+    if from == to {
+        return Some(vec![]);
+    }
+    let transitions = valid_transitions(kind);
+    let mut queue: VecDeque<(&str, Vec<&'static str>)> = VecDeque::new();
+    let mut visited: Vec<&str> = vec![from];
+
+    // Seed with direct neighbours of `from`
+    for &(src, dst) in transitions {
+        if src == from {
+            if dst == to {
+                return Some(vec![dst]);
+            }
+            visited.push(dst);
+            queue.push_back((dst, vec![dst]));
+        }
+    }
+
+    while let Some((current, path)) = queue.pop_front() {
+        for &(src, dst) in transitions {
+            if src == current && !visited.contains(&dst) {
+                let mut new_path = path.clone();
+                new_path.push(dst);
+                if dst == to {
+                    return Some(new_path);
+                }
+                visited.push(dst);
+                queue.push_back((dst, new_path));
+            }
+        }
+    }
+
+    None
+}
 
 /// Check whether a state transition is valid for the given thread kind.
 ///
@@ -297,5 +342,74 @@ mod tests {
     fn task_valid_targets_from_open() {
         let targets = valid_targets(ThreadKind::Task, "open");
         assert_eq!(targets, vec!["designing", "rejected", "closed"]);
+    }
+
+    // --- find_path tests ---
+
+    #[test]
+    fn find_path_same_state_returns_empty() {
+        assert_eq!(find_path(ThreadKind::Rfc, "draft", "draft"), Some(vec![]));
+    }
+
+    #[test]
+    fn find_path_direct_transition() {
+        assert_eq!(
+            find_path(ThreadKind::Rfc, "draft", "proposed"),
+            Some(vec!["proposed"])
+        );
+    }
+
+    #[test]
+    fn find_path_rfc_draft_to_accepted() {
+        assert_eq!(
+            find_path(ThreadKind::Rfc, "draft", "accepted"),
+            Some(vec!["proposed", "under-review", "accepted"])
+        );
+    }
+
+    #[test]
+    fn find_path_unreachable_returns_none() {
+        // accepted -> draft has no forward path (only back via under-review->draft)
+        // Actually under-review->draft exists, but accepted has no path to under-review
+        assert_eq!(find_path(ThreadKind::Rfc, "accepted", "draft"), None);
+    }
+
+    #[test]
+    fn find_path_task_open_to_closed_picks_shortest() {
+        // Direct edge open->closed exists; should not go through designing->implementing->reviewing
+        assert_eq!(
+            find_path(ThreadKind::Task, "open", "closed"),
+            Some(vec!["closed"])
+        );
+    }
+
+    #[test]
+    fn find_path_task_open_to_reviewing() {
+        assert_eq!(
+            find_path(ThreadKind::Task, "open", "reviewing"),
+            Some(vec!["designing", "implementing", "reviewing"])
+        );
+    }
+
+    #[test]
+    fn find_path_issue_open_to_closed() {
+        assert_eq!(
+            find_path(ThreadKind::Issue, "open", "closed"),
+            Some(vec!["closed"])
+        );
+    }
+
+    #[test]
+    fn find_path_dec_proposed_to_deprecated() {
+        // Direct edge exists
+        assert_eq!(
+            find_path(ThreadKind::Dec, "proposed", "deprecated"),
+            Some(vec!["deprecated"])
+        );
+    }
+
+    #[test]
+    fn find_path_bogus_target_returns_none() {
+        assert_eq!(find_path(ThreadKind::Rfc, "draft", "bogus"), None);
     }
 }

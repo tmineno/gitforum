@@ -89,9 +89,10 @@ pub fn state_transition_map() -> String {
     out.push_str("```\n\n");
     out.push_str("For TASK phase transitions, use `git forum state <ID> <state>` with:\n");
     out.push_str("designing, implementing, reviewing.\n\n");
-    out.push_str("All accept --as and --comment.\n");
-    out.push_str("close and accept also accept --sign, --link-to, --rel.\n");
+    out.push_str("All accept --as, --comment, and --fast-track.\n");
+    out.push_str("close and accept also accept --approve, --link-to, --rel.\n");
     out.push_str("close also accepts --resolve-open-actions.\n");
+    out.push_str("--fast-track walks through intermediate states to reach the target, checking guards at each step.\n");
     out.push_str(
         "Use `git forum show <ID> --what-next` to see valid transitions and guard status.\n",
     );

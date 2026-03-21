@@ -25,7 +25,7 @@ pub fn prepare_state_change(
     git: &GitOps,
     thread_id: &str,
     new_state: &str,
-    sign_actors: &[String],
+    approve_actors: &[String],
     clock: &dyn Clock,
     policy: &Policy,
     options: StateChangeOptions,
@@ -47,7 +47,7 @@ pub fn prepare_state_change(
     }
 
     let now = clock.now();
-    let approvals: Vec<Approval> = sign_actors
+    let approvals: Vec<Approval> = approve_actors
         .iter()
         .map(|a| Approval {
             actor_id: a.clone(),
@@ -112,7 +112,7 @@ pub fn prepare_state_change(
 
 /// Attempt a thread state transition, checking the state machine and policy guards.
 ///
-/// Preconditions: thread_id exists; sign_actors is the list of approving actor IDs.
+/// Preconditions: thread_id exists; approve_actors is the list of approving actor IDs.
 /// Postconditions: on success, a State event with attached approvals is written.
 /// Failure modes: ForumError::StateMachine if transition invalid; ForumError::Policy if guards fail.
 /// Side effects: writes git objects, updates ref.
@@ -121,7 +121,7 @@ pub fn change_state(
     git: &GitOps,
     thread_id: &str,
     new_state: &str,
-    sign_actors: &[String],
+    approve_actors: &[String],
     actor: &str,
     clock: &dyn Clock,
     policy: &Policy,
@@ -132,7 +132,7 @@ pub fn change_state(
         git,
         thread_id,
         new_state,
-        sign_actors,
+        approve_actors,
         clock,
         policy,
         options,
@@ -150,6 +150,61 @@ pub fn change_state(
     }
     super::event::write_event(git, &ev)?;
     Ok(())
+}
+
+/// Walk through intermediate states to reach `target`, checking guards at each step.
+///
+/// Preconditions: thread_id exists; target is a valid state for the thread's kind.
+/// Postconditions: on success, one State event per step is written; returns list of states walked.
+/// Failure modes: ForumError::StateMachine if no path exists; ForumError::Policy if a guard fails
+///   (thread is left at the last successfully transitioned state).
+/// Side effects: writes git objects, updates ref (one event per intermediate step).
+#[allow(clippy::too_many_arguments)]
+pub fn fast_track_state(
+    git: &GitOps,
+    thread_id: &str,
+    target: &str,
+    approve_actors: &[String],
+    actor: &str,
+    clock: &dyn Clock,
+    policy: &Policy,
+    options: StateChangeOptions,
+) -> ForumResult<Vec<String>> {
+    let state = thread::replay_thread(git, thread_id)?;
+    let path = state_machine::find_path(state.kind, &state.status, target).ok_or_else(|| {
+        ForumError::StateMachine(format!(
+            "no path from '{}' to '{}' for {:?}",
+            state.status, target, state.kind
+        ))
+    })?;
+
+    if path.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let mut walked = Vec::new();
+    for step in &path {
+        // Only pass approve_actors, comment, and resolve_open_actions on the final step
+        let is_final = *step == target;
+        let step_sign = if is_final { approve_actors } else { &[] };
+        let step_options = if is_final {
+            options.clone()
+        } else {
+            StateChangeOptions::default()
+        };
+        change_state(
+            git,
+            thread_id,
+            step,
+            step_sign,
+            actor,
+            clock,
+            policy,
+            step_options,
+        )?;
+        walked.push(step.to_string());
+    }
+    Ok(walked)
 }
 
 fn remediation_hint(rule: &str, state: &thread::ThreadState, thread_id: &str) -> String {
@@ -185,7 +240,7 @@ fn remediation_hint(rule: &str, state: &thread::ThreadState, thread_id: &str) ->
         "at_least_one_summary" => {
             format!("add a summary first: `summary {thread_id} \"<text>\"`")
         }
-        "one_human_approval" => "supply --sign human/<name>".to_string(),
+        "one_human_approval" => "supply --approve human/<name>".to_string(),
         _ => String::new(),
     }
 }
