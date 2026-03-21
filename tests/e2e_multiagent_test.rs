@@ -85,7 +85,10 @@ fn agent_by_name<'a>(agents: &'a [Agent], name: &str) -> &'a Agent {
 }
 
 fn empty_policy() -> Policy {
-    Policy { guards: vec![] }
+    Policy {
+        guards: vec![],
+        ..Default::default()
+    }
 }
 
 // ---------------------------------------------------------------------------

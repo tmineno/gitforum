@@ -77,11 +77,15 @@ fn policy_with_guards() -> Policy {
                 GuardRule::OneHumanApproval,
             ],
         }],
+        ..Default::default()
     }
 }
 
 fn empty_policy() -> Policy {
-    Policy { guards: vec![] }
+    Policy {
+        guards: vec![],
+        ..Default::default()
+    }
 }
 
 // ---- say / node creation ----
@@ -372,6 +376,7 @@ fn change_state_fails_guard_no_open_objections() {
             on: "under-review->accepted".into(),
             requires: vec![GuardRule::NoOpenObjections],
         }],
+        ..Default::default()
     };
 
     let result = state_change::change_state(
@@ -454,6 +459,7 @@ fn change_state_issue_close_fails_guard_no_open_actions() {
             on: "open->closed".into(),
             requires: vec![GuardRule::NoOpenActions],
         }],
+        ..Default::default()
     };
 
     let err = state_change::change_state(
@@ -500,6 +506,7 @@ fn change_state_issue_close_can_resolve_open_actions() {
             on: "open->closed".into(),
             requires: vec![GuardRule::NoOpenActions],
         }],
+        ..Default::default()
     };
 
     state_change::change_state(
@@ -591,6 +598,7 @@ fn verify_reports_open_action_violation_for_issue_close() {
             on: "open->closed".into(),
             requires: vec![GuardRule::NoOpenActions],
         }],
+        ..Default::default()
     };
 
     let report = verify::verify_thread(&git, &thread_id, &policy).unwrap();
@@ -895,6 +903,7 @@ fn change_state_issue_close_fails_guard_has_commit_evidence() {
             on: "open->closed".into(),
             requires: vec![GuardRule::HasCommitEvidence],
         }],
+        ..Default::default()
     };
 
     let err = state_change::change_state(
@@ -967,6 +976,7 @@ fn change_state_issue_close_passes_with_commit_evidence() {
             on: "open->closed".into(),
             requires: vec![GuardRule::HasCommitEvidence],
         }],
+        ..Default::default()
     };
 
     state_change::change_state(
