@@ -100,7 +100,6 @@ fn from_thread_without_title_uses_default() {
         &clock,
     )
     .unwrap();
-    let opts = state_change::StateChangeOptions::default();
     state_change::change_state(
         &git,
         "RFC-0001",
@@ -109,7 +108,7 @@ fn from_thread_without_title_uses_default() {
         "human/alice",
         &clock,
         &empty_policy,
-        opts,
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
     state_change::change_state(
@@ -120,7 +119,7 @@ fn from_thread_without_title_uses_default() {
         "human/alice",
         &clock,
         &empty_policy,
-        opts,
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
     state_change::change_state(
@@ -131,7 +130,7 @@ fn from_thread_without_title_uses_default() {
         "human/alice",
         &clock,
         &empty_policy,
-        opts,
+        state_change::StateChangeOptions::default(),
     )
     .unwrap();
 

@@ -281,7 +281,13 @@ pub fn render_node_show(lookup: &NodeLookup) -> String {
 fn event_detail(event: &Event) -> String {
     match event.event_type {
         EventType::Create => event.title.clone().unwrap_or_default(),
-        EventType::State => event.new_state.clone().unwrap_or_default(),
+        EventType::State => {
+            let state = event.new_state.clone().unwrap_or_default();
+            match &event.body {
+                Some(body) if !body.is_empty() => format!("{state} — {body}"),
+                _ => state,
+            }
+        }
         EventType::Scope => event
             .branch
             .clone()
