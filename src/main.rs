@@ -195,10 +195,24 @@ enum Commands {
         #[command(subcommand)]
         cmd: BranchCmd,
     },
-    /// Revise thread body or node body
+    /// Revise thread body (default) or node body
+    #[command(args_conflicts_with_subcommands = true)]
     Revise {
+        /// Thread ID (for default body revision)
+        thread_id: Option<String>,
+        /// New thread body text (use "-" to read from stdin)
+        #[arg(long, conflicts_with = "body_file")]
+        body: Option<String>,
+        /// Read new thread body from a file
+        #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        /// Node IDs to mark as incorporated into this body revision
+        #[arg(long = "incorporates", value_name = "NODE_ID")]
+        incorporates: Vec<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
         #[command(subcommand)]
-        cmd: ReviseCmd,
+        cmd: Option<ReviseCmd>,
     },
     /// Add a claim node to a thread
     Claim {
@@ -662,10 +676,24 @@ enum ThreadCmd {
         #[arg(long)]
         comment: Option<String>,
     },
-    /// Revise thread body or node body
+    /// Revise thread body (default) or node body
+    #[command(args_conflicts_with_subcommands = true)]
     Revise {
+        /// Thread ID (for default body revision)
+        thread_id: Option<String>,
+        /// New thread body text (use "-" to read from stdin)
+        #[arg(long, conflicts_with = "body_file")]
+        body: Option<String>,
+        /// Read new thread body from a file
+        #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        /// Node IDs to mark as incorporated into this body revision
+        #[arg(long = "incorporates", value_name = "NODE_ID")]
+        incorporates: Vec<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
         #[command(subcommand)]
-        cmd: ReviseCmd,
+        cmd: Option<ReviseCmd>,
     },
 }
 
@@ -1017,7 +1045,22 @@ fn main() -> Result<(), ForumError> {
             }
         },
 
-        Commands::Revise { cmd } => run_revise_cmd(cmd, &clock)?,
+        Commands::Revise {
+            thread_id,
+            body,
+            body_file,
+            incorporates,
+            as_actor,
+            cmd,
+        } => run_revise_dispatch(
+            cmd,
+            thread_id,
+            body,
+            body_file,
+            incorporates,
+            as_actor,
+            &clock,
+        )?,
         Commands::Claim {
             thread_id,
             body_positional,
@@ -1490,6 +1533,34 @@ fn run_revise_cmd(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn run_revise_dispatch(
+    cmd: Option<ReviseCmd>,
+    thread_id: Option<String>,
+    body: Option<String>,
+    body_file: Option<PathBuf>,
+    incorporates: Vec<String>,
+    as_actor: Option<String>,
+    clock: &dyn git_forum::internal::clock::Clock,
+) -> Result<(), ForumError> {
+    match cmd {
+        Some(subcmd) => run_revise_cmd(subcmd, clock),
+        None => {
+            let thread_id = thread_id.ok_or_else(|| {
+                ForumError::Config(
+                    "usage: git forum revise <THREAD_ID> --body <TEXT> | --body-file <PATH>".into(),
+                )
+            })?;
+            let (git, _paths) = discover_repo_with_init_warning()?;
+            let actor = resolve_actor(as_actor, &git);
+            let body_text = resolve_body_required(body, body_file)?;
+            say::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
+            println!("Body revised for {thread_id}");
+            Ok(())
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_shorthand_say(
     thread_id: &str,
     body_positional: Option<String>,
@@ -1674,7 +1745,22 @@ fn run_thread_cmd(
             let refs: Vec<&thread::ThreadState> = states.iter().collect();
             print!("{}", show::render_ls(&refs));
         }
-        ThreadCmd::Revise { cmd } => run_revise_cmd(cmd, clock)?,
+        ThreadCmd::Revise {
+            thread_id,
+            body,
+            body_file,
+            incorporates,
+            as_actor,
+            cmd,
+        } => run_revise_dispatch(
+            cmd,
+            thread_id,
+            body,
+            body_file,
+            incorporates,
+            as_actor,
+            clock,
+        )?,
         ThreadCmd::Close {
             thread_id,
             sign,
