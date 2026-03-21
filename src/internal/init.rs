@@ -6,6 +6,8 @@ use super::error::ForumResult;
 const DEFAULT_POLICY: &str = r#"# git-forum default policy
 # See doc/spec/SPEC.md for details.
 
+# --- Transition guards ---
+
 [[guards]]
 on = "under-review->accepted"
 requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
@@ -18,6 +20,38 @@ requires = ["no_open_actions"]
 # [[guards]]
 # on = "open->closed"
 # requires = ["has_commit_evidence"]
+
+# --- Operation checks ---
+
+[checks]
+strict = false
+
+# Creation rules: what is required when creating a new thread.
+[creation_rules.rfc]
+required_body = true
+body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
+
+[creation_rules.issue]
+required_body = false
+body_sections = []
+
+# Node rules: which node types are allowed in each state.
+# No restrictions by default — all node types allowed in all states.
+# Uncomment to restrict node types in terminal states:
+# [node_rules]
+# "accepted" = []
+# "closed" = []
+# "rejected" = []
+# "deprecated" = []
+
+# Revise rules: in which states body/node revision is allowed.
+[revise_rules]
+allow_body_revise = ["draft", "proposed", "open", "pending"]
+allow_node_revise = ["draft", "proposed", "under-review", "open", "pending"]
+
+# Evidence rules: in which states evidence can be attached.
+[evidence_rules]
+allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "closed", "accepted", "deprecated"]
 "#;
 
 const DEFAULT_ACTORS: &str = r#"# git-forum actors
@@ -67,4 +101,108 @@ fn write_if_missing(path: &std::path::Path, content: &str) -> ForumResult<()> {
         fs::write(path, content)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::internal::policy::Policy;
+
+    #[test]
+    fn default_policy_deserializes() {
+        let policy: Policy =
+            toml::from_str(DEFAULT_POLICY).expect("DEFAULT_POLICY must be valid TOML");
+
+        // Guards
+        assert_eq!(policy.guards.len(), 2);
+        assert_eq!(policy.guards[0].on, "under-review->accepted");
+        assert_eq!(policy.guards[1].on, "open->closed");
+
+        // Checks config
+        assert!(!policy.checks.strict);
+
+        // Creation rules — RFC
+        let rfc_rules = policy
+            .creation_rules
+            .get("rfc")
+            .expect("creation_rules.rfc must exist");
+        assert!(rfc_rules.required_body);
+        assert_eq!(
+            rfc_rules.body_sections,
+            vec!["Goal", "Non-goals", "Context", "Proposal"]
+        );
+
+        // Creation rules — issue
+        let issue_rules = policy
+            .creation_rules
+            .get("issue")
+            .expect("creation_rules.issue must exist");
+        assert!(!issue_rules.required_body);
+        assert!(issue_rules.body_sections.is_empty());
+
+        // Node rules — empty by default (no restrictions)
+        assert!(policy.node_rules.is_empty());
+
+        // Revise rules
+        let revise = policy.revise_rules.expect("revise_rules must exist");
+        assert_eq!(
+            revise.allow_body_revise,
+            vec!["draft", "proposed", "open", "pending"]
+        );
+        assert_eq!(
+            revise.allow_node_revise,
+            vec!["draft", "proposed", "under-review", "open", "pending"]
+        );
+
+        // Evidence rules
+        let evidence = policy.evidence_rules.expect("evidence_rules must exist");
+        assert_eq!(
+            evidence.allow_evidence,
+            vec![
+                "draft",
+                "proposed",
+                "under-review",
+                "open",
+                "pending",
+                "closed",
+                "accepted",
+                "deprecated"
+            ]
+        );
+    }
+
+    #[test]
+    fn default_policy_matches_fixture() {
+        let fixture =
+            std::fs::read_to_string("tests/fixtures/policy_default.toml").expect("fixture exists");
+        let from_const: Policy = toml::from_str(DEFAULT_POLICY).expect("DEFAULT_POLICY must parse");
+        let from_fixture: Policy = toml::from_str(&fixture).expect("fixture must parse");
+
+        // Both should produce equivalent Policy structs
+        assert_eq!(from_const.guards.len(), from_fixture.guards.len());
+        assert_eq!(from_const.checks.strict, from_fixture.checks.strict);
+        assert_eq!(
+            from_const.creation_rules.len(),
+            from_fixture.creation_rules.len()
+        );
+        assert_eq!(from_const.node_rules.len(), from_fixture.node_rules.len());
+
+        let const_revise = from_const.revise_rules.unwrap();
+        let fixture_revise = from_fixture.revise_rules.unwrap();
+        assert_eq!(
+            const_revise.allow_body_revise,
+            fixture_revise.allow_body_revise
+        );
+        assert_eq!(
+            const_revise.allow_node_revise,
+            fixture_revise.allow_node_revise
+        );
+
+        let const_evidence = from_const.evidence_rules.unwrap();
+        let fixture_evidence = from_fixture.evidence_rules.unwrap();
+        assert_eq!(
+            const_evidence.allow_evidence,
+            fixture_evidence.allow_evidence
+        );
+    }
 }

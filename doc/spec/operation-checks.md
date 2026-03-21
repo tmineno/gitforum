@@ -15,7 +15,34 @@ catching violations at the CLI boundary rather than only at state transitions.
 
 ### Policy configuration (`.forum/policy.toml`)
 
+The default policy shipped by `git forum init`:
+
 ```toml
+[checks]
+strict = false
+
+[creation_rules.rfc]
+required_body = true
+body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
+
+[creation_rules.issue]
+required_body = false
+body_sections = []
+
+[revise_rules]
+allow_body_revise = ["draft", "proposed", "open", "pending"]
+allow_node_revise = ["draft", "proposed", "under-review", "open", "pending"]
+
+[evidence_rules]
+allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "closed", "accepted", "deprecated"]
+```
+
+Example of a stricter per-project variant (more sections, node restrictions, no terminal-state evidence):
+
+```toml
+[checks]
+strict = false
+
 [creation_rules.rfc]
 required_body = true
 body_sections = ["Goal", "Non-goals", "Design", "Failure modes", "Acceptance tests"]
@@ -34,9 +61,6 @@ allow_node_revise = ["draft", "proposed", "under-review", "open", "pending"]
 
 [evidence_rules]
 allow_evidence = ["draft", "proposed", "under-review", "open", "pending"]
-
-[checks]
-strict = false
 ```
 
 ### Check functions
