@@ -17,6 +17,7 @@ use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::hook;
 use git_forum::internal::index;
 use git_forum::internal::init;
+use git_forum::internal::operation_check;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::reindex;
 use git_forum::internal::say;
@@ -93,6 +94,9 @@ enum Commands {
         risk: Vec<String>,
         #[arg(long)]
         summary: Vec<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// List all threads (optionally filter by kind and/or status)
     #[command(alias = "list")]
@@ -123,6 +127,9 @@ enum Commands {
         rel: Option<String>,
         #[arg(long)]
         comment: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// Mark a thread as pending (issue shorthand)
     Pend {
@@ -131,6 +138,9 @@ enum Commands {
         as_actor: Option<String>,
         #[arg(long)]
         comment: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// Accept an RFC (shorthand for state <ID> accepted)
     Accept {
@@ -145,6 +155,9 @@ enum Commands {
         rel: Option<String>,
         #[arg(long)]
         comment: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// Propose an RFC for review (shorthand for state <ID> proposed)
     Propose {
@@ -153,6 +166,9 @@ enum Commands {
         as_actor: Option<String>,
         #[arg(long)]
         comment: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// Deprecate an RFC (shorthand for state <ID> deprecated)
     Deprecate {
@@ -161,6 +177,9 @@ enum Commands {
         as_actor: Option<String>,
         #[arg(long)]
         comment: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// Reject a thread (shorthand for state <ID> rejected)
     Reject {
@@ -169,6 +188,9 @@ enum Commands {
         as_actor: Option<String>,
         #[arg(long)]
         comment: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// Show thread details
     Show {
@@ -214,6 +236,9 @@ enum Commands {
         incorporates: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
         #[command(subcommand)]
         cmd: Option<ReviseCmd>,
     },
@@ -230,6 +255,9 @@ enum Commands {
         reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// Add a question node to a thread
     Question {
@@ -243,6 +271,9 @@ enum Commands {
         reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// Add an objection node to a thread
     Objection {
@@ -256,6 +287,9 @@ enum Commands {
         reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// Add a summary node to a thread
     Summary {
@@ -269,6 +303,9 @@ enum Commands {
         reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// Add an action node to a thread
     Action {
@@ -282,6 +319,9 @@ enum Commands {
         reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// Add a risk node to a thread
     Risk {
@@ -295,6 +335,9 @@ enum Commands {
         reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// Add a review node to a thread
     Review {
@@ -308,6 +351,9 @@ enum Commands {
         reply_to: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// Retract one or more nodes (soft-delete)
     Retract {
@@ -370,6 +416,9 @@ enum Commands {
         /// Attach a comment to the state-change event
         #[arg(long)]
         comment: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     #[command(
         about = "Verify whether the thread currently satisfies guard conditions for its next forward transition",
@@ -440,6 +489,9 @@ enum ReviseCmd {
         incorporates: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// Revise the body of an existing node
     Node {
@@ -456,6 +508,9 @@ enum ReviseCmd {
         body_file: Option<PathBuf>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -470,6 +525,9 @@ enum EvidenceCmd {
         ref_targets: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -596,6 +654,9 @@ enum ThreadCmd {
         /// Add a summary node after creation
         #[arg(long)]
         summary: Vec<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// List threads of this kind
     #[command(alias = "list")]
@@ -697,9 +758,33 @@ enum ThreadCmd {
         incorporates: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
         #[command(subcommand)]
         cmd: Option<ReviseCmd>,
     },
+}
+
+/// Apply operation check violations: print to stderr, block on errors.
+/// Returns Ok(()) if the operation should proceed, Err if blocked.
+fn apply_operation_checks(
+    violations: &[operation_check::OperationViolation],
+    force: bool,
+    strict: bool,
+) -> Result<(), ForumError> {
+    if violations.is_empty() {
+        return Ok(());
+    }
+    let (has_errors, output) = operation_check::evaluate_violations(violations, force, strict);
+    eprint!("{output}");
+    if has_errors {
+        Err(ForumError::Policy(
+            "operation blocked by check violations".into(),
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn main() -> Result<(), ForumError> {
@@ -829,6 +914,7 @@ fn main() -> Result<(), ForumError> {
             action,
             risk,
             summary,
+            force,
         } => {
             let thread_kind = parse_thread_kind(&kind)?;
             run_thread_cmd(
@@ -848,6 +934,7 @@ fn main() -> Result<(), ForumError> {
                     action,
                     risk,
                     summary,
+                    force,
                 },
                 thread_kind,
                 &clock,
@@ -862,6 +949,7 @@ fn main() -> Result<(), ForumError> {
             link_to,
             rel,
             comment,
+            force,
         } => {
             run_state_shorthand(
                 &thread_id,
@@ -872,6 +960,7 @@ fn main() -> Result<(), ForumError> {
                 &link_to,
                 rel.as_deref(),
                 comment.as_deref(),
+                force,
                 &clock,
             )?;
         }
@@ -879,6 +968,7 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             as_actor,
             comment,
+            force,
         } => {
             run_state_shorthand(
                 &thread_id,
@@ -889,6 +979,7 @@ fn main() -> Result<(), ForumError> {
                 &[],
                 None,
                 comment.as_deref(),
+                force,
                 &clock,
             )?;
         }
@@ -899,6 +990,7 @@ fn main() -> Result<(), ForumError> {
             link_to,
             rel,
             comment,
+            force,
         } => {
             run_state_shorthand(
                 &thread_id,
@@ -909,6 +1001,7 @@ fn main() -> Result<(), ForumError> {
                 &link_to,
                 rel.as_deref(),
                 comment.as_deref(),
+                force,
                 &clock,
             )?;
         }
@@ -916,6 +1009,7 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             as_actor,
             comment,
+            force,
         } => {
             run_state_shorthand(
                 &thread_id,
@@ -926,6 +1020,7 @@ fn main() -> Result<(), ForumError> {
                 &[],
                 None,
                 comment.as_deref(),
+                force,
                 &clock,
             )?;
         }
@@ -933,6 +1028,7 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             as_actor,
             comment,
+            force,
         } => {
             run_state_shorthand(
                 &thread_id,
@@ -943,6 +1039,7 @@ fn main() -> Result<(), ForumError> {
                 &[],
                 None,
                 comment.as_deref(),
+                force,
                 &clock,
             )?;
         }
@@ -950,6 +1047,7 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             as_actor,
             comment,
+            force,
         } => {
             run_state_shorthand(
                 &thread_id,
@@ -960,6 +1058,7 @@ fn main() -> Result<(), ForumError> {
                 &[],
                 None,
                 comment.as_deref(),
+                force,
                 &clock,
             )?;
         }
@@ -1057,6 +1156,7 @@ fn main() -> Result<(), ForumError> {
             body_file,
             incorporates,
             as_actor,
+            force,
             cmd,
         } => run_revise_dispatch(
             cmd,
@@ -1065,6 +1165,7 @@ fn main() -> Result<(), ForumError> {
             body_file,
             incorporates,
             as_actor,
+            force,
             &clock,
         )?,
         Commands::Claim {
@@ -1074,6 +1175,7 @@ fn main() -> Result<(), ForumError> {
             body_file,
             reply_to,
             as_actor,
+            force,
         } => run_shorthand_say(
             &thread_id,
             body_positional,
@@ -1082,6 +1184,7 @@ fn main() -> Result<(), ForumError> {
             reply_to,
             as_actor,
             NodeType::Claim,
+            force,
             &clock,
         )?,
         Commands::Question {
@@ -1091,6 +1194,7 @@ fn main() -> Result<(), ForumError> {
             body_file,
             reply_to,
             as_actor,
+            force,
         } => run_shorthand_say(
             &thread_id,
             body_positional,
@@ -1099,6 +1203,7 @@ fn main() -> Result<(), ForumError> {
             reply_to,
             as_actor,
             NodeType::Question,
+            force,
             &clock,
         )?,
         Commands::Objection {
@@ -1108,6 +1213,7 @@ fn main() -> Result<(), ForumError> {
             body_file,
             reply_to,
             as_actor,
+            force,
         } => run_shorthand_say(
             &thread_id,
             body_positional,
@@ -1116,6 +1222,7 @@ fn main() -> Result<(), ForumError> {
             reply_to,
             as_actor,
             NodeType::Objection,
+            force,
             &clock,
         )?,
         Commands::Summary {
@@ -1125,6 +1232,7 @@ fn main() -> Result<(), ForumError> {
             body_file,
             reply_to,
             as_actor,
+            force,
         } => run_shorthand_say(
             &thread_id,
             body_positional,
@@ -1133,6 +1241,7 @@ fn main() -> Result<(), ForumError> {
             reply_to,
             as_actor,
             NodeType::Summary,
+            force,
             &clock,
         )?,
         Commands::Action {
@@ -1142,6 +1251,7 @@ fn main() -> Result<(), ForumError> {
             body_file,
             reply_to,
             as_actor,
+            force,
         } => run_shorthand_say(
             &thread_id,
             body_positional,
@@ -1150,6 +1260,7 @@ fn main() -> Result<(), ForumError> {
             reply_to,
             as_actor,
             NodeType::Action,
+            force,
             &clock,
         )?,
         Commands::Risk {
@@ -1159,6 +1270,7 @@ fn main() -> Result<(), ForumError> {
             body_file,
             reply_to,
             as_actor,
+            force,
         } => run_shorthand_say(
             &thread_id,
             body_positional,
@@ -1167,6 +1279,7 @@ fn main() -> Result<(), ForumError> {
             reply_to,
             as_actor,
             NodeType::Risk,
+            force,
             &clock,
         )?,
         Commands::Review {
@@ -1176,6 +1289,7 @@ fn main() -> Result<(), ForumError> {
             body_file,
             reply_to,
             as_actor,
+            force,
         } => run_shorthand_say(
             &thread_id,
             body_positional,
@@ -1184,6 +1298,7 @@ fn main() -> Result<(), ForumError> {
             reply_to,
             as_actor,
             NodeType::Review,
+            force,
             &clock,
         )?,
 
@@ -1241,6 +1356,7 @@ fn main() -> Result<(), ForumError> {
                 &[],
                 None,
                 comment.as_deref(),
+                false,
                 &clock,
             )?;
         }
@@ -1255,6 +1371,7 @@ fn main() -> Result<(), ForumError> {
             link_to,
             rel,
             comment,
+            force: _force,
         } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
@@ -1362,12 +1479,17 @@ fn main() -> Result<(), ForumError> {
                 kind,
                 ref_targets,
                 as_actor,
+                force,
             } => {
                 if ref_targets.is_empty() {
                     return Err(ForumError::Config("--ref is required".into()));
                 }
-                let (git, _paths) = discover_repo_with_init_warning()?;
+                let (git, paths) = discover_repo_with_init_warning()?;
                 let actor = resolve_actor(as_actor, &git);
+                let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
+                let state = thread::replay_thread(&git, &thread_id)?;
+                let violations = operation_check::check_evidence(&policy, &state.status);
+                apply_operation_checks(&violations, force, policy.checks.strict)?;
                 for ref_target in &ref_targets {
                     let commit_sha = evidence_ops::add_evidence(
                         &git,
@@ -1513,10 +1635,17 @@ fn run_revise_cmd(
             body_file,
             incorporates,
             as_actor,
+            force,
         } => {
-            let (git, _paths) = discover_repo_with_init_warning()?;
+            let (git, paths) = discover_repo_with_init_warning()?;
+            let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
             let actor = resolve_actor(as_actor, &git);
             let body_text = resolve_body_required(body, body_file)?;
+
+            let state = thread::replay_thread(&git, &thread_id)?;
+            let violations = operation_check::check_revise(&policy, &state.status, true);
+            apply_operation_checks(&violations, force, policy.checks.strict)?;
+
             say::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
             println!("Body revised for {thread_id}");
         }
@@ -1526,10 +1655,17 @@ fn run_revise_cmd(
             body,
             body_file,
             as_actor,
+            force,
         } => {
-            let (git, _paths) = discover_repo_with_init_warning()?;
+            let (git, paths) = discover_repo_with_init_warning()?;
+            let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
             let actor = resolve_actor(as_actor, &git);
             let body_text = resolve_body_required(body, body_file)?;
+
+            let state = thread::replay_thread(&git, &thread_id)?;
+            let violations = operation_check::check_revise(&policy, &state.status, false);
+            apply_operation_checks(&violations, force, policy.checks.strict)?;
+
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
             say::revise_node(&git, &thread_id, &resolved, &body_text, &actor, clock)?;
             println!("Revised {resolved}");
@@ -1546,6 +1682,7 @@ fn run_revise_dispatch(
     body_file: Option<PathBuf>,
     incorporates: Vec<String>,
     as_actor: Option<String>,
+    force: bool,
     clock: &dyn git_forum::internal::clock::Clock,
 ) -> Result<(), ForumError> {
     match cmd {
@@ -1556,9 +1693,15 @@ fn run_revise_dispatch(
                     "usage: git forum revise <THREAD_ID> --body <TEXT> | --body-file <PATH>".into(),
                 )
             })?;
-            let (git, _paths) = discover_repo_with_init_warning()?;
+            let (git, paths) = discover_repo_with_init_warning()?;
+            let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
             let actor = resolve_actor(as_actor, &git);
             let body_text = resolve_body_required(body, body_file)?;
+
+            let state = thread::replay_thread(&git, &thread_id)?;
+            let violations = operation_check::check_revise(&policy, &state.status, true);
+            apply_operation_checks(&violations, force, policy.checks.strict)?;
+
             say::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
             println!("Body revised for {thread_id}");
             Ok(())
@@ -1575,12 +1718,20 @@ fn run_shorthand_say(
     reply_to: Option<String>,
     as_actor: Option<String>,
     node_type: NodeType,
+    force: bool,
     clock: &dyn git_forum::internal::clock::Clock,
 ) -> Result<(), ForumError> {
     let (git, paths) = discover_repo_with_init_warning()?;
+    let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
     let actor = resolve_actor(as_actor, &git);
     let body = body_positional.or(body_flag);
     let body_text = resolve_body_required(body, body_file)?;
+
+    // Operation check: is this node type allowed in the current state?
+    let state = thread::replay_thread(&git, thread_id)?;
+    let violations = operation_check::check_say(&policy, &state.status, node_type);
+    apply_operation_checks(&violations, force, policy.checks.strict)?;
+
     let resolved_reply = resolve_reply_to(&git, thread_id, reply_to.as_deref())?;
     let node_id = say::say_node(
         &git,
@@ -1593,7 +1744,6 @@ fn run_shorthand_say(
     )?;
     println!("Added {node_type} {node_id}");
     if let Ok(state) = thread::replay_thread(&git, thread_id) {
-        let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
         eprintln!("{}", show::render_next_actions(&state, &policy));
     }
     Ok(())
@@ -1629,8 +1779,10 @@ fn run_thread_cmd(
             action,
             risk,
             summary,
+            force,
         } => {
             let (git, paths) = discover_repo_with_init_warning()?;
+            let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
             let actor = resolve_actor(as_actor, &git);
 
             // Resolve title and body from --from-thread, --from-commit, or direct args
@@ -1674,6 +1826,15 @@ fn run_thread_cmd(
                 (t, b, None, None)
             };
             // source_thread is now Option<(String, ThreadKind)>
+
+            // Operation check: validate creation rules
+            let violations = operation_check::check_create(
+                &policy,
+                kind,
+                &effective_title,
+                effective_body.as_deref(),
+            );
+            apply_operation_checks(&violations, force, policy.checks.strict)?;
 
             let thread_id = create::create_thread_with_branch(
                 &git,
@@ -1769,6 +1930,7 @@ fn run_thread_cmd(
             body_file,
             incorporates,
             as_actor,
+            force,
             cmd,
         } => run_revise_dispatch(
             cmd,
@@ -1777,6 +1939,7 @@ fn run_thread_cmd(
             body_file,
             incorporates,
             as_actor,
+            force,
             clock,
         )?,
         ThreadCmd::Close {
@@ -1797,6 +1960,7 @@ fn run_thread_cmd(
                 &link_to,
                 rel.as_deref(),
                 comment.as_deref(),
+                false,
                 clock,
             )?;
         }
@@ -1814,6 +1978,7 @@ fn run_thread_cmd(
                 &[],
                 None,
                 comment.as_deref(),
+                false,
                 clock,
             )?;
         }
@@ -1831,6 +1996,7 @@ fn run_thread_cmd(
                 &[],
                 None,
                 comment.as_deref(),
+                false,
                 clock,
             )?;
         }
@@ -1848,6 +2014,7 @@ fn run_thread_cmd(
                 &[],
                 None,
                 comment.as_deref(),
+                false,
                 clock,
             )?;
         }
@@ -1868,6 +2035,7 @@ fn run_thread_cmd(
                 &link_to,
                 rel.as_deref(),
                 comment.as_deref(),
+                false,
                 clock,
             )?;
         }
@@ -1885,6 +2053,7 @@ fn run_thread_cmd(
                 &[],
                 None,
                 comment.as_deref(),
+                false,
                 clock,
             )?;
         }
@@ -1902,6 +2071,7 @@ fn run_thread_cmd(
                 &[],
                 None,
                 comment.as_deref(),
+                false,
                 clock,
             )?;
         }
@@ -1919,6 +2089,7 @@ fn run_state_shorthand(
     link_to: &[String],
     rel: Option<&str>,
     comment: Option<&str>,
+    _force: bool,
     clock: &dyn git_forum::internal::clock::Clock,
 ) -> Result<(), ForumError> {
     let (git, paths) = discover_repo_with_init_warning()?;
