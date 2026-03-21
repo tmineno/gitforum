@@ -94,14 +94,19 @@ enum Commands {
         #[arg(long)]
         summary: Vec<String>,
     },
-    /// List all threads (optionally filter by kind)
+    /// List all threads (optionally filter by kind and/or status)
     #[command(alias = "list")]
     Ls {
+        /// Thread kind (rfc or issue) — positional shorthand for --kind
+        kind_positional: Option<String>,
         #[arg(long, value_name = "BRANCH")]
         branch: Option<String>,
         /// Filter by thread kind (rfc or issue)
         #[arg(long, value_name = "KIND")]
         kind: Option<String>,
+        /// Filter by thread status (open, closed, draft, etc.)
+        #[arg(long, value_name = "STATUS")]
+        status: Option<String>,
     },
     /// Close a thread (issue shorthand)
     Close {
@@ -926,12 +931,30 @@ fn main() -> Result<(), ForumError> {
             )?;
         }
 
-        Commands::Ls { branch, kind } => {
+        Commands::Ls {
+            kind_positional,
+            branch,
+            kind,
+            status,
+        } => {
+            let effective_kind = match (kind_positional.as_deref(), kind.as_deref()) {
+                (Some(pos), Some(flag)) if pos != flag => {
+                    return Err(ForumError::Config(format!(
+                        "conflicting kind: positional '{pos}' vs --kind '{flag}'"
+                    )));
+                }
+                (Some(pos), _) => Some(pos),
+                (_, Some(flag)) => Some(flag),
+                (None, None) => None,
+            };
+            let kind_filter = effective_kind.map(parse_thread_kind).transpose()?;
             let (git, _paths) = discover_repo_with_init_warning()?;
-            let kind_filter = kind.as_deref().and_then(|k| parse_thread_kind(k).ok());
             let states = list_thread_states(&git, kind_filter, branch.as_deref())?;
-            let refs: Vec<&thread::ThreadState> = states.iter().collect();
-            print!("{}", show::render_ls(&refs));
+            let filtered: Vec<&thread::ThreadState> = states
+                .iter()
+                .filter(|s| status.as_deref().is_none_or(|st| s.status == st))
+                .collect();
+            print!("{}", show::render_ls(&filtered));
         }
 
         Commands::Show {
