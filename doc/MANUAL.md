@@ -607,7 +607,7 @@ git forum close ISSUE-0001 --link-to RFC-0001 --rel implements
 git forum close ISSUE-0001 --resolve-open-actions
 git forum pend ISSUE-0001                              # mark as pending
 git forum pend ISSUE-0001 --comment "Waiting on review"
-git forum reopen ISSUE-0001
+git forum issue reopen ISSUE-0001                     # thread state reopen
 git forum reject ISSUE-0001 --comment "Won't fix"
 git forum propose RFC-0001
 git forum accept RFC-0001 --sign human/alice
@@ -622,7 +622,7 @@ the state-change event's body), `--link-to` (creates links after transitioning),
 Available shorthands:
 - `close` — transition to `closed` (also accepts `--sign`, `--link-to`, `--rel`, `--resolve-open-actions`)
 - `pend` — transition to `pending` (work-in-progress)
-- `reopen` — transition to `open` (1 arg: thread state reopen; 2 args: node reopen)
+- `reopen` — reopen resolved/retracted nodes (requires node IDs; for thread state reopen use `git forum {issue,rfc} reopen`)
 - `reject` — transition to `rejected`
 - `propose` — transition to `proposed`
 - `accept` — transition to `accepted` (also accepts `--sign`, `--link-to`, `--rel`)

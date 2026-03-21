@@ -268,7 +268,7 @@ fn bulk_retract_reports_failures_inline() {
 }
 
 #[test]
-fn reopen_without_node_ids_reopens_thread() {
+fn reopen_without_node_ids_is_rejected() {
     let (repo, git, _paths) = setup();
     let thread_id = create::create_thread(
         &git,
@@ -288,16 +288,49 @@ fn reopen_without_node_ids_reopens_thread() {
         .expect("failed to run");
     assert!(output.status.success());
 
-    // Reopen without node IDs should reopen the thread
+    // Reopen without node IDs should fail (requires at least one node ID)
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
         .args(["reopen", &thread_id])
         .output()
         .expect("failed to run");
+    assert!(
+        !output.status.success(),
+        "reopen without node IDs should fail"
+    );
+}
+
+#[test]
+fn thread_reopen_via_issue_subcommand() {
+    let (repo, git, _paths) = setup();
+    let thread_id = create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Thread reopen test",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
+    // Close the thread
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["close", &thread_id])
+        .output()
+        .expect("failed to run");
+    assert!(output.status.success());
+
+    // Reopen via issue subcommand
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["issue", "reopen", &thread_id])
+        .output()
+        .expect("failed to run");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
-        "thread reopen failed: {}",
+        "thread reopen via issue subcommand failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(stdout.contains("-> open"));

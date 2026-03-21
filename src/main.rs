@@ -354,6 +354,7 @@ enum Commands {
         thread_id: String,
         #[arg(
             num_args = 1..,
+            required = true,
             value_name = "NODE_ID",
             help = "Full node ID(s) or unique prefix within the thread (8+ chars unless exact match)"
         )]
@@ -366,6 +367,7 @@ enum Commands {
         thread_id: String,
         #[arg(
             num_args = 1..,
+            required = true,
             value_name = "NODE_ID",
             help = "Full node ID(s) or unique prefix within the thread (8+ chars unless exact match)"
         )]
@@ -373,20 +375,18 @@ enum Commands {
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
-    /// Reopen resolved/retracted node(s), or reopen a closed/rejected thread
+    /// Reopen resolved/retracted node(s)
     Reopen {
         thread_id: String,
-        /// Node ID(s) to reopen (omit to reopen the thread itself)
         #[arg(
+            num_args = 1..,
+            required = true,
             value_name = "NODE_ID",
-            help = "Full node ID(s) or unique prefix (omit to reopen the thread state)"
+            help = "Full node ID(s) or unique prefix within the thread (8+ chars unless exact match)"
         )]
         node_ids: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
-        /// Attach a comment to the state-change event (only for thread reopen)
-        #[arg(long)]
-        comment: Option<String>,
     },
     /// Transition a thread to a new state
     State {
@@ -798,10 +798,7 @@ fn main() -> Result<(), ForumError> {
             Some("claim" | "question" | "objection" | "summary" | "action" | "risk" | "review") => {
                 print!("{}", help::node_type_taxonomy());
             }
-            Some(
-                "state" | "close" | "reopen" | "reject" | "accept" | "propose" | "deprecate"
-                | "pend",
-            ) => {
+            Some("state" | "close" | "reject" | "accept" | "propose" | "deprecate" | "pend") => {
                 print!("{}", help::state_transition_map());
             }
             Some("evidence") => {
@@ -1316,8 +1313,7 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             node_ids,
             as_actor,
-            ..
-        } if !node_ids.is_empty() => run_node_lifecycle_bulk(
+        } => run_node_lifecycle_bulk(
             &thread_id,
             &node_ids,
             as_actor,
@@ -1325,25 +1321,6 @@ fn main() -> Result<(), ForumError> {
             "Reopened",
             &clock,
         )?,
-        Commands::Reopen {
-            thread_id,
-            as_actor,
-            comment,
-            ..
-        } => {
-            run_state_shorthand(
-                &thread_id,
-                "open",
-                &[],
-                as_actor,
-                false,
-                &[],
-                None,
-                comment.as_deref(),
-                false,
-                &clock,
-            )?;
-        }
 
         Commands::State {
             cmd,

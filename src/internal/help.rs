@@ -64,7 +64,7 @@ pub fn state_transition_map() -> String {
     out.push_str("```\n");
     out.push_str("git forum close <ID>       # open/pending -> closed\n");
     out.push_str("git forum pend <ID>        # open -> pending\n");
-    out.push_str("git forum reopen <ID>      # closed/rejected -> open\n");
+    out.push_str("git forum {issue,rfc} reopen <ID>  # closed/rejected -> open\n");
     out.push_str("git forum reject <ID>      # open -> rejected\n");
     out.push_str("git forum propose <ID>     # draft -> proposed\n");
     out.push_str("git forum accept <ID>      # under-review -> accepted\n");
