@@ -236,7 +236,7 @@ refs/forum/threads/<THREAD_ID>    # tip of thread event chain
 
 ```text
 <git-dir>/forum/
-  index.sqlite          # search and list index
+  index.db              # search and list index (SQLite)
   local.toml            # local-only settings
   logs/                 # operation logs
 ```
