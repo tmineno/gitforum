@@ -12,8 +12,11 @@ git forum close ISSUE-0001                         Close an issue
 git forum close ISSUE-0001 --comment "Done"        Close with comment
 git forum pend ISSUE-0001                          Mark issue pending
 git forum new rfc "Title" --body "..."             Create an RFC
+git forum new dec "Title" --body "..."             Create a decision record
+git forum new task "Title"                         Create a task
 git forum accept RFC-0001 --sign human/alice       Accept an RFC
 git forum show RFC-0001 --what-next                Show valid next actions
+git forum node add DEC-0001 --type alternative "Use Memcached"  Add typed node
 git forum evidence add ISSUE-0001 --kind commit --ref HEAD  Add evidence
 git forum status ISSUE-0001                         Check open items
 git forum hook install                             Install commit-msg hook
@@ -56,14 +59,39 @@ git-forum evidence --help-llm          # evidence kinds reference
 ```
 
 Per-subcommand `--help-llm` prints only the relevant reference section. Shorthand node commands
-(`claim`, `question`, `objection`, `summary`, `action`, `risk`, `review`)
+(`claim`, `question`, `objection`, `summary`, `action`, `risk`, `review`,
+`alternative`, `assumption`, `node`)
 print the node type taxonomy. `state` (and shorthand commands like `close`, `accept`)
 prints the state transition map. `evidence` prints evidence kinds.
 
+## Thread Kind Selection
+
+Before creating a thread, select the appropriate kind:
+
+| If the work...                                    | Use   |
+|---------------------------------------------------|-------|
+| Affects multiple teams, hard to reverse            | rfc   |
+| Is a local design decision worth recording         | dec   |
+| Is an implementable unit of work with clear scope  | task  |
+| Is a bug report or feature request                 | issue |
+
+Rules of thumb:
+- If you are comparing alternatives → dec
+- If you are defining acceptance criteria → task
+- If you need cross-team sign-off → rfc
+- If something is broken or missing → issue
+- When in doubt between dec and rfc, start with dec — it can be escalated to an rfc later
+- When in doubt between task and issue, prefer task if you know the implementation path
+
+DEC threads should include at least one `alternative` node documenting what was not chosen.
+TASK threads should include `assumption` nodes for any dependencies the work relies on.
+
+Use `git forum node add <ID> --type alternative "..."` and `--type assumption "..."` to create these nodes.
+
 ## Conventions
 
-- thread kinds: `issue`, `rfc`
-- thread IDs: `ISSUE-0001`, `RFC-0001`
+- thread kinds: `issue`, `rfc`, `dec`, `task`
+- thread IDs: `ISSUE-0001`, `RFC-0001`, `DEC-0001`, `TASK-0001`
 - node IDs: printed by shorthand node commands (e.g. `claim`, `question`); canonical IDs are Git commit OIDs of the say event
 - CLI/TUI displays of node and event OIDs usually show the first 16 characters
 - node IDs in CLI arguments:
@@ -79,13 +107,14 @@ prints the state transition map. `evidence` prints evidence kinds.
 
 ## Preferred model
 
-- `rfc` is the starting point for a project, feature, or design change
-- `issue` is the implementation work item
-- an accepted RFC plus its latest summary acts as the decision record
+- `rfc` is the starting point for cross-cutting design decisions
+- `dec` records local design decisions worth preserving (lighter than RFC)
+- `task` tracks implementable work units through design/implementation/review phases
+- `issue` tracks bugs and feature requests
 - agents are participants, not a separate control plane
 
-In other words: do not start with a standalone `decision` object. Start with an RFC, then create
-linked issues once the RFC is accepted.
+For cross-cutting alignment, start with an RFC. For team-internal design reasoning, use a DEC.
+Break implementation into TASKs. Track bugs and requests as ISSUEs.
 
 ## Repository setup
 
@@ -114,6 +143,39 @@ git forum new rfc "Switch solver backend to trait objects" \
 git forum new rfc "Switch solver backend to trait objects" --body -
 git forum new rfc "Switch solver backend to trait objects" --body-file ./tmp/rfc.md
 ```
+
+### DEC (Decision Record)
+
+Use DECs to record local design decisions worth preserving. Requires a body.
+
+```bash
+git forum new dec "Use Redis over Memcached" --body-file ./tmp/dec.md
+git forum node add DEC-0001 --type alternative "Memcached: simpler, but no pub/sub"
+git forum node add DEC-0001 --type assumption "Redis cluster available in prod"
+git forum state DEC-0001 accepted
+```
+
+DEC lifecycle: `proposed` → `accepted` / `rejected` → `deprecated`
+
+### TASK
+
+Use TASKs for implementable work units with clear scope.
+
+```bash
+git forum new task "Implement Redis cache client wrapper"
+git forum state TASK-0001 designing
+git forum state TASK-0001 implementing
+git forum state TASK-0001 reviewing
+git forum state TASK-0001 closed
+
+# Fast-track for trivial tasks:
+git forum new task "Add cache-control headers"
+git forum state TASK-0002 closed
+```
+
+TASK lifecycle: `open` → `designing` → `implementing` → `reviewing` → `closed`
+Back-transitions: `implementing` → `designing`, `reviewing` → `implementing`
+Fast-track: `open` → `closed` (for trivial tasks)
 
 ### Issue
 
@@ -185,6 +247,8 @@ Behavior depends on the source and target kinds:
 git forum ls --kind issue
 git forum ls --kind issue --branch feat/trait-backend
 git forum ls --kind rfc
+git forum ls dec                                   # positional shorthand
+git forum ls task
 ```
 
 The old forms `git forum issue ls` and `git forum rfc ls` remain as hidden aliases for backward
@@ -200,7 +264,7 @@ git forum show RFC-0001 --what-next
 ```
 
 `git forum ls` shows `ID`, `KIND`, `STATUS`, `BRANCH`, `CREATED`, `UPDATED`, and `TITLE`.
-`--kind rfc` or `--kind issue` filters by thread kind.
+`--kind rfc`, `--kind issue`, `--kind dec`, or `--kind task` filters by thread kind.
 `--branch <BRANCH>` filters the listing to threads currently bound to that branch.
 
 `git forum show <THREAD_ID>` shows:
@@ -312,6 +376,15 @@ Valid node types used in the preferred workflow:
 - `action`
 - `risk`
 - `review`
+- `alternative`
+- `assumption`
+
+`alternative` and `assumption` have no shorthand commands — use `git forum node add` instead:
+
+```bash
+git forum node add DEC-0001 --type alternative "Use Memcached instead"
+git forum node add TASK-0001 --type assumption "Redis cluster is available"
+```
 
 `review` is a holistic analysis of the entire thread, distinct from `claim` (single assertion) and
 `summary` (consensus digest). Reviews are informational and typically not resolvable.
@@ -492,7 +565,7 @@ git forum hook uninstall            # remove the git-forum hook
 The hook delegates to `git-forum hook check-commit-msg <file>`, which:
 
 1. Strips Git comment lines (respecting `core.commentChar`) and scissors sections.
-2. Scans the cleaned message for thread ID patterns (`ISSUE-NNNN`, `RFC-NNNN`).
+2. Scans the cleaned message for thread ID patterns (`ISSUE-NNNN`, `RFC-NNNN`, `DEC-NNNN`, `TASK-NNNN`).
 3. Validates each referenced thread exists in `refs/forum/threads/`.
 
 **Behavior:**
@@ -522,8 +595,8 @@ git forum tui RFC-0001
 
 The TUI uses color to distinguish kinds, statuses, and node types:
 
-- **Thread kind**: cyan = rfc, yellow = issue
-- **Thread status**: green = open/draft, yellow = pending/proposed/under-review,
+- **Thread kind**: cyan = rfc, yellow = issue, magenta = dec, green = task
+- **Thread status**: green = open/draft, yellow = pending/proposed/under-review/designing/implementing/reviewing,
   magenta = accepted/closed, red = rejected, gray = deprecated
 - **Node type**: red = objection/risk, yellow = question, green = summary, cyan = action,
   blue = review
@@ -622,14 +695,14 @@ the state-change event's body), `--link-to` (creates links after transitioning),
 Available shorthands:
 - `close` — transition to `closed` (also accepts `--sign`, `--link-to`, `--rel`, `--resolve-open-actions`)
 - `pend` — transition to `pending` (work-in-progress)
-- `reopen` — reopen resolved/retracted nodes (requires node IDs; for thread state reopen use `git forum {issue,rfc} reopen`)
+- `reopen` — reopen resolved/retracted nodes (requires node IDs; for thread state reopen use `git forum {issue,rfc,dec,task} reopen`)
 - `reject` — transition to `rejected`
 - `propose` — transition to `proposed`
 - `accept` — transition to `accepted` (also accepts `--sign`, `--link-to`, `--rel`)
 - `deprecate` — transition to `deprecated` (from `accepted` or `rejected`)
 
 The old kind-prefixed forms (`git forum issue close`, `git forum rfc accept`, etc.) remain as hidden
-aliases for backward compatibility.
+aliases for backward compatibility. The same applies to `git forum dec` and `git forum task`.
 
 ### Generic state command
 
@@ -653,8 +726,11 @@ git forum state bulk --to closed ISSUE-0001 ISSUE-0002 --dry-run
 - issues support `open`, `pending`, `closed`, and `rejected` states; `pending` is for
   work-in-progress or waiting, `rejected` is for invalid or won't-fix issues, `closed` means
   completed
-- if policy requires `no_open_actions`, closing an issue with open `action` nodes fails
-- `--resolve-open-actions` is an explicit escape hatch for issue close; it resolves open `action`
+- DECs support `proposed`, `accepted`, `rejected`, and `deprecated` states
+- TASKs support `open`, `designing`, `implementing`, `reviewing`, `closed`, and `rejected` states;
+  use `git forum state TASK-0001 designing` for phase transitions
+- if policy requires `no_open_actions`, closing an issue or task with open `action` nodes fails
+- `--resolve-open-actions` is an explicit escape hatch for issue/task close; it resolves open `action`
   nodes before writing the closing state event
 - `state bulk` evaluates each target independently, applies successful transitions, reports
   failures inline, and exits non-zero if any target failed
@@ -692,6 +768,14 @@ requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
 on = "open->closed"
 requires = ["no_open_actions"]
 
+[[guards]]
+on = "proposed->accepted"
+requires = ["no_open_objections"]
+
+[[guards]]
+on = "reviewing->closed"
+requires = ["no_open_actions"]
+
 [checks]
 strict = false
 
@@ -703,12 +787,20 @@ body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
 required_body = false
 body_sections = []
 
+[creation_rules.dec]
+required_body = true
+body_sections = ["Context", "Decision", "Rationale", "Impact"]
+
+[creation_rules.task]
+required_body = false
+body_sections = ["Background", "Acceptance criteria", "Exceptions"]
+
 [revise_rules]
-allow_body_revise = ["draft", "proposed", "open", "pending"]
-allow_node_revise = ["draft", "proposed", "under-review", "open", "pending"]
+allow_body_revise = ["draft", "proposed", "open", "pending", "designing", "implementing"]
+allow_node_revise = ["draft", "proposed", "under-review", "open", "pending", "designing", "implementing", "reviewing"]
 
 [evidence_rules]
-allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "closed", "accepted", "deprecated"]
+allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "designing", "implementing", "reviewing", "closed", "accepted", "rejected", "deprecated"]
 ```
 
 ### Guard rules

@@ -59,7 +59,10 @@ pub fn prepare_state_change(
         .collect();
 
     let resolve_action_ids = if options.resolve_open_actions
-        && state.kind == super::event::ThreadKind::Issue
+        && matches!(
+            state.kind,
+            super::event::ThreadKind::Issue | super::event::ThreadKind::Task
+        )
         && new_state == "closed"
     {
         state

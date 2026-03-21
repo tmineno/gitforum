@@ -15,6 +15,8 @@ pub fn node_type_taxonomy() -> String {
 | action | A task to be completed (must be resolved before closing) | yes |
 | risk | Flag a potential problem or uncertainty | no |
 | review | Holistic analysis of the entire thread | no |
+| alternative | Record a considered alternative approach | no |
+| assumption | Record an assumption the design depends on | no |
 
 ## When to use each
 
@@ -26,6 +28,8 @@ pub fn node_type_taxonomy() -> String {
 - **action**: tasks to track ("Add div-by-zero guard") — blocks issue close until resolved
 - **risk**: non-blocking concerns ("Floating-point precision may diverge")
 - **review**: overall thread analysis, distinct from claim (single point) and summary (consensus)
+- **alternative**: documents what was *not* chosen and why (especially in DEC threads)
+- **assumption**: surfaces hidden dependencies that may invalidate the decision if they change
 
 ## Shorthand commands
 
@@ -41,6 +45,14 @@ git forum review <THREAD> "body"
 
 All accept a positional body argument, --body, --body-file, --reply-to, and --as.
 Priority: positional > --body > --body-file. Pass "-" as the positional body to read from stdin.
+
+## Generic node creation
+
+```
+git forum node add <THREAD> --type <TYPE> "body"
+```
+
+This works for all node types, including alternative and assumption which have no shorthand.
 "#
     .to_string()
 }
@@ -50,7 +62,12 @@ pub fn state_transition_map() -> String {
     let mut out = String::new();
     out.push_str("# State Transition Map\n\n");
 
-    for kind in [ThreadKind::Issue, ThreadKind::Rfc] {
+    for kind in [
+        ThreadKind::Issue,
+        ThreadKind::Rfc,
+        ThreadKind::Dec,
+        ThreadKind::Task,
+    ] {
         out.push_str(&format!("## {} transitions\n\n", kind));
         out.push_str(&format!("Initial state: `{}`\n\n", kind.initial_status()));
         out.push_str("| From | To |\n|------|----|\n");
@@ -62,14 +79,16 @@ pub fn state_transition_map() -> String {
 
     out.push_str("## Shorthand commands\n\n");
     out.push_str("```\n");
-    out.push_str("git forum close <ID>       # open/pending -> closed\n");
+    out.push_str("git forum close <ID>       # open/pending/reviewing -> closed\n");
     out.push_str("git forum pend <ID>        # open -> pending\n");
-    out.push_str("git forum {issue,rfc} reopen <ID>  # closed/rejected -> open\n");
+    out.push_str("git forum {issue,rfc,dec,task} reopen <ID>  # closed/rejected -> open\n");
     out.push_str("git forum reject <ID>      # open -> rejected\n");
     out.push_str("git forum propose <ID>     # draft -> proposed\n");
-    out.push_str("git forum accept <ID>      # under-review -> accepted\n");
-    out.push_str("git forum deprecate <ID>   # accepted/rejected -> deprecated\n");
+    out.push_str("git forum accept <ID>      # under-review/proposed -> accepted\n");
+    out.push_str("git forum deprecate <ID>   # accepted/rejected/proposed -> deprecated\n");
     out.push_str("```\n\n");
+    out.push_str("For TASK phase transitions, use `git forum state <ID> <state>` with:\n");
+    out.push_str("designing, implementing, reviewing.\n\n");
     out.push_str("All accept --as and --comment.\n");
     out.push_str("close and accept also accept --sign, --link-to, --rel.\n");
     out.push_str("close also accepts --resolve-open-actions.\n");

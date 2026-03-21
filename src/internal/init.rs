@@ -16,6 +16,14 @@ requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
 on = "open->closed"
 requires = ["no_open_actions"]
 
+[[guards]]
+on = "proposed->accepted"
+requires = ["no_open_objections"]
+
+[[guards]]
+on = "reviewing->closed"
+requires = ["no_open_actions"]
+
 # Uncomment to require commit evidence before closing issues:
 # [[guards]]
 # on = "open->closed"
@@ -35,6 +43,14 @@ body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
 required_body = false
 body_sections = []
 
+[creation_rules.dec]
+required_body = true
+body_sections = ["Context", "Decision", "Rationale", "Impact"]
+
+[creation_rules.task]
+required_body = false
+body_sections = ["Background", "Acceptance criteria", "Exceptions"]
+
 # Node rules: which node types are allowed in each state.
 # No restrictions by default — all node types allowed in all states.
 # Uncomment to restrict node types in terminal states:
@@ -46,12 +62,12 @@ body_sections = []
 
 # Revise rules: in which states body/node revision is allowed.
 [revise_rules]
-allow_body_revise = ["draft", "proposed", "open", "pending"]
-allow_node_revise = ["draft", "proposed", "under-review", "open", "pending"]
+allow_body_revise = ["draft", "proposed", "open", "pending", "designing", "implementing"]
+allow_node_revise = ["draft", "proposed", "under-review", "open", "pending", "designing", "implementing", "reviewing"]
 
 # Evidence rules: in which states evidence can be attached.
 [evidence_rules]
-allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "closed", "accepted", "deprecated"]
+allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "designing", "implementing", "reviewing", "closed", "accepted", "rejected", "deprecated"]
 "#;
 
 const DEFAULT_ACTORS: &str = r#"# git-forum actors
@@ -65,6 +81,8 @@ const DEFAULT_ACTORS: &str = r#"# git-forum actors
 
 const TEMPLATE_ISSUE: &str = "# {title}\n";
 const TEMPLATE_RFC: &str = "# {title}\n";
+const TEMPLATE_DEC: &str = "# {title}\n";
+const TEMPLATE_TASK: &str = "# {title}\n";
 
 /// Initialize `.forum/` and `.git/forum/` structure.
 ///
@@ -78,6 +96,8 @@ pub fn init_forum(paths: &RepoPaths) -> ForumResult<()> {
     write_if_missing(&paths.dot_forum.join("actors.toml"), DEFAULT_ACTORS)?;
     write_if_missing(&templates_dir.join("issue.md"), TEMPLATE_ISSUE)?;
     write_if_missing(&templates_dir.join("rfc.md"), TEMPLATE_RFC)?;
+    write_if_missing(&templates_dir.join("dec.md"), TEMPLATE_DEC)?;
+    write_if_missing(&templates_dir.join("task.md"), TEMPLATE_TASK)?;
 
     // .git/forum/ local-only data
     fs::create_dir_all(paths.git_forum.join("logs"))?;
@@ -114,9 +134,11 @@ mod tests {
             toml::from_str(DEFAULT_POLICY).expect("DEFAULT_POLICY must be valid TOML");
 
         // Guards
-        assert_eq!(policy.guards.len(), 2);
+        assert_eq!(policy.guards.len(), 4);
         assert_eq!(policy.guards[0].on, "under-review->accepted");
         assert_eq!(policy.guards[1].on, "open->closed");
+        assert_eq!(policy.guards[2].on, "proposed->accepted");
+        assert_eq!(policy.guards[3].on, "reviewing->closed");
 
         // Checks config
         assert!(!policy.checks.strict);
@@ -140,6 +162,28 @@ mod tests {
         assert!(!issue_rules.required_body);
         assert!(issue_rules.body_sections.is_empty());
 
+        // Creation rules — dec
+        let dec_rules = policy
+            .creation_rules
+            .get("dec")
+            .expect("creation_rules.dec must exist");
+        assert!(dec_rules.required_body);
+        assert_eq!(
+            dec_rules.body_sections,
+            vec!["Context", "Decision", "Rationale", "Impact"]
+        );
+
+        // Creation rules — task
+        let task_rules = policy
+            .creation_rules
+            .get("task")
+            .expect("creation_rules.task must exist");
+        assert!(!task_rules.required_body);
+        assert_eq!(
+            task_rules.body_sections,
+            vec!["Background", "Acceptance criteria", "Exceptions"]
+        );
+
         // Node rules — empty by default (no restrictions)
         assert!(policy.node_rules.is_empty());
 
@@ -147,11 +191,27 @@ mod tests {
         let revise = policy.revise_rules.expect("revise_rules must exist");
         assert_eq!(
             revise.allow_body_revise,
-            vec!["draft", "proposed", "open", "pending"]
+            vec![
+                "draft",
+                "proposed",
+                "open",
+                "pending",
+                "designing",
+                "implementing"
+            ]
         );
         assert_eq!(
             revise.allow_node_revise,
-            vec!["draft", "proposed", "under-review", "open", "pending"]
+            vec![
+                "draft",
+                "proposed",
+                "under-review",
+                "open",
+                "pending",
+                "designing",
+                "implementing",
+                "reviewing"
+            ]
         );
 
         // Evidence rules
@@ -164,8 +224,12 @@ mod tests {
                 "under-review",
                 "open",
                 "pending",
+                "designing",
+                "implementing",
+                "reviewing",
                 "closed",
                 "accepted",
+                "rejected",
                 "deprecated"
             ]
         );
