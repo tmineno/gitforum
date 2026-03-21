@@ -167,6 +167,7 @@ refs/forum/index/*
 - Reply chains, node revision history, thread body revision with `--incorporates`
 - Concurrency safety via atomic ref updates
 - Git worktree support
+- Advisory commit-msg hook (validates thread ID references, auto-installed on init)
 
 See [doc/ROADMAP.md](./doc/ROADMAP.md) for in-progress and planned work including semantic merge,
 role enforcement, and import/export.
