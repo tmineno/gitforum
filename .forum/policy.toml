@@ -1,6 +1,8 @@
 # git-forum default policy
 # See doc/spec/SPEC.md for details.
 
+# --- Transition guards ---
+
 [[guards]]
 on = "under-review->accepted"
 requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
@@ -8,3 +10,40 @@ requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
 [[guards]]
 on = "open->closed"
 requires = ["no_open_actions"]
+
+# Uncomment to require commit evidence before closing issues:
+# [[guards]]
+# on = "open->closed"
+# requires = ["has_commit_evidence"]
+
+# --- Operation checks ---
+
+[checks]
+strict = false
+
+# Creation rules: what is required when creating a new thread.
+[creation_rules.rfc]
+required_body = true
+body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
+
+[creation_rules.issue]
+required_body = false
+body_sections = []
+
+# Node rules: which node types are allowed in each state.
+# No restrictions by default — all node types allowed in all states.
+# Uncomment to restrict node types in terminal states:
+# [node_rules]
+# "accepted" = []
+# "closed" = []
+# "rejected" = []
+# "deprecated" = []
+
+# Revise rules: in which states body/node revision is allowed.
+[revise_rules]
+allow_body_revise = ["draft", "proposed", "open", "pending"]
+allow_node_revise = ["draft", "proposed", "under-review", "open", "pending"]
+
+# Evidence rules: in which states evidence can be attached.
+[evidence_rules]
+allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "closed", "accepted", "deprecated"]
