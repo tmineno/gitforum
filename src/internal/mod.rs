@@ -11,6 +11,7 @@ pub mod evidence;
 pub mod evidence_ops;
 pub mod git_ops;
 pub mod help;
+pub mod hook;
 pub mod id;
 pub mod id_alloc;
 pub mod index;

@@ -14,6 +14,7 @@ use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
+use git_forum::internal::hook;
 use git_forum::internal::index;
 use git_forum::internal::init;
 use git_forum::internal::policy::Policy;
@@ -375,6 +376,11 @@ enum Commands {
         /// Search query (matched against title, id, kind, and status)
         query: String,
     },
+    /// Hook sub-commands
+    Hook {
+        #[command(subcommand)]
+        cmd: HookCmd,
+    },
     /// Open the interactive TUI
     Tui {
         /// Open a specific thread in detail view directly
@@ -469,6 +475,23 @@ enum BranchCmd {
         thread_id: String,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookCmd {
+    /// Install git-forum commit-msg hook into the Git hooks directory
+    Install {
+        /// Overwrite existing hook without backup
+        #[arg(long)]
+        force: bool,
+    },
+    /// Remove git-forum commit-msg hook
+    Uninstall,
+    /// Validate thread references in a commit message file (used by the hook)
+    CheckCommitMsg {
+        /// Path to the commit message file (provided by Git)
+        file: PathBuf,
     },
 }
 
@@ -695,6 +718,8 @@ fn main() -> Result<(), ForumError> {
             let paths = RepoPaths::from_repo_root_and_git_dir(git.root(), &git_dir);
             init::init_forum(&paths)?;
             println!("Initialized git-forum in {}", git.root().display());
+            let hook_path = hook::resolve_hook_path(&git)?;
+            hook::install_hook(&hook_path, false)?;
         }
 
         Commands::Doctor => {
@@ -1316,6 +1341,41 @@ fn main() -> Result<(), ForumError> {
                 &clock,
             )?;
             println!("{thread_id} -> {target_thread_id} ({rel})");
+        }
+
+        Commands::Hook { cmd } => {
+            let git = GitOps::discover()?;
+            match cmd {
+                HookCmd::Install { force } => {
+                    let hook_path = hook::resolve_hook_path(&git)?;
+                    hook::install_hook(&hook_path, force)?;
+                }
+                HookCmd::Uninstall => {
+                    let hook_path = hook::resolve_hook_path(&git)?;
+                    hook::uninstall_hook(&hook_path)?;
+                }
+                HookCmd::CheckCommitMsg { file } => {
+                    let raw = fs::read_to_string(&file)?;
+                    let comment_char = hook::get_comment_char(&git);
+                    let cleaned = hook::strip_comments(&raw, comment_char);
+                    let ids = hook::extract_thread_ids(&cleaned);
+                    if ids.is_empty() {
+                        eprintln!("git-forum: warning: no thread ID referenced in commit message");
+                        return Ok(());
+                    }
+                    let result = hook::check_thread_refs(&git, &ids)?;
+                    if result.has_errors() {
+                        eprintln!("git-forum: commit message references non-existent thread(s):");
+                        for id in &result.missing_ids {
+                            eprintln!("  {id} — not found");
+                        }
+                        eprintln!(
+                            "hint: create the thread first, or remove the reference from the commit message."
+                        );
+                        std::process::exit(1);
+                    }
+                }
+            }
         }
 
         Commands::Policy { cmd } => {
