@@ -43,8 +43,9 @@ git forum risk <THREAD> "body"
 git forum review <THREAD> "body"
 ```
 
-All accept a positional body argument, --body, --body-file, --reply-to, and --as.
+All accept a positional body argument, --body, --body-file, --edit, --reply-to, and --as.
 Priority: positional > --body > --body-file. Pass "-" as the positional body to read from stdin.
+--edit opens $VISUAL / $EDITOR / vi for interactive composition (conflicts with body args).
 
 ## Generic node creation
 
