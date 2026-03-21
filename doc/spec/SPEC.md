@@ -341,13 +341,16 @@ git forum reindex
 ### 9.2 Thread creation
 
 ```text
-git forum issue new <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
+git forum new issue <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
     [--branch <BRANCH>] [--link-to <THREAD_ID> --rel <REL>]
     [--from-commit <REV>] [--from-thread <THREAD_ID>]
-git forum rfc new <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
+git forum new rfc <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
     [--link-to <THREAD_ID> --rel <REL>]
     [--from-commit <REV>] [--from-thread <THREAD_ID>]
 ```
+
+The old forms `git forum issue new` and `git forum rfc new` remain as hidden aliases for backward
+compatibility.
 
 Initial states: issue = `open`, RFC = `draft`.
 
@@ -361,10 +364,7 @@ if it is an RFC. An explicit `<TITLE>` argument overrides the default title.
 ### 9.3 Listing and display
 
 ```text
-git forum ls [--branch <BRANCH>]
-git forum issue ls [--branch <BRANCH>]
-git forum issue list                          # alias for ls
-git forum rfc ls
+git forum ls [--kind <KIND>] [--branch <BRANCH>]
 git forum show <THREAD_ID>
 git forum node show <NODE_ID>
 git forum search <QUERY>
@@ -372,6 +372,9 @@ git forum status <THREAD_ID>
 git forum status --all
 git-forum --help-llm                          # works at any subcommand level
 ```
+
+`--kind rfc` or `--kind issue` filters the listing by thread kind. The old forms `git forum issue ls`
+and `git forum rfc ls` remain as hidden aliases for backward compatibility.
 
 Thread listings show `YYYY-MM-DD HH:MM` for created and updated timestamps.
 
@@ -397,28 +400,37 @@ git forum revise node <THREAD_ID> <NODE_ID> --body <TEXT>
 git forum revise body <THREAD_ID> --body <TEXT> [--incorporates <NODE_ID>]...
 git forum retract <THREAD_ID> <NODE_ID>
 git forum resolve <THREAD_ID> <NODE_ID>
-git forum reopen <THREAD_ID> <NODE_ID>
+git forum reopen <THREAD_ID> <NODE_ID>         # node reopen (2 args)
 ```
+
+`git forum reopen` with two arguments (thread ID + node ID) reopens a node. With one argument
+(thread ID only) it performs a thread state reopen (see section 9.6).
 
 ### 9.6 State changes
 
-Shorthand commands:
+Shorthand commands (top-level, verb-first):
 
 ```text
-git forum issue close <THREAD_ID> [--sign <ACTOR_ID>]...
+git forum close <THREAD_ID> [--sign <ACTOR_ID>]...
     [--resolve-open-actions] [--link-to <THREAD_ID> --rel <REL>]
     [--comment <TEXT>]
-git forum issue pend <THREAD_ID> [--comment <TEXT>]
-git forum issue reopen <THREAD_ID> [--comment <TEXT>]
-git forum issue reject <THREAD_ID> [--comment <TEXT>]
-git forum rfc propose <THREAD_ID> [--comment <TEXT>]
-git forum rfc accept <THREAD_ID> [--sign <ACTOR_ID>]...
+git forum pend <THREAD_ID> [--comment <TEXT>]
+git forum reopen <THREAD_ID> [--comment <TEXT>]
+git forum reject <THREAD_ID> [--comment <TEXT>]
+git forum propose <THREAD_ID> [--comment <TEXT>]
+git forum accept <THREAD_ID> [--sign <ACTOR_ID>]...
     [--link-to <THREAD_ID> --rel <REL>] [--comment <TEXT>]
-git forum rfc deprecate <THREAD_ID> [--comment <TEXT>]
+git forum deprecate <THREAD_ID> [--comment <TEXT>]
 ```
+
+`git forum reopen` with one argument (thread ID only) performs a thread state reopen. With two
+arguments (thread ID + node ID) it reopens a node (see section 9.5).
 
 `--comment` adds a summary node before the state transition.
 `--link-to` creates thread links after the state transition.
+
+The old kind-prefixed forms (`git forum issue close`, `git forum rfc accept`, etc.) remain as hidden
+aliases for backward compatibility.
 
 Generic state command:
 
@@ -475,7 +487,7 @@ git forum export <THREAD_ID> [--format <FORMAT>]
 
 ## 10. Command requirements
 
-### 10.1 `issue new` and `rfc new`
+### 10.1 `new issue` and `new rfc`
 
 - Create a `create` event.
 - Accept `--body`, `--body-file`, or `--body -` (stdin).
@@ -528,8 +540,8 @@ Display:
 - Append a `state` event.
 - `--link-to <THREAD_ID> --rel <REL>` creates thread links after the state transition.
 - `--resolve-open-actions` resolves open action nodes before the transition.
-- Shorthand commands: `issue close`, `issue pend`, `issue reopen`, `issue reject`, `rfc propose`,
-  `rfc accept`, `rfc deprecate`.
+- Shorthand commands: `close`, `pend`, `reopen`, `reject`, `propose`, `accept`, `deprecate`.
+  The old kind-prefixed forms (`issue close`, `rfc accept`, etc.) remain as hidden aliases.
 
 ### 10.6 `state bulk`
 

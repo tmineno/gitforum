@@ -4,15 +4,15 @@
 
 ```
 git forum init                                     Initialize forum in repo
-git forum issue new "Title" --body "..."           Create an issue
-git forum issue ls                                 List issues
+git forum new issue "Title" --body "..."           Create an issue
+git forum ls --kind issue                          List issues
 git forum show ISSUE-0001                          Show issue details
 git forum claim ISSUE-0001 "Implemented X"       Add a claim node
-git forum issue close ISSUE-0001                   Close an issue
-git forum issue close ISSUE-0001 --comment "Done"  Close with summary
-git forum issue pend ISSUE-0001                    Mark issue pending
-git forum rfc new "Title" --body "..."             Create an RFC
-git forum rfc accept RFC-0001 --sign human/alice   Accept an RFC
+git forum close ISSUE-0001                         Close an issue
+git forum close ISSUE-0001 --comment "Done"        Close with summary
+git forum pend ISSUE-0001                          Mark issue pending
+git forum new rfc "Title" --body "..."             Create an RFC
+git forum accept RFC-0001 --sign human/alice       Accept an RFC
 git forum show RFC-0001 --what-next                Show valid next actions
 git forum evidence add ISSUE-0001 --kind commit --ref HEAD  Add evidence
 git forum status --all                             Check open items
@@ -107,11 +107,11 @@ git forum reindex
 Use RFCs to frame work before implementation starts.
 
 ```bash
-git forum rfc new "Switch solver backend to trait objects"
-git forum rfc new "Switch solver backend to trait objects" \
+git forum new rfc "Switch solver backend to trait objects"
+git forum new rfc "Switch solver backend to trait objects" \
   --body "Goal, constraints, and acceptance."
-git forum rfc new "Switch solver backend to trait objects" --body -
-git forum rfc new "Switch solver backend to trait objects" --body-file ./tmp/rfc.md
+git forum new rfc "Switch solver backend to trait objects" --body -
+git forum new rfc "Switch solver backend to trait objects" --body-file ./tmp/rfc.md
 ```
 
 ### Issue
@@ -119,14 +119,14 @@ git forum rfc new "Switch solver backend to trait objects" --body-file ./tmp/rfc
 Use issues for implementation work, especially when code or a branch is involved.
 
 ```bash
-git forum issue new "Implement trait backend"
-git forum issue new "Implement trait backend" --body "Initial implementation checklist"
-git forum issue new "Implement trait backend" --body -
-git forum issue new "Implement trait backend" --body-file ./tmp/issue.md
-git forum issue new "Implement trait backend" --branch feat/trait-backend
-git forum issue new "Implement trait backend" \
+git forum new issue "Implement trait backend"
+git forum new issue "Implement trait backend" --body "Initial implementation checklist"
+git forum new issue "Implement trait backend" --body -
+git forum new issue "Implement trait backend" --body-file ./tmp/issue.md
+git forum new issue "Implement trait backend" --branch feat/trait-backend
+git forum new issue "Implement trait backend" \
   --link-to RFC-0001 --rel implements
-git forum rfc new "Error handling" \
+git forum new rfc "Error handling" \
   --claim "All errors should be typed" --action "Define error enum"
 ```
 
@@ -138,13 +138,13 @@ Thread creation accepts `--claim`, `--question`, `--objection`, `--action`, `--r
 `--summary` flags to add nodes immediately after creating the thread. Each flag may be repeated:
 
 ```bash
-git forum rfc new "Caching layer" --body "Goal and constraints." \
+git forum new rfc "Caching layer" --body "Goal and constraints." \
   --claim "LRU eviction with 10-min TTL" \
   --action "Benchmark cache hit ratio" \
   --risk "Memory pressure under load"
 ```
 
-This is equivalent to running `rfc new` followed by separate `claim`, `action`, and `risk` commands.
+This is equivalent to running `new rfc` followed by separate `claim`, `action`, and `risk` commands.
 `--branch <BRANCH>` binds the new thread to an existing Git branch.
 `--link-to <THREAD_ID> --rel <REL>` creates the thread and immediately records one or more links
 from the new thread to existing threads.
@@ -152,8 +152,8 @@ from the new thread to existing threads.
 ### Create from a commit
 
 ```bash
-git forum issue new --from-commit HEAD
-git forum issue new --from-commit abc123 --link-to RFC-0001 --rel implements
+git forum new issue --from-commit HEAD
+git forum new issue --from-commit abc123 --link-to RFC-0001 --rel implements
 ```
 
 `--from-commit <REV>` uses the commit subject as the title, the commit body as the thread body,
@@ -162,9 +162,9 @@ and automatically adds the commit as evidence. An explicit title argument overri
 ### Create from another thread
 
 ```bash
-git forum issue new --from-thread RFC-0001
-git forum rfc new --from-thread RFC-0003
-git forum issue new --from-thread RFC-0001 "Custom title"
+git forum new issue --from-thread RFC-0001
+git forum new rfc --from-thread RFC-0003
+git forum new issue --from-thread RFC-0001 "Custom title"
 ```
 
 `--from-thread <THREAD_ID>` copies the title (prefixed with `v2: `) and body from the source
@@ -175,11 +175,13 @@ creating successor RFCs from deprecated ones or implementation issues from accep
 ### List by kind
 
 ```bash
-git forum issue ls
-git forum issue list              # alias for ls
-git forum issue ls --branch feat/trait-backend
-git forum rfc ls
+git forum ls --kind issue
+git forum ls --kind issue --branch feat/trait-backend
+git forum ls --kind rfc
 ```
+
+The old forms `git forum issue ls` and `git forum rfc ls` remain as hidden aliases for backward
+compatibility.
 
 ## List and inspect threads
 
@@ -190,8 +192,8 @@ git forum show RFC-0001
 git forum show RFC-0001 --what-next
 ```
 
-`git forum ls` and kind-specific `ls` commands show `ID`, `KIND`, `STATUS`, `BRANCH`, `CREATED`,
-`UPDATED`, and `TITLE`.
+`git forum ls` shows `ID`, `KIND`, `STATUS`, `BRANCH`, `CREATED`, `UPDATED`, and `TITLE`.
+`--kind rfc` or `--kind issue` filters by thread kind.
 `--branch <BRANCH>` filters the listing to threads currently bound to that branch.
 
 `git forum show <THREAD_ID>` shows:
@@ -366,8 +368,6 @@ supported. `git forum show` groups reply chains into conversations for readabili
 git forum revise body RFC-0001 --body "Updated body text"
 git forum revise body RFC-0001 --body-file ./tmp/body.md
 git forum revise body RFC-0001 --body -
-git forum rfc revise body RFC-0001 --body "Updated body"
-git forum issue revise body ISSUE-0001 --body "Updated body"
 ```
 
 `--incorporates` marks referenced nodes as incorporated into this revision:
@@ -551,18 +551,20 @@ open items.
 
 ### Shorthand commands
 
+All state shorthands are now top-level (verb-first):
+
 ```bash
-git forum issue close ISSUE-0001
-git forum issue close ISSUE-0001 --comment "Fixed in abc123"
-git forum issue close ISSUE-0001 --link-to RFC-0001 --rel implements
-git forum issue close ISSUE-0001 --resolve-open-actions
-git forum issue pend ISSUE-0001                        # mark as pending
-git forum issue pend ISSUE-0001 --comment "Waiting on review"
-git forum issue reopen ISSUE-0001
-git forum issue reject ISSUE-0001 --comment "Won't fix"
-git forum rfc propose RFC-0001
-git forum rfc accept RFC-0001 --sign human/alice
-git forum rfc deprecate RFC-0001 --comment "Superseded by RFC-0005"
+git forum close ISSUE-0001
+git forum close ISSUE-0001 --comment "Fixed in abc123"
+git forum close ISSUE-0001 --link-to RFC-0001 --rel implements
+git forum close ISSUE-0001 --resolve-open-actions
+git forum pend ISSUE-0001                              # mark as pending
+git forum pend ISSUE-0001 --comment "Waiting on review"
+git forum reopen ISSUE-0001
+git forum reject ISSUE-0001 --comment "Won't fix"
+git forum propose RFC-0001
+git forum accept RFC-0001 --sign human/alice
+git forum deprecate RFC-0001 --comment "Superseded by RFC-0005"
 git forum state RFC-0001 deprecated --link-to RFC-0005 --rel relates-to
 ```
 
@@ -570,13 +572,16 @@ Shorthand commands combine a state transition with optional `--comment` (adds a 
 transitioning), `--link-to` (creates links after transitioning), and `--sign` (records approvals).
 
 Available shorthands:
-- `issue close` — transition to `closed` (also accepts `--sign`, `--link-to`, `--rel`, `--resolve-open-actions`)
-- `issue pend` — transition to `pending` (work-in-progress)
-- `issue reopen` — transition to `open`
-- `issue reject` — transition to `rejected`
-- `rfc propose` — transition to `proposed`
-- `rfc accept` — transition to `accepted` (also accepts `--sign`, `--link-to`, `--rel`)
-- `rfc deprecate` — transition to `deprecated` (from `accepted` or `rejected`)
+- `close` — transition to `closed` (also accepts `--sign`, `--link-to`, `--rel`, `--resolve-open-actions`)
+- `pend` — transition to `pending` (work-in-progress)
+- `reopen` — transition to `open` (1 arg: thread state reopen; 2 args: node reopen)
+- `reject` — transition to `rejected`
+- `propose` — transition to `proposed`
+- `accept` — transition to `accepted` (also accepts `--sign`, `--link-to`, `--rel`)
+- `deprecate` — transition to `deprecated` (from `accepted` or `rejected`)
+
+The old kind-prefixed forms (`git forum issue close`, `git forum rfc accept`, etc.) remain as hidden
+aliases for backward compatibility.
 
 ### Generic state command
 
@@ -679,7 +684,7 @@ In practice, this means `verify` is most useful right before an acceptance-like 
 
 ```bash
 git forum init
-git forum rfc new "Switch solver backend to trait objects" \
+git forum new rfc "Switch solver backend to trait objects" \
   --body "Goal, constraints, and acceptance."
 git forum claim RFC-0001 "Needed for compatibility."
 git forum question RFC-0001 "What is the migration plan?" --as ai/reviewer
@@ -687,15 +692,15 @@ git forum objection RFC-0001 "Benchmarks are missing."
 git forum evidence add RFC-0001 --kind benchmark --ref bench/result.csv
 git forum summary RFC-0001 "Benchmarks added; objection addressed."
 git forum resolve RFC-0001 <OBJECTION_NODE_ID>
-git forum state RFC-0001 proposed
+git forum propose RFC-0001
 git forum state RFC-0001 under-review
 git forum verify RFC-0001
-git forum state RFC-0001 accepted --sign human/alice
-git forum issue new "Implement trait backend" --link-to RFC-0001 --rel implements
+git forum accept RFC-0001 --sign human/alice
+git forum new issue "Implement trait backend" --link-to RFC-0001 --rel implements
 git forum branch bind ISSUE-0001 feat/trait-backend
 git forum action ISSUE-0001 "Wire trait backend behind feature flag."
 git forum evidence add ISSUE-0001 --kind test --ref tests/backend_trait.rs
-git forum state ISSUE-0001 closed
+git forum close ISSUE-0001
 ```
 
 ## AI-agent workflow pattern
@@ -710,7 +715,7 @@ human participants. The typical flow is:
 
 ```bash
 # 1. Human opens the RFC
-git forum rfc new "Add caching layer" --body "Goal and constraints."
+git forum new rfc "Add caching layer" --body "Goal and constraints."
 
 # 2. AI reviewer raises concerns
 GIT_FORUM_ACTOR=ai/reviewer
@@ -724,9 +729,9 @@ git forum claim RFC-0001 "LRU eviction with 10-minute TTL." \
 # 4. Human resolves the objection, summarizes, and accepts
 git forum resolve RFC-0001 <OBJECTION_NODE_ID>
 git forum summary RFC-0001 "Caching with LRU eviction approved."
-git forum state RFC-0001 proposed
+git forum propose RFC-0001
 git forum state RFC-0001 under-review
-git forum state RFC-0001 accepted --sign human/alice
+git forum accept RFC-0001 --sign human/alice
 ```
 
 ## Linking implementation commits as evidence
@@ -778,7 +783,7 @@ resolve non-conflicting concurrent writes to the same thread.
 This manual currently covers:
 
 - init / doctor / reindex
-- issue / rfc create and list
+- thread create (`new issue`, `new rfc`) and list (`ls --kind`)
 - thread show
 - node show
 - search
