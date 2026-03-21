@@ -89,8 +89,8 @@ One node type (`evidence`) lacks a dedicated shorthand command; it uses `evidenc
 
 Interoperability with external systems.
 
-- ISSUE-0007 — Import: GitHub issue and markdown RFC
-- ISSUE-0008 — Export: issue and RFC to markdown or tracker-friendly format
+- ISSUE-0099 — Import: GitHub issues into git-forum (supersedes ISSUE-0007)
+- ISSUE-0008 — Export: git-forum issues to GitHub Issues
 
 ### Completion tracking
 
