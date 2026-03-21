@@ -679,8 +679,9 @@ The policy file lives at `.forum/policy.toml`.
 It is created automatically by `git forum init`, and it controls two kinds of configuration:
 
 - transition guard rules under `[[guards]]`
+- operation checks for write commands (creation rules, node rules, revise rules, evidence rules)
 
-A default file looks like this:
+A full example:
 
 ```toml
 [[guards]]
@@ -690,14 +691,36 @@ requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
 [[guards]]
 on = "open->closed"
 requires = ["no_open_actions"]
+
+[creation_rules.rfc]
+required_body = true
+body_sections = ["Goal", "Non-goals", "Design", "Failure modes", "Acceptance tests"]
+
+[creation_rules.issue]
+required_body = false
+body_sections = []
+
+[node_rules]
+"draft" = ["claim", "question", "objection", "evidence", "summary", "action", "risk", "review"]
+"accepted" = []
+
+[revise_rules]
+allow_body_revise = ["draft", "proposed", "open", "pending"]
+allow_node_revise = ["draft", "proposed", "under-review", "open", "pending"]
+
+[evidence_rules]
+allow_evidence = ["draft", "proposed", "under-review", "open", "pending"]
+
+[checks]
+strict = false
 ```
 
-### What the fields mean
+### Guard rules
 
 - `on`: the transition that a guard block applies to, written as `from->to`
 - `requires`: the list of guard rules that must pass for that transition
 
-### Guard rules currently understood by the implementation
+Guard rules currently understood by the implementation:
 
 - `no_open_objections`
 - `no_open_actions`
@@ -705,14 +728,51 @@ requires = ["no_open_actions"]
 - `one_human_approval`
 - `has_commit_evidence`
 
-### What is enforced today
+### Operation checks
 
-Current implementation status is narrower than the target spec:
+Operation checks validate write commands against policy rules before committing events. They are
+evaluated at the CLI boundary on `new`, node commands, `revise`, and `evidence add`.
+
+| Policy section | Commands checked | What it validates |
+|----------------|------------------|-------------------|
+| `[creation_rules.<kind>]` | `new` | Required body, required body sections (headings) |
+| `[node_rules]` | `claim`, `question`, etc. | Node type allowed in the current thread state |
+| `[revise_rules]` | `revise` | Revision allowed in the current thread state |
+| `[evidence_rules]` | `evidence add` | Evidence addition allowed in the current thread state |
+
+**Severity model:**
+
+- **Error**: always blocks the operation. `--force` does NOT bypass errors.
+- **Warning**: printed to stderr; operation proceeds.
+  - With `strict = true` in `[checks]`: warnings become errors (blocked) unless `--force`.
+  - With `--force` + `strict = true`: warnings downgrade back to warnings.
+
+Specific severity assignments:
+
+- Missing body when `required_body = true` → **Error**
+- Missing or empty required body section → **Warning**
+- Node type not allowed in state → **Error**
+- Revision not allowed in state → **Error**
+- Evidence not allowed in state → **Error**
+
+**The `--force` flag:**
+
+All write commands (`new`, node commands, `revise`, `evidence add`) accept `--force`. It bypasses
+warning-level violations only. Error-level violations are never bypassed. Violations are always
+printed to stderr regardless of `--force`.
+
+**Missing or partial policy:**
+
+- No policy file → all checks pass (no restrictions)
+- Missing policy sections → no restrictions for that check (`#[serde(default)]`)
+
+### What is enforced today
 
 - `git forum state ...` evaluates guard rules from `[[guards]]`
 - `git forum verify` evaluates those same guard rules in read-only mode
-- `git forum policy lint` currently performs structural validation, mainly checking that guard
-  transitions use the `from->to` format
+- `git forum policy lint` performs structural validation of guard transitions
+- All write commands evaluate operation checks from `[creation_rules]`, `[node_rules]`,
+  `[revise_rules]`, and `[evidence_rules]`
 
 
 ### What `git forum verify` actually does
@@ -842,6 +902,7 @@ This manual currently covers:
 - state
 - verify
 - policy lint / check
+- operation checks (creation rules, node rules, revise rules, evidence rules, --force, strict mode)
 - evidence add
 - link
 - branch bind / clear

@@ -296,9 +296,68 @@ requires = ["no_open_actions"]
 | `one_human_approval` | At least one `human/*` approval must be attached |
 | `has_commit_evidence` | At least one `commit` evidence item must be attached |
 
-### 7.3 Enforcement
+### 7.3 Operation checks
+
+Operation checks validate write commands against policy before events are committed.
+
+```toml
+[creation_rules.rfc]
+required_body = true
+body_sections = ["Goal", "Non-goals", "Design", "Failure modes", "Acceptance tests"]
+
+[creation_rules.issue]
+required_body = false
+body_sections = []
+
+[node_rules]
+"draft" = ["claim", "question", "objection", "evidence", "summary", "action", "risk", "review"]
+"accepted" = []
+
+[revise_rules]
+allow_body_revise = ["draft", "proposed", "open", "pending"]
+allow_node_revise = ["draft", "proposed", "under-review", "open", "pending"]
+
+[evidence_rules]
+allow_evidence = ["draft", "proposed", "under-review", "open", "pending"]
+
+[checks]
+strict = false
+```
+
+Check functions:
+
+| Function | Commands | Validates |
+|----------|----------|-----------|
+| `check_create` | `new` | Required body, required body sections (markdown headings) |
+| `check_say` | node commands | Node type allowed in the current state |
+| `check_revise` | `revise` | Revision allowed in the current state |
+| `check_evidence` | `evidence add` | Evidence addition allowed in the current state |
+
+Each returns `Vec<OperationViolation>` (pure function, no I/O).
+
+Severity model:
+
+| Severity | Behavior | `--force` effect |
+|----------|----------|------------------|
+| Error | Always blocks | Cannot bypass |
+| Warning | Printed to stderr, operation proceeds | N/A (already proceeds) |
+| Warning + `strict = true` | Becomes error (blocks) | Downgrades back to warning |
+
+Specific assignments:
+
+- Missing body when `required_body = true`: **Error**
+- Missing or empty required body section: **Warning**
+- Node type not allowed in state: **Error**
+- Revision not allowed in state: **Error**
+- Evidence not allowed in state: **Error**
+
+Missing policy file or missing sections apply no restrictions (`#[serde(default)]`).
+
+### 7.4 Enforcement
 
 - **Guard evaluation**: enforced on `state` command and evaluated read-only by `verify`.
+- **Operation checks**: enforced on `new`, node commands (`claim`, `question`, etc.), `revise`,
+  and `evidence add`. All write commands accept `--force` to bypass warning-level violations.
 
 ## 8. Concurrency
 
@@ -342,10 +401,10 @@ git forum reindex
 ```text
 git forum new issue <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
     [--branch <BRANCH>] [--link-to <THREAD_ID> --rel <REL>]
-    [--from-commit <REV>] [--from-thread <THREAD_ID>]
+    [--from-commit <REV>] [--from-thread <THREAD_ID>] [--force]
 git forum new rfc <TITLE> [--body <TEXT> | --body-file <PATH> | --body -]
     [--link-to <THREAD_ID> --rel <REL>]
-    [--from-commit <REV>] [--from-thread <THREAD_ID>]
+    [--from-commit <REV>] [--from-thread <THREAD_ID>] [--force]
 ```
 
 The old forms `git forum issue new` and `git forum rfc new` remain as hidden aliases for backward
@@ -384,24 +443,24 @@ Thread listings show `YYYY-MM-DD HH:MM` for created and updated timestamps.
 ### 9.4 Structured discussion
 
 ```text
-git forum claim <THREAD_ID> <TEXT>
-git forum question <THREAD_ID> <TEXT>
-git forum objection <THREAD_ID> <TEXT>
-git forum summary <THREAD_ID> <TEXT>
-git forum action <THREAD_ID> <TEXT>
-git forum risk <THREAD_ID> <TEXT>
-git forum review <THREAD_ID> <TEXT>
+git forum claim <THREAD_ID> <TEXT> [--force]
+git forum question <THREAD_ID> <TEXT> [--force]
+git forum objection <THREAD_ID> <TEXT> [--force]
+git forum summary <THREAD_ID> <TEXT> [--force]
+git forum action <THREAD_ID> <TEXT> [--force]
+git forum risk <THREAD_ID> <TEXT> [--force]
+git forum review <THREAD_ID> <TEXT> [--force]
 ```
 
 All discussion commands accept a positional body argument (use `"-"` to read from stdin),
-`--body-file`, `--reply-to`, and `--as`.
+`--body-file`, `--reply-to`, `--as`, and `--force`.
 
 ### 9.5 Node lifecycle
 
 ```text
-git forum revise <THREAD_ID> --body <TEXT> [--incorporates <NODE_ID>]...
-git forum revise body <THREAD_ID> --body <TEXT> [--incorporates <NODE_ID>]...
-git forum revise node <THREAD_ID> <NODE_ID> --body <TEXT>
+git forum revise <THREAD_ID> --body <TEXT> [--incorporates <NODE_ID>]... [--force]
+git forum revise body <THREAD_ID> --body <TEXT> [--incorporates <NODE_ID>]... [--force]
+git forum revise node <THREAD_ID> <NODE_ID> --body <TEXT> [--force]
 git forum retract <THREAD_ID> <NODE_ID>...
 git forum resolve <THREAD_ID> <NODE_ID>...
 git forum reopen <THREAD_ID> <NODE_ID>...      # node reopen (with node IDs)
@@ -456,7 +515,7 @@ git forum state bulk --to <NEW_STATE> [<THREAD_ID>...] [--branch <BRANCH>]
 ### 9.7 Evidence and links
 
 ```text
-git forum evidence add <THREAD_ID> --kind <KIND> --ref <REF> [<REF>...]
+git forum evidence add <THREAD_ID> --kind <KIND> --ref <REF> [<REF>...] [--force]
 git forum link <FROM> <TO> --rel <REL>
 git forum branch bind <THREAD_ID> <BRANCH>
 git forum branch clear <THREAD_ID>
@@ -525,6 +584,8 @@ git forum export <THREAD_ID> [--format <FORMAT>]
 - Accept `--from-commit <REV>`: populate title/body from commit message, auto-add commit evidence.
 - Accept `--from-thread <THREAD_ID>`: populate title/body from source thread, add bidirectional
   `supersedes` / `superseded-by` links, auto-deprecate source only if RFC→RFC. Reject RFC→issue.
+- Accept `--force`: bypass warning-level operation check violations (does not bypass errors).
+- Evaluate `check_create` against `[creation_rules]` policy before committing.
 - Title accepts values starting with hyphens (`allow_hyphen_values`).
 - Allocate a display ID.
 - Assign the initial state.
@@ -533,7 +594,8 @@ git forum export <THREAD_ID> [--format <FORMAT>]
 ### 10.2 Node commands
 
 - Append a `say` event.
-- Validate node type against policy role restrictions.
+- Evaluate `check_say` against `[node_rules]` policy before committing.
+- Accept `--force`: bypass warning-level operation check violations (does not bypass errors).
 - `--reply-to <NODE_ID>` links the new node as a response.
 - Actor resolution: `--as` flag > `GIT_FORUM_ACTOR` env var > Git config `user.name`.
 
@@ -541,6 +603,8 @@ git forum export <THREAD_ID> [--format <FORMAT>]
 
 - `revise` appends an `edit` event. Without a subcommand, `revise` defaults to body revision.
   The explicit `revise body` and `revise node` forms continue to work.
+- `revise` evaluates `check_revise` against `[revise_rules]` policy before committing.
+- `revise` accepts `--force`: bypass warning-level operation check violations (does not bypass errors).
 - `retract` appends a `retract` event.
 - `resolve` and `reopen` operate primarily on `objection` and `action` nodes.
 - `retract`, `resolve`, and `reopen` accept one or more node IDs. Each node is processed
@@ -586,6 +650,8 @@ Display:
 ### 10.7 `evidence add` and `link`
 
 - `evidence add` appends a `link` event carrying evidence metadata.
+- `evidence add` evaluates `check_evidence` against `[evidence_rules]` policy before committing.
+- `evidence add` accepts `--force`: bypass warning-level operation check violations (does not bypass errors).
 - `--ref` accepts multiple values; each creates a separate evidence event.
 - `--kind commit --ref <REV>` resolves `<REV>` to a canonical commit OID.
 - `link` records thread-to-thread relations.
