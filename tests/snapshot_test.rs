@@ -241,10 +241,3 @@ fn status_with_objection() {
     let out = show::render_status(&state);
     assert_snapshot("status_with_objection", &out);
 }
-
-#[test]
-fn status_all_clean() {
-    let state = base_state();
-    let out = show::render_status_all(&[&state]);
-    assert_snapshot("status_all_clean", &out);
-}

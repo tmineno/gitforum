@@ -373,7 +373,6 @@ git forum show <THREAD_ID>
 git forum node show <NODE_ID>
 git forum search <QUERY>
 git forum status <THREAD_ID>
-git forum status --all
 git-forum --help-llm                          # works at any subcommand level
 ```
 

@@ -588,23 +588,6 @@ pub fn render_status(state: &ThreadState) -> String {
     lines.join("\n")
 }
 
-/// Render `git forum status --all` output across multiple threads.
-pub fn render_status_all(states: &[&ThreadState]) -> String {
-    let mut lines: Vec<String> = Vec::new();
-    let mut any_open = false;
-    for state in states {
-        let text = render_status(state);
-        if !text.contains("no open items") {
-            lines.push(text);
-            any_open = true;
-        }
-    }
-    if !any_open {
-        return "no open items across any thread\n".into();
-    }
-    lines.join("")
-}
-
 /// Render search results from the local index.
 pub fn render_search_results(rows: &[super::index::SearchRow]) -> String {
     if rows.is_empty() {

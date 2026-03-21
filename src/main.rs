@@ -202,14 +202,8 @@ enum Commands {
         #[arg(long)]
         compact: bool,
     },
-    /// Show unresolved items for a thread or all threads
-    Status {
-        /// Thread ID (omit for --all)
-        thread_id: Option<String>,
-        /// Show status across all open threads
-        #[arg(long)]
-        all: bool,
-    },
+    /// Show unresolved items for a thread
+    Status { thread_id: String },
     /// Node sub-commands
     Node {
         #[command(subcommand)]
@@ -1104,20 +1098,10 @@ fn main() -> Result<(), ForumError> {
             }
         }
 
-        Commands::Status { thread_id, all } => {
+        Commands::Status { thread_id } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
-            if all {
-                let states = list_thread_states(&git, None, None)?;
-                let refs: Vec<&thread::ThreadState> = states.iter().collect();
-                print!("{}", show::render_status_all(&refs));
-            } else if let Some(thread_id) = thread_id {
-                let state = thread::replay_thread(&git, &thread_id)?;
-                print!("{}", show::render_status(&state));
-            } else {
-                return Err(ForumError::Config(
-                    "usage: git forum status <THREAD_ID> or git forum status --all".into(),
-                ));
-            }
+            let state = thread::replay_thread(&git, &thread_id)?;
+            print!("{}", show::render_status(&state));
         }
 
         Commands::Node { cmd } => match cmd {

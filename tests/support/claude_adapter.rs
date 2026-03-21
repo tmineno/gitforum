@@ -314,7 +314,7 @@ impl ClaudeCodeAdapter {
 
         prompt.push_str(&format!(
             "\n## Before finishing\n\
-             1. Run `{bin} status --all` to check for unresolved items.\n\
+             1. For each thread you modified, run `{bin} status <ID>` to check for unresolved items.\n\
              2. For each thread you modified, run `{bin} show <ID> --what-next` to confirm no blocked transitions remain.\n\
              3. If open actions block a close, resolve each with `{bin} resolve <THREAD> <NODE>` or use --resolve-open-actions.\n",
             bin = git_forum_binary
