@@ -176,6 +176,9 @@ enum Commands {
         /// Show valid next actions, transitions, and guard check results
         #[arg(long)]
         what_next: bool,
+        /// Truncate node bodies and timeline details to single-line previews
+        #[arg(long)]
+        compact: bool,
     },
     /// Show unresolved items for a thread or all threads
     Status {
@@ -990,6 +993,7 @@ fn main() -> Result<(), ForumError> {
         Commands::Show {
             thread_id,
             what_next,
+            compact,
         } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             let state = thread::replay_thread(&git, &thread_id)?;
@@ -997,7 +1001,7 @@ fn main() -> Result<(), ForumError> {
                 let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
                 print!("{}", show::render_what_next(&state, &policy));
             } else {
-                print!("{}", show::render_show(&state));
+                print!("{}", show::render_show(&state, compact));
             }
         }
 
@@ -1630,37 +1634,46 @@ fn run_thread_cmd(
             let actor = resolve_actor(as_actor, &git);
 
             // Resolve title and body from --from-thread, --from-commit, or direct args
-            let (effective_title, effective_body, commit_ref, source_thread) =
-                if let Some(ref source_id) = from_thread {
-                    let source = thread::replay_thread(&git, source_id)?;
-                    let t = title.unwrap_or_else(|| format!("v2: {}", source.title));
-                    let b = resolve_thread_body(body, body_file)?.or(source.body.clone());
-                    (t, b, None, Some(source_id.clone()))
-                } else if let Some(rev) = from_commit {
-                    let commit_sha = git.resolve_commit(&rev)?;
-                    let msg = git.run(&["log", "-1", "--format=%B", &commit_sha])?;
-                    let mut lines = msg.lines();
-                    let subject = lines.next().unwrap_or("").to_string();
-                    let body_text: String = lines
-                        .skip_while(|l| l.is_empty())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let t = title.unwrap_or(subject);
-                    let b = resolve_thread_body(body, body_file)?.or(if body_text.is_empty() {
-                        None
-                    } else {
-                        Some(body_text)
-                    });
-                    (t, b, Some(commit_sha), None)
+            let (effective_title, effective_body, commit_ref, source_thread) = if let Some(
+                ref source_id,
+            ) = from_thread
+            {
+                let source = thread::replay_thread(&git, source_id)?;
+                // Reject RFC -> issue: an issue does not supersede an RFC
+                if source.kind == ThreadKind::Rfc && kind == ThreadKind::Issue {
+                    return Err(ForumError::Config(
+                            "cannot create an issue --from-thread an RFC; an issue does not supersede an RFC. Use `git forum link --rel implements` instead.".into(),
+                        ));
+                }
+                let t = title.unwrap_or_else(|| format!("v2: {}", source.title));
+                let b = resolve_thread_body(body, body_file)?.or(source.body.clone());
+                (t, b, None, Some((source_id.clone(), source.kind)))
+            } else if let Some(rev) = from_commit {
+                let commit_sha = git.resolve_commit(&rev)?;
+                let msg = git.run(&["log", "-1", "--format=%B", &commit_sha])?;
+                let mut lines = msg.lines();
+                let subject = lines.next().unwrap_or("").to_string();
+                let body_text: String = lines
+                    .skip_while(|l| l.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let t = title.unwrap_or(subject);
+                let b = resolve_thread_body(body, body_file)?.or(if body_text.is_empty() {
+                    None
                 } else {
-                    let t = title.ok_or_else(|| {
-                        ForumError::Config(
-                            "title is required (or use --from-commit / --from-thread)".into(),
-                        )
-                    })?;
-                    let b = resolve_thread_body(body, body_file)?;
-                    (t, b, None, None)
-                };
+                    Some(body_text)
+                });
+                (t, b, Some(commit_sha), None)
+            } else {
+                let t = title.ok_or_else(|| {
+                    ForumError::Config(
+                        "title is required (or use --from-commit / --from-thread)".into(),
+                    )
+                })?;
+                let b = resolve_thread_body(body, body_file)?;
+                (t, b, None, None)
+            };
+            // source_thread is now Option<(String, ThreadKind)>
 
             let thread_id = create::create_thread_with_branch(
                 &git,
@@ -1690,8 +1703,9 @@ fn run_thread_cmd(
                     clock,
                 )?;
             }
-            // --from-thread: link new→old (supersedes), old→new (superseded-by), auto-deprecate
-            if let Some(source_id) = source_thread {
+            // --from-thread: link new→old (supersedes), old→new (superseded-by),
+            // auto-deprecate only when source is RFC and target is RFC
+            if let Some((source_id, source_kind)) = source_thread {
                 evidence_ops::add_thread_link(
                     &git,
                     &thread_id,
@@ -1708,17 +1722,19 @@ fn run_thread_cmd(
                     &actor,
                     clock,
                 )?;
-                let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
-                state_change::change_state(
-                    &git,
-                    &source_id,
-                    "deprecated",
-                    &[],
-                    &actor,
-                    clock,
-                    &policy,
-                    state_change::StateChangeOptions::default(),
-                )?;
+                if source_kind == ThreadKind::Rfc && kind == ThreadKind::Rfc {
+                    let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
+                    state_change::change_state(
+                        &git,
+                        &source_id,
+                        "deprecated",
+                        &[],
+                        &actor,
+                        clock,
+                        &policy,
+                        state_change::StateChangeOptions::default(),
+                    )?;
+                }
                 println!("Created {thread_id} (supersedes {source_id})");
             } else {
                 println!("Created {thread_id}");

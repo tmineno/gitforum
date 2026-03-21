@@ -222,7 +222,7 @@ fn show_contains_all_required_fields() {
     )
     .unwrap();
     let state = thread::replay_thread(&git, "RFC-0001").unwrap();
-    let out = show::render_show(&state);
+    let out = show::render_show(&state, false);
 
     assert!(out.contains("RFC-0001"), "missing thread id");
     assert!(out.contains("Test RFC"), "missing title");
@@ -266,7 +266,10 @@ fn show_replay_consistency() {
     .unwrap();
     let state1 = thread::replay_thread(&git, "RFC-0001").unwrap();
     let state2 = thread::replay_thread(&git, "RFC-0001").unwrap();
-    assert_eq!(show::render_show(&state1), show::render_show(&state2));
+    assert_eq!(
+        show::render_show(&state1, false),
+        show::render_show(&state2, false)
+    );
 }
 
 #[test]
@@ -283,7 +286,7 @@ fn show_snapshot_stable() {
     )
     .unwrap();
     let state = thread::replay_thread(&git, "RFC-0001").unwrap();
-    let out = show::render_show(&state);
+    let out = show::render_show(&state, false);
     let event_id = &state.events[0].event_id;
 
     let expected = format!(

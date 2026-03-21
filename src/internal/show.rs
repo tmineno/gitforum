@@ -5,10 +5,13 @@ use super::thread::{NodeLookup, ThreadState};
 
 /// Render `git forum show` output for a thread.
 ///
+/// When `compact` is true, node bodies and timeline details are truncated
+/// to single-line previews. When false (default), full bodies are shown.
+///
 /// Output is deterministic given deterministic event timestamps and IDs.
 /// Snapshot strategy: tests use fixed synthetic events where needed;
 /// integration tests should avoid asserting exact Git OIDs.
-pub fn render_show(state: &ThreadState) -> String {
+pub fn render_show(state: &ThreadState, compact: bool) -> String {
     let mut lines: Vec<String> = Vec::new();
 
     lines.push(format!("{:<12} {}", state.id, state.title));
@@ -40,7 +43,7 @@ pub fn render_show(state: &ThreadState) -> String {
     let incorporated: Vec<&super::node::Node> =
         state.nodes.iter().filter(|n| n.incorporated).collect();
     render_item_list(&mut lines, "incorporated nodes", &incorporated, |node| {
-        let preview = truncate_body(&node.body, 60);
+        let preview = body_or_truncated(&node.body, 60, compact);
         format!(
             "  - {} {} {}",
             short_oid(&node.node_id),
@@ -51,13 +54,13 @@ pub fn render_show(state: &ThreadState) -> String {
 
     let open_obj = state.open_objections();
     render_item_list(&mut lines, "open objections", &open_obj, |node| {
-        let preview = truncate_body(&node.body, 60);
+        let preview = body_or_truncated(&node.body, 60, compact);
         format!("  - {} {}", short_oid(&node.node_id), preview)
     });
 
     let open_act = state.open_actions();
     render_item_list(&mut lines, "open actions", &open_act, |node| {
-        let preview = truncate_body(&node.body, 60);
+        let preview = body_or_truncated(&node.body, 60, compact);
         format!("  - {} {}", short_oid(&node.node_id), preview)
     });
 
@@ -88,16 +91,22 @@ pub fn render_show(state: &ThreadState) -> String {
                 short_oid(&root.node_id),
                 root.node_type,
                 status,
-                truncate_body(&root.body, 50)
+                body_or_truncated(&root.body, 50, compact)
             ));
+            if !compact {
+                render_indented_body(&mut lines, &root.body, "      ");
+            }
             for reply in &convo[1..] {
                 lines.push(format!(
                     "    -> {} {} {} {}",
                     short_oid(&reply.node_id),
                     reply.node_type,
                     reply.actor,
-                    truncate_body(&reply.body, 50)
+                    body_or_truncated(&reply.body, 50, compact)
                 ));
+                if !compact {
+                    render_indented_body(&mut lines, &reply.body, "        ");
+                }
             }
         }
         lines.push(String::new());
@@ -107,7 +116,7 @@ pub fn render_show(state: &ThreadState) -> String {
     let widths = timeline_widths(&state.events);
     lines.push(format_timeline_header(&widths));
     for event in &state.events {
-        lines.push(format_timeline_entry(event, &widths));
+        lines.push(format_timeline_entry(event, &widths, compact));
     }
     lines.push(String::new());
 
@@ -271,7 +280,7 @@ pub fn render_node_show(lookup: &NodeLookup) -> String {
     let widths = timeline_widths(&lookup.events);
     lines.push(format_timeline_header(&widths));
     for event in &lookup.events {
-        lines.push(format_timeline_entry(event, &widths));
+        lines.push(format_timeline_entry(event, &widths, false));
     }
     lines.push(String::new());
 
@@ -343,8 +352,13 @@ fn event_display_type(event: &Event) -> String {
     }
 }
 
-fn timeline_body(event: &Event) -> String {
-    single_line_preview(&event_detail(event), 80)
+fn timeline_body(event: &Event, compact: bool) -> String {
+    let detail = event_detail(event);
+    if compact {
+        single_line_preview(&detail, 80)
+    } else {
+        detail
+    }
 }
 
 struct TimelineWidths {
@@ -403,7 +417,7 @@ fn format_timeline_header(widths: &TimelineWidths) -> String {
     )
 }
 
-fn format_timeline_entry(event: &Event, widths: &TimelineWidths) -> String {
+fn format_timeline_entry(event: &Event, widths: &TimelineWidths, compact: bool) -> String {
     format!(
         "  {:<date$}  {:<node_id$}  {:<event_id$}  {:<author$}  {:<type$}  {}",
         event.created_at.format("%Y-%m-%dT%H:%M:%SZ"),
@@ -411,7 +425,7 @@ fn format_timeline_entry(event: &Event, widths: &TimelineWidths) -> String {
         short_oid(&event.event_id),
         event.actor,
         event_display_type(event),
-        timeline_body(event),
+        timeline_body(event, compact),
         date = widths.date,
         node_id = widths.node_id,
         event_id = widths.event_id,
@@ -484,6 +498,26 @@ where
         lines.push(formatter(item));
     }
     lines.push(String::new());
+}
+
+/// Return truncated body in compact mode, or the first line in full mode.
+fn body_or_truncated(s: &str, max: usize, compact: bool) -> String {
+    if compact {
+        truncate_body(s, max)
+    } else {
+        s.lines().next().unwrap_or("").to_string()
+    }
+}
+
+/// Render multi-line body text indented under a node header (full mode only).
+/// Only emits lines if the body has more than one line.
+fn render_indented_body(lines: &mut Vec<String>, body: &str, indent: &str) {
+    let body_lines: Vec<&str> = body.lines().collect();
+    if body_lines.len() > 1 {
+        for line in &body_lines[1..] {
+            lines.push(format!("{indent}{line}"));
+        }
+    }
 }
 
 fn truncate_body(s: &str, max: usize) -> String {
@@ -720,7 +754,7 @@ mod tests {
     fn show_contains_key_fields() {
         let mut state = fixed_state();
         state.branch = Some("feat/solver".into());
-        let out = render_show(&state);
+        let out = render_show(&state, false);
         assert!(out.contains("RFC-0001"));
         assert!(out.contains("Test RFC"));
         assert!(out.contains("rfc"));
@@ -797,14 +831,14 @@ mod tests {
     #[test]
     fn show_includes_timeline_event_id() {
         let state = fixed_state();
-        let out = render_show(&state);
+        let out = render_show(&state, false);
         assert!(out.contains("evt-0001"));
     }
 
     #[test]
     fn show_is_deterministic() {
         let state = fixed_state();
-        assert_eq!(render_show(&state), render_show(&state));
+        assert_eq!(render_show(&state, false), render_show(&state, false));
     }
 
     #[test]
@@ -813,6 +847,23 @@ mod tests {
             single_line_preview("実装開始: CMake + ImGui + GLFW スケルトンアプリの構築", 20);
         assert!(preview.starts_with("実装開始"));
         assert!(preview.ends_with("..."));
+    }
+
+    #[test]
+    fn show_full_mode_does_not_truncate_timeline() {
+        let mut state = fixed_state();
+        let long_body = "First line of a multi-paragraph body\n\nSecond paragraph with more detail";
+        state.events[0].body = Some(long_body.into());
+        state.events[0].event_type = EventType::Say;
+        state.events[0].node_type = Some(crate::internal::event::NodeType::Claim);
+        state.events[0].target_node_id = Some("node-0001".into());
+        let full = render_show(&state, false);
+        let compact = render_show(&state, true);
+        // Full mode preserves the full event detail
+        assert!(full.contains("First line of a multi-paragraph body"));
+        assert!(full.contains("Second paragraph with more detail"));
+        // Compact mode truncates with " / " joining
+        assert!(compact.contains(" / "));
     }
 
     #[test]

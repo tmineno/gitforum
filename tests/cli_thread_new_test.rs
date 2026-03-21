@@ -150,3 +150,127 @@ fn from_thread_without_title_uses_default() {
     assert_eq!(state.title, "v2: Original design");
     assert_eq!(state.body.as_deref(), Some("Body of original RFC"));
 }
+
+#[test]
+fn from_thread_issue_to_issue_does_not_deprecate_source() {
+    let repo = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(repo.path());
+    init::init_forum(&paths).unwrap();
+
+    let git = GitOps::new(repo.path().to_path_buf());
+    let clock = SystemClock;
+    create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Original bug",
+        Some("Body of original issue"),
+        "human/alice",
+        &clock,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["issue", "new", "--from-thread", "ISSUE-0001"])
+        .output()
+        .expect("failed to run git-forum issue new --from-thread");
+    assert!(
+        output.status.success(),
+        "issue --from-thread issue should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // New issue has links and copied content
+    let new_state = thread::replay_thread(&git, "ISSUE-0002").unwrap();
+    assert_eq!(new_state.title, "v2: Original bug");
+    assert_eq!(new_state.body.as_deref(), Some("Body of original issue"));
+    assert_eq!(new_state.links.len(), 1);
+    assert_eq!(new_state.links[0].target_thread_id, "ISSUE-0001");
+    assert_eq!(new_state.links[0].rel, "supersedes");
+
+    // Source issue is NOT deprecated — remains in its prior state
+    let source = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    assert_eq!(source.status, "open");
+    assert_eq!(source.links.len(), 1);
+    assert_eq!(source.links[0].target_thread_id, "ISSUE-0002");
+    assert_eq!(source.links[0].rel, "superseded-by");
+}
+
+#[test]
+fn from_thread_issue_to_rfc_does_not_deprecate_source() {
+    let repo = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(repo.path());
+    init::init_forum(&paths).unwrap();
+
+    let git = GitOps::new(repo.path().to_path_buf());
+    let clock = SystemClock;
+    create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Feature request",
+        Some("We need a better API"),
+        "human/alice",
+        &clock,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["rfc", "new", "--from-thread", "ISSUE-0001"])
+        .output()
+        .expect("failed to run git-forum rfc new --from-thread");
+    assert!(
+        output.status.success(),
+        "rfc --from-thread issue should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // New RFC has links and copied content
+    let new_state = thread::replay_thread(&git, "RFC-0001").unwrap();
+    assert_eq!(new_state.title, "v2: Feature request");
+    assert_eq!(new_state.body.as_deref(), Some("We need a better API"));
+    assert_eq!(new_state.links.len(), 1);
+    assert_eq!(new_state.links[0].target_thread_id, "ISSUE-0001");
+    assert_eq!(new_state.links[0].rel, "supersedes");
+
+    // Source issue is NOT deprecated
+    let source = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    assert_eq!(source.status, "open");
+    assert_eq!(source.links.len(), 1);
+    assert_eq!(source.links[0].target_thread_id, "RFC-0001");
+    assert_eq!(source.links[0].rel, "superseded-by");
+}
+
+#[test]
+fn from_thread_rfc_to_issue_is_rejected() {
+    let repo = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(repo.path());
+    init::init_forum(&paths).unwrap();
+
+    let git = GitOps::new(repo.path().to_path_buf());
+    let clock = SystemClock;
+    create::create_thread(
+        &git,
+        ThreadKind::Rfc,
+        "Some RFC",
+        Some("RFC body"),
+        "human/alice",
+        &clock,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["issue", "new", "--from-thread", "RFC-0001"])
+        .output()
+        .expect("failed to run git-forum issue new --from-thread");
+    assert!(
+        !output.status.success(),
+        "issue --from-thread RFC should fail"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot create an issue --from-thread an RFC"),
+        "error should explain why: {stderr}"
+    );
+}

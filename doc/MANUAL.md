@@ -163,15 +163,21 @@ and automatically adds the commit as evidence. An explicit title argument overri
 ### Create from another thread
 
 ```bash
-git forum new issue --from-thread RFC-0001
 git forum new rfc --from-thread RFC-0003
-git forum new issue --from-thread RFC-0001 "Custom title"
+git forum new issue --from-thread ISSUE-0001
+git forum new rfc --from-thread ISSUE-0005 "Custom title"
 ```
 
 `--from-thread <THREAD_ID>` copies the title (prefixed with `v2: `) and body from the source
-thread, creates bidirectional `supersedes` / `superseded-by` links, and auto-deprecates the source
-thread if it is an RFC. An explicit title argument overrides the default title. This is useful for
-creating successor RFCs from deprecated ones or implementation issues from accepted RFCs.
+thread and creates bidirectional `supersedes` / `superseded-by` links. An explicit title argument
+overrides the default title.
+
+Behavior depends on the source and target kinds:
+
+- **RFC → new RFC**: source RFC is auto-deprecated (supersession).
+- **Issue → new issue**: source issue is unchanged (respin/split).
+- **Issue → new RFC**: source issue is unchanged (elevation to formal proposal).
+- **RFC → new issue**: not allowed — use `git forum link --rel implements` instead.
 
 ### List by kind
 
