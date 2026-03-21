@@ -325,7 +325,7 @@ enum Commands {
         node_id: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
-        /// Add a summary node before reopening the thread (only for thread reopen)
+        /// Attach a comment to the state-change event (only for thread reopen)
         #[arg(long)]
         comment: Option<String>,
     },
@@ -348,7 +348,7 @@ enum Commands {
         /// Relation to use with --link-to
         #[arg(long, requires = "link_to", value_name = "REL")]
         rel: Option<String>,
-        /// Add a summary node before the state transition
+        /// Attach a comment to the state-change event
         #[arg(long)]
         comment: Option<String>,
     },
@@ -597,7 +597,7 @@ enum ThreadCmd {
         link_to: Vec<String>,
         #[arg(long, requires = "link_to", value_name = "REL")]
         rel: Option<String>,
-        /// Add a summary node before closing
+        /// Attach a comment to the state-change event
         #[arg(long)]
         comment: Option<String>,
     },
@@ -606,7 +606,7 @@ enum ThreadCmd {
         thread_id: String,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
-        /// Add a summary node before marking pending
+        /// Attach a comment to the state-change event
         #[arg(long)]
         comment: Option<String>,
     },
@@ -616,7 +616,7 @@ enum ThreadCmd {
         thread_id: String,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
-        /// Add a summary node before reopening
+        /// Attach a comment to the state-change event
         #[arg(long)]
         comment: Option<String>,
     },
@@ -625,7 +625,7 @@ enum ThreadCmd {
         thread_id: String,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
-        /// Add a summary node before rejecting
+        /// Attach a comment to the state-change event
         #[arg(long)]
         comment: Option<String>,
     },
@@ -640,7 +640,7 @@ enum ThreadCmd {
         link_to: Vec<String>,
         #[arg(long, requires = "link_to", value_name = "REL")]
         rel: Option<String>,
-        /// Add a summary node before accepting
+        /// Attach a comment to the state-change event
         #[arg(long)]
         comment: Option<String>,
     },
@@ -649,7 +649,7 @@ enum ThreadCmd {
         thread_id: String,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
-        /// Add a summary node before proposing
+        /// Attach a comment to the state-change event
         #[arg(long)]
         comment: Option<String>,
     },
@@ -658,7 +658,7 @@ enum ThreadCmd {
         thread_id: String,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
-        /// Add a summary node before deprecating
+        /// Attach a comment to the state-change event
         #[arg(long)]
         comment: Option<String>,
     },
@@ -1238,6 +1238,7 @@ fn main() -> Result<(), ForumError> {
                         &clock,
                         state_change::StateChangeOptions {
                             resolve_open_actions,
+                            ..Default::default()
                         },
                         dry_run,
                     )?;
@@ -1260,18 +1261,6 @@ fn main() -> Result<(), ForumError> {
                         )
                     })?;
                     let actor = resolve_actor(as_actor, &git);
-                    // Add comment (summary node) before state transition if requested
-                    if let Some(comment_text) = &comment {
-                        say::say_node(
-                            &git,
-                            &thread_id,
-                            NodeType::Summary,
-                            comment_text,
-                            &actor,
-                            &clock,
-                            None,
-                        )?;
-                    }
                     state_change::change_state(
                         &git,
                         &thread_id,
@@ -1282,6 +1271,7 @@ fn main() -> Result<(), ForumError> {
                         &policy,
                         state_change::StateChangeOptions {
                             resolve_open_actions,
+                            comment,
                         },
                     )?;
                     // Create links after state transition if requested
@@ -1830,17 +1820,6 @@ fn run_state_shorthand(
     let (git, paths) = discover_repo_with_init_warning()?;
     let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
     let actor = resolve_actor(as_actor, &git);
-    if let Some(text) = comment {
-        say::say_node(
-            &git,
-            thread_id,
-            NodeType::Summary,
-            text,
-            &actor,
-            clock,
-            None,
-        )?;
-    }
     state_change::change_state(
         &git,
         thread_id,
@@ -1851,6 +1830,7 @@ fn run_state_shorthand(
         &policy,
         state_change::StateChangeOptions {
             resolve_open_actions,
+            comment: comment.map(|s| s.to_string()),
         },
     )?;
     if !link_to.is_empty() {
@@ -1988,12 +1968,25 @@ fn run_bulk_state_change(
         }
 
         match state_change::prepare_state_change(
-            git, &thread_id, new_state, sign, clock, policy, options,
+            git,
+            &thread_id,
+            new_state,
+            sign,
+            clock,
+            policy,
+            options.clone(),
         ) {
             Ok(plan) => {
                 if !dry_run {
                     if let Err(err) = state_change::change_state(
-                        git, &thread_id, new_state, sign, actor, clock, policy, options,
+                        git,
+                        &thread_id,
+                        new_state,
+                        sign,
+                        actor,
+                        clock,
+                        policy,
+                        options.clone(),
                     ) {
                         outcomes.push(BulkStateOutcome {
                             thread_id,

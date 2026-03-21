@@ -8,9 +8,10 @@ use super::say;
 use super::state_machine;
 use super::thread;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct StateChangeOptions {
     pub resolve_open_actions: bool,
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +124,7 @@ pub fn change_state(
     policy: &Policy,
     options: StateChangeOptions,
 ) -> ForumResult<()> {
+    let comment = options.comment.clone();
     let plan = prepare_state_change(
         git,
         thread_id,
@@ -137,9 +139,12 @@ pub fn change_state(
         say::resolve_node(git, thread_id, node_id, actor, clock)?;
     }
 
-    let ev = Event::base(thread_id, EventType::State, actor, clock)
+    let mut ev = Event::base(thread_id, EventType::State, actor, clock)
         .with_new_state(new_state)
         .with_approvals(plan.approvals);
+    if let Some(ref text) = comment {
+        ev = ev.with_body(text);
+    }
     super::event::write_event(git, &ev)?;
     Ok(())
 }

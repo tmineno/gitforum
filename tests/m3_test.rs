@@ -512,6 +512,7 @@ fn change_state_issue_close_can_resolve_open_actions() {
         &policy,
         state_change::StateChangeOptions {
             resolve_open_actions: true,
+            ..Default::default()
         },
     )
     .unwrap();
@@ -1164,4 +1165,52 @@ fn from_thread_creates_new_rfc_with_links_and_deprecates_source() {
     assert_eq!(source_after.links.len(), 1);
     assert_eq!(source_after.links[0].target_thread_id, new_id);
     assert_eq!(source_after.links[0].rel, "superseded-by");
+}
+
+#[test]
+fn state_change_with_comment_attaches_body_no_summary_node() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Issue with comment",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
+    state_change::change_state(
+        &git,
+        &thread_id,
+        "closed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions {
+            comment: Some("closing because resolved".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.status, "closed");
+
+    // Should produce exactly 2 events: Create + State (no Summary node)
+    assert_eq!(state.events.len(), 2);
+    assert_eq!(state.events[0].event_type, EventType::Create);
+    assert_eq!(state.events[1].event_type, EventType::State);
+    assert_eq!(
+        state.events[1].body.as_deref(),
+        Some("closing because resolved")
+    );
+
+    // No nodes should be created (comment is on the event, not a node)
+    assert!(state.nodes.is_empty());
+
+    // Timeline should show the comment in the state event detail
+    let out = show::render_show(&state);
+    assert!(out.contains("closed — closing because resolved"));
 }
