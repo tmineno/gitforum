@@ -15,7 +15,7 @@ git forum new rfc "Title" --body "..."             Create an RFC
 git forum accept RFC-0001 --sign human/alice       Accept an RFC
 git forum show RFC-0001 --what-next                Show valid next actions
 git forum evidence add ISSUE-0001 --kind commit --ref HEAD  Add evidence
-git forum status --all                             Check open items
+git forum status ISSUE-0001                         Check open items
 git forum hook install                             Install commit-msg hook
 git forum tui                                      Open interactive TUI
 ```
@@ -589,14 +589,10 @@ Current controls:
 
 ```bash
 git forum status RFC-0001
-git forum status --all
 ```
 
 `git forum status <THREAD_ID>` shows unresolved items grouped by type: open objections, open
 actions, and open questions.
-
-`git forum status --all` shows unresolved items across all open threads, omitting threads with no
-open items.
 
 ## Change thread state
 
