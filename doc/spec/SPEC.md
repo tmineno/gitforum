@@ -475,7 +475,26 @@ git forum policy check <THREAD_ID> --transition <TRANSITION>
 git forum tui [<THREAD_ID>]
 ```
 
-### 9.10 Import / export (planned)
+### 9.10 Hooks
+
+```text
+git forum hook install [--force]
+git forum hook uninstall
+git forum hook check-commit-msg <FILE>
+```
+
+`git forum init` auto-installs the commit-msg hook. The hook validates that thread IDs referenced
+in commit messages (`ISSUE-NNNN`, `RFC-NNNN`) exist as git-forum refs. Comment lines (respecting
+`core.commentChar`) and scissors sections are stripped before scanning.
+
+- No thread IDs found: warn, exit 0 (non-blocking).
+- All referenced threads exist: exit 0.
+- Any missing: warn, exit 1 (blocks commit).
+
+Hook path is resolved via `git rev-parse --git-path hooks/commit-msg` (worktree and
+`core.hooksPath` safe). `--force` overwrites without backup.
+
+### 9.11 Import / export (planned)
 
 Import and export commands are planned but not yet implemented:
 
@@ -566,6 +585,19 @@ Read-only guard evaluation:
 - Missing summary before RFC acceptance.
 - Unresolved objections before RFC acceptance.
 - Unresolved actions before issue close.
+
+### 10.9 `hook`
+
+- `hook install` writes a shell script to the hooks directory, makes it executable.
+- If hook already contains the git-forum marker: print "already installed", succeed.
+- If hook exists without marker and no `--force`: fail with suggestion to use `--force`.
+- `--force` overwrites without backup.
+- `hook uninstall` removes the hook only if it matches the git-forum template.
+- `hook check-commit-msg <FILE>`:
+  - Query `core.commentChar` (default `#`), strip comment lines and scissors sections.
+  - Extract thread IDs matching known prefixes (`ISSUE`, `RFC`) with 4-digit suffixes.
+  - Validate each ID against `refs/forum/threads/<ID>`.
+  - No IDs found: warn, exit 0. All valid: exit 0. Any missing: warn, exit 1.
 
 ## 11. TUI
 

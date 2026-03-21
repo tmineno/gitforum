@@ -1,6 +1,6 @@
 # Roadmap
 
-Last updated: 2026-03-18
+Last updated: 2026-03-21
 
 ## Completed
 
@@ -50,6 +50,8 @@ The following capabilities are implemented and tested:
 - Inline node flags on thread creation: `--claim`, `--question`, `--objection`, `--action`,
   `--risk`, `--summary` (ISSUE-0052)
 - E2E scenario expanded to 10/10 node types, 11/13 transitions, 9 threads (ISSUE-0053)
+- Advisory commit-msg hook: validates thread ID references in commit messages, auto-installed
+  during `init`, respects `core.commentChar` and `core.hooksPath` (RFC-0020)
 
 ## In progress
 
@@ -129,7 +131,7 @@ the current open issues are resolved.
 ### Notification and subscription
 
 - Watch specific threads or node types.
-- Hook-based notifications (post-event shell hooks).
+- Post-event shell hooks (beyond the shipped commit-msg hook).
 
 ### Advanced policy
 

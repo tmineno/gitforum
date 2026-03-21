@@ -16,6 +16,7 @@ git forum accept RFC-0001 --sign human/alice       Accept an RFC
 git forum show RFC-0001 --what-next                Show valid next actions
 git forum evidence add ISSUE-0001 --kind commit --ref HEAD  Add evidence
 git forum status --all                             Check open items
+git forum hook install                             Install commit-msg hook
 git forum tui                                      Open interactive TUI
 ```
 
@@ -96,7 +97,7 @@ git forum doctor
 git forum reindex
 ```
 
-- `init`: creates `.forum/` and `.git/forum/`
+- `init`: creates `.forum/` and `.git/forum/`, installs the commit-msg hook
 - `doctor`: checks policy, templates, local index, and ref namespace health
 - `reindex`: rebuilds the local index from Git refs
 
@@ -460,6 +461,41 @@ git forum branch clear ISSUE-0001
 This updates the thread's `scope.branch`. It is most useful for issues that track implementation
 work on a feature branch, but the command is available for any thread kind.
 
+## Hooks
+
+### Commit-msg hook
+
+`git forum init` automatically installs an advisory `commit-msg` hook that validates thread ID
+references in commit messages. The hook can also be managed manually:
+
+```bash
+git forum hook install              # install the commit-msg hook
+git forum hook install --force      # overwrite an existing hook (no backup)
+git forum hook uninstall            # remove the git-forum hook
+```
+
+The hook delegates to `git-forum hook check-commit-msg <file>`, which:
+
+1. Strips Git comment lines (respecting `core.commentChar`) and scissors sections.
+2. Scans the cleaned message for thread ID patterns (`ISSUE-NNNN`, `RFC-NNNN`).
+3. Validates each referenced thread exists in `refs/forum/threads/`.
+
+**Behavior:**
+
+- No thread IDs found: prints a warning, exits 0 (commit proceeds).
+- All referenced threads exist: exits 0 silently.
+- Any referenced thread missing: prints a warning with the missing IDs, exits 1 (commit blocked).
+
+```text
+git-forum: commit message references non-existent thread(s):
+  ISSUE-9999 — not found
+hint: create the thread first, or remove the reference from the commit message.
+```
+
+The hook path is resolved via `git rev-parse --git-path hooks/commit-msg`, so it works correctly
+with worktrees and `core.hooksPath`. `--force` overwrites any existing hook without backup; users
+with custom hooks should use a hook dispatcher (e.g., the pre-commit framework).
+
 ## TUI
 
 ```bash
@@ -797,6 +833,7 @@ This manual currently covers:
 - evidence add
 - link
 - branch bind / clear
+- hooks (commit-msg validation)
 - TUI
 
 Still out of scope:
