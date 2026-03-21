@@ -14,6 +14,9 @@ use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
+use git_forum::internal::github;
+use git_forum::internal::github_export;
+use git_forum::internal::github_import;
 use git_forum::internal::hook;
 use git_forum::internal::index;
 use git_forum::internal::init;
@@ -465,6 +468,16 @@ enum Commands {
         /// Open a specific thread in detail view directly
         thread_id: Option<String>,
     },
+    /// Import from external sources
+    Import {
+        #[command(subcommand)]
+        cmd: ImportCmd,
+    },
+    /// Export to external platforms
+    Export {
+        #[command(subcommand)]
+        cmd: ExportCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -609,6 +622,46 @@ enum HookCmd {
     CheckCommitMsg {
         /// Path to the commit message file (provided by Git)
         file: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum ImportCmd {
+    /// Import a GitHub issue into git-forum
+    GithubIssue {
+        /// GitHub repository (owner/repo)
+        #[arg(long)]
+        repo: String,
+        /// Issue number to import
+        #[arg(long, required_unless_present = "all")]
+        issue: Option<u64>,
+        /// Import all issues from the repository
+        #[arg(long, conflicts_with = "issue")]
+        all: bool,
+        /// Actor identity
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        /// Show what would be imported without creating anything
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ExportCmd {
+    /// Export a git-forum thread to a GitHub issue
+    GithubIssue {
+        /// Thread ID to export
+        thread_id: String,
+        /// Target GitHub repository (owner/repo)
+        #[arg(long)]
+        repo: String,
+        /// Actor identity
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        /// Show what would be created without actually creating
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -924,6 +977,84 @@ fn main() -> Result<(), ForumError> {
             let db_path = paths.git_forum.join("index.db");
             forum_tui::run(&git, &db_path, thread_id.as_deref())?;
         }
+
+        Commands::Import { cmd } => match cmd {
+            ImportCmd::GithubIssue {
+                repo,
+                issue,
+                all,
+                as_actor,
+                dry_run,
+            } => {
+                let (git, _paths) = discover_repo_with_init_warning()?;
+                let actor = resolve_actor(as_actor, &git);
+                if dry_run {
+                    if all {
+                        let issues = github::list_issues(&repo)?;
+                        for gh_issue in &issues {
+                            let plan = github_import::plan_import(&git, &repo, gh_issue.number)?;
+                            print_import_plan(&plan);
+                        }
+                    } else {
+                        let issue_number = issue
+                            .ok_or_else(|| ForumError::Config("--issue is required".into()))?;
+                        let plan = github_import::plan_import(&git, &repo, issue_number)?;
+                        print_import_plan(&plan);
+                    }
+                } else if all {
+                    let results = github_import::import_all(&git, &repo, &actor, &clock)?;
+                    for result in &results {
+                        match result {
+                            Ok(r) => {
+                                println!("Imported {} <- {}", r.thread_id, r.github_url);
+                                if r.state_changed {
+                                    println!("  (closed)");
+                                }
+                                println!("  {} comment(s)", r.comments_imported);
+                            }
+                            Err((num, e)) => eprintln!("Failed #{num}: {e}"),
+                        }
+                    }
+                } else {
+                    let issue_number =
+                        issue.ok_or_else(|| ForumError::Config("--issue is required".into()))?;
+                    let result =
+                        github_import::import_issue(&git, &repo, issue_number, &actor, &clock)?;
+                    println!("Imported {} <- {}", result.thread_id, result.github_url);
+                    if result.state_changed {
+                        println!("  (closed)");
+                    }
+                    println!("  {} comment(s)", result.comments_imported);
+                }
+            }
+        },
+
+        Commands::Export { cmd } => match cmd {
+            ExportCmd::GithubIssue {
+                thread_id,
+                repo,
+                as_actor,
+                dry_run,
+            } => {
+                let (git, _paths) = discover_repo_with_init_warning()?;
+                let actor = resolve_actor(as_actor, &git);
+                if dry_run {
+                    let plan = github_export::plan_export(&git, &thread_id)?;
+                    print_export_plan(&plan);
+                } else {
+                    let result =
+                        github_export::export_issue(&git, &thread_id, &repo, &actor, &clock)?;
+                    println!("Exported {} -> {}", thread_id, result.github_url);
+                    println!(
+                        "  Comments: {} created, {} updated, {} skipped",
+                        result.comments_created, result.comments_updated, result.comments_skipped
+                    );
+                    if result.was_closed {
+                        println!("  (GitHub issue closed)");
+                    }
+                }
+            }
+        },
 
         Commands::Issue { cmd } => {
             run_thread_cmd(cmd, ThreadKind::Issue, &clock)?;
@@ -2428,5 +2559,38 @@ fn resolve_thread_body(
         (None, Some(path)) => Ok(Some(fs::read_to_string(path)?)),
         (None, None) => Ok(None),
         (Some(_), Some(_)) => unreachable!("clap enforces body/body-file conflicts"),
+    }
+}
+
+fn print_import_plan(plan: &github_import::ImportPlan) {
+    if let Some(ref existing) = plan.already_imported {
+        println!(
+            "[SKIP] {} — already imported as {existing}",
+            plan.github_url
+        );
+        return;
+    }
+    println!("[DRY-RUN] Would import: {}", plan.github_url);
+    println!("  Title: {}", plan.title);
+    println!("  Comments: {}", plan.comment_count);
+    if plan.would_close {
+        println!("  State: would be closed after import");
+    }
+}
+
+fn print_export_plan(plan: &github_export::ExportPlan) {
+    if plan.already_exported {
+        println!(
+            "[RE-EXPORT] {} -> {} (will update existing)",
+            plan.thread_id,
+            plan.existing_github_url.as_deref().unwrap_or("?")
+        );
+    } else {
+        println!("[DRY-RUN] Would export: {}", plan.thread_id);
+    }
+    println!("  Title: {}", plan.title);
+    println!("  Nodes: {}", plan.node_count);
+    if plan.would_close {
+        println!("  State: GitHub issue would be closed");
     }
 }
