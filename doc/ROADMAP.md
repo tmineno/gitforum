@@ -51,7 +51,7 @@ The following capabilities are implemented and tested:
 ### CLI and UX
 
 - Repository init, doctor (refs, templates, index integrity), reindex
-- `show`, `node show`, `status`, `verify`, `show --what-next`, `policy lint`, `policy check`
+- `show` (with compact next-states and state diagram), `node show`, `status`, `verify`, `show --what-next` (with operation checks), `policy show` / `lint` / `check` (ISSUE-0110)
 - `--help-llm` at any subcommand level with per-command contextual help (ISSUE-0034, ISSUE-0050)
 - Structured `--help` output with grouped categories (RFC-0024)
 - `--edit` flag for interactive body composition via `$EDITOR` (ISSUE-0072)
@@ -98,13 +98,13 @@ Active issues awaiting implementation:
 
 - ISSUE-0097 — Kind-scoped guard keys to prevent cross-kind collisions
 - ISSUE-0095 — Policy lint: detect semantic footguns like transition collisions and stale state lists
-- ISSUE-0081 — Add `policy show` command for discoverability of effective rules
+- ~~ISSUE-0081~~ — Superseded by ISSUE-0110 (implemented)
 - ISSUE-0093 — Make `verify` distinguish PASS, BLOCKED, and NOT APPLICABLE
 
 ### Display and output
 
 - ISSUE-0094 — Body revision diff between revisions (`git forum diff`)
-- ISSUE-0070 — Show output should display available state transitions
+- ~~ISSUE-0070~~ — Superseded by ISSUE-0110 (implemented)
 - ISSUE-0096 — Expand structured workflow outputs around status, what-next, and verify
 
 ### Templates and scaffolding

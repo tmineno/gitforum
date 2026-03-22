@@ -63,7 +63,7 @@ evidence and links
 
 policy and verification
    verify      Check guard conditions for the next transition
-   policy      Policy sub-commands (lint, check)
+   policy      Policy sub-commands (show, lint, check)
 
 hooks and maintenance
    hook        Manage the commit-msg hook
@@ -608,6 +608,8 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum PolicyCmd {
+    /// Display the loaded policy in human-readable format
+    Show,
     /// Check policy file for structural problems
     Lint,
     /// Check whether a transition satisfies policy guards
@@ -1427,9 +1429,9 @@ fn main() -> Result<(), ForumError> {
             no_timeline,
         } => {
             let (git, paths) = discover_repo_with_init_warning()?;
+            let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
             let state = thread::replay_thread(&git, &thread_id)?;
             if what_next {
-                let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
                 print!("{}", show::render_what_next(&state, &policy));
             } else {
                 print!(
@@ -1439,6 +1441,7 @@ fn main() -> Result<(), ForumError> {
                         &show::ShowOptions {
                             compact,
                             no_timeline,
+                            policy: Some(policy),
                         }
                     )
                 );
@@ -1925,6 +1928,13 @@ fn main() -> Result<(), ForumError> {
         Commands::Policy { cmd } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             match cmd {
+                PolicyCmd::Show => {
+                    let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
+                    print!(
+                        "{}",
+                        git_forum::internal::policy::render_policy_show(&policy)
+                    );
+                }
                 PolicyCmd::Lint => {
                     let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
                     let diags = git_forum::internal::policy::lint_policy(&policy);

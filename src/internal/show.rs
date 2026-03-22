@@ -1,4 +1,4 @@
-use super::event::{Event, EventType};
+use super::event::{Event, EventType, ThreadKind};
 use super::policy::{self, Policy};
 use super::state_machine;
 use super::thread::{NodeLookup, ThreadState};
@@ -9,6 +9,132 @@ pub struct ShowOptions {
     pub compact: bool,
     /// Omit the timeline section entirely.
     pub no_timeline: bool,
+    /// When set, show compact next-states and state diagram.
+    pub policy: Option<Policy>,
+}
+
+/// Render a compact Unicode state diagram for a thread kind.
+///
+/// The current state is highlighted with brackets: `[under-review]`.
+/// Forward edges use `→`, branch edges use `├→` / `└→`.
+pub fn render_state_diagram(kind: ThreadKind, current_status: &str) -> Vec<String> {
+    // Define main spine (longest forward path) and branch edges per kind
+    let (spine, branches): (&[&str], Vec<(&str, &str)>) = match kind {
+        ThreadKind::Issue => (
+            &["open", "pending", "closed"],
+            vec![
+                ("open", "rejected"),
+                ("open", "closed"),
+                ("rejected", "open"),
+                ("closed", "open"),
+            ],
+        ),
+        ThreadKind::Rfc => (
+            &[
+                "draft",
+                "proposed",
+                "under-review",
+                "accepted",
+                "deprecated",
+            ],
+            vec![
+                ("draft", "rejected"),
+                ("proposed", "draft"),
+                ("under-review", "rejected"),
+                ("under-review", "draft"),
+                ("rejected", "deprecated"),
+            ],
+        ),
+        ThreadKind::Dec => (
+            &["proposed", "accepted", "deprecated"],
+            vec![
+                ("proposed", "rejected"),
+                ("proposed", "deprecated"),
+                ("rejected", "deprecated"),
+            ],
+        ),
+        ThreadKind::Task => (
+            &["open", "designing", "implementing", "reviewing", "closed"],
+            vec![
+                ("open", "rejected"),
+                ("open", "closed"),
+                ("designing", "rejected"),
+                ("designing", "open"),
+                ("implementing", "rejected"),
+                ("implementing", "designing"),
+                ("reviewing", "rejected"),
+                ("reviewing", "implementing"),
+                ("closed", "open"),
+                ("rejected", "open"),
+            ],
+        ),
+    };
+
+    let fmt_state = |s: &str| -> String {
+        if s == current_status {
+            format!("[{s}]")
+        } else {
+            s.to_string()
+        }
+    };
+
+    let mut lines = Vec::new();
+
+    // Render main spine
+    let spine_parts: Vec<String> = spine.iter().map(|s| fmt_state(s)).collect();
+    lines.push(format!("  {}", spine_parts.join(" → ")));
+
+    // Group branches by source state on the spine
+    for &src in spine {
+        let src_branches: Vec<&&str> = branches
+            .iter()
+            .filter(|(from, _)| *from == src)
+            .map(|(_, to)| to)
+            .collect();
+        if src_branches.is_empty() {
+            continue;
+        }
+        // Calculate indent to align under the source state on the spine
+        let indent = spine_indent(spine, src, current_status);
+        for (i, target) in src_branches.iter().enumerate() {
+            let connector = if i + 1 < src_branches.len() {
+                "├→"
+            } else {
+                "└→"
+            };
+            lines.push(format!("{indent}{connector} {}", fmt_state(target)));
+        }
+    }
+
+    // Also show branches from non-spine states
+    for (src, targets) in &branches {
+        if spine.contains(src) {
+            continue;
+        }
+        let indent = "  ";
+        let target_list: Vec<String> = std::iter::once(targets).map(|t| fmt_state(t)).collect();
+        lines.push(format!(
+            "{indent}{} → {}",
+            fmt_state(src),
+            target_list.join(", ")
+        ));
+    }
+
+    lines
+}
+
+/// Calculate whitespace indent to align a branch connector under a spine state.
+fn spine_indent(spine: &[&str], src: &str, current: &str) -> String {
+    let mut offset = 2; // leading "  "
+    for &s in spine {
+        if s == src {
+            break;
+        }
+        // Width of state name (with brackets if current)
+        let w = if s == current { s.len() + 2 } else { s.len() };
+        offset += w + 3; // " → " separator
+    }
+    " ".repeat(offset)
 }
 
 /// Render `git forum show` output for a thread.
@@ -28,6 +154,7 @@ pub fn render_show(state: &ThreadState, compact: bool) -> String {
         &ShowOptions {
             compact,
             no_timeline: false,
+            policy: None,
         },
     )
 }
@@ -39,6 +166,26 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
     lines.push(format!("{:<12} {}", state.id, state.title));
     lines.push(format!("kind:     {}", state.kind));
     lines.push(format!("status:   {}", state.status));
+    if let Some(policy) = &options.policy {
+        let targets = state_machine::valid_targets(state.kind, &state.status);
+        if !targets.is_empty() {
+            let mut target_parts: Vec<String> = Vec::new();
+            for target in &targets {
+                let violations = policy::check_guards(policy, state, &state.status, target, &[]);
+                if violations.is_empty() {
+                    target_parts.push(target.to_string());
+                } else {
+                    let blockers: Vec<String> = violations.iter().map(|v| v.rule.clone()).collect();
+                    target_parts.push(format!("{target} (blocked: {})", blockers.join(", ")));
+                }
+            }
+            lines.push(format!("next:     {}", target_parts.join(", ")));
+        }
+        lines.push("transitions:".into());
+        for diagram_line in render_state_diagram(state.kind, &state.status) {
+            lines.push(diagram_line);
+        }
+    }
     lines.push(format!(
         "created:  {}",
         state.created_at.format("%Y-%m-%dT%H:%M:%SZ")
@@ -255,6 +402,58 @@ pub fn render_what_next(state: &ThreadState, policy: &Policy) -> String {
         if has_summary { "yes" } else { "no" }
     ));
     lines.push(String::new());
+
+    // Operation check rules for current state
+    let mut op_lines: Vec<String> = Vec::new();
+
+    // Node rules
+    if !policy.node_rules.is_empty() {
+        if let Some(allowed) = policy.node_rules.get(&state.status) {
+            if allowed.is_empty() {
+                op_lines.push("  node types: (none allowed)".into());
+            } else {
+                let types: Vec<String> = allowed.iter().map(|n| n.to_string()).collect();
+                op_lines.push(format!("  node types: {}", types.join(", ")));
+            }
+        } else {
+            op_lines.push("  node types: (all allowed)".into());
+        }
+    }
+
+    // Revise rules
+    if let Some(revise) = &policy.revise_rules {
+        if !revise.allow_body_revise.is_empty() {
+            let allowed = revise.allow_body_revise.iter().any(|s| s == &state.status);
+            op_lines.push(format!(
+                "  body revise: {}",
+                if allowed { "allowed" } else { "blocked" }
+            ));
+        }
+        if !revise.allow_node_revise.is_empty() {
+            let allowed = revise.allow_node_revise.iter().any(|s| s == &state.status);
+            op_lines.push(format!(
+                "  node revise: {}",
+                if allowed { "allowed" } else { "blocked" }
+            ));
+        }
+    }
+
+    // Evidence rules
+    if let Some(evidence) = &policy.evidence_rules {
+        if !evidence.allow_evidence.is_empty() {
+            let allowed = evidence.allow_evidence.iter().any(|s| s == &state.status);
+            op_lines.push(format!(
+                "  evidence:    {}",
+                if allowed { "allowed" } else { "blocked" }
+            ));
+        }
+    }
+
+    if !op_lines.is_empty() {
+        lines.push(format!("operation checks (state: {}):", state.status));
+        lines.extend(op_lines);
+        lines.push(String::new());
+    }
 
     lines.join("\n")
 }
@@ -910,6 +1109,7 @@ mod tests {
             &ShowOptions {
                 compact: false,
                 no_timeline: true,
+                policy: None,
             },
         );
         assert!(with_timeline.contains("timeline:"));
@@ -917,6 +1117,100 @@ mod tests {
         // Non-timeline content is preserved
         assert!(without_timeline.contains("status:"));
         assert!(without_timeline.contains("body:"));
+    }
+
+    #[test]
+    fn show_with_policy_includes_next_and_diagram() {
+        let state = fixed_state();
+        let policy = crate::internal::policy::Policy::default();
+        let out = render_show_with_options(
+            &state,
+            &ShowOptions {
+                compact: false,
+                no_timeline: false,
+                policy: Some(policy),
+            },
+        );
+        // RFC in draft has transitions: proposed, rejected
+        assert!(out.contains("next:     proposed, rejected"));
+        assert!(out.contains("transitions:"));
+        // State diagram should show [draft] highlighted
+        assert!(out.contains("[draft]"));
+        assert!(out.contains("→"));
+    }
+
+    #[test]
+    fn state_diagram_highlights_current() {
+        let lines = render_state_diagram(ThreadKind::Issue, "open");
+        let joined = lines.join("\n");
+        assert!(joined.contains("[open]"));
+        assert!(!joined.contains("[closed]"));
+        assert!(joined.contains("closed"));
+    }
+
+    #[test]
+    fn state_diagram_rfc_all_states_present() {
+        let lines = render_state_diagram(ThreadKind::Rfc, "under-review");
+        let joined = lines.join("\n");
+        assert!(joined.contains("[under-review]"));
+        assert!(joined.contains("draft"));
+        assert!(joined.contains("proposed"));
+        assert!(joined.contains("accepted"));
+        assert!(joined.contains("deprecated"));
+        assert!(joined.contains("rejected"));
+    }
+
+    #[test]
+    fn state_diagram_dec() {
+        let lines = render_state_diagram(ThreadKind::Dec, "proposed");
+        let joined = lines.join("\n");
+        assert!(joined.contains("[proposed]"));
+        assert!(joined.contains("accepted"));
+        assert!(joined.contains("deprecated"));
+        assert!(joined.contains("rejected"));
+    }
+
+    #[test]
+    fn state_diagram_task() {
+        let lines = render_state_diagram(ThreadKind::Task, "implementing");
+        let joined = lines.join("\n");
+        assert!(joined.contains("[implementing]"));
+        assert!(joined.contains("open"));
+        assert!(joined.contains("designing"));
+        assert!(joined.contains("reviewing"));
+        assert!(joined.contains("closed"));
+        assert!(joined.contains("rejected"));
+    }
+
+    #[test]
+    fn what_next_includes_operation_checks() {
+        let state = fixed_state();
+        let policy = crate::internal::policy::Policy {
+            node_rules: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "draft".into(),
+                    vec![
+                        crate::internal::event::NodeType::Claim,
+                        crate::internal::event::NodeType::Question,
+                    ],
+                );
+                m
+            },
+            revise_rules: Some(crate::internal::policy::ReviseRules {
+                allow_body_revise: vec!["draft".into()],
+                allow_node_revise: vec![],
+            }),
+            evidence_rules: Some(crate::internal::policy::EvidenceRules {
+                allow_evidence: vec!["draft".into(), "proposed".into()],
+            }),
+            ..Default::default()
+        };
+        let out = render_what_next(&state, &policy);
+        assert!(out.contains("operation checks (state: draft):"));
+        assert!(out.contains("node types: claim, question"));
+        assert!(out.contains("body revise: allowed"));
+        assert!(out.contains("evidence:    allowed"));
     }
 
     #[test]

@@ -408,6 +408,100 @@ fn kind_name(kind: &ThreadKind) -> &'static str {
     }
 }
 
+/// Render the policy in human-readable format for `policy show`.
+///
+/// Only shows sections that are actually configured — no synthesized defaults.
+pub fn render_policy_show(policy: &Policy) -> String {
+    let mut lines: Vec<String> = Vec::new();
+
+    // Guards
+    if !policy.guards.is_empty() {
+        lines.push("guards:".into());
+        for guard in &policy.guards {
+            let rules: Vec<String> = guard.requires.iter().map(|r| r.to_string()).collect();
+            lines.push(format!("  {}: {}", guard.on, rules.join(", ")));
+        }
+        lines.push(String::new());
+    }
+
+    // Checks
+    lines.push("checks:".into());
+    lines.push(format!("  strict = {}", policy.checks.strict));
+    lines.push(String::new());
+
+    // Creation rules
+    if !policy.creation_rules.is_empty() {
+        lines.push("creation_rules:".into());
+        let mut keys: Vec<&String> = policy.creation_rules.keys().collect();
+        keys.sort();
+        for key in keys {
+            let rules = &policy.creation_rules[key];
+            let mut parts: Vec<String> = Vec::new();
+            if rules.required_body {
+                parts.push("required_body=true".into());
+            }
+            if !rules.body_sections.is_empty() {
+                parts.push(format!("sections=[{}]", rules.body_sections.join(", ")));
+            }
+            if parts.is_empty() {
+                lines.push(format!("  {key}: (no restrictions)"));
+            } else {
+                lines.push(format!("  {key}: {}", parts.join(", ")));
+            }
+        }
+        lines.push(String::new());
+    }
+
+    // Node rules
+    if !policy.node_rules.is_empty() {
+        lines.push("node_rules:".into());
+        let mut keys: Vec<&String> = policy.node_rules.keys().collect();
+        keys.sort();
+        for key in keys {
+            let types: Vec<String> = policy.node_rules[key]
+                .iter()
+                .map(|n| n.to_string())
+                .collect();
+            if types.is_empty() {
+                lines.push(format!("  {key}: (none allowed)"));
+            } else {
+                lines.push(format!("  {key}: {}", types.join(", ")));
+            }
+        }
+        lines.push(String::new());
+    } else {
+        lines.push("node_rules: (not configured)".into());
+        lines.push(String::new());
+    }
+
+    // Revise rules
+    if let Some(revise) = &policy.revise_rules {
+        lines.push("revise_rules:".into());
+        if !revise.allow_body_revise.is_empty() {
+            lines.push(format!("  body: [{}]", revise.allow_body_revise.join(", ")));
+        }
+        if !revise.allow_node_revise.is_empty() {
+            lines.push(format!("  node: [{}]", revise.allow_node_revise.join(", ")));
+        }
+        lines.push(String::new());
+    } else {
+        lines.push("revise_rules: (not configured)".into());
+        lines.push(String::new());
+    }
+
+    // Evidence rules
+    if let Some(evidence) = &policy.evidence_rules {
+        lines.push("evidence_rules:".into());
+        lines.push(format!("  allow: [{}]", evidence.allow_evidence.join(", ")));
+        lines.push(String::new());
+    } else {
+        lines.push("evidence_rules: (not configured)".into());
+        lines.push(String::new());
+    }
+
+    lines.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -600,5 +694,27 @@ mod tests {
             .filter(|d| d.level == LintLevel::Warn)
             .collect();
         assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    }
+
+    #[test]
+    fn render_policy_show_empty_policy() {
+        let policy = Policy::default();
+        let out = render_policy_show(&policy);
+        assert!(out.contains("checks:"));
+        assert!(out.contains("strict = false"));
+        assert!(out.contains("node_rules: (not configured)"));
+        assert!(out.contains("revise_rules: (not configured)"));
+        assert!(out.contains("evidence_rules: (not configured)"));
+    }
+
+    #[test]
+    fn render_policy_show_full_policy() {
+        let policy: Policy =
+            toml::from_str(include_str!("../../tests/fixtures/policy_default.toml")).unwrap();
+        let out = render_policy_show(&policy);
+        assert!(out.contains("guards:"));
+        assert!(out.contains("under-review->accepted:"));
+        assert!(out.contains("creation_rules:"));
+        assert!(out.contains("checks:"));
     }
 }
