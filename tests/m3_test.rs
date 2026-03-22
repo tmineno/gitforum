@@ -1009,10 +1009,15 @@ fn policy_loads_from_toml_file() {
 
 #[test]
 fn policy_lint_on_default_policy_passes() {
+    use git_forum::internal::policy::LintLevel;
     let (_repo, _git, paths) = setup();
     let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap();
     let diags = git_forum::internal::policy::lint_policy(&policy);
-    assert!(diags.is_empty(), "lint diags: {diags:?}");
+    let warnings: Vec<_> = diags
+        .iter()
+        .filter(|d| d.level == LintLevel::Warn)
+        .collect();
+    assert!(warnings.is_empty(), "lint warnings: {warnings:?}");
 }
 
 // ---- RFC deprecated state ----

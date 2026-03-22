@@ -4,8 +4,9 @@ use serde::Deserialize;
 
 use super::approval::Approval;
 use super::error::{ForumError, ForumResult};
-use super::event::NodeType;
+use super::event::{NodeType, ThreadKind};
 use super::evidence::EvidenceKind;
+use super::state_machine;
 use super::thread::ThreadState;
 
 /// A named guard rule.
@@ -205,23 +206,206 @@ pub fn evaluate_rule(
     }
 }
 
+/// Severity level for a lint diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LintLevel {
+    /// Informational note (e.g. multi-kind transition — intentional but worth knowing).
+    Note,
+    /// Warning about a likely mistake (e.g. unknown state name).
+    Warn,
+}
+
+/// A single lint diagnostic with a severity level.
+#[derive(Debug, Clone)]
+pub struct LintDiag {
+    pub level: LintLevel,
+    pub message: String,
+}
+
+impl std::fmt::Display for LintDiag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let prefix = match self.level {
+            LintLevel::Note => "NOTE",
+            LintLevel::Warn => "WARN",
+        };
+        write!(f, "{prefix} {}", self.message)
+    }
+}
+
 /// Lint a policy for structural problems.
 ///
 /// Preconditions: policy is loaded.
-/// Postconditions: returns a list of diagnostic strings (empty = OK).
+/// Postconditions: returns a list of diagnostics (empty = OK).
 /// Failure modes: none.
 /// Side effects: none.
-pub fn lint_policy(policy: &Policy) -> Vec<String> {
+pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
     let mut diags = Vec::new();
+    let all_kinds = [
+        ThreadKind::Issue,
+        ThreadKind::Rfc,
+        ThreadKind::Dec,
+        ThreadKind::Task,
+    ];
+
+    // Collect all valid states across all kinds for global validation.
+    let all_states: std::collections::HashSet<&str> = all_kinds
+        .iter()
+        .flat_map(|k| {
+            state_machine::valid_transitions(*k)
+                .iter()
+                .flat_map(|(from, to)| [*from, *to])
+        })
+        .collect();
+
     for guard in &policy.guards {
         if !guard.on.contains("->") {
-            diags.push(format!(
-                "guard 'on' field {:?} is not a valid transition (expected 'from->to')",
-                guard.on
-            ));
+            diags.push(LintDiag {
+                level: LintLevel::Warn,
+                message: format!(
+                    "guard 'on' field {:?} is not a valid transition (expected 'from->to')",
+                    guard.on
+                ),
+            });
+            continue;
+        }
+
+        let parts: Vec<&str> = guard.on.splitn(2, "->").collect();
+        let (from, to) = (parts[0], parts[1]);
+
+        // Check for undefined states.
+        if !all_states.contains(from) {
+            diags.push(LintDiag {
+                level: LintLevel::Warn,
+                message: format!(
+                    "guard {:?}: unknown state {:?}; valid states are: {}",
+                    guard.on,
+                    from,
+                    sorted_states(&all_states),
+                ),
+            });
+        }
+        if !all_states.contains(to) {
+            diags.push(LintDiag {
+                level: LintLevel::Warn,
+                message: format!(
+                    "guard {:?}: unknown state {:?}; valid states are: {}",
+                    guard.on,
+                    to,
+                    sorted_states(&all_states),
+                ),
+            });
+        }
+
+        // Check which kinds this transition applies to and note if multiple.
+        let matching_kinds: Vec<&str> = all_kinds
+            .iter()
+            .filter(|k| state_machine::is_valid_transition(**k, from, to))
+            .map(|k| kind_name(k))
+            .collect();
+        if matching_kinds.len() > 1 {
+            diags.push(LintDiag {
+                level: LintLevel::Note,
+                message: format!(
+                    "guard {:?}: transition applies to multiple thread kinds ({}); \
+                     use kind-unique states if you need different rules per kind",
+                    guard.on,
+                    matching_kinds.join(", "),
+                ),
+            });
+        } else if matching_kinds.is_empty() && all_states.contains(from) && all_states.contains(to)
+        {
+            diags.push(LintDiag {
+                level: LintLevel::Warn,
+                message: format!(
+                    "guard {:?}: not a valid transition for any thread kind",
+                    guard.on,
+                ),
+            });
         }
     }
+
+    // Validate state names in operation checks.
+    lint_state_list(
+        &mut diags,
+        &all_states,
+        "revise_rules.allow_body_revise",
+        policy
+            .revise_rules
+            .as_ref()
+            .map(|r| r.allow_body_revise.as_slice())
+            .unwrap_or(&[]),
+    );
+    lint_state_list(
+        &mut diags,
+        &all_states,
+        "revise_rules.allow_node_revise",
+        policy
+            .revise_rules
+            .as_ref()
+            .map(|r| r.allow_node_revise.as_slice())
+            .unwrap_or(&[]),
+    );
+    lint_state_list(
+        &mut diags,
+        &all_states,
+        "evidence_rules.allow_evidence",
+        policy
+            .evidence_rules
+            .as_ref()
+            .map(|r| r.allow_evidence.as_slice())
+            .unwrap_or(&[]),
+    );
+
+    // Validate state names in node_rules keys.
+    for state_name in policy.node_rules.keys() {
+        if !all_states.contains(state_name.as_str()) {
+            diags.push(LintDiag {
+                level: LintLevel::Warn,
+                message: format!(
+                    "node_rules: unknown state {:?}; valid states are: {}",
+                    state_name,
+                    sorted_states(&all_states),
+                ),
+            });
+        }
+    }
+
     diags
+}
+
+fn lint_state_list(
+    diags: &mut Vec<LintDiag>,
+    all_states: &std::collections::HashSet<&str>,
+    field: &str,
+    states: &[String],
+) {
+    for s in states {
+        if !all_states.contains(s.as_str()) {
+            diags.push(LintDiag {
+                level: LintLevel::Warn,
+                message: format!(
+                    "{field}: unknown state {:?}; valid states are: {}",
+                    s,
+                    sorted_states(all_states),
+                ),
+            });
+        }
+    }
+}
+
+fn sorted_states(states: &std::collections::HashSet<&str>) -> String {
+    let mut v: Vec<&str> = states.iter().copied().collect();
+    v.sort_unstable();
+    v.join(", ")
+}
+
+fn kind_name(kind: &ThreadKind) -> &'static str {
+    match kind {
+        ThreadKind::Issue => "issue",
+        ThreadKind::Rfc => "rfc",
+        ThreadKind::Dec => "dec",
+        ThreadKind::Task => "task",
+    }
 }
 
 #[cfg(test)]
@@ -287,5 +471,134 @@ mod tests {
             GuardRule::HasCommitEvidence.to_string(),
             "has_commit_evidence"
         );
+    }
+
+    #[test]
+    fn lint_unknown_guard_from_state() {
+        let policy = Policy {
+            guards: vec![GuardEntry {
+                on: "bogus->closed".into(),
+                requires: vec![],
+            }],
+            ..Default::default()
+        };
+        let diags = lint_policy(&policy);
+        assert!(diags
+            .iter()
+            .any(|d| d.level == LintLevel::Warn && d.message.contains("unknown state \"bogus\"")));
+    }
+
+    #[test]
+    fn lint_unknown_guard_to_state() {
+        let policy = Policy {
+            guards: vec![GuardEntry {
+                on: "open->fantasy".into(),
+                requires: vec![],
+            }],
+            ..Default::default()
+        };
+        let diags = lint_policy(&policy);
+        assert!(diags
+            .iter()
+            .any(|d| d.message.contains("unknown state \"fantasy\"")));
+    }
+
+    #[test]
+    fn lint_notes_multi_kind_transition() {
+        // "open->closed" applies to both issue and task
+        let policy = Policy {
+            guards: vec![GuardEntry {
+                on: "open->closed".into(),
+                requires: vec![GuardRule::NoOpenActions],
+            }],
+            ..Default::default()
+        };
+        let diags = lint_policy(&policy);
+        let multi = diags
+            .iter()
+            .find(|d| d.message.contains("multiple thread kinds"));
+        assert!(multi.is_some());
+        assert_eq!(multi.unwrap().level, LintLevel::Note);
+        assert!(multi.unwrap().message.contains("issue"));
+    }
+
+    #[test]
+    fn lint_no_note_for_kind_unique_transition() {
+        // "under-review->accepted" is RFC-only
+        let policy = minimal_policy();
+        let diags = lint_policy(&policy);
+        assert!(!diags
+            .iter()
+            .any(|d| d.message.contains("multiple thread kinds")));
+    }
+
+    #[test]
+    fn lint_invalid_transition_for_any_kind() {
+        // "draft->closed" is valid states but not a valid transition
+        let policy = Policy {
+            guards: vec![GuardEntry {
+                on: "draft->closed".into(),
+                requires: vec![],
+            }],
+            ..Default::default()
+        };
+        let diags = lint_policy(&policy);
+        assert!(diags.iter().any(|d| d.level == LintLevel::Warn
+            && d.message
+                .contains("not a valid transition for any thread kind")));
+    }
+
+    #[test]
+    fn lint_unknown_state_in_revise_rules() {
+        let policy = Policy {
+            revise_rules: Some(ReviseRules {
+                allow_body_revise: vec!["nonexistent".into()],
+                allow_node_revise: vec![],
+            }),
+            ..Default::default()
+        };
+        let diags = lint_policy(&policy);
+        assert!(diags
+            .iter()
+            .any(|d| d.message.contains("revise_rules.allow_body_revise")
+                && d.message.contains("unknown state \"nonexistent\"")));
+    }
+
+    #[test]
+    fn lint_unknown_state_in_node_rules_key() {
+        let mut node_rules = HashMap::new();
+        node_rules.insert("imaginary".to_string(), vec![]);
+        let policy = Policy {
+            node_rules,
+            ..Default::default()
+        };
+        let diags = lint_policy(&policy);
+        assert!(diags.iter().any(|d| d.message.contains("node_rules")
+            && d.message.contains("unknown state \"imaginary\"")));
+    }
+
+    #[test]
+    fn lint_unknown_state_in_evidence_rules() {
+        let policy = Policy {
+            evidence_rules: Some(EvidenceRules {
+                allow_evidence: vec!["nope".into()],
+            }),
+            ..Default::default()
+        };
+        let diags = lint_policy(&policy);
+        assert!(diags.iter().any(|d| d.message.contains("evidence_rules")
+            && d.message.contains("unknown state \"nope\"")));
+    }
+
+    #[test]
+    fn lint_default_policy_has_no_warnings() {
+        let policy: Policy =
+            toml::from_str(include_str!("../../tests/fixtures/policy_default.toml")).unwrap();
+        let diags = lint_policy(&policy);
+        let warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.level == LintLevel::Warn)
+            .collect();
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
     }
 }
