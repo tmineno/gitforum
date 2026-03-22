@@ -12,6 +12,7 @@ use super::event::{Event, EventType, NodeType, ThreadKind};
 use super::evidence::{Evidence, EvidenceKind};
 use super::git_ops::GitOps;
 use super::github::{self, GhIssue};
+use super::index;
 use super::policy::Policy;
 use super::say;
 use super::state_change::{self, StateChangeOptions};
@@ -37,8 +38,27 @@ pub struct ImportPlan {
 
 /// Check if a GitHub issue URL already has a matching thread.
 ///
-/// Scans all threads' evidence_items for an External evidence with a matching URL.
+/// Attempts a fast lookup via the SQLite evidence index first. On index hit,
+/// returns immediately (false positives are impossible). On index miss or if
+/// the index is unavailable, falls back to a full replay-based scan.
 pub fn find_existing_import(git: &GitOps, github_url: &str) -> ForumResult<Option<String>> {
+    // Fast path: try index-based lookup
+    let db_path = git.git_dir().ok().map(|d| d.join("forum").join("index.db"));
+    if let Some(ref path) = db_path {
+        if path.exists() {
+            if let Ok(conn) = index::open_db(path) {
+                if let Ok(matches) =
+                    index::find_threads_by_evidence_ref(&conn, &EvidenceKind::External, github_url)
+                {
+                    if let Some(thread_id) = matches.into_iter().next() {
+                        return Ok(Some(thread_id));
+                    }
+                }
+            }
+        }
+    }
+
+    // Slow path: replay all threads (covers stale/missing index)
     let thread_ids = thread::list_thread_ids(git)?;
     for id in &thread_ids {
         let state = thread::replay_thread(git, id)?;

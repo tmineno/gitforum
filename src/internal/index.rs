@@ -76,7 +76,14 @@ fn ensure_schema(conn: &Connection) -> ForumResult<()> {
             node_type       TEXT NOT NULL,
             status          TEXT NOT NULL,
             body            TEXT NOT NULL
-        );",
+        );
+        CREATE TABLE IF NOT EXISTS evidence (
+            id              TEXT PRIMARY KEY,
+            thread_id       TEXT NOT NULL,
+            kind            TEXT NOT NULL,
+            ref_target      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_evidence_ref ON evidence(ref_target);",
     )
     .map_err(|e| ForumError::Repo(e.to_string()))?;
     ensure_thread_branch_column(conn)?;
@@ -135,6 +142,8 @@ fn ensure_thread_updated_at_column(conn: &Connection) -> ForumResult<()> {
 /// Failure modes: ForumError::Repo on SQL error.
 /// Side effects: deletes all rows.
 pub fn clear_all(conn: &Connection) -> ForumResult<()> {
+    conn.execute("DELETE FROM evidence", [])
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
     conn.execute("DELETE FROM nodes", [])
         .map_err(|e| ForumError::Repo(e.to_string()))?;
     conn.execute("DELETE FROM threads", [])
@@ -215,6 +224,39 @@ pub fn replace_nodes_for_thread(conn: &Connection, state: &ThreadState) -> Forum
     Ok(())
 }
 
+/// Replace indexed evidence items for a replayed ThreadState.
+///
+/// Preconditions: `conn` is open with schema applied.
+/// Postconditions: evidence rows for the thread reflect current replayed state.
+/// Failure modes: ForumError::Repo on SQL error.
+/// Side effects: deletes and inserts evidence rows for one thread.
+pub fn replace_evidence_for_thread(conn: &Connection, state: &ThreadState) -> ForumResult<()> {
+    conn.execute(
+        "DELETE FROM evidence WHERE thread_id = ?1",
+        params![state.id],
+    )
+    .map_err(|e| ForumError::Repo(e.to_string()))?;
+
+    let mut stmt = conn
+        .prepare(
+            "INSERT OR REPLACE INTO evidence
+             (id, thread_id, kind, ref_target)
+             VALUES (?1, ?2, ?3, ?4)",
+        )
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+
+    for ev in &state.evidence_items {
+        stmt.execute(params![
+            ev.evidence_id,
+            state.id,
+            ev.kind.to_string(),
+            ev.ref_target,
+        ])
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+    }
+    Ok(())
+}
+
 /// Return all thread rows ordered by ID.
 ///
 /// Preconditions: `conn` is open with schema applied.
@@ -254,11 +296,45 @@ pub fn thread_tip_shas(
 
 /// Delete a thread and its nodes from the index.
 pub fn delete_thread(conn: &Connection, thread_id: &str) -> ForumResult<()> {
+    conn.execute(
+        "DELETE FROM evidence WHERE thread_id = ?1",
+        params![thread_id],
+    )
+    .map_err(|e| ForumError::Repo(e.to_string()))?;
     conn.execute("DELETE FROM nodes WHERE thread_id = ?1", params![thread_id])
         .map_err(|e| ForumError::Repo(e.to_string()))?;
     conn.execute("DELETE FROM threads WHERE id = ?1", params![thread_id])
         .map_err(|e| ForumError::Repo(e.to_string()))?;
     Ok(())
+}
+
+/// Find thread IDs that have evidence matching the given kind and ref_target.
+///
+/// Preconditions: `conn` is open with schema applied.
+/// Postconditions: returns matching thread IDs (may be empty).
+/// Failure modes: ForumError::Repo on SQL error.
+/// Side effects: none.
+pub fn find_threads_by_evidence_ref(
+    conn: &Connection,
+    kind: &super::evidence::EvidenceKind,
+    ref_target: &str,
+) -> ForumResult<Vec<String>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT thread_id FROM evidence
+             WHERE kind = ?1 AND ref_target = ?2",
+        )
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+    let rows = stmt
+        .query_map(params![kind.to_string(), ref_target], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(row.map_err(|e| ForumError::Repo(e.to_string()))?);
+    }
+    Ok(ids)
 }
 
 /// Return thread rows whose indexed thread or current node fields match `query`.
@@ -475,5 +551,140 @@ mod tests {
         upsert_thread(&conn, &make_state("RFC-0001")).unwrap();
         let results = search_threads(&conn, "zzznomatch").unwrap();
         assert!(results.is_empty());
+    }
+
+    fn make_state_with_evidence(
+        id: &str,
+        evidence: Vec<crate::internal::evidence::Evidence>,
+    ) -> ThreadState {
+        let mut state = make_state(id);
+        state.evidence_items = evidence;
+        state
+    }
+
+    #[test]
+    fn replace_evidence_for_thread_inserts_and_replaces() {
+        use crate::internal::evidence::{Evidence, EvidenceKind};
+        let conn = in_memory();
+        let state = make_state_with_evidence(
+            "ISSUE-0001",
+            vec![Evidence {
+                evidence_id: "ev01".into(),
+                kind: EvidenceKind::External,
+                ref_target: "https://github.com/owner/repo/issues/1".into(),
+                locator: None,
+            }],
+        );
+        upsert_thread(&conn, &state).unwrap();
+        replace_evidence_for_thread(&conn, &state).unwrap();
+
+        let hits = find_threads_by_evidence_ref(
+            &conn,
+            &EvidenceKind::External,
+            "https://github.com/owner/repo/issues/1",
+        )
+        .unwrap();
+        assert_eq!(hits, vec!["ISSUE-0001"]);
+
+        // Replace with different evidence
+        let state2 = make_state_with_evidence(
+            "ISSUE-0001",
+            vec![Evidence {
+                evidence_id: "ev02".into(),
+                kind: EvidenceKind::External,
+                ref_target: "https://github.com/owner/repo/issues/2".into(),
+                locator: None,
+            }],
+        );
+        replace_evidence_for_thread(&conn, &state2).unwrap();
+
+        // Old evidence is gone
+        let old = find_threads_by_evidence_ref(
+            &conn,
+            &EvidenceKind::External,
+            "https://github.com/owner/repo/issues/1",
+        )
+        .unwrap();
+        assert!(old.is_empty());
+
+        // New evidence is present
+        let new = find_threads_by_evidence_ref(
+            &conn,
+            &EvidenceKind::External,
+            "https://github.com/owner/repo/issues/2",
+        )
+        .unwrap();
+        assert_eq!(new, vec!["ISSUE-0001"]);
+    }
+
+    #[test]
+    fn find_threads_by_evidence_ref_filters_by_kind() {
+        use crate::internal::evidence::{Evidence, EvidenceKind};
+        let conn = in_memory();
+        let state = make_state_with_evidence(
+            "ISSUE-0001",
+            vec![Evidence {
+                evidence_id: "ev01".into(),
+                kind: EvidenceKind::Commit,
+                ref_target: "abc123".into(),
+                locator: None,
+            }],
+        );
+        upsert_thread(&conn, &state).unwrap();
+        replace_evidence_for_thread(&conn, &state).unwrap();
+
+        // Wrong kind returns empty
+        let hits = find_threads_by_evidence_ref(&conn, &EvidenceKind::External, "abc123").unwrap();
+        assert!(hits.is_empty());
+
+        // Right kind returns match
+        let hits = find_threads_by_evidence_ref(&conn, &EvidenceKind::Commit, "abc123").unwrap();
+        assert_eq!(hits, vec!["ISSUE-0001"]);
+    }
+
+    #[test]
+    fn clear_all_clears_evidence() {
+        use crate::internal::evidence::{Evidence, EvidenceKind};
+        let conn = in_memory();
+        let state = make_state_with_evidence(
+            "ISSUE-0001",
+            vec![Evidence {
+                evidence_id: "ev01".into(),
+                kind: EvidenceKind::External,
+                ref_target: "https://example.com".into(),
+                locator: None,
+            }],
+        );
+        upsert_thread(&conn, &state).unwrap();
+        replace_evidence_for_thread(&conn, &state).unwrap();
+        clear_all(&conn).unwrap();
+
+        let hits =
+            find_threads_by_evidence_ref(&conn, &EvidenceKind::External, "https://example.com")
+                .unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn delete_thread_clears_evidence() {
+        use crate::internal::evidence::{Evidence, EvidenceKind};
+        let conn = in_memory();
+        let state = make_state_with_evidence(
+            "ISSUE-0001",
+            vec![Evidence {
+                evidence_id: "ev01".into(),
+                kind: EvidenceKind::External,
+                ref_target: "https://example.com".into(),
+                locator: None,
+            }],
+        );
+        upsert_thread(&conn, &state).unwrap();
+        replace_evidence_for_thread(&conn, &state).unwrap();
+        delete_thread(&conn, "ISSUE-0001").unwrap();
+
+        let hits =
+            find_threads_by_evidence_ref(&conn, &EvidenceKind::External, "https://example.com")
+                .unwrap();
+        assert!(hits.is_empty());
     }
 }
