@@ -1078,7 +1078,11 @@ fn main() -> Result<(), ForumError> {
             let (git, paths) = discover_repo_with_init_warning()?;
             let report = doctor::run_doctor(&git, &paths)?;
             for check in &report.checks {
-                let marker = if check.passed { " ok " } else { "FAIL" };
+                let marker = match check.level {
+                    doctor::CheckLevel::Ok => " ok ",
+                    doctor::CheckLevel::Warn => "WARN",
+                    doctor::CheckLevel::Fail => "FAIL",
+                };
                 print!("[{marker}] {}", check.name);
                 if let Some(detail) = &check.detail {
                     print!(" -- {detail}");
