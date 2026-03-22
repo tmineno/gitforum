@@ -105,6 +105,17 @@ pub fn state_transition_map() -> String {
         "`git forum show <ID> --what-next` shows guard checks and operation check rules.\n",
     );
     out.push_str("`git forum policy show` displays the full loaded policy.\n\n");
+    out.push_str("## Kind-scoped guard keys\n\n");
+    out.push_str("Guards support an optional kind prefix to restrict to a specific thread kind:\n");
+    out.push_str("```toml\n");
+    out.push_str("[[guards]]\n");
+    out.push_str("on = \"dec:proposed->accepted\"  # only DEC threads\n");
+    out.push_str("requires = [\"no_open_objections\"]\n\n");
+    out.push_str("[[guards]]\n");
+    out.push_str("on = \"proposed->accepted\"      # all kinds (wildcard)\n");
+    out.push_str("requires = [\"no_open_objections\"]\n");
+    out.push_str("```\n");
+    out.push_str("When both scoped and unscoped guards match, both apply (union).\n\n");
     out.push_str(
         "`git forum show <ID> --compact` truncates all sections to single-line previews.\n",
     );

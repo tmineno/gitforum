@@ -39,23 +39,29 @@ fn empty_policy() -> Policy {
 }
 
 fn dec_guard_policy() -> Policy {
-    Policy {
+    let mut p = Policy {
         guards: vec![GuardEntry {
             on: "proposed->accepted".into(),
             requires: vec![GuardRule::NoOpenObjections],
+            ..Default::default()
         }],
         ..Default::default()
-    }
+    };
+    p.resolve_guard_scopes();
+    p
 }
 
 fn task_guard_policy() -> Policy {
-    Policy {
+    let mut p = Policy {
         guards: vec![GuardEntry {
             on: "reviewing->closed".into(),
             requires: vec![GuardRule::NoOpenActions],
+            ..Default::default()
         }],
         ..Default::default()
-    }
+    };
+    p.resolve_guard_scopes();
+    p
 }
 
 fn make_dec(git: &GitOps) -> String {

@@ -9,11 +9,15 @@ const DEFAULT_POLICY: &str = r#"# git-forum default policy
 #   1. Transition guards — conditions that must be met before a state change.
 #   2. Operation checks  — rules about what is allowed in each state.
 #
-# IMPORTANT: Transitions are GLOBAL, not scoped to a thread kind.
-# "open->closed" applies to every kind that has both states (issue AND task).
-# If you need different rules per kind, create separate guard entries and
-# use state names unique to that kind (e.g. "designing->implementing" is
-# task-only because no other kind uses those states).
+# Transitions without a kind prefix are GLOBAL — "open->closed" applies to
+# every kind that has both states (issue AND task).
+#
+# Kind-scoped guards (optional prefix):
+#   on = "dec:proposed->accepted"   — only applies to DEC threads
+#   on = "proposed->accepted"       — applies to all kinds with this transition
+#
+# When both a scoped and unscoped guard match, both apply (union semantics).
+# If you need different rules per kind, use kind-scoped keys.
 #
 # State names per thread kind:
 #   issue: open, pending, closed, rejected
