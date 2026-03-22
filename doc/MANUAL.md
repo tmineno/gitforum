@@ -23,6 +23,9 @@ git forum reopen <ID> <NODE_ID>                    Reopen a node
 git forum evidence add <ID> --kind <kind> --ref <ref>  Add evidence
 git forum link <FROM> <TO> --rel <rel>             Link two threads
 git forum branch bind <ID> <branch>                Bind thread to branch
+git forum diff <ID>                                Diff between body revisions
+git forum diff <ID> --rev N                        Diff revision N-1 vs N
+git forum diff <ID> --rev N..M                     Diff revision N vs M
 git forum search <query>                           Search threads and nodes
 git forum status <ID>                              Check open items
 git forum verify <ID>                              Verify guard conditions
@@ -506,6 +509,31 @@ git forum revise RFC-0001 --body "Revised body" \
 
 Incorporated nodes appear as `incorporated` status in show output, distinct from `resolved` and
 `retracted`. They represent content that has been folded into the current body.
+
+### Diff body revisions
+
+After revising a thread body, use `diff` to see what changed between revisions:
+
+```bash
+git forum diff RFC-0001                            # latest vs previous revision
+git forum diff RFC-0001 --rev 1                    # diff revision 0 vs 1
+git forum diff RFC-0001 --rev 0..2                 # diff revision 0 vs 2
+```
+
+Revision numbering:
+
+- **Revision 0**: the body from the Create event (empty string if the thread was created without a body)
+- **Revision 1, 2, ...**: each subsequent ReviseBody event in timeline order
+
+Output uses unified diff format matching `git diff` conventions. Diff headers show
+`a/revN/body` and `b/revM/body` labels instead of temporary file paths.
+
+`--rev` accepts two formats:
+
+- `--rev N` — diff between revision N-1 and N
+- `--rev N..M` — diff between revision N and M
+
+If the thread has no body revisions, an informative message is printed instead.
 
 ## Inspect a single node
 
@@ -1039,6 +1067,7 @@ This manual currently covers:
 - search
 - node commands (claim, question, objection, etc.) with --reply-to
 - revise body / revise node
+- diff body revisions
 - retract / resolve / reopen
 - status
 - state

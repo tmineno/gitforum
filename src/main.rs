@@ -8,6 +8,7 @@ use git_forum::internal::branch_ops;
 use git_forum::internal::clock::SystemClock;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
+use git_forum::internal::diff;
 use git_forum::internal::doctor;
 use git_forum::internal::editor;
 use git_forum::internal::error::ForumError;
@@ -43,6 +44,7 @@ create and browse threads
    new         Create a new thread
    ls          List threads (filter by kind, status, or branch)
    show        Show thread details
+   diff        Show diff between body revisions
    search      Search threads and nodes
    status      Show unresolved items for a thread
 
@@ -315,6 +317,13 @@ enum Commands {
         /// Omit the timeline section
         #[arg(long)]
         no_timeline: bool,
+    },
+    /// Show unified diff between body revisions
+    Diff {
+        thread_id: String,
+        /// Revision specifier: N (diff rev N-1 vs N) or N..M (diff rev N vs M)
+        #[arg(long)]
+        rev: Option<String>,
     },
     /// Show unresolved items for a thread
     Status { thread_id: String },
@@ -1443,6 +1452,13 @@ fn main() -> Result<(), ForumError> {
                     )
                 );
             }
+        }
+
+        Commands::Diff { thread_id, rev } => {
+            let (git, _paths) = discover_repo_with_init_warning()?;
+            let state = thread::replay_thread(&git, &thread_id)?;
+            let output = diff::diff_body(&git, &state, rev.as_deref())?;
+            println!("{output}");
         }
 
         Commands::Status { thread_id } => {
