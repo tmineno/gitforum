@@ -169,7 +169,7 @@ refs/forum/threads/*
 - GitHub issue import/export via `gh` CLI (`import github-issue`, `export github-issue`)
 - TUI with list, detail, create, sort, filter, mouse support, color coding, markdown rendering,
   full-screen select mode, incremental refresh, and performance telemetry
-- Reply chains, node revision history, thread body revision with `--incorporates`
+- Reply chains, node revision history, thread body revision with `--incorporates`, body revision diff
 - `--edit` flag to open `$EDITOR` for interactive body composition
 - Operation checks: creation rules, node rules, revise rules, evidence rules with error/warning
   severity model, `--force` bypass, and strict mode
