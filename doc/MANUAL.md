@@ -234,7 +234,8 @@ git forum new rfc "Error handling" \
 `--body -` reads the initial body from standard input, so you can avoid creating a temporary file.
 `--edit` opens `$VISUAL` / `$EDITOR` / `vi` for interactive body composition. Lines starting with
 `#` are stripped. Empty content aborts the command. `--edit` conflicts with `--body` and
-`--body-file`.
+`--body-file`. `--edit` requires an interactive terminal; in scripts or agent workflows, use
+`--body`, `--body-file`, or `--body -` instead.
 
 ### Inline nodes at creation
 
@@ -1026,6 +1027,15 @@ git forum summary RFC-0001 "Caching with LRU eviction approved."
 git forum propose RFC-0001
 git forum state RFC-0001 under-review
 git forum accept RFC-0001 --approve human/alice
+```
+
+**Non-interactive body input for agents:** Since agents run without a TTY, `--edit` will
+not work. Use `--body "..."` for short text, `--body-file <path>` for longer content, or
+pipe through stdin with `--body -`:
+
+```bash
+echo "Detailed review body..." | git forum review RFC-0001 --body -
+cat /tmp/review.md | git forum revise RFC-0001 --body -
 ```
 
 ## Linking implementation commits as evidence
