@@ -1,6 +1,6 @@
 # git-forum
 
-> Git-native RFCs, issues, and structured human-agent coding discussion.
+> Git-native RFCs, issues, decisions, tasks, and structured human-agent coding discussion.
 
 `git-forum` is a CLI for running design and implementation work in Git with four thread kinds:
 `rfc`, `issue`, `dec`, and `task`.
@@ -118,10 +118,11 @@ Git history.
 
 ## Core model
 
-- thread: shared abstraction for `issue` and `rfc`
+- thread: shared abstraction for `issue`, `rfc`, `dec`, and `task`
 - event: append-only record for creation, discussion, state transitions, links, and verification
-- node: typed contribution such as `claim`, `question`, or `summary`
-- evidence: links to commits, files, tests, benchmarks, docs, and threads
+- node: typed contribution such as `claim`, `question`, `objection`, `summary`, `action`, `risk`,
+  `review`, `alternative`, or `assumption`
+- evidence: links to commits, files, tests, benchmarks, docs, threads, and external URLs
 - actor: a human or AI participant
 
 The product specification is in [./doc/spec/SPEC.md](./doc/spec/SPEC.md).
@@ -139,6 +140,8 @@ Authoritative data lives in Git refs, while shared rules and templates live in t
   templates/
     issue.md
     rfc.md
+    dec.md
+    task.md
 
 <git-dir>/forum/           # <git-dir> = .git/ or worktree git dir
   index.db
@@ -153,23 +156,29 @@ refs/forum/threads/*
 
 - Four thread kinds: `rfc`, `issue`, `dec`, and `task`, with full state machines
 - Append-only event log stored as Git commits
-- Ten typed discussion nodes, seven with shorthand CLI commands
-- Policy-driven state transitions with guard rules
+- Ten typed discussion nodes (`claim`, `question`, `objection`, `summary`, `action`, `risk`,
+  `review`, `alternative`, `assumption`, `evidence`), seven with shorthand CLI commands
+- Policy-driven state transitions with guard rules and operation checks
 - State transition shorthands: `close`, `pend`, `accept`, `propose`, `reject`, `deprecate`
 - Combined close + comment + link in one command (`--comment`, `--link-to`)
-- Evidence attachment (commits, files, tests, benchmarks) with bulk `--ref` support
+- Evidence attachment (commits, files, tests, benchmarks, external URLs) with bulk `--ref` support
 - Thread-to-thread links
-- Retroactive thread creation from commits (`--from-commit`)
+- Retroactive thread creation from commits (`--from-commit`) or existing threads (`--from-thread`)
 - Branch binding for implementation issues
-- Lexical search over a SQLite index
-- TUI with list, detail, create, sort, filter, mouse support, and color coding
+- Lexical search over a SQLite index (with evidence dedup index for fast import lookups)
+- GitHub issue import/export via `gh` CLI (`import github-issue`, `export github-issue`)
+- TUI with list, detail, create, sort, filter, mouse support, color coding, markdown rendering,
+  full-screen select mode, incremental refresh, and performance telemetry
 - Reply chains, node revision history, thread body revision with `--incorporates`
+- `--edit` flag to open `$EDITOR` for interactive body composition
+- Operation checks: creation rules, node rules, revise rules, evidence rules with error/warning
+  severity model, `--force` bypass, and strict mode
 - Concurrency safety via atomic ref updates
 - Git worktree support
 - Advisory commit-msg hook (validates thread ID references, auto-installed on init)
+- Health checks via `doctor` (refs, templates, index integrity)
 
-See [doc/ROADMAP.md](./doc/ROADMAP.md) for in-progress and planned work including
-role enforcement and GitHub issue import/export.
+See [doc/ROADMAP.md](./doc/ROADMAP.md) for in-progress and planned work.
 
 ## Non-goals
 
