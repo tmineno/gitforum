@@ -157,7 +157,7 @@ git forum reindex
 ```
 
 - `init`: creates `.forum/` and `.git/forum/`, installs the commit-msg hook
-- `doctor`: checks `.forum/` and `.git/forum/` directories exist, validates `policy.toml` syntax, and replays every thread's event log to verify integrity
+- `doctor`: checks `.forum/` and `.git/forum/` directories exist, validates `policy.toml` syntax, verifies template files are present and non-empty, checks SQLite index health (integrity and freshness), and replays every thread's event log to verify integrity. Reports `[ok]`, `[WARN]`, or `[FAIL]` per check; exits non-zero only on failures (warnings are informational)
 - `reindex`: rebuilds the local index from Git refs
 
 ## Create threads
