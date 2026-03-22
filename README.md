@@ -2,8 +2,8 @@
 
 > Git-native RFCs, issues, and structured human-agent coding discussion.
 
-`git-forum` is a CLI for running design and implementation work in Git with two first-class
-objects: `rfc` and `issue`.
+`git-forum` is a CLI for running design and implementation work in Git with four thread kinds:
+`rfc`, `issue`, `dec`, and `task`.
 
 It records discussion as typed nodes such as `claim`, `question`, `objection`, `summary`,
 `action`, `risk`, and `review`, instead of a plain comment stream. The goal is not to manage AI
@@ -151,11 +151,11 @@ refs/forum/threads/*
 
 `git-forum` is functional and under active development. The following capabilities are implemented:
 
-- Two thread kinds: `rfc` and `issue`, with full state machines (including `rejected` for issues)
+- Four thread kinds: `rfc`, `issue`, `dec`, and `task`, with full state machines
 - Append-only event log stored as Git commits
-- Ten typed discussion nodes, nine with shorthand CLI commands
+- Ten typed discussion nodes, seven with shorthand CLI commands
 - Policy-driven state transitions with guard rules
-- State transition shorthands: `issue close`, `issue reopen`, `rfc accept`, etc.
+- State transition shorthands: `close`, `pend`, `accept`, `propose`, `reject`, `deprecate`
 - Combined close + comment + link in one command (`--comment`, `--link-to`)
 - Evidence attachment (commits, files, tests, benchmarks) with bulk `--ref` support
 - Thread-to-thread links
