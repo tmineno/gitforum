@@ -43,7 +43,7 @@ The following capabilities are implemented and tested:
 - Operation checks: creation rules, node rules, revise rules, evidence rules
 - Error/warning severity model with `--force` flag and strict mode (RFC-0018)
 - Policy lint: state validation, multi-kind transition notes, invalid transition detection,
-  remediation hints (ISSUE-0091)
+  remediation hints (ISSUE-0091), allow-list gap detection per thread kind (ISSUE-0095)
 - State transition shorthands: `close`, `pend`, `accept`, `propose`, `reject`, `deprecate`
   (ISSUE-0033)
 - `--comment` on state transitions (ISSUE-0066)
@@ -97,7 +97,6 @@ Active issues awaiting implementation:
 ### Policy and verification
 
 - ISSUE-0097 — Kind-scoped guard keys to prevent cross-kind collisions
-- ISSUE-0095 — Policy lint: detect semantic footguns like transition collisions and stale state lists
 - ISSUE-0081 — Add `policy show` command for discoverability of effective rules
 - ISSUE-0093 — Make `verify` distinguish PASS, BLOCKED, and NOT APPLICABLE
 
