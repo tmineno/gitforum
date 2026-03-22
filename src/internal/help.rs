@@ -56,6 +56,12 @@ git forum review <THREAD> "body"        # node add --type review
 ```
 
 alternative and assumption have no shorthand — use `node add --type <TYPE>` for these.
+
+## Reading a node's full body
+
+`git forum node show <NODE_ID>` prints the full node body, type, actor, timestamp, and parent
+thread context. Accepts full IDs or unique prefixes (8+ chars). Use this to read long review or
+objection text that is truncated in the timeline.
 "#
     .to_string()
 }

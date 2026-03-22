@@ -49,6 +49,7 @@ create and browse threads
    status      Show unresolved items for a thread
 
 structured discussion (see also: git forum node add --help)
+   node show   Show full body of a node by ID
    node add    Add a typed discussion node
    revise      Revise thread body or node body
    retract     Retract a node (soft-delete)
