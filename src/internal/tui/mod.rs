@@ -28,6 +28,9 @@ use cache::ReplayCache;
 use input::{handle_key, handle_mouse};
 use perf::Perf;
 use render::render;
+
+/// Number of lines/rows to scroll per PageUp/PageDown press.
+const PAGE_SCROLL: u16 = 20;
 use state::{auto_refresh, default_thread_kind_index};
 
 // Re-export for external tests
@@ -388,6 +391,46 @@ impl App {
         self.table_state.select(Some(next));
     }
 
+    fn page_down(&mut self) {
+        let n = self.visible_threads().len();
+        if n == 0 {
+            return;
+        }
+        let next = self
+            .table_state
+            .selected()
+            .map(|i| (i + PAGE_SCROLL as usize).min(n - 1))
+            .unwrap_or(0);
+        self.table_state.select(Some(next));
+    }
+
+    fn page_up(&mut self) {
+        let n = self.visible_threads().len();
+        if n == 0 {
+            return;
+        }
+        let next = self
+            .table_state
+            .selected()
+            .map(|i| i.saturating_sub(PAGE_SCROLL as usize))
+            .unwrap_or(0);
+        self.table_state.select(Some(next));
+    }
+
+    fn move_to_top(&mut self) {
+        let n = self.visible_threads().len();
+        if n > 0 {
+            self.table_state.select(Some(0));
+        }
+    }
+
+    fn move_to_bottom(&mut self) {
+        let n = self.visible_threads().len();
+        if n > 0 {
+            self.table_state.select(Some(n - 1));
+        }
+    }
+
     fn open_filter_bar(&mut self) {
         self.filter_bar = Some(FilterBar {
             field: FilterField::Kind,
@@ -568,6 +611,14 @@ impl App {
 
     fn scroll_thread_up(&mut self) {
         self.thread_scroll = self.thread_scroll.saturating_sub(1);
+    }
+
+    fn scroll_thread_page_down(&mut self) {
+        self.thread_scroll = self.thread_scroll.saturating_add(PAGE_SCROLL);
+    }
+
+    fn scroll_thread_page_up(&mut self) {
+        self.thread_scroll = self.thread_scroll.saturating_sub(PAGE_SCROLL);
     }
 
     fn begin_create_thread(&mut self) {
