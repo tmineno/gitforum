@@ -2,7 +2,7 @@ mod support;
 
 use chrono::{TimeZone, Utc};
 use git_forum::internal::config::RepoPaths;
-use git_forum::internal::doctor;
+use git_forum::internal::doctor::{self, CheckLevel};
 use git_forum::internal::event::{self, Event, EventType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
@@ -198,7 +198,7 @@ fn doctor_after_init_all_pass() {
         report
             .checks
             .iter()
-            .filter(|c| !c.passed)
+            .filter(|c| !c.passed())
             .map(|c| (&c.name, &c.detail))
             .collect::<Vec<_>>()
     );
@@ -209,6 +209,104 @@ fn doctor_uninitialized_reports_failures() {
     let (_repo, git, paths) = setup();
     let report = doctor::run_doctor(&git, &paths).unwrap();
     assert!(!report.all_passed());
+}
+
+#[test]
+fn doctor_reports_missing_template_files() {
+    let (_repo, git, paths) = setup();
+    init::init_forum(&paths).unwrap();
+    // Remove one template file
+    std::fs::remove_file(paths.dot_forum.join("templates/dec.md")).unwrap();
+    let report = doctor::run_doctor(&git, &paths).unwrap();
+    let dec_check = report
+        .checks
+        .iter()
+        .find(|c| c.name == "template dec.md")
+        .expect("should have dec.md check");
+    assert_eq!(dec_check.level, CheckLevel::Fail);
+    // Other templates still pass
+    let issue_check = report
+        .checks
+        .iter()
+        .find(|c| c.name == "template issue.md")
+        .expect("should have issue.md check");
+    assert_eq!(issue_check.level, CheckLevel::Ok);
+}
+
+#[test]
+fn doctor_reports_empty_template_file() {
+    let (_repo, git, paths) = setup();
+    init::init_forum(&paths).unwrap();
+    // Truncate a template to empty
+    std::fs::write(paths.dot_forum.join("templates/rfc.md"), "").unwrap();
+    let report = doctor::run_doctor(&git, &paths).unwrap();
+    let rfc_check = report
+        .checks
+        .iter()
+        .find(|c| c.name == "template rfc.md")
+        .expect("should have rfc.md check");
+    assert_eq!(rfc_check.level, CheckLevel::Fail);
+}
+
+#[test]
+fn doctor_warns_on_missing_index() {
+    let (_repo, git, paths) = setup();
+    init::init_forum(&paths).unwrap();
+    let report = doctor::run_doctor(&git, &paths).unwrap();
+    let idx_check = report
+        .checks
+        .iter()
+        .find(|c| c.name == "index database")
+        .expect("should have index database check");
+    assert_eq!(idx_check.level, CheckLevel::Warn);
+    // Warnings don't fail the report
+    assert!(report.all_passed());
+}
+
+#[test]
+fn doctor_passes_index_after_reindex() {
+    let (_repo, git, paths) = setup();
+    init::init_forum(&paths).unwrap();
+    let db_path = paths.git_forum.join("index.db");
+    reindex::run_reindex(&git, &db_path).unwrap();
+    let report = doctor::run_doctor(&git, &paths).unwrap();
+    let integrity_check = report
+        .checks
+        .iter()
+        .find(|c| c.name == "index integrity")
+        .expect("should have integrity check");
+    assert_eq!(integrity_check.level, CheckLevel::Ok);
+}
+
+#[test]
+fn doctor_warns_on_stale_index() {
+    let (_repo, git, paths) = setup();
+    init::init_forum(&paths).unwrap();
+    let db_path = paths.git_forum.join("index.db");
+    // Reindex with no threads
+    reindex::run_reindex(&git, &db_path).unwrap();
+    // Create a thread after reindexing
+    let clock = git_forum::internal::clock::FixedClock {
+        instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+    };
+    git_forum::internal::create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Test",
+        None,
+        "human/alice",
+        &clock,
+    )
+    .unwrap();
+    let report = doctor::run_doctor(&git, &paths).unwrap();
+    let freshness_check = report
+        .checks
+        .iter()
+        .find(|c| c.name == "index freshness")
+        .expect("should have freshness check");
+    assert_eq!(freshness_check.level, CheckLevel::Warn);
+    // Stale index is a warning, not a failure
+    assert!(report.all_passed());
 }
 
 // ---- Reindex tests ----
