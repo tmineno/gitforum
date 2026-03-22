@@ -8,9 +8,9 @@ use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id_alloc;
 use git_forum::internal::init;
-use git_forum::internal::say;
 use git_forum::internal::show;
 use git_forum::internal::thread;
+use git_forum::internal::write_ops;
 
 fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
     let repo = support::repo::TestRepo::new();
@@ -376,7 +376,7 @@ fn say_node_with_timestamp_uses_override() {
     )
     .unwrap();
     let custom_ts = Utc.with_ymd_and_hms(2020, 3, 10, 8, 0, 0).unwrap();
-    say::say_node_with_timestamp(
+    write_ops::say_node_with_timestamp(
         &git,
         "ISSUE-0001",
         NodeType::Claim,

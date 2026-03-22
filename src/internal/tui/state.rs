@@ -12,9 +12,9 @@ use crate::internal::index::{self, ThreadRow};
 use crate::internal::node::Node;
 use crate::internal::refs;
 use crate::internal::reindex;
-use crate::internal::say;
 use crate::internal::show;
 use crate::internal::thread;
+use crate::internal::write_ops;
 
 use super::perf::Perf;
 use super::{App, LinkOrigin, LinkTargetKind, NodeStatusAction, TreeEntry, View};
@@ -93,15 +93,15 @@ pub(super) fn apply_node_status_action(
 
     match action {
         NodeStatusAction::Resolve if !lookup.node.resolved && !lookup.node.retracted => {
-            say::resolve_node(git, thread_id, &lookup.node.node_id, &actor, &clock)?;
+            write_ops::resolve_node(git, thread_id, &lookup.node.node_id, &actor, &clock)?;
         }
         NodeStatusAction::Reopen
             if lookup.node.resolved || lookup.node.retracted || lookup.node.incorporated =>
         {
-            say::reopen_node(git, thread_id, &lookup.node.node_id, &actor, &clock)?;
+            write_ops::reopen_node(git, thread_id, &lookup.node.node_id, &actor, &clock)?;
         }
         NodeStatusAction::Retract if !lookup.node.retracted => {
-            say::retract_node(git, thread_id, &lookup.node.node_id, &actor, &clock)?;
+            write_ops::retract_node(git, thread_id, &lookup.node.node_id, &actor, &clock)?;
         }
         _ => {}
     }
@@ -158,7 +158,7 @@ pub(super) fn submit_create_node(
     let actor = actor::current_actor(git);
     let clock = SystemClock;
     let node_type = node_type_values()[app.node_form.node_type_index];
-    let node_id = say::say_node(git, thread_id, node_type, body, &actor, &clock, None)?;
+    let node_id = write_ops::say_node(git, thread_id, node_type, body, &actor, &clock, None)?;
     reindex::run_reindex(git, db_path)?;
     app.threads = index::list_threads(conn)?;
     perf.record("submit_create", Some(thread_id), t.elapsed());

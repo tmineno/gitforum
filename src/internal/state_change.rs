@@ -4,9 +4,9 @@ use super::error::{ForumError, ForumResult};
 use super::event::{Event, EventType};
 use super::git_ops::GitOps;
 use super::policy::Policy;
-use super::say;
 use super::state_machine;
 use super::thread;
+use super::write_ops;
 
 #[derive(Debug, Clone, Default)]
 pub struct StateChangeOptions {
@@ -139,7 +139,7 @@ pub fn change_state(
     )?;
 
     for node_id in &plan.resolve_action_ids {
-        say::resolve_node(git, thread_id, node_id, actor, clock)?;
+        write_ops::resolve_node(git, thread_id, node_id, actor, clock)?;
     }
 
     let mut ev = Event::base(thread_id, EventType::State, actor, clock)
