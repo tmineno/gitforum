@@ -1,3 +1,5 @@
+use chrono::{DateTime, Utc};
+
 use super::clock::Clock;
 use super::error::ForumResult;
 use super::event::{Event, EventType, ThreadKind};
@@ -36,6 +38,47 @@ pub fn create_thread_with_branch(
     actor: &str,
     clock: &dyn Clock,
 ) -> ForumResult<String> {
+    create_thread_core(git, kind, title, body, branch, actor, clock, None)
+}
+
+/// Create a new thread with a timestamp override.
+///
+/// Like `create_thread_with_branch`, but uses the given `created_at`
+/// instead of the clock. Intended for import/migration scenarios.
+#[allow(clippy::too_many_arguments)]
+pub fn create_thread_with_timestamp(
+    git: &GitOps,
+    kind: ThreadKind,
+    title: &str,
+    body: Option<&str>,
+    branch: Option<&str>,
+    actor: &str,
+    clock: &dyn Clock,
+    created_at: DateTime<Utc>,
+) -> ForumResult<String> {
+    create_thread_core(
+        git,
+        kind,
+        title,
+        body,
+        branch,
+        actor,
+        clock,
+        Some(created_at),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_thread_core(
+    git: &GitOps,
+    kind: ThreadKind,
+    title: &str,
+    body: Option<&str>,
+    branch: Option<&str>,
+    actor: &str,
+    clock: &dyn Clock,
+    created_at: Option<DateTime<Utc>>,
+) -> ForumResult<String> {
     if let Some(branch) = branch {
         let refname = format!("refs/heads/{branch}");
         if git.resolve_ref(&refname)?.is_none() {
@@ -49,6 +92,9 @@ pub fn create_thread_with_branch(
         .with_title(title)
         .with_kind(kind)
         .with_branch(branch);
+    if let Some(ts) = created_at {
+        event = event.with_created_at(ts);
+    }
     if let Some(body) = body {
         event = event.with_body(body);
     }

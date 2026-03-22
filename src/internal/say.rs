@@ -1,3 +1,5 @@
+use chrono::{DateTime, Utc};
+
 use super::clock::Clock;
 use super::error::ForumResult;
 use super::event::{Event, EventType, NodeType};
@@ -19,10 +21,56 @@ pub fn say_node(
     clock: &dyn Clock,
     reply_to: Option<&str>,
 ) -> ForumResult<String> {
-    let ev = Event::base(thread_id, EventType::Say, actor, clock)
+    say_node_core(
+        git, thread_id, node_type, body, actor, clock, reply_to, None,
+    )
+}
+
+/// Add a typed discussion node with a timestamp override.
+///
+/// Like `say_node`, but uses the given `created_at` instead of the clock.
+/// Intended for import/migration scenarios.
+#[allow(clippy::too_many_arguments)]
+pub fn say_node_with_timestamp(
+    git: &GitOps,
+    thread_id: &str,
+    node_type: NodeType,
+    body: &str,
+    actor: &str,
+    clock: &dyn Clock,
+    reply_to: Option<&str>,
+    created_at: DateTime<Utc>,
+) -> ForumResult<String> {
+    say_node_core(
+        git,
+        thread_id,
+        node_type,
+        body,
+        actor,
+        clock,
+        reply_to,
+        Some(created_at),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn say_node_core(
+    git: &GitOps,
+    thread_id: &str,
+    node_type: NodeType,
+    body: &str,
+    actor: &str,
+    clock: &dyn Clock,
+    reply_to: Option<&str>,
+    created_at: Option<DateTime<Utc>>,
+) -> ForumResult<String> {
+    let mut ev = Event::base(thread_id, EventType::Say, actor, clock)
         .with_body(body)
         .with_node_type(node_type)
         .with_reply_to(reply_to);
+    if let Some(ts) = created_at {
+        ev = ev.with_created_at(ts);
+    }
     super::event::write_event(git, &ev)
 }
 
