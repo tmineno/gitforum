@@ -356,6 +356,38 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
             .unwrap_or(&[]),
     );
 
+    // Semantic check: warn when an allow-list misses all non-terminal states for a kind.
+    lint_allow_list_coverage(
+        &mut diags,
+        "revise_rules.allow_body_revise",
+        policy
+            .revise_rules
+            .as_ref()
+            .map(|r| r.allow_body_revise.as_slice())
+            .unwrap_or(&[]),
+        &all_kinds,
+    );
+    lint_allow_list_coverage(
+        &mut diags,
+        "revise_rules.allow_node_revise",
+        policy
+            .revise_rules
+            .as_ref()
+            .map(|r| r.allow_node_revise.as_slice())
+            .unwrap_or(&[]),
+        &all_kinds,
+    );
+    lint_allow_list_coverage(
+        &mut diags,
+        "evidence_rules.allow_evidence",
+        policy
+            .evidence_rules
+            .as_ref()
+            .map(|r| r.allow_evidence.as_slice())
+            .unwrap_or(&[]),
+        &all_kinds,
+    );
+
     // Validate state names in node_rules keys.
     for state_name in policy.node_rules.keys() {
         if !all_states.contains(state_name.as_str()) {
@@ -397,6 +429,59 @@ fn sorted_states(states: &std::collections::HashSet<&str>) -> String {
     let mut v: Vec<&str> = states.iter().copied().collect();
     v.sort_unstable();
     v.join(", ")
+}
+
+/// Terminal states are resolution/conclusion states where a thread's primary work is done.
+const TERMINAL_STATES: &[&str] = &["closed", "rejected", "accepted", "deprecated"];
+
+/// Return non-terminal states for a thread kind (states where active work happens).
+fn non_terminal_states(kind: ThreadKind) -> Vec<&'static str> {
+    let transitions = state_machine::valid_transitions(kind);
+    let mut states: std::collections::BTreeSet<&str> = transitions
+        .iter()
+        .flat_map(|(from, to)| [*from, *to])
+        .filter(|s| !TERMINAL_STATES.contains(s))
+        .collect();
+    // Include the initial state even if it only appears as a target
+    let initial = initial_state(kind);
+    states.insert(initial);
+    states.into_iter().collect()
+}
+
+fn initial_state(kind: ThreadKind) -> &'static str {
+    match kind {
+        ThreadKind::Issue | ThreadKind::Task => "open",
+        ThreadKind::Rfc => "draft",
+        ThreadKind::Dec => "proposed",
+    }
+}
+
+/// Warn when an allow-list has no non-terminal states for an entire thread kind.
+fn lint_allow_list_coverage(
+    diags: &mut Vec<LintDiag>,
+    field: &str,
+    states: &[String],
+    all_kinds: &[ThreadKind],
+) {
+    if states.is_empty() {
+        return;
+    }
+    let state_set: std::collections::HashSet<&str> = states.iter().map(|s| s.as_str()).collect();
+
+    for kind in all_kinds {
+        let non_terminal = non_terminal_states(*kind);
+        let has_any = non_terminal.iter().any(|s| state_set.contains(*s));
+        if !has_any {
+            diags.push(LintDiag {
+                level: LintLevel::Warn,
+                message: format!(
+                    "{field}: no states for {} workflows; consider adding: {}",
+                    kind_name(kind),
+                    non_terminal.join(", "),
+                ),
+            });
+        }
+    }
 }
 
 fn kind_name(kind: &ThreadKind) -> &'static str {
@@ -600,5 +685,101 @@ mod tests {
             .filter(|d| d.level == LintLevel::Warn)
             .collect();
         assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    }
+
+    // ---- allow-list gap detection (ISSUE-0095) ----
+
+    #[test]
+    fn lint_warns_when_kind_missing_from_allow_list() {
+        // Only RFC states — Issue, Dec, Task kinds are completely absent
+        let policy = Policy {
+            revise_rules: Some(ReviseRules {
+                allow_body_revise: vec!["draft".into(), "proposed".into()],
+                allow_node_revise: vec![],
+            }),
+            ..Default::default()
+        };
+        let diags = lint_policy(&policy);
+        assert!(diags.iter().any(|d| d.level == LintLevel::Warn
+            && d.message.contains("allow_body_revise")
+            && d.message.contains("no states for issue")));
+        assert!(diags.iter().any(|d| d.level == LintLevel::Warn
+            && d.message.contains("allow_body_revise")
+            && d.message.contains("no states for task")));
+    }
+
+    #[test]
+    fn lint_no_gap_warning_when_kind_partially_covered() {
+        // Has at least one non-terminal state per kind (even if not all)
+        let policy = Policy {
+            revise_rules: Some(ReviseRules {
+                allow_body_revise: vec![
+                    "open".into(),     // issue + task
+                    "draft".into(),    // rfc
+                    "proposed".into(), // rfc + dec
+                ],
+                allow_node_revise: vec![],
+            }),
+            ..Default::default()
+        };
+        let diags = lint_policy(&policy);
+        let gap_warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.level == LintLevel::Warn && d.message.contains("no states for"))
+            .collect();
+        assert!(
+            gap_warnings.is_empty(),
+            "unexpected gap warnings: {gap_warnings:?}"
+        );
+    }
+
+    #[test]
+    fn lint_no_gap_warning_for_empty_allow_list() {
+        // Empty list = not configured, not a gap
+        let policy = Policy {
+            revise_rules: Some(ReviseRules {
+                allow_body_revise: vec![],
+                allow_node_revise: vec![],
+            }),
+            ..Default::default()
+        };
+        let diags = lint_policy(&policy);
+        let gap_warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.message.contains("no states for"))
+            .collect();
+        assert!(
+            gap_warnings.is_empty(),
+            "empty list should not trigger gap warning"
+        );
+    }
+
+    #[test]
+    fn lint_gap_warning_includes_remediation_hint() {
+        // Only task states — RFC kind is missing
+        let policy = Policy {
+            evidence_rules: Some(EvidenceRules {
+                allow_evidence: vec![
+                    "open".into(),
+                    "designing".into(),
+                    "implementing".into(),
+                    "reviewing".into(),
+                ],
+            }),
+            ..Default::default()
+        };
+        let diags = lint_policy(&policy);
+        let rfc_gap = diags
+            .iter()
+            .find(|d| d.message.contains("no states for rfc"))
+            .expect("should warn about missing RFC states");
+        assert!(
+            rfc_gap.message.contains("consider adding"),
+            "should include remediation hint"
+        );
+        assert!(
+            rfc_gap.message.contains("draft"),
+            "should suggest RFC non-terminal states"
+        );
     }
 }
