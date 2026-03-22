@@ -1,5 +1,7 @@
+mod cache;
 mod input;
 mod markdown;
+pub(crate) mod perf;
 pub(crate) mod render;
 mod state;
 
@@ -22,7 +24,9 @@ use super::git_ops::GitOps;
 use super::index::{self, ThreadRow};
 use super::node::Node;
 
+use cache::ReplayCache;
 use input::{handle_key, handle_mouse};
+use perf::Perf;
 use render::render;
 use state::{auto_refresh, default_thread_kind_index};
 
@@ -258,6 +262,8 @@ pub struct App {
     thread_title: String,
     thread_kind: String,
     thread_status: String,
+    /// LRU cache for replayed thread states (RFC-0017 Phase 1).
+    replay_cache: ReplayCache,
 }
 
 impl App {
@@ -314,6 +320,7 @@ impl App {
             thread_title: String::new(),
             thread_kind: String::new(),
             thread_status: String::new(),
+            replay_cache: ReplayCache::new(),
         }
     }
 
@@ -629,10 +636,11 @@ const AUTO_REFRESH_INTERVAL_MS: u128 = 2000;
 pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> ForumResult<()> {
     let threads = load_threads(git, db_path)?;
     let conn = index::open_db(db_path)?;
+    let mut perf = Perf::new();
 
     let mut app = App::new(threads);
     if let Some(thread_id) = initial_thread_id {
-        state::open_thread_detail(&mut app, git, thread_id, None)?;
+        state::open_thread_detail(&mut app, git, thread_id, None, &mut perf)?;
     }
 
     enable_raw_mode()?;
@@ -641,7 +649,7 @@ pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> For
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_app(&mut terminal, &mut app, git, &conn, db_path);
+    let result = run_app(&mut terminal, &mut app, git, &conn, db_path, &mut perf);
 
     disable_raw_mode().ok();
     execute!(
@@ -652,6 +660,7 @@ pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> For
     .ok();
     terminal.show_cursor().ok();
 
+    perf.finish();
     result
 }
 
@@ -661,25 +670,35 @@ pub(crate) fn run_app<B: Backend>(
     git: &GitOps,
     conn: &rusqlite::Connection,
     db_path: &Path,
+    perf: &mut Perf,
 ) -> ForumResult<()> {
+    let mut input_start: Option<Instant> = None;
     loop {
+        let draw_start = Instant::now();
         terminal.draw(|f| render(f, app))?;
+        perf.record("render_frame", None, draw_start.elapsed());
+
+        if let Some(t) = input_start.take() {
+            perf.record("event_poll_to_render", None, t.elapsed());
+        }
 
         // Auto-refresh: check if the viewed thread has changed
         if app.last_refresh.elapsed().as_millis() >= AUTO_REFRESH_INTERVAL_MS {
-            auto_refresh(app, git, conn, db_path)?;
+            auto_refresh(app, git, conn, db_path, perf)?;
             app.last_refresh = Instant::now();
         }
 
         if event::poll(std::time::Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key) => {
-                    if handle_key(app, key, git, conn, db_path)? {
+                    input_start = Some(Instant::now());
+                    if handle_key(app, key, git, conn, db_path, perf)? {
                         return Ok(());
                     }
                 }
                 Event::Mouse(mouse) => {
-                    if handle_mouse(app, mouse, git, conn, db_path)? {
+                    input_start = Some(Instant::now());
+                    if handle_mouse(app, mouse, git, conn, db_path, perf)? {
                         return Ok(());
                     }
                 }
@@ -855,6 +874,7 @@ mod tests {
             &git,
             &conn,
             &db_path,
+            &mut Perf::disabled(),
         )
         .unwrap();
 
@@ -886,11 +906,12 @@ mod tests {
             area.x + 2,
             area.y + 2,
         );
+        let mut perf = Perf::disabled();
         // First click selects
-        handle_mouse(&mut app, click, &git, &conn, &db_path).unwrap();
+        handle_mouse(&mut app, click, &git, &conn, &db_path, &mut perf).unwrap();
         assert_eq!(app.view, View::List);
         // Second click (same position, quick) opens
-        handle_mouse(&mut app, click, &git, &conn, &db_path).unwrap();
+        handle_mouse(&mut app, click, &git, &conn, &db_path, &mut perf).unwrap();
         assert_eq!(app.view, View::ThreadDetail("RFC-0001".into()));
     }
 
@@ -915,12 +936,14 @@ mod tests {
             header_rect.x + 1,
             header_rect.y,
         );
+        let mut perf = Perf::disabled();
         handle_mouse(
             &mut app,
             click,
             &GitOps::new(std::path::PathBuf::from("/")),
             &rusqlite::Connection::open_in_memory().unwrap(),
             std::path::Path::new("/tmp/test.db"),
+            &mut perf,
         )
         .unwrap();
 
@@ -937,6 +960,7 @@ mod tests {
             &GitOps::new(std::path::PathBuf::from("/")),
             &rusqlite::Connection::open_in_memory().unwrap(),
             std::path::Path::new("/tmp/test.db"),
+            &mut perf,
         )
         .unwrap();
         assert!(!app.sort_ascending);
@@ -1000,6 +1024,7 @@ mod tests {
             &git,
             &conn,
             dir.path(),
+            &mut Perf::disabled(),
         )
         .unwrap();
 
@@ -1192,6 +1217,7 @@ mod tests {
             &git,
             &conn,
             dir.path(),
+            &mut Perf::disabled(),
         )
         .unwrap();
     }
@@ -1207,6 +1233,7 @@ mod tests {
             &conn,
             dir.path(),
             "RFC-0001",
+            &mut Perf::disabled(),
         )
         .unwrap();
     }
@@ -1295,7 +1322,7 @@ mod tests {
         app.thread_form.title = "Created in TUI".into();
         app.thread_form.body = "Body from TUI".into();
 
-        submit_create_thread(&mut app, &git, &conn, &db_path).unwrap();
+        submit_create_thread(&mut app, &git, &conn, &db_path, &mut Perf::disabled()).unwrap();
 
         assert_eq!(app.view, View::ThreadDetail("RFC-0001".into()));
         assert!(app.thread_text.contains("Created in TUI"));
@@ -1320,6 +1347,7 @@ mod tests {
             &git,
             &conn,
             &db_path,
+            &mut Perf::disabled(),
         )
         .unwrap();
 
@@ -1344,7 +1372,8 @@ mod tests {
         reindex::run_reindex(&git, &db_path).unwrap();
 
         let mut app = App::new(index::list_threads(&conn).unwrap());
-        open_thread_detail(&mut app, &git, &thread_id, None).unwrap();
+        let mut perf = Perf::disabled();
+        open_thread_detail(&mut app, &git, &thread_id, None, &mut perf).unwrap();
         app.begin_create_node(&thread_id);
         app.node_form.node_type_index = 1;
         app.node_form.body = "Node from TUI\nwith more detail".into();
@@ -1356,6 +1385,7 @@ mod tests {
             &conn,
             &db_path,
             &thread_id,
+            &mut perf,
         )
         .unwrap();
 
@@ -1394,7 +1424,8 @@ mod tests {
         reindex::run_reindex(&git, &db_path).unwrap();
 
         let mut app = App::new(index::list_threads(&conn).unwrap());
-        open_thread_detail(&mut app, &git, &source_id, None).unwrap();
+        let mut perf = Perf::disabled();
+        open_thread_detail(&mut app, &git, &source_id, None, &mut perf).unwrap();
         app.begin_create_link_from_thread(&source_id);
         app.link_form.field = LinkFormField::Submit;
 
@@ -1406,6 +1437,7 @@ mod tests {
             &LinkOrigin::ThreadDetail {
                 selected_node_id: None,
             },
+            &mut perf,
         )
         .unwrap();
 
@@ -1466,6 +1498,7 @@ mod tests {
             &LinkOrigin::NodeDetail {
                 node_id: node_id.clone(),
             },
+            &mut Perf::disabled(),
         )
         .unwrap();
 
