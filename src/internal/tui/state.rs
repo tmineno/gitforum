@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Instant;
 
 use crate::internal::actor;
 use crate::internal::clock::SystemClock;
@@ -9,11 +10,13 @@ use crate::internal::evidence_ops;
 use crate::internal::git_ops::GitOps;
 use crate::internal::index::{self, ThreadRow};
 use crate::internal::node::Node;
+use crate::internal::refs;
 use crate::internal::reindex;
 use crate::internal::say;
 use crate::internal::show;
 use crate::internal::thread;
 
+use super::perf::Perf;
 use super::{App, LinkOrigin, LinkTargetKind, NodeStatusAction, TreeEntry, View};
 
 pub(super) fn open_thread_detail(
@@ -21,8 +24,29 @@ pub(super) fn open_thread_detail(
     git: &GitOps,
     thread_id: &str,
     selected_node_id: Option<&str>,
+    perf: &mut Perf,
 ) -> ForumResult<()> {
-    let state = thread::replay_thread(git, thread_id)?;
+    // Resolve the tip SHA for cache lookup and change detection
+    let ref_name = format!("refs/forum/threads/{thread_id}");
+    let tip_sha = git.resolve_ref(&ref_name)?.unwrap_or_default();
+
+    // Try the replay cache first
+    let state = if let Some(cached) = app.replay_cache.get(thread_id, &tip_sha) {
+        perf.record(
+            "replay_thread_cached",
+            Some(thread_id),
+            std::time::Duration::ZERO,
+        );
+        cached.clone()
+    } else {
+        let t = Instant::now();
+        let replayed = thread::replay_thread(git, thread_id)?;
+        perf.record("replay_thread", Some(thread_id), t.elapsed());
+        app.replay_cache
+            .insert(thread_id.to_string(), tip_sha.clone(), replayed.clone());
+        replayed
+    };
+
     app.thread_title = state.title.clone();
     app.thread_kind = state.kind.to_string();
     app.thread_status = state.status.to_string();
@@ -33,10 +57,8 @@ pub(super) fn open_thread_detail(
     app.recompute_visible_tree();
     app.node_detail_text.clear();
     app.node_detail_scroll = 0;
-    // Cache the tip SHA for auto-refresh change detection
-    let ref_name = format!("refs/forum/threads/{thread_id}");
-    app.thread_tip_sha = git.resolve_ref(&ref_name)?.or(None);
-    app.last_refresh = std::time::Instant::now();
+    app.thread_tip_sha = Some(tip_sha);
+    app.last_refresh = Instant::now();
     app.select_node_by_id(selected_node_id);
     app.view = View::ThreadDetail(thread_id.to_string());
     Ok(())
@@ -92,12 +114,14 @@ pub(super) fn submit_create_thread(
     git: &GitOps,
     conn: &rusqlite::Connection,
     db_path: &Path,
+    perf: &mut Perf,
 ) -> ForumResult<()> {
     let title = app.thread_form.title.trim();
     if title.is_empty() {
         return Ok(());
     }
 
+    let t = Instant::now();
     let actor = actor::current_actor(git);
     let clock = SystemClock;
     let kind = thread_kind_values()[app.thread_form.kind_index];
@@ -110,10 +134,11 @@ pub(super) fn submit_create_thread(
     let thread_id = create::create_thread(git, kind, title, body, &actor, &clock)?;
     reindex::run_reindex(git, db_path)?;
     app.threads = index::list_threads(conn)?;
+    perf.record("submit_create", Some(&thread_id), t.elapsed());
     if let Some(pos) = app.threads.iter().position(|row| row.id == thread_id) {
         app.table_state.select(Some(pos));
     }
-    open_thread_detail(app, git, &thread_id, None)
+    open_thread_detail(app, git, &thread_id, None, perf)
 }
 
 pub(super) fn submit_create_node(
@@ -122,19 +147,22 @@ pub(super) fn submit_create_node(
     conn: &rusqlite::Connection,
     db_path: &Path,
     thread_id: &str,
+    perf: &mut Perf,
 ) -> ForumResult<()> {
     let body = app.node_form.body.trim();
     if body.is_empty() {
         return Ok(());
     }
 
+    let t = Instant::now();
     let actor = actor::current_actor(git);
     let clock = SystemClock;
     let node_type = node_type_values()[app.node_form.node_type_index];
     let node_id = say::say_node(git, thread_id, node_type, body, &actor, &clock, None)?;
     reindex::run_reindex(git, db_path)?;
     app.threads = index::list_threads(conn)?;
-    open_thread_detail(app, git, thread_id, Some(&node_id))
+    perf.record("submit_create", Some(thread_id), t.elapsed());
+    open_thread_detail(app, git, thread_id, Some(&node_id), perf)
 }
 
 pub(super) fn submit_create_link(
@@ -142,6 +170,7 @@ pub(super) fn submit_create_link(
     git: &GitOps,
     thread_id: &str,
     origin: &LinkOrigin,
+    perf: &mut Perf,
 ) -> ForumResult<()> {
     let Some(target_thread_id) = selected_link_target(app, thread_id) else {
         return Ok(());
@@ -151,7 +180,7 @@ pub(super) fn submit_create_link(
     let clock = SystemClock;
     let relation = link_relation_labels()[app.link_form.relation_index];
     evidence_ops::add_thread_link(git, thread_id, &target_thread_id, relation, &actor, &clock)?;
-    return_from_link_form(app, git, thread_id, origin)
+    return_from_link_form(app, git, thread_id, origin, perf)
 }
 
 pub(super) fn return_from_link_form(
@@ -159,10 +188,11 @@ pub(super) fn return_from_link_form(
     git: &GitOps,
     thread_id: &str,
     origin: &LinkOrigin,
+    perf: &mut Perf,
 ) -> ForumResult<()> {
     match origin {
         LinkOrigin::ThreadDetail { selected_node_id } => {
-            open_thread_detail(app, git, thread_id, selected_node_id.as_deref())
+            open_thread_detail(app, git, thread_id, selected_node_id.as_deref(), perf)
         }
         LinkOrigin::NodeDetail { node_id } => open_node_detail(app, git, thread_id, node_id),
     }
@@ -375,17 +405,73 @@ pub(super) fn selected_link_target_label(app: &App, source_thread_id: &str) -> S
     }
 }
 
+/// Incremental list refresh: compare git ref SHAs against the SQLite index and
+/// only replay threads whose SHA has changed. Returns true if any changes were made.
+fn incremental_refresh(
+    git: &GitOps,
+    conn: &rusqlite::Connection,
+    perf: &mut Perf,
+) -> ForumResult<bool> {
+    let t = Instant::now();
+    let current_refs = git.list_refs_with_shas(refs::THREADS_PREFIX)?;
+    perf.record("incremental_ref_scan", None, t.elapsed());
+
+    let stored_shas = index::thread_tip_shas(conn)?;
+
+    // Build map of current thread_id -> ref tip SHA
+    let mut current: std::collections::HashMap<String, String> =
+        std::collections::HashMap::with_capacity(current_refs.len());
+    for (refname, sha) in &current_refs {
+        if let Some(thread_id) = refs::thread_id_from_ref(refname) {
+            current.insert(thread_id.to_string(), sha.clone());
+        }
+    }
+
+    let mut changed = false;
+
+    // Replay new or changed threads
+    for (thread_id, sha) in &current {
+        let needs_update = match stored_shas.get(thread_id) {
+            Some(stored) => stored != sha,
+            None => true,
+        };
+        if needs_update {
+            let rt = Instant::now();
+            if let Ok(state) = thread::replay_thread(git, thread_id) {
+                perf.record("replay_thread", Some(thread_id), rt.elapsed());
+                let _ = index::upsert_thread(conn, &state)
+                    .and_then(|_| index::replace_nodes_for_thread(conn, &state));
+            }
+            changed = true;
+        }
+    }
+
+    // Remove deleted threads
+    for stored_id in stored_shas.keys() {
+        if !current.contains_key(stored_id) {
+            let _ = index::delete_thread(conn, stored_id);
+            changed = true;
+        }
+    }
+
+    Ok(changed)
+}
+
 /// Auto-refresh: check if the currently viewed thread or list has changed, and refresh if so.
 pub(super) fn auto_refresh(
     app: &mut App,
     git: &GitOps,
     conn: &rusqlite::Connection,
-    db_path: &Path,
+    _db_path: &Path,
+    perf: &mut Perf,
 ) -> ForumResult<()> {
     match &app.view {
         View::ThreadDetail(thread_id) => {
             let ref_name = format!("refs/forum/threads/{thread_id}");
-            if let Ok(Some(current_sha)) = git.resolve_ref(&ref_name) {
+            let t = Instant::now();
+            let resolved = git.resolve_ref(&ref_name);
+            perf.record("resolve_ref", Some(thread_id), t.elapsed());
+            if let Ok(Some(current_sha)) = resolved {
                 let changed = app
                     .thread_tip_sha
                     .as_ref()
@@ -393,13 +479,16 @@ pub(super) fn auto_refresh(
                 if changed {
                     let selected = app.selected_node_id();
                     let thread_id = thread_id.clone();
-                    open_thread_detail(app, git, &thread_id, selected.as_deref())?;
+                    open_thread_detail(app, git, &thread_id, selected.as_deref(), perf)?;
                 }
             }
         }
         View::NodeDetail { thread_id, node_id } => {
             let ref_name = format!("refs/forum/threads/{thread_id}");
-            if let Ok(Some(current_sha)) = git.resolve_ref(&ref_name) {
+            let t = Instant::now();
+            let resolved = git.resolve_ref(&ref_name);
+            perf.record("resolve_ref", Some(thread_id), t.elapsed());
+            if let Ok(Some(current_sha)) = resolved {
                 let changed = app
                     .thread_tip_sha
                     .as_ref()
@@ -413,14 +502,17 @@ pub(super) fn auto_refresh(
             }
         }
         View::List => {
-            // Refresh list by reindexing
-            reindex::run_reindex(git, db_path)?;
-            let threads = index::list_threads(conn)?;
-            let sel = app.table_state.selected().unwrap_or(0);
-            app.threads = threads;
-            let n = app.visible_threads().len();
-            app.table_state
-                .select(if n > 0 { Some(sel.min(n - 1)) } else { None });
+            let t = Instant::now();
+            let changed = incremental_refresh(git, conn, perf)?;
+            perf.record("list_refresh", None, t.elapsed());
+            if changed {
+                let threads = index::list_threads(conn)?;
+                let sel = app.table_state.selected().unwrap_or(0);
+                app.threads = threads;
+                let n = app.visible_threads().len();
+                app.table_state
+                    .select(if n > 0 { Some(sel.min(n - 1)) } else { None });
+            }
         }
         _ => {}
     }

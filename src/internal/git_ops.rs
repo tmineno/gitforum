@@ -197,6 +197,24 @@ impl GitOps {
         }
     }
 
+    /// List all refs under a prefix with their object names (SHAs).
+    /// Returns `Vec<(refname, sha)>`.
+    pub fn list_refs_with_shas(&self, prefix: &str) -> ForumResult<Vec<(String, String)>> {
+        match self.run(&["for-each-ref", "--format=%(refname) %(objectname)", prefix]) {
+            Ok(s) if s.is_empty() => Ok(vec![]),
+            Ok(s) => Ok(s
+                .lines()
+                .filter_map(|l| {
+                    let mut parts = l.splitn(2, ' ');
+                    let refname = parts.next()?.to_string();
+                    let sha = parts.next()?.to_string();
+                    Some((refname, sha))
+                })
+                .collect()),
+            Err(_) => Ok(vec![]),
+        }
+    }
+
     // ---- Reading ----
 
     /// List commits reachable from `start_ref`, newest first.
