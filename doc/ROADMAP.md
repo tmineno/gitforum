@@ -9,7 +9,8 @@ The following capabilities are implemented and tested:
 - Repository init, doctor, reindex
 - RFC and issue thread creation with body, branch binding, and link-at-create
 - Event-sourced thread replay
-- Typed discussion nodes (claim, question, objection, evidence, summary, action, risk, review)
+- Typed discussion nodes (claim, question, objection, evidence, summary, action, risk, review,
+  alternative, assumption)
 - Shorthand CLI commands for common node types (claim, question, objection, summary, action, risk,
   review)
 - Node lifecycle: revise, retract, resolve, reopen, reply chains
@@ -25,8 +26,8 @@ The following capabilities are implemented and tested:
 - Concurrency safety via atomic ref updates (compare-and-swap)
 - Snapshot and integration test infrastructure
 - Git worktree support (ISSUE-0026)
-- State transition shorthand commands: `issue close`, `issue reopen`, `issue reject`, `rfc propose`,
-  `rfc accept` (ISSUE-0033)
+- State transition shorthand commands: `close`, `pend`, `accept`, `propose`, `reject`,
+  `deprecate` (ISSUE-0033)
 - `--link-to` and `--comment` flags on state transitions (ISSUE-0027, ISSUE-0036)
 - `--from-commit` flag for retroactive thread creation from commits (ISSUE-0030)
 - Bulk evidence add with multiple `--ref` values (ISSUE-0028)
@@ -49,7 +50,7 @@ The following capabilities are implemented and tested:
   evidence kinds for `evidence` (ISSUE-0050)
 - Inline node flags on thread creation: `--claim`, `--question`, `--objection`, `--action`,
   `--risk`, `--summary` (ISSUE-0052)
-- E2E scenario expanded to 10/10 node types, 11/13 transitions, 9 threads (ISSUE-0053)
+- E2E scenario expanded to 8/10 node types, 11/13 transitions, 9 threads (ISSUE-0053)
 - Advisory commit-msg hook: validates thread ID references in commit messages, auto-installed
   during `init`, respects `core.commentChar` and `core.hooksPath` (RFC-0020)
 - `--comment` on state transitions attaches text to the state-change event body instead of
@@ -76,11 +77,12 @@ would automatically resolve non-conflicting concurrent writes and surface true c
 - ISSUE-0021 — Auto-merge concurrent non-conflicting events (say, evidence, summaries)
 - ISSUE-0022 — Detect and surface conflicting concurrent events (state changes, resolve/reopen)
 
-### Remaining shorthand command
+### Remaining shorthand commands
 
-One node type (`evidence`) lacks a dedicated shorthand command; it uses `evidence add` instead.
+Three node types lack dedicated shorthand commands: `evidence` (uses `evidence add`),
+`alternative`, and `assumption` (use `node add --type`).
 
-- ISSUE-0001 — Add shorthand command for evidence node type
+- ISSUE-0001 — Add shorthand commands for remaining node types
 
 ### Documentation alignment
 
