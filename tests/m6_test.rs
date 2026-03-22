@@ -11,11 +11,11 @@ use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::operation_check::{self, Severity};
 use git_forum::internal::policy::{CreationRules, GuardEntry, GuardRule, Policy, ReviseRules};
-use git_forum::internal::say;
 use git_forum::internal::show;
 use git_forum::internal::state_change;
 use git_forum::internal::thread;
 use git_forum::internal::verify;
+use git_forum::internal::write_ops;
 
 fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
     let repo = support::repo::TestRepo::new();
@@ -251,7 +251,7 @@ fn dec_accepted_to_proposed_is_invalid() {
 fn dec_proposed_to_accepted_blocked_by_objection() {
     let (_repo, git, _paths) = setup();
     let id = make_dec(&git);
-    say::say_node(
+    write_ops::say_node(
         &git,
         &id,
         NodeType::Objection,
@@ -516,7 +516,7 @@ fn task_reviewing_to_closed_blocked_by_actions() {
         )
         .unwrap();
     }
-    say::say_node(
+    write_ops::say_node(
         &git,
         &id,
         NodeType::Action,
@@ -547,7 +547,7 @@ fn task_reviewing_to_closed_blocked_by_actions() {
 fn node_add_alternative() {
     let (_repo, git, _paths) = setup();
     let id = make_dec(&git);
-    let node_id = say::say_node(
+    let node_id = write_ops::say_node(
         &git,
         &id,
         NodeType::Alternative,
@@ -568,7 +568,7 @@ fn node_add_alternative() {
 fn node_add_assumption() {
     let (_repo, git, _paths) = setup();
     let id = make_task(&git);
-    let node_id = say::say_node(
+    let node_id = write_ops::say_node(
         &git,
         &id,
         NodeType::Assumption,
@@ -591,7 +591,7 @@ fn node_add_assumption() {
 fn verify_dec_proposed_checks_accepted() {
     let (_repo, git, _paths) = setup();
     let id = make_dec(&git);
-    say::say_node(
+    write_ops::say_node(
         &git,
         &id,
         NodeType::Objection,
@@ -626,7 +626,7 @@ fn verify_task_reviewing_checks_closed() {
         )
         .unwrap();
     }
-    say::say_node(
+    write_ops::say_node(
         &git,
         &id,
         NodeType::Action,

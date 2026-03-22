@@ -8,7 +8,7 @@ use git_forum::internal::create;
 use git_forum::internal::event::ThreadKind;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
-use git_forum::internal::say;
+use git_forum::internal::write_ops;
 
 use chrono::{TimeZone, Utc};
 
@@ -72,7 +72,7 @@ fn diff_default_shows_latest_vs_previous() {
     )
     .unwrap();
 
-    say::revise_body(
+    write_ops::revise_body(
         &git,
         &thread_id,
         "line one\nline two\nline three\n",
@@ -117,7 +117,7 @@ fn diff_rev_range() {
     )
     .unwrap();
 
-    say::revise_body(
+    write_ops::revise_body(
         &git,
         &thread_id,
         "version one\n",
@@ -126,7 +126,7 @@ fn diff_rev_range() {
         &clock,
     )
     .unwrap();
-    say::revise_body(
+    write_ops::revise_body(
         &git,
         &thread_id,
         "version two\n",
@@ -176,7 +176,7 @@ fn diff_rev_single() {
     )
     .unwrap();
 
-    say::revise_body(
+    write_ops::revise_body(
         &git,
         &thread_id,
         "version one\n",
@@ -185,7 +185,7 @@ fn diff_rev_single() {
         &clock,
     )
     .unwrap();
-    say::revise_body(
+    write_ops::revise_body(
         &git,
         &thread_id,
         "version two\n",
@@ -227,7 +227,7 @@ fn diff_empty_create_body_vs_first_revision() {
     )
     .unwrap();
 
-    say::revise_body(
+    write_ops::revise_body(
         &git,
         &thread_id,
         "first body content\n",
@@ -264,7 +264,7 @@ fn diff_headers_show_body_not_temp_paths() {
     )
     .unwrap();
 
-    say::revise_body(&git, &thread_id, "new\n", &[], "human/alice", &clock).unwrap();
+    write_ops::revise_body(&git, &thread_id, "new\n", &[], "human/alice", &clock).unwrap();
 
     let output = run_diff(&repo, &[&thread_id]);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -295,7 +295,7 @@ fn diff_invalid_rev_fails() {
     )
     .unwrap();
 
-    say::revise_body(&git, &thread_id, "new body\n", &[], "human/alice", &clock).unwrap();
+    write_ops::revise_body(&git, &thread_id, "new body\n", &[], "human/alice", &clock).unwrap();
 
     // Out of range
     let output = run_diff(&repo, &[&thread_id, "--rev", "5"]);

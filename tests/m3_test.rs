@@ -10,11 +10,11 @@ use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::policy::{GuardEntry, GuardRule, Policy};
-use git_forum::internal::say;
 use git_forum::internal::show;
 use git_forum::internal::state_change;
 use git_forum::internal::thread;
 use git_forum::internal::verify;
+use git_forum::internal::write_ops;
 
 fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
     let repo = support::repo::TestRepo::new();
@@ -102,7 +102,7 @@ fn say_creates_node_in_replay() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    let node_id = say::say_node(
+    let node_id = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Claim,
@@ -132,7 +132,7 @@ fn objection_appears_in_open_objections() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Objection,
@@ -154,7 +154,7 @@ fn resolve_removes_from_open_objections() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    let node_id = say::say_node(
+    let node_id = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Objection,
@@ -165,7 +165,7 @@ fn resolve_removes_from_open_objections() {
     )
     .unwrap();
 
-    say::resolve_node(&git, &thread_id, &node_id, "human/alice", &fixed_clock()).unwrap();
+    write_ops::resolve_node(&git, &thread_id, &node_id, "human/alice", &fixed_clock()).unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert!(state.open_objections().is_empty());
@@ -178,7 +178,7 @@ fn reopen_restores_to_open_objections() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    let node_id = say::say_node(
+    let node_id = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Objection,
@@ -189,8 +189,8 @@ fn reopen_restores_to_open_objections() {
     )
     .unwrap();
 
-    say::resolve_node(&git, &thread_id, &node_id, "human/alice", &fixed_clock()).unwrap();
-    say::reopen_node(&git, &thread_id, &node_id, "human/bob", &fixed_clock()).unwrap();
+    write_ops::resolve_node(&git, &thread_id, &node_id, "human/alice", &fixed_clock()).unwrap();
+    write_ops::reopen_node(&git, &thread_id, &node_id, "human/bob", &fixed_clock()).unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(state.open_objections().len(), 1);
@@ -202,7 +202,7 @@ fn retract_removes_node_from_open() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    let node_id = say::say_node(
+    let node_id = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Objection,
@@ -213,7 +213,7 @@ fn retract_removes_node_from_open() {
     )
     .unwrap();
 
-    say::retract_node(&git, &thread_id, &node_id, "human/bob", &fixed_clock()).unwrap();
+    write_ops::retract_node(&git, &thread_id, &node_id, "human/bob", &fixed_clock()).unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert!(state.open_objections().is_empty());
@@ -225,7 +225,7 @@ fn revise_updates_node_body() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    let node_id = say::say_node(
+    let node_id = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Claim,
@@ -236,7 +236,7 @@ fn revise_updates_node_body() {
     )
     .unwrap();
 
-    say::revise_node(
+    write_ops::revise_node(
         &git,
         &thread_id,
         &node_id,
@@ -255,7 +255,7 @@ fn latest_summary_tracks_most_recent() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Summary,
@@ -266,7 +266,7 @@ fn latest_summary_tracks_most_recent() {
     )
     .unwrap();
 
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Summary,
@@ -287,7 +287,7 @@ fn open_actions_tracks_unresolved_actions() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Action,
@@ -365,7 +365,7 @@ fn change_state_fails_guard_no_open_objections() {
     move_rfc_to_under_review(&git, &thread_id);
 
     // Add an open objection
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Objection,
@@ -407,7 +407,7 @@ fn change_state_passes_all_guards() {
     move_rfc_to_under_review(&git, &thread_id);
 
     // Add a summary (satisfies at_least_one_summary)
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Summary,
@@ -448,7 +448,7 @@ fn change_state_issue_close_fails_guard_no_open_actions() {
     )
     .unwrap();
 
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Action,
@@ -493,7 +493,7 @@ fn change_state_issue_close_can_resolve_open_actions() {
     )
     .unwrap();
 
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Action,
@@ -551,7 +551,7 @@ fn verify_reports_open_objection_violation() {
     move_rfc_to_under_review(&git, &thread_id);
 
     // Add open objection
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Objection,
@@ -583,7 +583,7 @@ fn verify_reports_open_action_violation_for_issue_close() {
     )
     .unwrap();
 
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Action,
@@ -615,7 +615,7 @@ fn show_includes_open_objections_section() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Objection,
@@ -638,7 +638,7 @@ fn show_includes_latest_summary_section() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Summary,
@@ -674,7 +674,7 @@ fn show_timeline_includes_say_events() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    let node_id = say::say_node(
+    let node_id = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Claim,
@@ -698,7 +698,7 @@ fn find_node_returns_current_body_and_history() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    let node_id = say::say_node(
+    let node_id = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Question,
@@ -708,7 +708,7 @@ fn find_node_returns_current_body_and_history() {
         None,
     )
     .unwrap();
-    say::revise_node(
+    write_ops::revise_node(
         &git,
         &thread_id,
         &node_id,
@@ -739,7 +739,7 @@ fn find_node_accepts_unique_global_prefix() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    let node_id = say::say_node(
+    let node_id = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Question,
@@ -760,7 +760,7 @@ fn resolve_node_id_rejects_short_prefix() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Question,
@@ -771,7 +771,7 @@ fn resolve_node_id_rejects_short_prefix() {
     )
     .unwrap();
 
-    let node_id = say::say_node(
+    let node_id = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Question,
@@ -1310,7 +1310,7 @@ fn fast_track_rfc_draft_to_accepted() {
     let thread_id = make_rfc(&git);
 
     // Add a summary (needed for guard at under-review->accepted in default policy)
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Summary,
@@ -1367,7 +1367,7 @@ fn fast_track_stops_on_guard_failure() {
     let thread_id = make_rfc(&git);
 
     // Add an open objection — will fail no_open_objections guard at under-review->accepted
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Objection,

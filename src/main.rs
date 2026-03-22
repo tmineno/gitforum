@@ -25,12 +25,12 @@ use git_forum::internal::init;
 use git_forum::internal::operation_check;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::reindex;
-use git_forum::internal::say;
 use git_forum::internal::show;
 use git_forum::internal::state_change;
 use git_forum::internal::thread;
 use git_forum::internal::tui as forum_tui;
 use git_forum::internal::verify;
+use git_forum::internal::write_ops;
 
 const GROUPED_HELP: &str = "\
 These are common git-forum commands:
@@ -1069,6 +1069,9 @@ fn main() -> Result<(), ForumError> {
                 if let Some(hint) = subcommand_hint(&sub) {
                     eprintln!("error: unrecognized subcommand '{sub}'\n\n  tip: {hint}\n");
                     std::process::exit(2);
+                } else {
+                    eprintln!("error: unrecognized subcommand '{sub}'\n\n  tip: run 'git forum --help-llm' for command reference\n");
+                    std::process::exit(2);
                 }
             }
             e.exit();
@@ -2051,7 +2054,7 @@ fn run_revise_cmd(
             let violations = operation_check::check_revise(&policy, &state.status, true);
             apply_operation_checks(&violations, force, policy.checks.strict)?;
 
-            say::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
+            write_ops::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
             println!("Body revised for {thread_id}");
         }
         ReviseCmd::Node {
@@ -2078,7 +2081,7 @@ fn run_revise_cmd(
             apply_operation_checks(&violations, force, policy.checks.strict)?;
 
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
-            say::revise_node(&git, &thread_id, &resolved, &body_text, &actor, clock)?;
+            write_ops::revise_node(&git, &thread_id, &resolved, &body_text, &actor, clock)?;
             println!("Revised {resolved}");
         }
     }
@@ -2119,7 +2122,7 @@ fn run_revise_dispatch(
             let violations = operation_check::check_revise(&policy, &state.status, true);
             apply_operation_checks(&violations, force, policy.checks.strict)?;
 
-            say::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
+            write_ops::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
             println!("Body revised for {thread_id}");
             Ok(())
         }
@@ -2156,7 +2159,7 @@ fn run_shorthand_say(
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
     let resolved_reply = resolve_reply_to(&git, thread_id, reply_to.as_deref())?;
-    let node_id = say::say_node(
+    let node_id = write_ops::say_node(
         &git,
         thread_id,
         node_type,
@@ -2341,7 +2344,7 @@ fn run_thread_cmd(
             ];
             for (node_type, bodies) in &inline_nodes {
                 for body_text in *bodies {
-                    let node_id = say::say_node(
+                    let node_id = write_ops::say_node(
                         &git, &thread_id, *node_type, body_text, &actor, clock, None,
                     )?;
                     println!("Added {node_type} {node_id}");
@@ -2802,7 +2805,7 @@ fn run_node_lifecycle_bulk(
                 continue;
             }
         };
-        match say::node_lifecycle(&git, thread_id, &resolved, &actor, clock, event_type) {
+        match write_ops::node_lifecycle(&git, thread_id, &resolved, &actor, clock, event_type) {
             Ok(()) => println!("{label} {resolved}"),
             Err(e) => {
                 eprintln!("error: {resolved}: {e}");

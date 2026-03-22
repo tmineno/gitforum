@@ -9,8 +9,8 @@ use git_forum::internal::create;
 use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
-use git_forum::internal::say;
 use git_forum::internal::thread;
+use git_forum::internal::write_ops;
 
 fn fixed_clock() -> FixedClock {
     FixedClock {
@@ -39,7 +39,7 @@ fn retract_multiple_nodes() {
     )
     .unwrap();
 
-    let n1 = say::say_node(
+    let n1 = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Summary,
@@ -49,7 +49,7 @@ fn retract_multiple_nodes() {
         None,
     )
     .unwrap();
-    let n2 = say::say_node(
+    let n2 = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Summary,
@@ -91,7 +91,7 @@ fn resolve_multiple_nodes() {
     )
     .unwrap();
 
-    let n1 = say::say_node(
+    let n1 = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Objection,
@@ -101,7 +101,7 @@ fn resolve_multiple_nodes() {
         None,
     )
     .unwrap();
-    let n2 = say::say_node(
+    let n2 = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Objection,
@@ -142,7 +142,7 @@ fn reopen_multiple_nodes() {
     )
     .unwrap();
 
-    let n1 = say::say_node(
+    let n1 = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Objection,
@@ -152,7 +152,7 @@ fn reopen_multiple_nodes() {
         None,
     )
     .unwrap();
-    let n2 = say::say_node(
+    let n2 = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Objection,
@@ -164,8 +164,8 @@ fn reopen_multiple_nodes() {
     .unwrap();
 
     // Resolve both first
-    say::resolve_node(&git, &thread_id, &n1, "human/alice", &fixed_clock()).unwrap();
-    say::resolve_node(&git, &thread_id, &n2, "human/alice", &fixed_clock()).unwrap();
+    write_ops::resolve_node(&git, &thread_id, &n1, "human/alice", &fixed_clock()).unwrap();
+    write_ops::resolve_node(&git, &thread_id, &n2, "human/alice", &fixed_clock()).unwrap();
 
     // Reopen both
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
@@ -198,7 +198,7 @@ fn single_node_id_still_works() {
     )
     .unwrap();
 
-    let n1 = say::say_node(
+    let n1 = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Action,
@@ -235,7 +235,7 @@ fn bulk_retract_reports_failures_inline() {
     )
     .unwrap();
 
-    let n1 = say::say_node(
+    let n1 = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Summary,

@@ -14,9 +14,9 @@ use super::git_ops::GitOps;
 use super::github::{self, GhIssue};
 use super::index;
 use super::policy::Policy;
-use super::say;
 use super::state_change::{self, StateChangeOptions};
 use super::thread;
+use super::write_ops;
 
 /// Result of importing a single GitHub issue.
 pub struct ImportResult {
@@ -161,7 +161,7 @@ pub fn import_issue(
             comment.created_at.format("%Y-%m-%dT%H:%M:%SZ"),
             body
         );
-        say::say_node_with_timestamp(
+        write_ops::say_node_with_timestamp(
             git,
             &thread_id,
             NodeType::Claim,

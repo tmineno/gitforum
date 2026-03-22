@@ -11,10 +11,10 @@ use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::policy::Policy;
-use git_forum::internal::say;
 use git_forum::internal::state_change;
 use git_forum::internal::thread;
 use git_forum::internal::verify;
+use git_forum::internal::write_ops;
 use support::repo::TestRepo;
 use support::report;
 use support::scenario::{self, ScenarioDef};
@@ -130,7 +130,7 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
 
     for node_def in &rfc1_nodes {
         let agent = agent_by_name(agents, &node_def.actor);
-        let node_id = say::say_node(
+        let node_id = write_ops::say_node(
             &agent.git,
             &rfc_0001,
             node_def.node_type,
@@ -148,7 +148,7 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
 
     // Resolve nodes that need resolving (alice resolves them)
     for node_id in &resolve_ids {
-        say::resolve_node(&alice.git, &rfc_0001, node_id, &alice.name, &alice.clock).unwrap();
+        write_ops::resolve_node(&alice.git, &rfc_0001, node_id, &alice.name, &alice.clock).unwrap();
     }
 
     // State transitions for RFC-0001
@@ -194,7 +194,7 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
     // Nodes for RFC-0002
     for node_def in phase.nodes.iter().filter(|n| n.thread_ref == "RFC-0002") {
         let agent = agent_by_name(agents, &node_def.actor);
-        say::say_node(
+        write_ops::say_node(
             &agent.git,
             &rfc_0002,
             node_def.node_type,
@@ -532,7 +532,7 @@ fn phase_contention(agents: &[Agent], issue_id: &str) -> report::ContentionRepor
             let mut retries = 0;
             let mut errors = Vec::new();
             loop {
-                let result = say::say_node(
+                let result = write_ops::say_node(
                     &alice.git,
                     issue_id,
                     NodeType::Claim,
@@ -558,7 +558,7 @@ fn phase_contention(agents: &[Agent], issue_id: &str) -> report::ContentionRepor
             let mut retries = 0;
             let mut errors = Vec::new();
             loop {
-                let result = say::say_node(
+                let result = write_ops::say_node(
                     &bob.git,
                     issue_id,
                     NodeType::Claim,

@@ -1471,7 +1471,7 @@ mod tests {
             },
         )
         .unwrap();
-        let node_id = crate::internal::say::say_node(
+        let node_id = crate::internal::write_ops::say_node(
             &git,
             &source_id,
             crate::internal::event::NodeType::Claim,
@@ -1527,7 +1527,7 @@ mod tests {
             },
         )
         .unwrap();
-        let node_id = crate::internal::say::say_node(
+        let node_id = crate::internal::write_ops::say_node(
             &git,
             &thread_id,
             crate::internal::event::NodeType::Objection,

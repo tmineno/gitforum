@@ -11,7 +11,7 @@ use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::github_export;
 use git_forum::internal::github_import;
 use git_forum::internal::init;
-use git_forum::internal::say;
+use git_forum::internal::write_ops;
 
 fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
     let repo = support::repo::TestRepo::new();
@@ -148,7 +148,7 @@ fn format_node_comment_includes_marker_and_type() {
     let clock = fixed_clock();
     let thread_id =
         create::create_thread(&git, ThreadKind::Issue, "Bug", None, "human/alice", &clock).unwrap();
-    say::say_node(
+    write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Objection,
@@ -172,7 +172,7 @@ fn extract_marker_from_formatted_comment() {
     let clock = fixed_clock();
     let thread_id =
         create::create_thread(&git, ThreadKind::Issue, "Bug", None, "human/alice", &clock).unwrap();
-    let node_id = say::say_node(
+    let node_id = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Claim,

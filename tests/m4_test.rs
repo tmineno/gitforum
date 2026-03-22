@@ -9,9 +9,9 @@ use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::say;
 use git_forum::internal::show;
 use git_forum::internal::thread;
+use git_forum::internal::write_ops;
 
 fn setup() -> (support::repo::TestRepo, GitOps) {
     let repo = support::repo::TestRepo::new();
@@ -189,7 +189,7 @@ fn node_show_includes_parent_thread_links() {
     let (_repo, git) = setup();
     let thread_id = make_thread(&git);
 
-    let node_id = say::say_node(
+    let node_id = write_ops::say_node(
         &git,
         &thread_id,
         NodeType::Question,

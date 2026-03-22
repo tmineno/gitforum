@@ -9,8 +9,8 @@ use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::index;
 use git_forum::internal::init;
 use git_forum::internal::reindex;
-use git_forum::internal::say;
 use git_forum::internal::tui;
+use git_forum::internal::write_ops;
 
 fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
     let repo = support::repo::TestRepo::new();
@@ -35,7 +35,7 @@ fn add_node(
     node_type: git_forum::internal::event::NodeType,
     body: &str,
 ) {
-    say::say_node(
+    write_ops::say_node(
         git,
         thread_id,
         node_type,
