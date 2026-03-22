@@ -26,6 +26,9 @@ git forum branch bind <ID> <branch>                Bind thread to branch
 git forum search <query>                           Search threads and nodes
 git forum status <ID>                              Check open items
 git forum verify <ID>                              Verify guard conditions
+git forum policy show                              Display loaded policy rules
+git forum policy lint                              Check policy for problems
+git forum policy check <ID> --transition from->to  Check guards for transition
 git forum hook install                             Install commit-msg hook
 git forum tui                                      Open interactive TUI
 ```
@@ -304,24 +307,21 @@ git forum show RFC-0001 --what-next
 
 `git forum show <THREAD_ID>` shows:
 
-- title
-- branch
+- title, kind, status
+- **next**: compact list of valid transitions with guard status (e.g. `accepted (blocked: no_open_objections), rejected, draft`)
+- **transitions**: Unicode state diagram with current state highlighted in brackets
+- created_at, created_by, branch
 - body
-- kind
-- status
-- created_at
-- created_by
 - body revisions count (if body has been revised)
 - incorporated nodes (if any)
-- open objections
-- open actions
+- open objections, open actions
 - latest summary
-- evidence section
-- links section
+- evidence, links
 - conversations (reply chains grouped by root node)
 - timeline
 
-`git forum show <THREAD_ID> --what-next` shows valid next actions:
+`git forum show <THREAD_ID> --what-next` shows valid next actions plus operation check
+rules for the current state:
 
 ```text
 RFC-0001 (under-review)
@@ -337,7 +337,18 @@ nodes:           6
 evidence:        1
 links:           0
 has summary:     yes
+
+operation checks (state: under-review):
+  node types: (all allowed)
+  body revise: allowed
+  evidence:    allowed
 ```
+
+Three discoverability surfaces exist:
+
+- **`show`**: compact, thread-specific — `next:` line and state diagram
+- **`show --what-next`**: detailed, thread-specific — guard checks plus operation check rules
+- **`policy show`**: global — full policy as loaded from `.forum/policy.toml`
 
 The timeline is displayed in `date node_id event_id author type body` order.
 
@@ -778,11 +789,13 @@ git forum state bulk --to closed ISSUE-0001 ISSUE-0002 --dry-run
 
 ```bash
 git forum verify RFC-0001
+git forum policy show
 git forum policy lint
 git forum policy check RFC-0001 --transition under-review->accepted
 ```
 
 - `verify`: checks whether the thread already satisfies guard conditions for its next forward transition
+- `policy show`: displays the loaded policy in human-readable format (guards, creation rules, operation checks, strict mode). Only shows configured sections — no synthesized defaults
 - `policy lint`: validates `.forum/policy.toml`
 - `policy check`: dry-runs guard evaluation for a specific transition
 
@@ -912,6 +925,9 @@ printed to stderr regardless of `--force`.
 
 - `git forum state ...` evaluates guard rules from `[[guards]]`
 - `git forum verify` evaluates those same guard rules in read-only mode
+- `git forum show` displays compact next-states with guard blockers and a state diagram
+- `git forum show --what-next` displays detailed guard checks and operation check rules for the current state
+- `git forum policy show` displays the loaded policy in human-readable format
 - `git forum policy lint` performs structural validation of guard transitions
 - All write commands evaluate operation checks from `[creation_rules]`, `[node_rules]`,
   `[revise_rules]`, and `[evidence_rules]`
@@ -1043,7 +1059,7 @@ This manual currently covers:
 - status
 - state
 - verify
-- policy lint / check
+- policy show / lint / check
 - operation checks (creation rules, node rules, revise rules, evidence rules, --force, strict mode)
 - evidence add
 - link
