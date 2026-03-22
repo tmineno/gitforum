@@ -56,6 +56,7 @@ The following capabilities are implemented and tested:
 - Structured `--help` output with grouped categories (RFC-0024)
 - `--edit` flag for interactive body composition via `$EDITOR` (ISSUE-0072)
 - `revise` defaults to body revision; `revise body` and `revise node` still work (ISSUE-0063)
+- Body revision diff: `diff` command with `--rev N` and `--rev N..M` (ISSUE-0094)
 - Post-action next-actions hints printed to stderr (ISSUE-0048)
 - Advisory commit-msg hook: validates thread ID references, auto-installed on init (RFC-0020)
 
@@ -102,7 +103,6 @@ Active issues awaiting implementation:
 
 ### Display and output
 
-- ISSUE-0094 — Body revision diff between revisions (`git forum diff`)
 - ~~ISSUE-0070~~ — Superseded by ISSUE-0110 (implemented)
 - ISSUE-0096 — Expand structured workflow outputs around status, what-next, and verify
 

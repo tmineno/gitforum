@@ -4,6 +4,7 @@ pub mod branch_ops;
 pub mod clock;
 pub mod config;
 pub mod create;
+pub mod diff;
 pub mod doctor;
 pub mod editor;
 pub mod error;
