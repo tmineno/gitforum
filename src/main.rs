@@ -1060,7 +1060,19 @@ fn main() -> Result<(), ForumError> {
         return Ok(());
     }
 
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            let msg = e.to_string();
+            if let Some(sub) = parse_unrecognized_subcommand(&msg) {
+                if let Some(hint) = subcommand_hint(&sub) {
+                    eprintln!("error: unrecognized subcommand '{sub}'\n\n  tip: {hint}\n");
+                    std::process::exit(2);
+                }
+            }
+            e.exit();
+        }
+    };
     if cli.help_llm {
         print!("{}", include_str!("../doc/MANUAL.md"));
         return Ok(());
@@ -2824,6 +2836,34 @@ fn is_forum_initialized(paths: &RepoPaths, git: &GitOps) -> bool {
     git.list_refs("refs/forum/threads/")
         .map(|refs| !refs.is_empty())
         .unwrap_or(false)
+}
+
+/// Extract the subcommand name from a clap "unrecognized subcommand" error message.
+fn parse_unrecognized_subcommand(msg: &str) -> Option<String> {
+    // clap format: "error: unrecognized subcommand 'foo'"
+    let marker = "unrecognized subcommand '";
+    let start = msg.find(marker)? + marker.len();
+    let end = msg[start..].find('\'')?;
+    Some(msg[start..start + end].to_string())
+}
+
+/// Return a custom hint for known unrecognized subcommands.
+fn subcommand_hint(sub: &str) -> Option<&'static str> {
+    match sub {
+        "say" => Some(
+            "\"say\" is an internal module, not a CLI command. \
+             Use node shorthands instead:\n  \
+             git forum claim, question, objection, summary, action, risk, review\n  \
+             or: git forum node add <THREAD> --type <TYPE> \"body\"",
+        ),
+        "revise-body" => Some(
+            "use `git forum revise <THREAD_ID>` to revise a thread body, \
+             or `git forum revise node <NODE_ID> <THREAD_ID>` to revise a node",
+        ),
+        "create" => Some("use `git forum new <kind> \"title\"` to create a thread"),
+        "add" => Some("use `git forum node add <THREAD> --type <TYPE> \"body\"` to add a node"),
+        _ => None,
+    }
 }
 
 fn resolve_thread_body(
