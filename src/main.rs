@@ -2807,7 +2807,7 @@ fn discover_repo_with_init_warning() -> Result<(GitOps, RepoPaths), ForumError> 
     let git = GitOps::discover()?;
     let git_dir = git.git_dir()?;
     let paths = RepoPaths::from_repo_root_and_git_dir(git.root(), &git_dir);
-    if !is_forum_initialized(&paths) {
+    if !is_forum_initialized(&paths, &git) {
         eprintln!(
             "warning: git-forum is not initialized in this repository; run `git forum init` first"
         );
@@ -2815,8 +2815,15 @@ fn discover_repo_with_init_warning() -> Result<(GitOps, RepoPaths), ForumError> 
     Ok((git, paths))
 }
 
-fn is_forum_initialized(paths: &RepoPaths) -> bool {
-    paths.dot_forum.join("policy.toml").is_file() && paths.git_forum.join("logs").is_dir()
+fn is_forum_initialized(paths: &RepoPaths, git: &GitOps) -> bool {
+    // Primary check: config files created by `git forum init`.
+    if paths.dot_forum.join("policy.toml").is_file() && paths.git_forum.join("logs").is_dir() {
+        return true;
+    }
+    // Fallback: forum refs already exist (repo is functional even without explicit init).
+    git.list_refs("refs/forum/threads/")
+        .map(|refs| !refs.is_empty())
+        .unwrap_or(false)
 }
 
 fn resolve_thread_body(
