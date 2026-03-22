@@ -2,25 +2,55 @@
 
 ## Quick Reference
 
+### Canonical forms (preferred in docs, help text, and agent prompts)
+
 ```
 git forum init                                     Initialize forum in repo
-git forum new issue "Title" --body "..."           Create an issue (or --edit)
-git forum ls --kind issue                          List issues
-git forum show ISSUE-0001                          Show issue details
-git forum claim ISSUE-0001 "Implemented X"       Add a claim node
-git forum close ISSUE-0001                         Close an issue
-git forum close ISSUE-0001 --comment "Done"        Close with comment
-git forum pend ISSUE-0001                          Mark issue pending
-git forum new rfc "Title" --body "..."             Create an RFC
-git forum new dec "Title" --body "..."             Create a decision record
-git forum new task "Title"                         Create a task
-git forum accept RFC-0001 --approve human/alice       Accept an RFC
-git forum show RFC-0001 --what-next                Show valid next actions
-git forum node add DEC-0001 --type alternative "Use Memcached"  Add typed node
-git forum evidence add ISSUE-0001 --kind commit --ref HEAD  Add evidence
-git forum status ISSUE-0001                         Check open items
+git forum new <kind> "Title" [--body "..."|--edit] Create a thread
+git forum ls [--kind <kind>]                       List threads
+git forum show <ID>                                Show thread details
+git forum show <ID> --what-next                    Show valid next actions
+git forum state <ID> <state>                       Change thread state
+git forum state <ID> <state> --approve human/alice State change with approval
+git forum state <ID> <state> --comment "Done"      State change with comment
+git forum state bulk --to <state> [--kind <kind>]  Bulk state change
+git forum node add <ID> --type <type> "body"       Add a typed node
+git forum revise <ID> [--body "..."|--edit]        Revise thread body
+git forum revise node <ID> <NODE_ID> --body "..."  Revise a node
+git forum resolve <ID> <NODE_ID>                   Resolve a node
+git forum retract <ID> <NODE_ID>                   Retract a node
+git forum reopen <ID> <NODE_ID>                    Reopen a node
+git forum evidence add <ID> --kind <kind> --ref <ref>  Add evidence
+git forum link <FROM> <TO> --rel <rel>             Link two threads
+git forum branch bind <ID> <branch>                Bind thread to branch
+git forum search <query>                           Search threads and nodes
+git forum status <ID>                              Check open items
+git forum verify <ID>                              Verify guard conditions
 git forum hook install                             Install commit-msg hook
 git forum tui                                      Open interactive TUI
+```
+
+### Shorthands (convenience aliases — produce identical events)
+
+State shorthands:
+```
+git forum close <ID>                               state <ID> closed
+git forum pend <ID>                                state <ID> pending
+git forum accept <ID> --approve human/alice        state <ID> accepted
+git forum propose <ID>                             state <ID> proposed
+git forum reject <ID>                              state <ID> rejected
+git forum deprecate <ID>                           state <ID> deprecated
+```
+
+Node shorthands:
+```
+git forum claim <ID> "body"                        node add <ID> --type claim
+git forum question <ID> "body"                     node add <ID> --type question
+git forum objection <ID> "body"                    node add <ID> --type objection
+git forum summary <ID> "body"                      node add <ID> --type summary
+git forum action <ID> "body"                       node add <ID> --type action
+git forum risk <ID> "body"                         node add <ID> --type risk
+git forum review <ID> "body"                       node add <ID> --type review
 ```
 
 ---
@@ -679,7 +709,7 @@ actions, and open questions.
 
 ### Shorthand commands
 
-All state shorthands are now top-level (verb-first):
+State shorthands are top-level convenience aliases (verb-first):
 
 ```bash
 git forum close ISSUE-0001
@@ -688,7 +718,7 @@ git forum close ISSUE-0001 --link-to RFC-0001 --rel implements
 git forum close ISSUE-0001 --resolve-open-actions
 git forum pend ISSUE-0001                              # mark as pending
 git forum pend ISSUE-0001 --comment "Waiting on review"
-git forum issue reopen ISSUE-0001                     # thread state reopen
+git forum state ISSUE-0001 open                       # thread state reopen
 git forum reject ISSUE-0001 --comment "Won't fix"
 git forum propose RFC-0001
 git forum accept RFC-0001 --approve human/alice
@@ -703,7 +733,7 @@ the state-change event's body), `--link-to` (creates links after transitioning),
 Available shorthands:
 - `close` — transition to `closed` (also accepts `--approve`, `--link-to`, `--rel`, `--resolve-open-actions`)
 - `pend` — transition to `pending` (work-in-progress)
-- `reopen` — reopen resolved/retracted nodes (requires node IDs; for thread state reopen use `git forum {issue,rfc,dec,task} reopen`)
+- `reopen` — reopen resolved/retracted nodes (requires node IDs; for thread state reopen use `git forum state <ID> open`)
 - `reject` — transition to `rejected`
 - `propose` — transition to `proposed`
 - `accept` — transition to `accepted` (also accepts `--approve`, `--link-to`, `--rel`)
