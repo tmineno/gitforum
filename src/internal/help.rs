@@ -99,9 +99,12 @@ pub fn state_transition_map() -> String {
     out.push_str("git forum accept <ID>      # state <ID> accepted\n");
     out.push_str("git forum deprecate <ID>   # state <ID> deprecated\n");
     out.push_str("```\n\n");
+    out.push_str("## Discoverability\n\n");
+    out.push_str("`git forum show <ID>` includes a compact `next:` line and state diagram.\n");
     out.push_str(
-        "Use `git forum show <ID> --what-next` to see valid transitions and guard status.\n",
+        "`git forum show <ID> --what-next` shows guard checks and operation check rules.\n",
     );
+    out.push_str("`git forum policy show` displays the full loaded policy.\n\n");
     out.push_str(
         "`git forum show <ID> --compact` truncates all sections to single-line previews.\n",
     );
