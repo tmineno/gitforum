@@ -387,6 +387,24 @@ allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "desig
 | `one_human_approval` | At least one `human/*` approval must be attached |
 | `has_commit_evidence` | At least one `commit` evidence item must be attached |
 
+#### Kind-scoped guard keys
+
+The `on` field supports an optional thread-kind prefix:
+
+```toml
+[[guards]]
+on = "dec:proposed->accepted"       # only applies to DEC threads
+requires = ["no_open_objections"]
+
+[[guards]]
+on = "proposed->accepted"           # applies to all kinds with this transition
+requires = ["no_open_objections"]
+```
+
+- Scoped format: `"<kind>:<from>-><to>"` — guard fires only for the specified kind.
+- Unscoped format: `"<from>-><to>"` — guard fires for every kind that has the transition.
+- When both a scoped and unscoped guard match, both apply (union semantics).
+
 ### 7.3 Operation checks
 
 Operation checks validate write commands against policy before events are committed.

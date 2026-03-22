@@ -33,10 +33,20 @@ impl std::fmt::Display for GuardRule {
 }
 
 /// A guard entry: a set of rules that must pass for a given transition.
-#[derive(Debug, Clone, Deserialize)]
+///
+/// The `on` field supports an optional kind prefix: `"dec:proposed->accepted"` restricts
+/// the guard to DEC threads. Without a prefix (`"proposed->accepted"`), the guard applies
+/// to all kinds that have the transition.
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct GuardEntry {
     pub on: String,
     pub requires: Vec<GuardRule>,
+    /// Parsed kind scope (None = applies to all kinds).
+    #[serde(skip)]
+    pub kind_scope: Option<ThreadKind>,
+    /// Parsed transition string ("from->to"), without the kind prefix.
+    #[serde(skip)]
+    pub transition: String,
 }
 
 /// Creation rules for a specific thread kind (e.g. rfc, issue).
@@ -98,12 +108,30 @@ impl Policy {
     pub fn load(path: &std::path::Path) -> ForumResult<Self> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| ForumError::Config(format!("cannot read policy.toml: {e}")))?;
-        toml::from_str(&text).map_err(|e| ForumError::Config(format!("invalid policy.toml: {e}")))
+        let mut policy: Self = toml::from_str(&text)
+            .map_err(|e| ForumError::Config(format!("invalid policy.toml: {e}")))?;
+        policy.resolve_guard_scopes();
+        Ok(policy)
     }
 
-    /// Return guards that apply to the given transition string (e.g. `"under-review->accepted"`).
-    pub fn guards_for(&self, transition: &str) -> Vec<&GuardEntry> {
-        self.guards.iter().filter(|g| g.on == transition).collect()
+    /// Parse optional `kind:` prefix from each guard's `on` field and populate
+    /// `kind_scope` and `transition`.
+    pub fn resolve_guard_scopes(&mut self) {
+        for guard in &mut self.guards {
+            let (kind_scope, transition) = parse_guard_on(&guard.on);
+            guard.kind_scope = kind_scope;
+            guard.transition = transition;
+        }
+    }
+
+    /// Return guards that apply to the given transition string for the given thread kind.
+    ///
+    /// Both kind-scoped guards matching `kind` and unscoped (wildcard) guards are returned.
+    pub fn guards_for(&self, transition: &str, kind: ThreadKind) -> Vec<&GuardEntry> {
+        self.guards
+            .iter()
+            .filter(|g| g.transition == transition && g.kind_scope.is_none_or(|k| k == kind))
+            .collect()
     }
 }
 
@@ -129,7 +157,7 @@ pub fn check_guards(
 ) -> Vec<GuardViolation> {
     let transition = format!("{from}->{to}");
     let mut violations = Vec::new();
-    for guard in policy.guards_for(&transition) {
+    for guard in policy.guards_for(&transition, state.kind) {
         for rule in &guard.requires {
             if let Some(v) = evaluate_rule(rule, state, approvals) {
                 violations.push(v);
@@ -258,7 +286,22 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
         .collect();
 
     for guard in &policy.guards {
-        if !guard.on.contains("->") {
+        // Parse optional kind prefix.
+        let (kind_scope, transition_part) = parse_guard_on(&guard.on);
+
+        // Check for unknown kind prefix.
+        if guard.on.contains(':') && kind_scope.is_none() {
+            let prefix = guard.on.split_once(':').map(|(p, _)| p).unwrap_or("");
+            diags.push(LintDiag {
+                level: LintLevel::Warn,
+                message: format!(
+                    "guard {:?}: unknown kind prefix {:?}; valid kinds are: issue, rfc, dec, task",
+                    guard.on, prefix,
+                ),
+            });
+        }
+
+        if !transition_part.contains("->") {
             diags.push(LintDiag {
                 level: LintLevel::Warn,
                 message: format!(
@@ -269,7 +312,7 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
             continue;
         }
 
-        let parts: Vec<&str> = guard.on.splitn(2, "->").collect();
+        let parts: Vec<&str> = transition_part.splitn(2, "->").collect();
         let (from, to) = (parts[0], parts[1]);
 
         // Check for undefined states.
@@ -296,6 +339,24 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
             });
         }
 
+        // For kind-scoped guards, validate the transition against the specified kind.
+        if let Some(scoped_kind) = kind_scope {
+            if all_states.contains(from)
+                && all_states.contains(to)
+                && !state_machine::is_valid_transition(scoped_kind, from, to)
+            {
+                diags.push(LintDiag {
+                    level: LintLevel::Warn,
+                    message: format!(
+                        "guard {:?}: not a valid transition for {}",
+                        guard.on,
+                        kind_name(&scoped_kind),
+                    ),
+                });
+            }
+            continue; // scoped guards don't need multi-kind check
+        }
+
         // Check which kinds this transition applies to and note if multiple.
         let matching_kinds: Vec<&str> = all_kinds
             .iter()
@@ -307,9 +368,10 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
                 level: LintLevel::Note,
                 message: format!(
                     "guard {:?}: transition applies to multiple thread kinds ({}); \
-                     use kind-unique states if you need different rules per kind",
+                     consider using kind-scoped keys (e.g. \"issue:{}\") if you need different rules per kind",
                     guard.on,
                     matching_kinds.join(", "),
+                    guard.on,
                 ),
             });
         } else if matching_kinds.is_empty() && all_states.contains(from) && all_states.contains(to)
@@ -484,6 +546,31 @@ fn lint_allow_list_coverage(
     }
 }
 
+/// Parse the `on` field of a guard entry into an optional kind scope and the transition string.
+///
+/// Formats:
+/// - `"from->to"` → `(None, "from->to")`
+/// - `"dec:from->to"` → `(Some(ThreadKind::Dec), "from->to")`
+/// - Invalid kind prefix → `(None, original)` (lint will catch it)
+fn parse_guard_on(on: &str) -> (Option<ThreadKind>, String) {
+    if let Some((prefix, rest)) = on.split_once(':') {
+        if let Some(kind) = parse_kind(prefix) {
+            return (Some(kind), rest.to_string());
+        }
+    }
+    (None, on.to_string())
+}
+
+fn parse_kind(s: &str) -> Option<ThreadKind> {
+    match s {
+        "issue" => Some(ThreadKind::Issue),
+        "rfc" => Some(ThreadKind::Rfc),
+        "dec" => Some(ThreadKind::Dec),
+        "task" => Some(ThreadKind::Task),
+        _ => None,
+    }
+}
+
 fn kind_name(kind: &ThreadKind) -> &'static str {
     match kind {
         ThreadKind::Issue => "issue",
@@ -591,26 +678,40 @@ pub fn render_policy_show(policy: &Policy) -> String {
 mod tests {
     use super::*;
 
-    fn minimal_policy() -> Policy {
-        Policy {
-            guards: vec![GuardEntry {
-                on: "under-review->accepted".into(),
-                requires: vec![
-                    GuardRule::NoOpenObjections,
-                    GuardRule::NoOpenActions,
-                    GuardRule::AtLeastOneSummary,
-                    GuardRule::OneHumanApproval,
-                ],
-            }],
+    fn make_policy(guards: Vec<GuardEntry>) -> Policy {
+        let mut p = Policy {
+            guards,
             ..Default::default()
-        }
+        };
+        p.resolve_guard_scopes();
+        p
+    }
+
+    fn minimal_policy() -> Policy {
+        make_policy(vec![GuardEntry {
+            on: "under-review->accepted".into(),
+            requires: vec![
+                GuardRule::NoOpenObjections,
+                GuardRule::NoOpenActions,
+                GuardRule::AtLeastOneSummary,
+                GuardRule::OneHumanApproval,
+            ],
+            ..Default::default()
+        }])
     }
 
     #[test]
     fn guards_for_matches_transition() {
         let policy = minimal_policy();
-        assert_eq!(policy.guards_for("under-review->accepted").len(), 1);
-        assert!(policy.guards_for("draft->under-review").is_empty());
+        assert_eq!(
+            policy
+                .guards_for("under-review->accepted", ThreadKind::Rfc)
+                .len(),
+            1
+        );
+        assert!(policy
+            .guards_for("draft->under-review", ThreadKind::Rfc)
+            .is_empty());
     }
 
     #[test]
@@ -621,13 +722,11 @@ mod tests {
 
     #[test]
     fn lint_invalid_transition_reports_diag() {
-        let policy = Policy {
-            guards: vec![GuardEntry {
-                on: "badvalue".into(),
-                requires: vec![],
-            }],
+        let policy = make_policy(vec![GuardEntry {
+            on: "badvalue".into(),
+            requires: vec![],
             ..Default::default()
-        };
+        }]);
         assert!(!lint_policy(&policy).is_empty());
     }
 
@@ -654,13 +753,11 @@ mod tests {
 
     #[test]
     fn lint_unknown_guard_from_state() {
-        let policy = Policy {
-            guards: vec![GuardEntry {
-                on: "bogus->closed".into(),
-                requires: vec![],
-            }],
+        let policy = make_policy(vec![GuardEntry {
+            on: "bogus->closed".into(),
+            requires: vec![],
             ..Default::default()
-        };
+        }]);
         let diags = lint_policy(&policy);
         assert!(diags
             .iter()
@@ -669,13 +766,11 @@ mod tests {
 
     #[test]
     fn lint_unknown_guard_to_state() {
-        let policy = Policy {
-            guards: vec![GuardEntry {
-                on: "open->fantasy".into(),
-                requires: vec![],
-            }],
+        let policy = make_policy(vec![GuardEntry {
+            on: "open->fantasy".into(),
+            requires: vec![],
             ..Default::default()
-        };
+        }]);
         let diags = lint_policy(&policy);
         assert!(diags
             .iter()
@@ -685,13 +780,11 @@ mod tests {
     #[test]
     fn lint_notes_multi_kind_transition() {
         // "open->closed" applies to both issue and task
-        let policy = Policy {
-            guards: vec![GuardEntry {
-                on: "open->closed".into(),
-                requires: vec![GuardRule::NoOpenActions],
-            }],
+        let policy = make_policy(vec![GuardEntry {
+            on: "open->closed".into(),
+            requires: vec![GuardRule::NoOpenActions],
             ..Default::default()
-        };
+        }]);
         let diags = lint_policy(&policy);
         let multi = diags
             .iter()
@@ -699,6 +792,10 @@ mod tests {
         assert!(multi.is_some());
         assert_eq!(multi.unwrap().level, LintLevel::Note);
         assert!(multi.unwrap().message.contains("issue"));
+        assert!(
+            multi.unwrap().message.contains("kind-scoped keys"),
+            "should suggest kind-scoped keys"
+        );
     }
 
     #[test]
@@ -714,13 +811,11 @@ mod tests {
     #[test]
     fn lint_invalid_transition_for_any_kind() {
         // "draft->closed" is valid states but not a valid transition
-        let policy = Policy {
-            guards: vec![GuardEntry {
-                on: "draft->closed".into(),
-                requires: vec![],
-            }],
+        let policy = make_policy(vec![GuardEntry {
+            on: "draft->closed".into(),
+            requires: vec![],
             ..Default::default()
-        };
+        }]);
         let diags = lint_policy(&policy);
         assert!(diags.iter().any(|d| d.level == LintLevel::Warn
             && d.message
@@ -897,5 +992,148 @@ mod tests {
             rfc_gap.message.contains("draft"),
             "should suggest RFC non-terminal states"
         );
+    }
+
+    // ---- kind-scoped guard keys (ISSUE-0097) ----
+
+    #[test]
+    fn guards_for_scoped_matches_only_specified_kind() {
+        let policy = make_policy(vec![GuardEntry {
+            on: "issue:open->closed".into(),
+            requires: vec![GuardRule::NoOpenActions],
+            ..Default::default()
+        }]);
+        assert_eq!(
+            policy.guards_for("open->closed", ThreadKind::Issue).len(),
+            1
+        );
+        assert!(
+            policy
+                .guards_for("open->closed", ThreadKind::Task)
+                .is_empty(),
+            "scoped guard should not match other kinds"
+        );
+    }
+
+    #[test]
+    fn guards_for_unscoped_matches_all_kinds() {
+        let policy = make_policy(vec![GuardEntry {
+            on: "open->closed".into(),
+            requires: vec![GuardRule::NoOpenActions],
+            ..Default::default()
+        }]);
+        assert_eq!(
+            policy.guards_for("open->closed", ThreadKind::Issue).len(),
+            1
+        );
+        assert_eq!(policy.guards_for("open->closed", ThreadKind::Task).len(), 1);
+    }
+
+    #[test]
+    fn guards_for_union_of_scoped_and_unscoped() {
+        let policy = make_policy(vec![
+            GuardEntry {
+                on: "open->closed".into(),
+                requires: vec![GuardRule::NoOpenActions],
+                ..Default::default()
+            },
+            GuardEntry {
+                on: "issue:open->closed".into(),
+                requires: vec![GuardRule::HasCommitEvidence],
+                ..Default::default()
+            },
+        ]);
+        // Issue gets both guards (union)
+        assert_eq!(
+            policy.guards_for("open->closed", ThreadKind::Issue).len(),
+            2
+        );
+        // Task gets only the unscoped guard
+        assert_eq!(policy.guards_for("open->closed", ThreadKind::Task).len(), 1);
+    }
+
+    #[test]
+    fn lint_scoped_guard_valid() {
+        let policy = make_policy(vec![GuardEntry {
+            on: "dec:proposed->accepted".into(),
+            requires: vec![GuardRule::NoOpenObjections],
+            ..Default::default()
+        }]);
+        let diags = lint_policy(&policy);
+        let warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| d.level == LintLevel::Warn)
+            .collect();
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    }
+
+    #[test]
+    fn lint_scoped_guard_unknown_kind() {
+        let policy = make_policy(vec![GuardEntry {
+            on: "boguskind:open->closed".into(),
+            requires: vec![],
+            ..Default::default()
+        }]);
+        let diags = lint_policy(&policy);
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.level == LintLevel::Warn && d.message.contains("unknown kind prefix")),
+            "should warn about unknown kind prefix: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn lint_scoped_guard_invalid_transition_for_kind() {
+        // "open->closed" is not a valid DEC transition
+        let policy = make_policy(vec![GuardEntry {
+            on: "dec:open->closed".into(),
+            requires: vec![],
+            ..Default::default()
+        }]);
+        let diags = lint_policy(&policy);
+        assert!(
+            diags.iter().any(|d| d.level == LintLevel::Warn
+                && d.message.contains("not a valid transition for dec")),
+            "should warn about invalid transition for kind: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn lint_scoped_guard_skips_multi_kind_note() {
+        // Scoped guard should not trigger multi-kind note
+        let policy = make_policy(vec![GuardEntry {
+            on: "issue:open->closed".into(),
+            requires: vec![GuardRule::NoOpenActions],
+            ..Default::default()
+        }]);
+        let diags = lint_policy(&policy);
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.message.contains("multiple thread kinds")),
+            "scoped guard should not trigger multi-kind note"
+        );
+    }
+
+    #[test]
+    fn parse_guard_on_unscoped() {
+        let (kind, transition) = parse_guard_on("open->closed");
+        assert!(kind.is_none());
+        assert_eq!(transition, "open->closed");
+    }
+
+    #[test]
+    fn parse_guard_on_scoped() {
+        let (kind, transition) = parse_guard_on("dec:proposed->accepted");
+        assert_eq!(kind, Some(ThreadKind::Dec));
+        assert_eq!(transition, "proposed->accepted");
+    }
+
+    #[test]
+    fn parse_guard_on_unknown_kind_prefix() {
+        let (kind, transition) = parse_guard_on("bogus:open->closed");
+        assert!(kind.is_none());
+        assert_eq!(transition, "bogus:open->closed");
     }
 }

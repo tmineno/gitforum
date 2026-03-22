@@ -67,18 +67,25 @@ fn move_rfc_to_under_review(git: &GitOps, thread_id: &str) {
     .unwrap();
 }
 
-fn policy_with_guards() -> Policy {
-    Policy {
-        guards: vec![GuardEntry {
-            on: "under-review->accepted".into(),
-            requires: vec![
-                GuardRule::NoOpenObjections,
-                GuardRule::AtLeastOneSummary,
-                GuardRule::OneHumanApproval,
-            ],
-        }],
+fn make_policy(guards: Vec<GuardEntry>) -> Policy {
+    let mut p = Policy {
+        guards,
         ..Default::default()
-    }
+    };
+    p.resolve_guard_scopes();
+    p
+}
+
+fn policy_with_guards() -> Policy {
+    make_policy(vec![GuardEntry {
+        on: "under-review->accepted".into(),
+        requires: vec![
+            GuardRule::NoOpenObjections,
+            GuardRule::AtLeastOneSummary,
+            GuardRule::OneHumanApproval,
+        ],
+        ..Default::default()
+    }])
 }
 
 fn empty_policy() -> Policy {
@@ -371,13 +378,11 @@ fn change_state_fails_guard_no_open_objections() {
 
     // Policy requires no_open_objections
 
-    let policy = Policy {
-        guards: vec![GuardEntry {
-            on: "under-review->accepted".into(),
-            requires: vec![GuardRule::NoOpenObjections],
-        }],
+    let policy = make_policy(vec![GuardEntry {
+        on: "under-review->accepted".into(),
+        requires: vec![GuardRule::NoOpenObjections],
         ..Default::default()
-    };
+    }]);
 
     let result = state_change::change_state(
         &git,
@@ -454,13 +459,11 @@ fn change_state_issue_close_fails_guard_no_open_actions() {
     )
     .unwrap();
 
-    let policy = Policy {
-        guards: vec![GuardEntry {
-            on: "open->closed".into(),
-            requires: vec![GuardRule::NoOpenActions],
-        }],
+    let policy = make_policy(vec![GuardEntry {
+        on: "open->closed".into(),
+        requires: vec![GuardRule::NoOpenActions],
         ..Default::default()
-    };
+    }]);
 
     let err = state_change::change_state(
         &git,
@@ -501,13 +504,11 @@ fn change_state_issue_close_can_resolve_open_actions() {
     )
     .unwrap();
 
-    let policy = Policy {
-        guards: vec![GuardEntry {
-            on: "open->closed".into(),
-            requires: vec![GuardRule::NoOpenActions],
-        }],
+    let policy = make_policy(vec![GuardEntry {
+        on: "open->closed".into(),
+        requires: vec![GuardRule::NoOpenActions],
         ..Default::default()
-    };
+    }]);
 
     state_change::change_state(
         &git,
@@ -593,13 +594,11 @@ fn verify_reports_open_action_violation_for_issue_close() {
     )
     .unwrap();
 
-    let policy = Policy {
-        guards: vec![GuardEntry {
-            on: "open->closed".into(),
-            requires: vec![GuardRule::NoOpenActions],
-        }],
+    let policy = make_policy(vec![GuardEntry {
+        on: "open->closed".into(),
+        requires: vec![GuardRule::NoOpenActions],
         ..Default::default()
-    };
+    }]);
 
     let report = verify::verify_thread(&git, &thread_id, &policy).unwrap();
     assert!(!report.passed());
@@ -898,13 +897,11 @@ fn change_state_issue_close_fails_guard_has_commit_evidence() {
     )
     .unwrap();
 
-    let policy = Policy {
-        guards: vec![GuardEntry {
-            on: "open->closed".into(),
-            requires: vec![GuardRule::HasCommitEvidence],
-        }],
+    let policy = make_policy(vec![GuardEntry {
+        on: "open->closed".into(),
+        requires: vec![GuardRule::HasCommitEvidence],
         ..Default::default()
-    };
+    }]);
 
     let err = state_change::change_state(
         &git,
@@ -971,13 +968,11 @@ fn change_state_issue_close_passes_with_commit_evidence() {
     )
     .unwrap();
 
-    let policy = Policy {
-        guards: vec![GuardEntry {
-            on: "open->closed".into(),
-            requires: vec![GuardRule::HasCommitEvidence],
-        }],
+    let policy = make_policy(vec![GuardEntry {
+        on: "open->closed".into(),
+        requires: vec![GuardRule::HasCommitEvidence],
         ..Default::default()
-    };
+    }]);
 
     state_change::change_state(
         &git,
@@ -1003,7 +998,10 @@ fn policy_loads_from_toml_file() {
     let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap();
     // Default policy has one guard entry for under-review->accepted
     assert!(!policy.guards.is_empty());
-    let guard = policy.guards_for("under-review->accepted");
+    let guard = policy.guards_for(
+        "under-review->accepted",
+        git_forum::internal::event::ThreadKind::Rfc,
+    );
     assert!(!guard.is_empty());
 }
 
@@ -1018,6 +1016,128 @@ fn policy_lint_on_default_policy_passes() {
         .filter(|d| d.level == LintLevel::Warn)
         .collect();
     assert!(warnings.is_empty(), "lint warnings: {warnings:?}");
+}
+
+// ---- kind-scoped guard keys (ISSUE-0097) ----
+
+#[test]
+fn scoped_guard_only_fires_for_specified_kind() {
+    let (_repo, git, _paths) = setup();
+
+    // Create an issue
+    let issue_id = create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Test issue",
+        Some("body"),
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
+    // Create a task
+    let task_id = create::create_thread(
+        &git,
+        ThreadKind::Task,
+        "Test task",
+        Some("body"),
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
+    // Policy: issue:open->closed requires has_commit_evidence, but NOT for task
+    let policy = make_policy(vec![GuardEntry {
+        on: "issue:open->closed".into(),
+        requires: vec![GuardRule::HasCommitEvidence],
+        ..Default::default()
+    }]);
+
+    // Issue close should be blocked (no commit evidence)
+    let result = state_change::change_state(
+        &git,
+        &issue_id,
+        "closed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &policy,
+        state_change::StateChangeOptions::default(),
+    );
+    assert!(
+        result.is_err(),
+        "issue close should be blocked by scoped guard"
+    );
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("has_commit_evidence"),
+        "error should mention the guard rule"
+    );
+
+    // Task close should succeed (scoped guard doesn't apply)
+    let result = state_change::change_state(
+        &git,
+        &task_id,
+        "closed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &policy,
+        state_change::StateChangeOptions::default(),
+    );
+    assert!(
+        result.is_ok(),
+        "task close should not be blocked by issue-scoped guard"
+    );
+}
+
+#[test]
+fn union_of_scoped_and_unscoped_guards() {
+    let (_repo, git, _paths) = setup();
+
+    let issue_id = create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Test issue",
+        Some("body"),
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
+    // Policy: unscoped open->closed requires no_open_actions,
+    // plus issue-scoped requires has_commit_evidence (both apply to issues)
+    let policy = make_policy(vec![
+        GuardEntry {
+            on: "open->closed".into(),
+            requires: vec![GuardRule::NoOpenActions],
+            ..Default::default()
+        },
+        GuardEntry {
+            on: "issue:open->closed".into(),
+            requires: vec![GuardRule::HasCommitEvidence],
+            ..Default::default()
+        },
+    ]);
+
+    let result = state_change::change_state(
+        &git,
+        &issue_id,
+        "closed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &policy,
+        state_change::StateChangeOptions::default(),
+    );
+    assert!(result.is_err(), "issue close should be blocked");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("has_commit_evidence"),
+        "error should include scoped guard violation"
+    );
 }
 
 // ---- RFC deprecated state ----
