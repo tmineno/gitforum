@@ -13,6 +13,7 @@ use crate::internal::git_ops::GitOps;
 use crate::internal::index;
 use crate::internal::reindex;
 
+use super::perf::Perf;
 use super::state::{
     apply_node_status_action, auto_link_candidates, link_relation_labels, link_target_kind_labels,
     link_target_kind_values, node_type_labels, node_type_values, open_node_detail,
@@ -30,6 +31,7 @@ pub(super) fn handle_key(
     git: &GitOps,
     conn: &rusqlite::Connection,
     db_path: &Path,
+    perf: &mut Perf,
 ) -> ForumResult<bool> {
     // Ctrl-C always quits
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
@@ -65,7 +67,7 @@ pub(super) fn handle_key(
                     }
                     KeyCode::Enter => {
                         if let Some(id) = app.selected_thread_id() {
-                            open_thread_detail(app, git, &id, None)?;
+                            open_thread_detail(app, git, &id, None, perf)?;
                         }
                     }
                     _ => {}
@@ -110,7 +112,7 @@ pub(super) fn handle_key(
             KeyCode::Char('r') => {
                 let selected = app.selected_node_id();
                 reindex::run_reindex(git, db_path)?;
-                open_thread_detail(app, git, &thread_id, selected.as_deref())?;
+                open_thread_detail(app, git, &thread_id, selected.as_deref(), perf)?;
             }
             KeyCode::Enter => {
                 if let Some(node_id) = app.selected_node_id() {
@@ -121,7 +123,7 @@ pub(super) fn handle_key(
         },
         View::NodeDetail { thread_id, node_id } => match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
-                open_thread_detail(app, git, &thread_id, Some(&node_id))?;
+                open_thread_detail(app, git, &thread_id, Some(&node_id), perf)?;
             }
             KeyCode::Char('c') => app.begin_create_node(&thread_id),
             KeyCode::Char('l') => app.begin_create_link_from_node(&thread_id, &node_id),
@@ -164,19 +166,19 @@ pub(super) fn handle_key(
             _ => {}
         },
         View::CreateThread => {
-            handle_create_thread_key(app, key, git, conn, db_path)?;
+            handle_create_thread_key(app, key, git, conn, db_path, perf)?;
         }
         View::EditThreadBody => {
             handle_edit_thread_body_key(app, key)?;
         }
         View::CreateNode { thread_id } => {
-            handle_create_node_key(app, key, git, conn, db_path, &thread_id)?;
+            handle_create_node_key(app, key, git, conn, db_path, &thread_id, perf)?;
         }
         View::EditNodeBody { thread_id } => {
             handle_edit_node_body_key(app, key, &thread_id)?;
         }
         View::CreateLink { thread_id, origin } => {
-            handle_create_link_key(app, key, git, &thread_id, &origin)?;
+            handle_create_link_key(app, key, git, &thread_id, &origin, perf)?;
         }
     }
     Ok(false)
@@ -211,6 +213,7 @@ pub(super) fn handle_mouse(
     git: &GitOps,
     _conn: &rusqlite::Connection,
     _db_path: &Path,
+    perf: &mut Perf,
 ) -> ForumResult<bool> {
     match app.view.clone() {
         View::List => match mouse.kind {
@@ -247,7 +250,7 @@ pub(super) fn handle_mouse(
                             app.table_state.select(Some(index));
                             if is_double {
                                 if let Some(thread_id) = app.selected_thread_id() {
-                                    open_thread_detail(app, git, &thread_id, None)?;
+                                    open_thread_detail(app, git, &thread_id, None, perf)?;
                                 }
                             }
                         }
@@ -360,7 +363,7 @@ pub(super) fn handle_mouse(
                 {
                     let tid = thread_id.clone();
                     let selected = app.selected_node_id();
-                    open_thread_detail(app, git, &tid, selected.as_deref())?;
+                    open_thread_detail(app, git, &tid, selected.as_deref(), perf)?;
                 }
             }
             MouseEventKind::ScrollDown => {
@@ -387,7 +390,7 @@ pub(super) fn handle_mouse(
                     .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
                 {
                     app.thread_form.field = ThreadFormField::Submit;
-                    submit_create_thread(app, git, _conn, _db_path)?;
+                    submit_create_thread(app, git, _conn, _db_path, perf)?;
                 } else if let Some(area) = app.ui_rects.dropdown {
                     if let Some(index) = dropdown_item_at(area, mouse.row) {
                         let max = thread_kind_labels().len();
@@ -423,7 +426,7 @@ pub(super) fn handle_mouse(
                     .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
                 {
                     app.node_form.field = NodeFormField::Submit;
-                    submit_create_node(app, git, _conn, _db_path, &thread_id)?;
+                    submit_create_node(app, git, _conn, _db_path, &thread_id, perf)?;
                 } else if let Some(area) = app.ui_rects.dropdown {
                     if let Some(index) = dropdown_item_at(area, mouse.row) {
                         let max = node_type_labels().len();
@@ -457,7 +460,7 @@ pub(super) fn handle_mouse(
                     .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
                 {
                     app.link_form.field = LinkFormField::Submit;
-                    submit_create_link(app, git, &thread_id, &origin)?;
+                    submit_create_link(app, git, &thread_id, &origin, perf)?;
                 } else if let Some(area) = app.ui_rects.dropdown {
                     if let Some(index) = dropdown_item_at(area, mouse.row) {
                         match app.link_form.field {
@@ -581,6 +584,7 @@ pub(super) fn handle_create_thread_key(
     git: &GitOps,
     conn: &rusqlite::Connection,
     db_path: &Path,
+    perf: &mut Perf,
 ) -> ForumResult<()> {
     match key.code {
         KeyCode::Esc => app.view = View::List,
@@ -615,7 +619,7 @@ pub(super) fn handle_create_thread_key(
         },
         KeyCode::Enter => match app.thread_form.field {
             ThreadFormField::Body => app.view = View::EditThreadBody,
-            ThreadFormField::Submit => submit_create_thread(app, git, conn, db_path)?,
+            ThreadFormField::Submit => submit_create_thread(app, git, conn, db_path, perf)?,
             ThreadFormField::Kind | ThreadFormField::Title => {}
         },
         _ => {}
@@ -660,9 +664,10 @@ pub(super) fn handle_create_node_key(
     conn: &rusqlite::Connection,
     db_path: &Path,
     thread_id: &str,
+    perf: &mut Perf,
 ) -> ForumResult<()> {
     match key.code {
-        KeyCode::Esc => open_thread_detail(app, git, thread_id, None)?,
+        KeyCode::Esc => open_thread_detail(app, git, thread_id, None, perf)?,
         KeyCode::Tab => {
             app.node_form.field = match app.node_form.field {
                 NodeFormField::Type => NodeFormField::Body,
@@ -687,7 +692,7 @@ pub(super) fn handle_create_node_key(
                     thread_id: thread_id.to_string(),
                 };
             } else if app.node_form.field == NodeFormField::Submit {
-                submit_create_node(app, git, conn, db_path, thread_id)?;
+                submit_create_node(app, git, conn, db_path, thread_id, perf)?;
             }
         }
         _ => {}
@@ -736,9 +741,10 @@ pub(super) fn handle_create_link_key(
     git: &GitOps,
     thread_id: &str,
     origin: &LinkOrigin,
+    perf: &mut Perf,
 ) -> ForumResult<()> {
     match key.code {
-        KeyCode::Esc => super::state::return_from_link_form(app, git, thread_id, origin)?,
+        KeyCode::Esc => super::state::return_from_link_form(app, git, thread_id, origin, perf)?,
         KeyCode::Tab => {
             app.link_form.field = match app.link_form.field {
                 LinkFormField::Relation => LinkFormField::TargetKind,
@@ -804,7 +810,7 @@ pub(super) fn handle_create_link_key(
         }
         KeyCode::Enter => {
             if app.link_form.field == LinkFormField::Submit {
-                submit_create_link(app, git, thread_id, origin)?;
+                submit_create_link(app, git, thread_id, origin, perf)?;
             }
         }
         _ => {}

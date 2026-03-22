@@ -232,6 +232,35 @@ pub fn list_threads(conn: &Connection) -> ForumResult<Vec<ThreadRow>> {
     collect_rows(&mut stmt, [])
 }
 
+/// Return a map of thread_id -> tip_sha for all indexed threads.
+pub fn thread_tip_shas(
+    conn: &Connection,
+) -> ForumResult<std::collections::HashMap<String, String>> {
+    let mut stmt = conn
+        .prepare("SELECT id, tip_sha FROM threads")
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+    let mut map = std::collections::HashMap::new();
+    for row in rows {
+        let (id, sha) = row.map_err(|e| ForumError::Repo(e.to_string()))?;
+        map.insert(id, sha);
+    }
+    Ok(map)
+}
+
+/// Delete a thread and its nodes from the index.
+pub fn delete_thread(conn: &Connection, thread_id: &str) -> ForumResult<()> {
+    conn.execute("DELETE FROM nodes WHERE thread_id = ?1", params![thread_id])
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+    conn.execute("DELETE FROM threads WHERE id = ?1", params![thread_id])
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+    Ok(())
+}
+
 /// Return thread rows whose indexed thread or current node fields match `query`.
 ///
 /// Preconditions: `conn` is open with schema applied.
