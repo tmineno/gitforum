@@ -440,7 +440,8 @@ fn incremental_refresh(
             if let Ok(state) = thread::replay_thread(git, thread_id) {
                 perf.record("replay_thread", Some(thread_id), rt.elapsed());
                 let _ = index::upsert_thread(conn, &state)
-                    .and_then(|_| index::replace_nodes_for_thread(conn, &state));
+                    .and_then(|_| index::replace_nodes_for_thread(conn, &state))
+                    .and_then(|_| index::replace_evidence_for_thread(conn, &state));
             }
             changed = true;
         }

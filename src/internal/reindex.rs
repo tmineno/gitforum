@@ -31,6 +31,7 @@ pub fn run_reindex(git: &GitOps, db_path: &Path) -> ForumResult<ReindexReport> {
             Ok(state) => {
                 if let Err(e) = index::upsert_thread(&conn, &state)
                     .and_then(|_| index::replace_nodes_for_thread(&conn, &state))
+                    .and_then(|_| index::replace_evidence_for_thread(&conn, &state))
                 {
                     errors.push((id.clone(), e));
                 } else {
