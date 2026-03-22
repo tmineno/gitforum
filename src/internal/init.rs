@@ -127,9 +127,37 @@ const DEFAULT_ACTORS: &str = r#"# git-forum actors
 "#;
 
 const TEMPLATE_ISSUE: &str = "# {title}\n";
-const TEMPLATE_RFC: &str = "# {title}\n";
-const TEMPLATE_DEC: &str = "# {title}\n";
-const TEMPLATE_TASK: &str = "# {title}\n";
+const TEMPLATE_RFC: &str = "\
+# {title}
+
+## Goal
+
+## Non-goals
+
+## Context
+
+## Proposal
+";
+const TEMPLATE_DEC: &str = "\
+# {title}
+
+## Context
+
+## Decision
+
+## Rationale
+
+## Impact
+";
+const TEMPLATE_TASK: &str = "\
+# {title}
+
+## Background
+
+## Acceptance criteria
+
+## Exceptions
+";
 
 /// Initialize `.forum/` and `.git/forum/` structure.
 ///
