@@ -783,7 +783,7 @@ git forum policy check RFC-0001 --transition under-review->accepted
 ```
 
 - `verify`: checks whether the thread already satisfies guard conditions for its next forward transition
-- `policy lint`: validates `.forum/policy.toml`
+- `policy lint`: validates `.forum/policy.toml` — checks guard syntax, unknown states, invalid transitions, and warns when allow-lists miss entire thread kinds
 - `policy check`: dry-runs guard evaluation for a specific transition
 
 ### The policy file
@@ -912,7 +912,7 @@ printed to stderr regardless of `--force`.
 
 - `git forum state ...` evaluates guard rules from `[[guards]]`
 - `git forum verify` evaluates those same guard rules in read-only mode
-- `git forum policy lint` performs structural validation of guard transitions
+- `git forum policy lint` validates guard transitions and detects semantic gaps in operation allow-lists
 - All write commands evaluate operation checks from `[creation_rules]`, `[node_rules]`,
   `[revise_rules]`, and `[evidence_rules]`
 
