@@ -31,8 +31,82 @@ use git_forum::internal::thread;
 use git_forum::internal::tui as forum_tui;
 use git_forum::internal::verify;
 
+const GROUPED_HELP: &str = "\
+These are common git-forum commands:
+
+start a repository
+   init        Initialize a git-forum repository
+   doctor      Check repository health
+   reindex     Rebuild local index from Git refs
+
+create and browse threads
+   new         Create a new thread
+   ls          List threads (filter by kind, status, or branch)
+   show        Show thread details
+   search      Search threads and nodes
+   status      Show unresolved items for a thread
+
+structured discussion (see also: git forum node add --help)
+   node add    Add a typed discussion node
+   revise      Revise thread body or node body
+   retract     Retract a node (soft-delete)
+   resolve     Resolve a node (mark as addressed)
+   reopen      Reopen a resolved/retracted node
+
+state transitions (see also: git forum state --help)
+   state       Transition a thread to a new state
+
+evidence and links
+   evidence    Add evidence to a thread
+   link        Link two threads
+   branch      Bind or clear a thread's branch scope
+
+policy and verification
+   verify      Check guard conditions for the next transition
+   policy      Policy sub-commands (lint, check)
+
+hooks and maintenance
+   hook        Manage the commit-msg hook
+
+interactive
+   tui         Open the interactive TUI
+
+import / export
+   import      Import from external sources
+   export      Export to external platforms
+
+state shorthands (convenience aliases for 'state <ID> <target>')
+   close       state <ID> closed
+   pend        state <ID> pending
+   accept      state <ID> accepted
+   propose     state <ID> proposed
+   reject      state <ID> rejected
+   deprecate   state <ID> deprecated
+
+node shorthands (convenience aliases for 'node add <ID> --type <type>')
+   claim       node add --type claim
+   question    node add --type question
+   objection   node add --type objection
+   summary     node add --type summary
+   action      node add --type action
+   risk        node add --type risk
+   review      node add --type review
+
+'git forum <command> --help' for more on a specific command.
+'git forum --help-llm' for the full manual.";
+
 #[derive(Parser)]
-#[command(name = "git-forum", about = "Structured discussion in Git")]
+#[command(
+    name = "git-forum",
+    about = "Structured discussion in Git",
+    help_template = "\
+{about-with-newline}
+Usage: {usage}
+
+{options}
+{after-help}",
+    after_help = GROUPED_HELP,
+)]
 struct Cli {
     #[arg(long = "help-llm", help = "Print the full manual for LLMs and exit")]
     help_llm: bool,
