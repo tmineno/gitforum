@@ -4,9 +4,41 @@ use super::config::RepoPaths;
 use super::error::ForumResult;
 
 const DEFAULT_POLICY: &str = r#"# git-forum default policy
-# See doc/spec/SPEC.md for details.
+#
+# This file has two sections:
+#   1. Transition guards — conditions that must be met before a state change.
+#   2. Operation checks  — rules about what is allowed in each state.
+#
+# IMPORTANT: Transitions are GLOBAL, not scoped to a thread kind.
+# "open->closed" applies to every kind that has both states (issue AND task).
+# If you need different rules per kind, create separate guard entries and
+# use state names unique to that kind (e.g. "designing->implementing" is
+# task-only because no other kind uses those states).
+#
+# State names per thread kind:
+#   issue: open, pending, closed, rejected
+#   rfc:   draft, proposed, under-review, accepted, rejected, deprecated
+#   dec:   proposed, accepted, rejected, deprecated
+#   task:  open, designing, implementing, reviewing, closed, rejected
+#
+# Shared states: "rejected" appears in all kinds; "open"/"closed" in issue
+# and task; "proposed"/"accepted"/"deprecated" in rfc and dec.
 
-# --- Transition guards ---
+# ═══════════════════════════════════════════════════════════════════════
+# 1. TRANSITION GUARDS
+# ═══════════════════════════════════════════════════════════════════════
+# Each [[guards]] block defines conditions ("requires") that must ALL pass
+# before the transition in "on" is allowed.
+#
+# A guard violation is always an error — the transition is blocked.
+# This is different from operation checks (below), which can be warnings.
+#
+# Available guard rules:
+#   no_open_objections  — all objection nodes must be resolved/retracted
+#   no_open_actions     — all action nodes must be resolved/retracted
+#   at_least_one_summary — thread must have a non-retracted summary node
+#   one_human_approval  — at least one human/… actor approval required
+#   has_commit_evidence  — thread must have commit-type evidence attached
 
 [[guards]]
 on = "under-review->accepted"
@@ -29,12 +61,24 @@ requires = ["no_open_actions"]
 # on = "open->closed"
 # requires = ["has_commit_evidence"]
 
-# --- Operation checks ---
+# ═══════════════════════════════════════════════════════════════════════
+# 2. OPERATION CHECKS
+# ═══════════════════════════════════════════════════════════════════════
+# Operation checks validate creation, node posting, revision, and evidence
+# operations. Unlike guards, checks have two severity levels:
+#
+#   strict = false (default) — violations are WARNINGS; use --force to bypass
+#   strict = true            — violations are ERRORS; operation is blocked
+#
+# State names in operation checks (node_rules, revise_rules, evidence_rules)
+# are matched globally, just like guard transitions. A state name like
+# "closed" applies to any thread kind that uses that state.
 
 [checks]
 strict = false
 
 # Creation rules: what is required when creating a new thread.
+# Keyed by thread kind (rfc, issue, dec, task).
 [creation_rules.rfc]
 required_body = true
 body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
@@ -52,6 +96,7 @@ required_body = false
 body_sections = ["Background", "Acceptance criteria", "Exceptions"]
 
 # Node rules: which node types are allowed in each state.
+# State names are global — "rejected" affects issue, rfc, dec, and task.
 # No restrictions by default — all node types allowed in all states.
 # Uncomment to restrict node types in terminal states:
 # [node_rules]
@@ -61,11 +106,13 @@ body_sections = ["Background", "Acceptance criteria", "Exceptions"]
 # "deprecated" = []
 
 # Revise rules: in which states body/node revision is allowed.
+# State names listed here are global across all thread kinds.
 [revise_rules]
 allow_body_revise = ["draft", "proposed", "open", "pending", "designing", "implementing"]
 allow_node_revise = ["draft", "proposed", "under-review", "open", "pending", "designing", "implementing", "reviewing"]
 
 # Evidence rules: in which states evidence can be attached.
+# State names listed here are global across all thread kinds.
 [evidence_rules]
 allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "designing", "implementing", "reviewing", "closed", "accepted", "rejected", "deprecated"]
 "#;

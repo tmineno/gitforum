@@ -1932,7 +1932,7 @@ fn main() -> Result<(), ForumError> {
                         println!("policy ok");
                     } else {
                         for d in &diags {
-                            println!("WARN {d}");
+                            println!("{d}");
                         }
                     }
                 }
