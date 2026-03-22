@@ -57,6 +57,7 @@ fn edit_flag_creates_thread() {
         .current_dir(repo.path())
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
+        .env("GIT_FORUM_EDITOR_FORCE", "1")
         .args(["new", "issue", "Edit test", "--edit"])
         .output()
         .expect("failed to run");
@@ -90,6 +91,7 @@ fn edit_flag_creates_node() {
         .current_dir(repo.path())
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
+        .env("GIT_FORUM_EDITOR_FORCE", "1")
         .args(["claim", "ISSUE-0001", "--edit"])
         .output()
         .expect("failed to run");
@@ -125,6 +127,7 @@ fn edit_flag_revises_body() {
         .current_dir(repo.path())
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
+        .env("GIT_FORUM_EDITOR_FORCE", "1")
         .args(["revise", "ISSUE-0001", "--edit"])
         .output()
         .expect("failed to run");
@@ -149,6 +152,7 @@ fn edit_conflicts_with_body_flag() {
         .current_dir(repo.path())
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
+        .env("GIT_FORUM_EDITOR_FORCE", "1")
         .args(["new", "issue", "Test", "--edit", "--body", "direct"])
         .output()
         .expect("failed to run");
@@ -174,6 +178,7 @@ fn edit_conflicts_with_body_file() {
         .current_dir(repo.path())
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
+        .env("GIT_FORUM_EDITOR_FORCE", "1")
         .args([
             "new",
             "issue",
@@ -199,6 +204,7 @@ fn edit_empty_body_aborts() {
         .current_dir(repo.path())
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
+        .env("GIT_FORUM_EDITOR_FORCE", "1")
         .args(["new", "issue", "Empty test", "--edit"])
         .output()
         .expect("failed to run");
@@ -225,6 +231,7 @@ fn edit_strips_comment_lines() {
         .current_dir(repo.path())
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
+        .env("GIT_FORUM_EDITOR_FORCE", "1")
         .args(["new", "issue", "Comment test", "--edit"])
         .output()
         .expect("failed to run");
@@ -253,6 +260,7 @@ fn edit_uses_visual_env_var() {
         .current_dir(repo.path())
         .env("VISUAL", &visual_editor)
         .env("EDITOR", "false") // would fail if used
+        .env("GIT_FORUM_EDITOR_FORCE", "1")
         .args(["new", "issue", "Visual test", "--edit"])
         .output()
         .expect("failed to run");
@@ -286,6 +294,7 @@ fn edit_flag_with_revise_body_subcommand() {
         .current_dir(repo.path())
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
+        .env("GIT_FORUM_EDITOR_FORCE", "1")
         .args(["revise", "body", "ISSUE-0001", "--edit"])
         .output()
         .expect("failed to run");
@@ -298,4 +307,29 @@ fn edit_flag_with_revise_body_subcommand() {
 
     let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
     assert_eq!(state.body.as_deref(), Some("Revised via subcommand"));
+}
+
+#[test]
+fn edit_rejects_non_interactive_stdin() {
+    let (repo, _git, _paths) = setup();
+
+    // Do NOT set GIT_FORUM_EDITOR_FORCE — let the TTY check fire.
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .env("EDITOR", "false")
+        .env_remove("VISUAL")
+        .env_remove("GIT_FORUM_EDITOR_FORCE")
+        .args(["new", "issue", "Non-interactive test", "--edit"])
+        .output()
+        .expect("failed to run");
+
+    assert!(
+        !output.status.success(),
+        "should fail in non-interactive context"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--edit requires an interactive terminal"),
+        "expected actionable error, got: {stderr}"
+    );
 }

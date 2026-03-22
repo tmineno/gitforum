@@ -1,5 +1,5 @@
 use std::env;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::process::Command;
 
 use tempfile::Builder;
@@ -24,14 +24,21 @@ fn strip_comments(input: &str) -> String {
 
 /// Open `$VISUAL` / `$EDITOR` / `vi` with a temporary file for body composition.
 ///
-/// **Preconditions:** A TTY is available for the editor process.
+/// **Preconditions:** stdin is an interactive terminal.
 /// **Postconditions:** Returns the user-composed body with comment lines stripped.
 /// **Failure modes:**
+/// - `ForumError::Config` if stdin is not a terminal (non-interactive context)
 /// - `ForumError::Config` if edited content is empty after stripping comments
 /// - `ForumError::Io` if the temp file or editor process fails
 ///
 /// **Side effects:** Spawns an external editor process; creates a temp file (auto-cleaned).
 pub fn edit_body(hint: &str) -> Result<String, ForumError> {
+    if !std::io::stdin().is_terminal() && env::var("GIT_FORUM_EDITOR_FORCE").is_err() {
+        return Err(ForumError::Config(
+            "--edit requires an interactive terminal; use --body or --body-file instead".into(),
+        ));
+    }
+
     let editor = resolve_editor();
 
     let mut tmp = Builder::new()
