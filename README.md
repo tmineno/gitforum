@@ -35,21 +35,21 @@ Git-native history: branchable, reviewable, and preserved in the same repository
 
 ```bash
 $ git forum init
-$ git forum rfc new "Switch solver backend to trait objects" \
+$ git forum new rfc "Switch solver backend to trait objects" \
   --body "Goal, constraints, acceptance."
-$ git forum claim RFC-0001 "Need a stable plugin-facing boundary."
-$ git forum question RFC-0001 "What compatibility risks remain?" \
+$ git forum node add RFC-0001 --type claim "Need a stable plugin-facing boundary."
+$ git forum node add RFC-0001 --type question "What compatibility risks remain?" \
   --as ai/reviewer
-$ git forum summary RFC-0001 \
+$ git forum node add RFC-0001 --type summary \
   "Direction is plausible, but migration evidence is still missing."
-$ git forum rfc propose RFC-0001
+$ git forum state RFC-0001 proposed
 $ git forum state RFC-0001 under-review
-$ git forum rfc accept RFC-0001 --approve human/alice
-$ git forum issue new "Implement trait backend" \
+$ git forum state RFC-0001 accepted --approve human/alice
+$ git forum new issue "Implement trait backend" \
   --link-to RFC-0001 --rel implements
 $ git forum branch bind ISSUE-0001 feat/trait-backend
 $ git forum evidence add ISSUE-0001 --kind test --ref tests/backend_trait.rs
-$ git forum issue close ISSUE-0001 --comment "All tests passing."
+$ git forum state ISSUE-0001 closed --comment "All tests passing."
 ```
 
 ## Install

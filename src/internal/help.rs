@@ -31,29 +31,30 @@ pub fn node_type_taxonomy() -> String {
 - **alternative**: documents what was *not* chosen and why (especially in DEC threads)
 - **assumption**: surfaces hidden dependencies that may invalidate the decision if they change
 
-## Shorthand commands
-
-```
-git forum claim <THREAD> "body"
-git forum question <THREAD> "body"
-git forum objection <THREAD> "body"
-git forum summary <THREAD> "body"
-git forum action <THREAD> "body"
-git forum risk <THREAD> "body"
-git forum review <THREAD> "body"
-```
-
-All accept a positional body argument, --body, --body-file, --edit, --reply-to, and --as.
-Priority: positional > --body > --body-file. Pass "-" as the positional body to read from stdin.
---edit opens $VISUAL / $EDITOR / vi for interactive composition (conflicts with body args).
-
-## Generic node creation
+## Canonical form
 
 ```
 git forum node add <THREAD> --type <TYPE> "body"
 ```
 
-This works for all node types, including alternative and assumption which have no shorthand.
+This works for all 10 node types. All accept a positional body argument, --body, --body-file,
+--edit, --reply-to, and --as. Priority: positional > --body > --body-file.
+Pass "-" as the positional body to read from stdin.
+--edit opens $VISUAL / $EDITOR / vi for interactive composition (conflicts with body args).
+
+## Shorthand commands (convenience aliases)
+
+```
+git forum claim <THREAD> "body"         # node add --type claim
+git forum question <THREAD> "body"      # node add --type question
+git forum objection <THREAD> "body"     # node add --type objection
+git forum summary <THREAD> "body"       # node add --type summary
+git forum action <THREAD> "body"        # node add --type action
+git forum risk <THREAD> "body"          # node add --type risk
+git forum review <THREAD> "body"        # node add --type review
+```
+
+alternative and assumption have no shorthand — use `node add --type <TYPE>` for these.
 "#
     .to_string()
 }
@@ -78,22 +79,26 @@ pub fn state_transition_map() -> String {
         out.push('\n');
     }
 
-    out.push_str("## Shorthand commands\n\n");
+    out.push_str("## Canonical form\n\n");
     out.push_str("```\n");
-    out.push_str("git forum close <ID>       # open/pending/reviewing -> closed\n");
-    out.push_str("git forum pend <ID>        # open -> pending\n");
-    out.push_str("git forum {issue,rfc,dec,task} reopen <ID>  # closed/rejected -> open\n");
-    out.push_str("git forum reject <ID>      # open -> rejected\n");
-    out.push_str("git forum propose <ID>     # draft -> proposed\n");
-    out.push_str("git forum accept <ID>      # under-review/proposed -> accepted\n");
-    out.push_str("git forum deprecate <ID>   # accepted/rejected/proposed -> deprecated\n");
+    out.push_str("git forum state <ID> <state>   # single grammar for all transitions\n");
+    out.push_str("git forum state <ID> open       # thread reopen (closed/rejected -> open)\n");
     out.push_str("```\n\n");
-    out.push_str("For TASK phase transitions, use `git forum state <ID> <state>` with:\n");
+    out.push_str("For TASK phase transitions: `git forum state <ID> <state>` with:\n");
     out.push_str("designing, implementing, reviewing.\n\n");
     out.push_str("All accept --as, --comment, and --fast-track.\n");
-    out.push_str("close and accept also accept --approve, --link-to, --rel.\n");
-    out.push_str("close also accepts --resolve-open-actions.\n");
-    out.push_str("--fast-track walks through intermediate states to reach the target, checking guards at each step.\n");
+    out.push_str("`state` with closed/accepted also accepts --approve, --link-to, --rel.\n");
+    out.push_str("`state` with closed also accepts --resolve-open-actions.\n");
+    out.push_str("--fast-track walks through intermediate states to reach the target, checking guards at each step.\n\n");
+    out.push_str("## Shorthand commands (convenience aliases)\n\n");
+    out.push_str("```\n");
+    out.push_str("git forum close <ID>       # state <ID> closed\n");
+    out.push_str("git forum pend <ID>        # state <ID> pending\n");
+    out.push_str("git forum reject <ID>      # state <ID> rejected\n");
+    out.push_str("git forum propose <ID>     # state <ID> proposed\n");
+    out.push_str("git forum accept <ID>      # state <ID> accepted\n");
+    out.push_str("git forum deprecate <ID>   # state <ID> deprecated\n");
+    out.push_str("```\n\n");
     out.push_str(
         "Use `git forum show <ID> --what-next` to see valid transitions and guard status.\n",
     );
