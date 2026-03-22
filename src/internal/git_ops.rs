@@ -231,4 +231,39 @@ impl GitOps {
         let spec = format!("{commit_sha}:{path}");
         self.run(&["cat-file", "-p", &spec])
     }
+
+    /// Run `git diff --no-index` between two files.
+    ///
+    /// Unlike normal git commands, `git diff --no-index` exits with status 1
+    /// when differences are found (normal success case). This helper treats
+    /// exit codes 0 (no diff) and 1 (diff found) as success, and only
+    /// considers exit code >= 2 as an error.
+    pub fn diff_no_index(
+        &self,
+        old_file: &str,
+        new_file: &str,
+        extra_args: &[&str],
+    ) -> ForumResult<String> {
+        let mut args = vec!["diff", "--no-index"];
+        args.extend_from_slice(extra_args);
+        args.push(old_file);
+        args.push(new_file);
+        let output = Command::new("git")
+            .args(&args)
+            .current_dir(&self.root)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+            .output()?;
+        let code = output.status.code().unwrap_or(2);
+        if code >= 2 {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(ForumError::Git(stderr));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .trim_end()
+            .to_string())
+    }
 }
