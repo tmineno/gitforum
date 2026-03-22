@@ -4,10 +4,11 @@ use chrono::{TimeZone, Utc};
 use git_forum::internal::clock::FixedClock;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
-use git_forum::internal::event::ThreadKind;
+use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id_alloc;
 use git_forum::internal::init;
+use git_forum::internal::say;
 use git_forum::internal::show;
 use git_forum::internal::thread;
 
@@ -338,4 +339,56 @@ fn create_thread_body_roundtrips_in_replay() {
         state.body.as_deref(),
         Some("Problem statement and context.")
     );
+}
+
+// ---- timestamp override (ISSUE-0100) ----
+
+#[test]
+fn create_thread_with_timestamp_uses_override() {
+    let (_repo, git, _paths) = setup();
+    let custom_ts = Utc.with_ymd_and_hms(2020, 6, 15, 12, 30, 0).unwrap();
+    let id = create::create_thread_with_timestamp(
+        &git,
+        ThreadKind::Issue,
+        "Imported issue",
+        Some("Body from import"),
+        None,
+        "human/alice",
+        &fixed_clock(),
+        custom_ts,
+    )
+    .unwrap();
+    let state = thread::replay_thread(&git, &id).unwrap();
+    assert_eq!(state.events[0].created_at, custom_ts);
+    assert_eq!(state.created_at, custom_ts);
+}
+
+#[test]
+fn say_node_with_timestamp_uses_override() {
+    let (_repo, git, _paths) = setup();
+    create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Test issue",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+    let custom_ts = Utc.with_ymd_and_hms(2020, 3, 10, 8, 0, 0).unwrap();
+    say::say_node_with_timestamp(
+        &git,
+        "ISSUE-0001",
+        NodeType::Claim,
+        "Imported comment",
+        "human/bob",
+        &fixed_clock(),
+        None,
+        custom_ts,
+    )
+    .unwrap();
+    let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    // Event 0 is Create, Event 1 is Say
+    assert_eq!(state.events[1].created_at, custom_ts);
+    assert_eq!(state.nodes[0].created_at, custom_ts);
 }

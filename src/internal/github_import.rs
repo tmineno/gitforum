@@ -6,13 +6,14 @@
 //! Side effects: writes git objects, updates refs, network calls via `gh`.
 
 use super::clock::Clock;
+use super::create;
 use super::error::{ForumError, ForumResult};
 use super::event::{Event, EventType, NodeType, ThreadKind};
 use super::evidence::{Evidence, EvidenceKind};
 use super::git_ops::GitOps;
 use super::github::{self, GhIssue};
-use super::id_alloc;
 use super::policy::Policy;
+use super::say;
 use super::state_change::{self, StateChangeOptions};
 use super::thread;
 
@@ -92,7 +93,6 @@ pub fn plan_import(git: &GitOps, repo: &str, issue_number: u64) -> ForumResult<I
 }
 
 /// Import a single GitHub issue into git-forum.
-#[allow(clippy::too_many_arguments)]
 pub fn import_issue(
     git: &GitOps,
     repo: &str,
@@ -113,21 +113,25 @@ pub fn import_issue(
     let issue = github::fetch_issue(repo, issue_number)?;
     let comments = github::fetch_issue_comments(repo, issue_number)?;
 
-    // 1. Allocate thread ID
-    let thread_id = id_alloc::alloc_thread_id(git, ThreadKind::Issue)?;
-
-    // 2. Create thread event (with original timestamp)
+    // 1. Create thread (with original timestamp)
     let body_text = format_issue_body(&issue);
-    let mut create_event = Event::base(&thread_id, EventType::Create, actor, clock)
-        .with_title(&issue.title)
-        .with_kind(ThreadKind::Issue)
-        .with_created_at(issue.created_at);
-    if !body_text.is_empty() {
-        create_event = create_event.with_body(&body_text);
-    }
-    super::event::write_event(git, &create_event)?;
+    let body_opt = if body_text.is_empty() {
+        None
+    } else {
+        Some(body_text.as_str())
+    };
+    let thread_id = create::create_thread_with_timestamp(
+        git,
+        ThreadKind::Issue,
+        &issue.title,
+        body_opt,
+        None,
+        actor,
+        clock,
+        issue.created_at,
+    )?;
 
-    // 3. Add each comment as a Claim node (with original timestamp)
+    // 2. Add each comment as a Claim node (with original timestamp)
     let mut comments_imported = 0;
     for comment in &comments {
         let body = comment.body.as_deref().unwrap_or("");
@@ -137,11 +141,16 @@ pub fn import_issue(
             comment.created_at.format("%Y-%m-%dT%H:%M:%SZ"),
             body
         );
-        let ev = Event::base(&thread_id, EventType::Say, actor, clock)
-            .with_body(&comment_body)
-            .with_node_type(NodeType::Claim)
-            .with_created_at(comment.created_at);
-        super::event::write_event(git, &ev)?;
+        say::say_node_with_timestamp(
+            git,
+            &thread_id,
+            NodeType::Claim,
+            &comment_body,
+            actor,
+            clock,
+            None,
+            comment.created_at,
+        )?;
         comments_imported += 1;
     }
 
