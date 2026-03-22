@@ -25,6 +25,8 @@ use super::{
     ThreadFormField, View, FILTER_KIND_LABELS, FILTER_STATUS_LABELS,
 };
 
+use super::PAGE_SCROLL;
+
 pub(super) fn handle_key(
     app: &mut App,
     key: crossterm::event::KeyEvent,
@@ -54,6 +56,10 @@ pub(super) fn handle_key(
                     KeyCode::Char('q') | KeyCode::Char('Q') => return Ok(true),
                     KeyCode::Char('j') | KeyCode::Down => app.move_down(),
                     KeyCode::Char('k') | KeyCode::Up => app.move_up(),
+                    KeyCode::PageDown => app.page_down(),
+                    KeyCode::PageUp => app.page_up(),
+                    KeyCode::Home => app.move_to_top(),
+                    KeyCode::End => app.move_to_bottom(),
                     KeyCode::Char('f') => app.open_filter_bar(),
                     KeyCode::Char('c') => app.begin_create_thread(),
                     KeyCode::Char('r') => {
@@ -91,6 +97,14 @@ pub(super) fn handle_key(
             KeyCode::Char('k') => app.move_node_up(),
             KeyCode::Down => app.scroll_thread_down(),
             KeyCode::Up => app.scroll_thread_up(),
+            KeyCode::PageDown => app.scroll_thread_page_down(),
+            KeyCode::PageUp => app.scroll_thread_page_up(),
+            KeyCode::Home => {
+                app.thread_scroll = 0;
+            }
+            KeyCode::End => {
+                app.thread_scroll = u16::MAX;
+            }
             KeyCode::Char('c') => app.begin_create_node(&thread_id),
             KeyCode::Char('l') => app.begin_create_link_from_thread(&thread_id),
             KeyCode::Char('m') => app.markdown_mode = !app.markdown_mode,
@@ -158,6 +172,18 @@ pub(super) fn handle_key(
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 app.node_detail_scroll = app.node_detail_scroll.saturating_sub(1);
+            }
+            KeyCode::PageDown => {
+                app.node_detail_scroll = app.node_detail_scroll.saturating_add(PAGE_SCROLL);
+            }
+            KeyCode::PageUp => {
+                app.node_detail_scroll = app.node_detail_scroll.saturating_sub(PAGE_SCROLL);
+            }
+            KeyCode::Home => {
+                app.node_detail_scroll = 0;
+            }
+            KeyCode::End => {
+                app.node_detail_scroll = u16::MAX;
             }
             KeyCode::Char('r') => {
                 reindex::run_reindex(git, db_path)?;
