@@ -6,6 +6,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use git_forum::internal::actor;
 use git_forum::internal::branch_ops;
 use git_forum::internal::clock::SystemClock;
+use git_forum::internal::config;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
 use git_forum::internal::diff;
@@ -2820,13 +2821,18 @@ fn run_node_lifecycle_bulk(
 }
 
 fn discover_repo_with_init_warning() -> Result<(GitOps, RepoPaths), ForumError> {
-    let git = GitOps::discover()?;
+    let mut git = GitOps::discover()?;
     let git_dir = git.git_dir()?;
     let paths = RepoPaths::from_repo_root_and_git_dir(git.root(), &git_dir);
     if !is_forum_initialized(&paths, &git) {
         eprintln!(
             "warning: git-forum is not initialized in this repository; run `git forum init` first"
         );
+    }
+    // Load local config and apply commit identity if configured.
+    let local_cfg = config::load_local_config(&paths).unwrap_or_default();
+    if let Some(identity) = local_cfg.commit_identity {
+        git.set_commit_identity(identity);
     }
     Ok((git, paths))
 }

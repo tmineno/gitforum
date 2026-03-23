@@ -2,16 +2,27 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use super::config::CommitIdentity;
 use super::error::{ForumError, ForumResult};
 
 /// Thin subprocess wrapper for git plumbing commands.
 pub struct GitOps {
     root: PathBuf,
+    /// Optional override for git commit author/committer on forum commits.
+    commit_identity: Option<CommitIdentity>,
 }
 
 impl GitOps {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            commit_identity: None,
+        }
+    }
+
+    /// Set the commit identity used for forum commits.
+    pub fn set_commit_identity(&mut self, identity: CommitIdentity) {
+        self.commit_identity = Some(identity);
     }
 
     /// Discover the repository root from the current working directory.
@@ -122,6 +133,10 @@ impl GitOps {
     }
 
     /// Create a commit from a tree, optional parents, and a message.
+    ///
+    /// When a `CommitIdentity` is configured, its name/email override the
+    /// git config values for both author and committer fields.  Unset
+    /// fields fall through to the normal git defaults.
     pub fn commit_tree(
         &self,
         tree_sha: &str,
@@ -135,8 +150,39 @@ impl GitOps {
         }
         args.push("-m".into());
         args.push(message.into());
-        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        self.run(&refs)
+
+        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+
+        // If a commit identity is configured, set env vars on the command
+        // directly instead of going through self.run().
+        if let Some(ref id) = self.commit_identity {
+            let mut cmd = Command::new("git");
+            cmd.args(&arg_refs)
+                .current_dir(&self.root)
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_INDEX_FILE")
+                .env_remove("GIT_OBJECT_DIRECTORY")
+                .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES");
+            if let Some(ref name) = id.name {
+                cmd.env("GIT_AUTHOR_NAME", name);
+                cmd.env("GIT_COMMITTER_NAME", name);
+            }
+            if let Some(ref email) = id.email {
+                cmd.env("GIT_AUTHOR_EMAIL", email);
+                cmd.env("GIT_COMMITTER_EMAIL", email);
+            }
+            let output = cmd.output()?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                return Err(ForumError::Git(stderr));
+            }
+            Ok(String::from_utf8_lossy(&output.stdout)
+                .trim_end()
+                .to_string())
+        } else {
+            self.run(&arg_refs)
+        }
     }
 
     // ---- Ref management ----
