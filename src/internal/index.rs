@@ -50,6 +50,13 @@ pub fn open_db(path: &Path) -> ForumResult<Connection> {
         std::fs::create_dir_all(parent)?;
     }
     let conn = Connection::open(path).map_err(|e| ForumError::Repo(e.to_string()))?;
+    // Restrict file permissions to owner-only on Unix (prevents inter-user reads
+    // on shared systems, since the index contains full thread/node bodies).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
     ensure_schema(&conn)?;
     Ok(conn)
 }
