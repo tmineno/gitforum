@@ -240,6 +240,51 @@ fn purge_actor_no_match_returns_zero() {
     assert!(report.threads_affected.is_empty());
 }
 
+// ---- purge by node ID (resolve node → event SHA) ----
+
+#[test]
+fn purge_by_node_id_resolves_to_event_and_purges() {
+    let (_repo, git) = setup();
+    let (thread_id, node_sha) = make_thread_with_node(&git);
+
+    // node_sha is both the event_id and the node_id for a Say event
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    let node = state
+        .nodes
+        .iter()
+        .find(|n| n.node_id == node_sha)
+        .expect("node should exist");
+    assert_eq!(node.body, "Secret claim text");
+
+    // Resolve node_id to event SHA (same value for Say events)
+    let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_sha).unwrap();
+    assert_eq!(resolved, node_sha);
+
+    // Purge using the resolved event SHA
+    let report = purge::purge_event(&git, &thread_id, &resolved).unwrap();
+    assert_eq!(report.events_purged, 1);
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.nodes[0].body, "[purged]");
+}
+
+#[test]
+fn purge_by_node_id_prefix_resolves_and_purges() {
+    let (_repo, git) = setup();
+    let (thread_id, node_sha) = make_thread_with_node(&git);
+
+    // Use an 8-char prefix of the node ID
+    let prefix = &node_sha[..8];
+    let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, prefix).unwrap();
+    assert_eq!(resolved, node_sha);
+
+    let report = purge::purge_event(&git, &thread_id, &resolved).unwrap();
+    assert_eq!(report.events_purged, 1);
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.nodes[0].body, "[purged]");
+}
+
 // ---- dry-run tests ----
 
 #[test]
