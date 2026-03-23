@@ -234,8 +234,10 @@ Event types:
 | `assumption` | Design dependency or assumption | open |
 
 `objection` and `action` nodes are open when created. `resolve` closes them; `reopen` reopens
-them. `retract` marks any node inactive while preserving history. `incorporated` marks a node as
-folded into a thread body revision.
+them. `retract` is a **soft-delete**: it marks any node inactive while preserving history. The
+original node body remains in the git commit that created it and is recoverable via `git log`.
+Retract does not remove data from the repository. `incorporated` marks a node as folded into a
+thread body revision.
 
 ### 4.4 Evidence
 
@@ -755,7 +757,8 @@ Scope: GitHub issue interoperability only. RFC import/export is not planned.
 - `revise` accepts `--force`: bypass warning-level operation check violations (does not bypass errors).
 - `revise` accepts `--edit`: open `$EDITOR` for interactive body composition; conflicts with
   `--body` and `--body-file`.
-- `retract` appends a `retract` event.
+- `retract` appends a `retract` event. This is a soft-delete; the original content remains in
+  git history.
 - `resolve` and `reopen` operate primarily on `objection` and `action` nodes.
 - `retract`, `resolve`, and `reopen` accept one or more node IDs. Each node is processed
   independently; failures are reported inline and the command exits non-zero if any fail.

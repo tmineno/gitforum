@@ -509,7 +509,9 @@ git forum resolve RFC-0001 node1 node2          # resolve multiple nodes
 ```
 
 - `resolve` / `reopen` are mainly for `objection` and `action`
-- `retract` keeps history while marking the node inactive
+- `retract` is a **soft-delete**: it marks the node inactive but the original body text remains
+  in git history. Anyone with repo access can read retracted content via `git log`. Do not use
+  retract for removing sensitive data — there is currently no hard-delete mechanism.
 - when multiple node IDs are given, each node is processed independently; failures are reported
   inline on stderr and the command exits non-zero if any fail
 
