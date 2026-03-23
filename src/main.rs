@@ -2817,6 +2817,9 @@ fn run_node_lifecycle_bulk(
     if failures > 0 {
         std::process::exit(1);
     }
+    if event_type == git_forum::internal::event::EventType::Retract {
+        eprintln!("note: retract is a soft-delete — the original content remains in git history");
+    }
     Ok(())
 }
 
