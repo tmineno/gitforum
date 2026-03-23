@@ -79,7 +79,11 @@ fn format_issue_body(issue: &GhIssue) -> String {
         meta.push_str(&format!("**Labels:** {}\n", labels.join(", ")));
     }
     if !issue.assignees.is_empty() {
-        let assignees: Vec<&str> = issue.assignees.iter().map(|a| a.login.as_str()).collect();
+        let assignees: Vec<String> = issue
+            .assignees
+            .iter()
+            .map(|a| format!("github/{}", a.login))
+            .collect();
         meta.push_str(&format!("**Assignees:** {}\n", assignees.join(", ")));
     }
     if let Some(milestone) = &issue.milestone {
@@ -156,7 +160,7 @@ pub fn import_issue(
     for comment in &comments {
         let body = comment.body.as_deref().unwrap_or("");
         let comment_body = format!(
-            "**@{}** ({})\n\n{}",
+            "**[github/{}]** ({})\n\n{}",
             comment.user.login,
             comment.created_at.format("%Y-%m-%dT%H:%M:%SZ"),
             body
@@ -274,7 +278,7 @@ mod tests {
         let issue = make_issue(vec!["bug"], vec!["alice", "bob"], Some("v1.0"));
         let body = format_issue_body(&issue);
         assert!(body.contains("**Labels:** bug"));
-        assert!(body.contains("**Assignees:** alice, bob"));
+        assert!(body.contains("**Assignees:** github/alice, github/bob"));
         assert!(body.contains("**Milestone:** v1.0"));
         assert!(body.contains("Issue body"));
     }
