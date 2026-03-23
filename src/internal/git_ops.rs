@@ -121,7 +121,11 @@ impl GitOps {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
-        child.stdin.take().unwrap().write_all(data)?;
+        child
+            .stdin
+            .take()
+            .expect("stdin must be available after Stdio::piped()")
+            .write_all(data)?;
         let output = child.wait_with_output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
