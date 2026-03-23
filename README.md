@@ -123,7 +123,7 @@ Git history.
 - node: typed contribution such as `claim`, `question`, `objection`, `summary`, `action`, `risk`,
   `review`, `alternative`, or `assumption`
 - evidence: links to commits, files, tests, benchmarks, docs, threads, and external URLs
-- actor: a human or AI participant
+- actor: a human or AI participant identified by a trust-based actor ID
 
 The product specification is in [./doc/spec/SPEC.md](./doc/spec/SPEC.md).
 For current CLI usage, see [./doc/MANUAL.md](./doc/MANUAL.md).
@@ -212,6 +212,8 @@ Key points:
 - **Actor IDs may contain real names.** The default actor ID is derived from `git config
   user.name` (e.g., `human/taiki-mineno`). Set `GIT_FORUM_ACTOR` or `default_actor` in
   `local.toml` for privacy.
+- **Actor IDs and approvals are recorded, not authenticated.** `--as` and `--approve` preserve
+  the supplied IDs for attribution and workflow policy. Cryptographic verification is future work.
 
 See [doc/MANUAL.md](./doc/MANUAL.md) for configuration details.
 

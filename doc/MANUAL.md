@@ -142,6 +142,7 @@ Use `git forum node add <ID> --type alternative "..."` and `--type assumption ".
   - `--as human/alice` or `--as ai/reviewer` overrides everything
   - `GIT_FORUM_ACTOR=ai/reviewer` persists across commands without repeating `--as`
   - if neither is set, the actor is inferred from Git config as `human/<slug>`
+  - actor IDs are trust-based claims for attribution; MVP does not authenticate `--as`
 - commit identity (separate from actor):
   - controls the Git commit author/committer metadata on forum commits
   - defaults to Git config `user.name` / `user.email`
@@ -857,6 +858,7 @@ git forum state bulk --to closed ISSUE-0001 ISSUE-0002 --dry-run
 ```
 
 - `--approve` is recorded as an approval on the event
+- recorded approvals are not cryptographically verified in the MVP
 - `--comment` attaches comment text to the state-change event's body (visible in the timeline)
 - `--link-to` and `--rel` create thread links after the state transition
 - whether the transition succeeds depends on the state machine and policy guards

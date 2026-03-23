@@ -73,11 +73,15 @@ another thread, or an external resource.
 An actor is a participant identified by a namespaced string: `human/<name>` or `ai/<name>`.
 Resolution order: `--as` flag, then `GIT_FORUM_ACTOR` environment variable, then Git config
 `user.name` slugified as `human/<slug>`.
+Actor IDs are caller-supplied claims used for attribution. In the MVP, `git-forum` does not
+authenticate that the caller controls a given actor ID.
 
 ### 2.7 Approval
 
 An approval is a recorded human sign-off attached to a state transition event. The mechanism is
 `recorded`; cryptographic signing is a future extension.
+Recorded approvals preserve the supplied actor ID, but the MVP does not cryptographically verify
+that identity.
 
 ## 3. State machines
 
@@ -312,7 +316,7 @@ name = "alice"
 email = "alice@example.com"
 ```
 
-**`default_actor`** — sets the default actor ID for this clone. Overridden by `--as` and
+**`default_actor`** — sets the default claimed actor ID for this clone. Overridden by `--as` and
 `GIT_FORUM_ACTOR`.
 
 **`[commit_identity]`** — controls the Git commit metadata (author name and email) used when
@@ -804,7 +808,7 @@ Display:
 - Validate the transition against the state machine.
 - Evaluate guard rules from policy.
 - `--comment <TEXT>` attaches comment text to the state-change event's body.
-- Attach approvals from `--approve`.
+- Attach recorded approvals from `--approve`.
 - Append a `state` event.
 - `--link-to <THREAD_ID> --rel <REL>` creates thread links after the state transition.
 - `--resolve-open-actions` resolves open action nodes before the transition.
