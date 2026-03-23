@@ -14,6 +14,17 @@ use chrono::Utc;
 
 const ENV_VAR: &str = "GIT_FORUM_PERF_LOG";
 
+/// Hash an identifier to a short hex string for privacy in perf logs.
+fn hash_id(id: &str) -> String {
+    // FNV-1a 64-bit hash — deterministic, fast, no crypto dependency needed.
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in id.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{h:016x}")
+}
+
 struct PerfLog {
     writer: BufWriter<File>,
 }
@@ -31,7 +42,8 @@ impl PerfLog {
     fn record(&mut self, span: &str, thread_id: Option<&str>, duration: Duration) {
         let duration_ms = duration.as_secs_f64() * 1000.0;
         let ts = Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
-        let tid = thread_id.unwrap_or("");
+        // Hash thread IDs to avoid leaking access patterns in perf logs.
+        let tid = thread_id.map(hash_id).unwrap_or_default();
         let _ = writeln!(
             self.writer,
             r#"{{"span":"{}","thread_id":"{}","duration_ms":{:.3},"ts":"{}"}}"#,
