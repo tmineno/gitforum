@@ -47,8 +47,11 @@ pub fn prepare_state_change(
     }
 
     let now = clock.now();
+    // Deduplicate approval actors to prevent forged duplicate approvals.
+    let mut seen = std::collections::HashSet::new();
     let approvals: Vec<Approval> = approve_actors
         .iter()
+        .filter(|a| seen.insert(a.as_str()))
         .map(|a| Approval {
             actor_id: a.clone(),
             approved_at: now,
