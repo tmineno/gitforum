@@ -756,11 +756,16 @@ pub(crate) fn run_app<B: Backend>(
     conn: &rusqlite::Connection,
     db_path: &Path,
     perf: &mut Perf,
-) -> ForumResult<()> {
+) -> ForumResult<()>
+where
+    B::Error: Into<std::io::Error>,
+{
     let mut input_start: Option<Instant> = None;
     loop {
         let draw_start = Instant::now();
-        terminal.draw(|f| render(f, app))?;
+        terminal
+            .draw(|f| render(f, app))
+            .map_err(|e| -> std::io::Error { e.into() })?;
         perf.record("render_frame", None, draw_start.elapsed());
 
         if let Some(t) = input_start.take() {
