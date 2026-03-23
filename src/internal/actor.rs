@@ -23,18 +23,8 @@ pub struct Actor {
     pub key_id: Option<String>,
 }
 
-/// Resolve the current actor ID.
-///
-/// Resolution order:
-/// 1. `GIT_FORUM_ACTOR` environment variable (highest priority after `--as`)
-/// 2. Git config `user.name` → `human/<slug>` (lowercased, spaces → hyphens)
-/// 3. `human/user` fallback
-pub fn current_actor(git: &GitOps) -> String {
-    if let Ok(actor) = std::env::var("GIT_FORUM_ACTOR") {
-        if !actor.is_empty() {
-            return actor;
-        }
-    }
+/// Derive the default actor ID from git config user.name.
+pub fn actor_from_git_config(git: &GitOps) -> String {
     match git.run(&["config", "user.name"]) {
         Ok(name) if !name.is_empty() => {
             let slug = name.to_lowercase().replace(' ', "-");
@@ -42,6 +32,27 @@ pub fn current_actor(git: &GitOps) -> String {
         }
         _ => "human/user".into(),
     }
+}
+
+/// Resolve the current actor ID.
+///
+/// Resolution order:
+/// 1. `GIT_FORUM_ACTOR` environment variable (highest priority after `--as`)
+/// 2. `default_actor` from `.git/forum/local.toml` (set during `init`)
+/// 3. Git config `user.name` → `human/<slug>` (lowercased, spaces → hyphens)
+/// 4. `human/user` fallback
+pub fn current_actor(git: &GitOps, default_actor: Option<&str>) -> String {
+    if let Ok(actor) = std::env::var("GIT_FORUM_ACTOR") {
+        if !actor.is_empty() {
+            return actor;
+        }
+    }
+    if let Some(actor) = default_actor {
+        if !actor.is_empty() {
+            return actor.to_string();
+        }
+    }
+    actor_from_git_config(git)
 }
 
 #[cfg(test)]

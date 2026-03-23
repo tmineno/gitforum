@@ -10,6 +10,8 @@ pub struct GitOps {
     root: PathBuf,
     /// Optional override for git commit author/committer on forum commits.
     commit_identity: Option<CommitIdentity>,
+    /// Default actor ID from local config (set during init).
+    default_actor: Option<String>,
 }
 
 impl GitOps {
@@ -17,12 +19,23 @@ impl GitOps {
         Self {
             root,
             commit_identity: None,
+            default_actor: None,
         }
     }
 
     /// Set the commit identity used for forum commits.
     pub fn set_commit_identity(&mut self, identity: CommitIdentity) {
         self.commit_identity = Some(identity);
+    }
+
+    /// Set the default actor ID from local config.
+    pub fn set_default_actor(&mut self, actor: String) {
+        self.default_actor = Some(actor);
+    }
+
+    /// Get the configured default actor ID, if any.
+    pub fn default_actor(&self) -> Option<&str> {
+        self.default_actor.as_deref()
     }
 
     /// Discover the repository root from the current working directory.
