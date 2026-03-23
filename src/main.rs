@@ -37,15 +37,15 @@ use git_forum::internal::write_ops;
 const GROUPED_HELP: &str = "\
 These are common git-forum commands:
 
-start a repository
+setup and repo health
    init        Initialize a git-forum repository
-   doctor      Check repository health
+   doctor      Diagnose repo health (config, index, refs)
    reindex     Rebuild local index from Git refs
 
 create and browse threads
    new         Create a new thread
    ls          List threads (filter by kind, status, or branch)
-   show        Show thread details
+   show        Show thread details (use --what-next for diagnostics)
    diff        Show diff between body revisions
    search      Search threads and nodes
    status      Show unresolved items for a thread
@@ -67,7 +67,7 @@ evidence and links
    branch      Bind or clear a thread's branch scope
 
 policy and preflight
-   verify      Preflight check for the next forward transition
+   verify      Preflight: is this thread ready to advance?
    policy      Policy sub-commands (show, lint, check)
 
 hooks and maintenance
@@ -1155,6 +1155,7 @@ fn main() -> Result<(), ForumError> {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| ".".to_string());
             println!("Initialized git-forum in {dir_name}");
+            eprintln!("note: actor IDs (--as) are claimed identities, not authenticated. Approvals are recorded, not cryptographically verified.");
             let hook_path = hook::resolve_hook_path(&git)?;
             hook::install_hook(&hook_path, false)?;
         }
