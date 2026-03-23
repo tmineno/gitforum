@@ -183,7 +183,7 @@ pub fn list_comments(repo: &str, issue_number: u64) -> ForumResult<Vec<GhExistin
 pub fn update_comment(repo: &str, comment_id: u64, body: &str) -> ForumResult<()> {
     let endpoint = format!("repos/{repo}/issues/comments/{comment_id}");
     let field = format!("body={body}");
-    run_gh(&["api", &endpoint, "--method", "PATCH", "--field", &field])?;
+    run_gh(&["api", &endpoint, "--method", "PATCH", "--raw-field", &field])?;
     Ok(())
 }
 
