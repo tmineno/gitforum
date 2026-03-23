@@ -78,7 +78,10 @@ pub fn run_doctor(git: &GitOps, paths: &RepoPaths) -> ForumResult<DoctorReport> 
                     }
                 }
             } else {
-                checks.push(fail(&format!("template {filename}"), "file not found"));
+                checks.push(fail(
+                    &format!("template {filename}"),
+                    &format!("file not found; create .forum/templates/{filename}"),
+                ));
             }
         }
     }
