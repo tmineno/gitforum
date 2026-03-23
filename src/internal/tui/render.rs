@@ -12,8 +12,8 @@ use super::state::{
     node_type_labels, selected_link_target_label, thread_kind_labels,
 };
 use super::{
-    App, FilterField, LinkFormField, LinkTargetKind, NodeFormField, ThreadFormField, UiRects, View,
-    FILTER_KIND_LABELS, FILTER_STATUS_LABELS, SORT_COLUMNS,
+    App, ErrorFlash, FilterField, LinkFormField, LinkTargetKind, NodeFormField, ThreadFormField,
+    UiRects, View, FILTER_KIND_LABELS, FILTER_STATUS_LABELS, SORT_COLUMNS,
 };
 
 /// Render the current app state into `frame`.
@@ -41,6 +41,11 @@ pub(super) fn render(f: &mut Frame, app: &mut App) {
         View::CreateNode { .. } => render_create_node(f, f.area(), app),
         View::EditNodeBody { .. } => render_edit_node_body(f, f.area(), app),
         View::CreateLink { .. } => render_create_link(f, f.area(), app),
+    }
+
+    // Error flash overlay (rendered last, on top of everything)
+    if let Some(ref flash) = app.error_flash {
+        render_error_flash(f, f.area(), flash);
     }
 }
 
@@ -1059,4 +1064,53 @@ fn thread_body_preview(body: &str) -> String {
     } else {
         single_line_preview(body, 40)
     }
+}
+
+/// Render an error flash as a centered popup overlay.
+fn render_error_flash(f: &mut Frame, area: Rect, flash: &ErrorFlash) {
+    let mut lines = vec![
+        Line::from(""),
+        Line::styled(
+            format!("  {}", flash.message),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+    ];
+    if let Some(ref hint) = flash.hint {
+        lines.push(Line::from(""));
+        lines.push(Line::styled(
+            format!("  {hint}"),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::styled(
+        "  Press any key to dismiss",
+        Style::default().fg(Color::DarkGray),
+    ));
+    lines.push(Line::from(""));
+
+    let height = lines.len() as u16 + 2; // +2 for border
+    let width = lines
+        .iter()
+        .map(|l| l.width() as u16)
+        .max()
+        .unwrap_or(30)
+        .max(30)
+        + 4; // padding
+
+    let popup_width = width.min(area.width.saturating_sub(4));
+    let popup_height = height.min(area.height.saturating_sub(2));
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    f.render_widget(Clear, popup_area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red))
+        .title(" Error ");
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
+    f.render_widget(paragraph, popup_area);
 }
