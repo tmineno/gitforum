@@ -212,7 +212,9 @@ fn apply_event(state: &mut ThreadState, event: &Event) -> ForumResult<()> {
                 });
             }
         }
-        _ => {}
+        // These event types are no-ops during replay:
+        EventType::Create => {} // handled in replay() before apply_event loop
+        EventType::Verify | EventType::Merge => {}
     }
     Ok(())
 }
