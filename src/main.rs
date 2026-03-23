@@ -66,8 +66,8 @@ evidence and links
    link        Link two threads
    branch      Bind or clear a thread's branch scope
 
-policy and verification
-   verify      Check guard conditions for the next transition
+policy and preflight
+   verify      Preflight check for the next forward transition
    policy      Policy sub-commands (show, lint, check)
 
 hooks and maintenance
@@ -596,8 +596,8 @@ enum Commands {
         force: bool,
     },
     #[command(
-        about = "Verify whether the thread currently satisfies guard conditions for its next forward transition",
-        long_about = "Verify whether the thread currently satisfies policy guard conditions for its next forward transition.\n\nCurrent behavior:\n- Issue in `open` is checked as if it were moving to `closed`\n- RFC in `under-review` is checked as if it were moving to `accepted`\n- Other thread kinds or states currently return `ok` because no forward verify target is defined\n\nThis command is read-only. It does not change thread state or attach approvals."
+        about = "Preflight check: test whether a thread is ready for its next forward transition",
+        long_about = "Preflight check: evaluate policy guard conditions for the thread's next forward transition.\n\nThis is NOT a history audit or integrity check — it only answers: \"if I tried to advance this thread now, which guards would block?\"\n\nForward targets checked:\n- Issue in `open` → checks guards for `open->closed`\n- RFC in `under-review` → checks guards for `under-review->accepted`\n- DEC in `proposed` → checks guards for `proposed->accepted`\n- TASK in `reviewing` → checks guards for `reviewing->closed`\n- Other states → reports ready (no preflight target defined)\n\nThis command is read-only. It does not change thread state or attach approvals."
     )]
     Verify { thread_id: String },
     /// Policy sub-commands
@@ -2032,10 +2032,11 @@ fn main() -> Result<(), ForumError> {
             let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
             let report = verify::verify_thread(&git, &thread_id, &policy)?;
             if report.passed() {
-                println!("{thread_id}: ok");
+                println!("{thread_id}: ready");
             } else {
+                println!("{thread_id}: not ready");
                 for v in &report.violations {
-                    println!("FAIL [{}] {}", v.rule, v.reason);
+                    println!("  BLOCKED [{}] {}", v.rule, v.reason);
                 }
                 std::process::exit(1);
             }

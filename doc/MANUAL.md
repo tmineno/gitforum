@@ -28,7 +28,7 @@ git forum diff <ID> --rev N                        Diff revision N-1 vs N
 git forum diff <ID> --rev N..M                     Diff revision N vs M
 git forum search <query>                           Search threads and nodes
 git forum status <ID>                              Check open items
-git forum verify <ID>                              Verify guard conditions
+git forum verify <ID>                              Preflight check for next forward transition
 git forum policy show                              Display loaded policy rules
 git forum policy lint                              Check policy for problems
 git forum policy check <ID> --transition from->to  Check guards for transition
@@ -878,7 +878,7 @@ git forum state bulk --to closed ISSUE-0001 ISSUE-0002 --dry-run
   failures inline, and exits non-zero if any target failed
 - `state bulk --dry-run` reports what would succeed or fail without writing any events
 
-## Verify and inspect policy
+## Preflight and policy
 
 ```bash
 git forum verify RFC-0001
@@ -887,7 +887,7 @@ git forum policy lint
 git forum policy check RFC-0001 --transition under-review->accepted
 ```
 
-- `verify`: checks whether the thread already satisfies guard conditions for its next forward transition
+- `verify`: preflight check — tests whether the thread is ready for its next forward transition (not a history audit)
 - `policy show`: displays the loaded policy in human-readable format (guards, creation rules, operation checks, strict mode). Only shows configured sections — no synthesized defaults
 - `policy lint`: validates `.forum/policy.toml` — checks guard syntax, unknown states, invalid transitions, and warns when allow-lists miss entire thread kinds
 - `policy check`: dry-runs guard evaluation for a specific transition
@@ -1017,7 +1017,7 @@ printed to stderr regardless of `--force`.
 ### What is enforced today
 
 - `git forum state ...` evaluates guard rules from `[[guards]]`
-- `git forum verify` evaluates those same guard rules in read-only mode
+- `git forum verify` is a read-only preflight that evaluates those same guard rules without changing state
 - `git forum show` displays compact next-states with guard blockers and a state diagram
 - `git forum show --what-next` displays detailed guard checks and operation check rules for the current state
 - `git forum policy show` displays the loaded policy in human-readable format
@@ -1028,16 +1028,18 @@ printed to stderr regardless of `--force`.
 
 ### What `git forum verify` actually does
 
-`git forum verify` is read-only. It does not change the thread state and it does not attach approvals.
+`git forum verify` is a **preflight check**, not a history audit or integrity verifier. It is read-only — it does not change thread state or attach approvals.
 
-At the moment, it evaluates these forward transitions:
+It evaluates policy guards for the thread's next forward transition:
 
-- RFC in `under-review` against `under-review -> accepted`
-- Issue in `open` against `open -> closed`
-- other kinds or states currently return `ok` because no verify target is defined
+- Issue in `open` → checks guards for `open->closed`
+- RFC in `under-review` → checks guards for `under-review->accepted`
+- DEC in `proposed` → checks guards for `proposed->accepted`
+- TASK in `reviewing` → checks guards for `reviewing->closed`
+- Other states → reports `ready` (no preflight target defined)
 
-In practice, this means `verify` is most useful right before an acceptance-like transition. It answers:
-"If I tried to move this thread forward now, which guard checks would fail?"
+Use it right before an acceptance-like transition. It answers:
+"If I tried to advance this thread now, which guards would block?"
 
 ## Typical workflow
 
