@@ -143,10 +143,21 @@ Use `git forum node add <ID> --type alternative "..."` and `--type assumption ".
   - `GIT_FORUM_ACTOR=ai/reviewer` persists across commands without repeating `--as`
   - if neither is set, the actor is inferred from Git config as `human/<slug>`
   - actor IDs are trust-based claims for attribution; MVP does not authenticate `--as`
+  - see **Trust model** below
 - commit identity (separate from actor):
   - controls the Git commit author/committer metadata on forum commits
   - defaults to Git config `user.name` / `user.email`
   - override via `[commit_identity]` in `.git/forum/local.toml`
+
+## Trust model
+
+git-forum uses a **trust-based** identity model:
+
+- **Actor IDs are claimed, not authenticated.** Anyone can pass `--as human/alice`. There is no login, token, or key verification in the current version.
+- **Approvals are recorded, not cryptographically verified.** An approval event stores the supplied actor ID, but nothing proves that actor actually signed off.
+- **History rewriting is intentional** for some operations (`purge`). Event logs are not tamper-evident.
+
+These trade-offs keep the tool lightweight and Git-native. Cryptographic signing of events and approvals is planned as a future extension. Until then, git-forum is best suited for teams where repository access already implies a baseline of trust.
 
 ## Preferred model
 
@@ -1040,6 +1051,28 @@ It evaluates policy guards for the thread's next forward transition:
 
 Use it right before an acceptance-like transition. It answers:
 "If I tried to advance this thread now, which guards would block?"
+
+### Which diagnostic command should I use?
+
+| I want to...                                  | Command                  | Scope      |
+|-----------------------------------------------|--------------------------|------------|
+| See what's blocking a thread                  | `show --what-next`       | thread     |
+| Check if a thread is ready to advance         | `verify`                 | thread     |
+| Test guards for a specific transition         | `policy check`           | thread     |
+| List unresolved objections/actions/questions   | `status`                 | thread     |
+| View the full policy rules                    | `policy show`            | repo       |
+| Validate the policy file for errors           | `policy lint`            | repo       |
+| Check repository health (config, index, refs) | `doctor`                 | repo       |
+| Rebuild the search index                      | `reindex`                | repo       |
+
+**Thread-scoped commands** operate on a single thread ID. **Repo-scoped commands** check the whole repository.
+
+Quick decision tree:
+
+1. **Something feels broken?** → `doctor` (repo health), then `reindex` if doctor suggests it.
+2. **Thread won't advance?** → `show --what-next` (full picture) or `verify` (quick pass/fail).
+3. **Want to test a specific transition?** → `policy check --transition from->to`.
+4. **What's still unresolved?** → `status` (compact list of open items).
 
 ## Typical workflow
 
