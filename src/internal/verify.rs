@@ -4,7 +4,11 @@ use super::git_ops::GitOps;
 use super::policy::{self, GuardViolation, Policy};
 use super::thread;
 
-/// Result of a `git forum verify` run.
+/// Result of a preflight check (`git forum verify`).
+///
+/// This is a forward-transition readiness check, not a history audit.
+/// It evaluates policy guards for the thread's next expected transition
+/// (e.g. `open->closed` for issues, `under-review->accepted` for RFCs).
 #[derive(Debug)]
 pub struct VerifyReport {
     pub thread_id: String,
@@ -17,10 +21,10 @@ impl VerifyReport {
     }
 }
 
-/// Verify a thread against all policy guards for its next expected transition.
+/// Preflight check: evaluate policy guards for the thread's next forward transition.
 ///
 /// Preconditions: thread_id exists; policy is loaded.
-/// Postconditions: returns VerifyReport with all guard violations.
+/// Postconditions: returns VerifyReport with blocking guard violations (empty = ready).
 /// Failure modes: ForumError::Git on replay failure.
 /// Side effects: none (read-only).
 pub fn verify_thread(git: &GitOps, thread_id: &str, p: &Policy) -> ForumResult<VerifyReport> {
@@ -35,7 +39,7 @@ pub fn verify_thread(git: &GitOps, thread_id: &str, p: &Policy) -> ForumResult<V
     })
 }
 
-/// The "forward" target state for verify purposes (the acceptance-track terminal).
+/// The forward target state for preflight purposes (the acceptance-track terminal).
 fn forward_target(kind: ThreadKind, status: &str) -> Option<&'static str> {
     match (kind, status) {
         (ThreadKind::Issue, "open") => Some("closed"),

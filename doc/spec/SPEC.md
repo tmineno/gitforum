@@ -492,7 +492,7 @@ Missing policy file or missing sections apply no restrictions (`#[serde(default)
 
 ### 7.4 Enforcement
 
-- **Guard evaluation**: enforced on `state` command and evaluated read-only by `verify`.
+- **Guard evaluation**: enforced on `state` command and evaluated as a read-only preflight by `verify`.
 - **Operation checks**: enforced on `new`, node commands (`claim`, `question`, etc.), `revise`,
   and `evidence add`. All write commands accept `--force` to bypass warning-level violations.
   See `doc/spec/operation-checks.md` for details.
@@ -672,7 +672,7 @@ git forum branch clear <THREAD_ID>
 
 Common link relations: `implements`, `relates-to`, `depends-on`, `blocks`.
 
-### 9.8 Verification and policy
+### 9.8 Preflight and policy
 
 ```text
 git forum verify <THREAD_ID>
@@ -680,7 +680,7 @@ git forum policy lint
 git forum policy check <THREAD_ID> --transition <TRANSITION>
 ```
 
-`verify` is read-only. It evaluates forward-transition guards:
+`verify` is a read-only preflight check (not a history audit). It evaluates forward-transition guards:
 
 - RFC in `under-review` → checks `under-review->accepted` guards.
 - Issue in `open` → checks `open->closed` guards.
@@ -834,12 +834,11 @@ Display:
 
 ### 10.8 `verify`
 
-Read-only guard evaluation:
+Read-only preflight check for the next forward transition:
 
-- Guard violations.
-- Missing summary before RFC acceptance.
-- Unresolved objections before RFC acceptance.
-- Unresolved actions before issue close.
+- Reports `ready` when all guards pass, `not ready` with blocking violations otherwise.
+- Checks: unresolved objections, unresolved actions, missing summary, approval requirements, evidence requirements.
+- This is not a history audit or integrity check — use `doctor` for repository health.
 
 ### 10.9 `hook`
 
