@@ -1,7 +1,7 @@
 mod support;
 
 use chrono::{TimeZone, Utc};
-use git_forum::internal::config::RepoPaths;
+use git_forum::internal::config::{CommitIdentity, RepoPaths};
 use git_forum::internal::doctor::{self, CheckLevel};
 use git_forum::internal::event::{self, Event, EventType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
@@ -142,6 +142,96 @@ fn load_thread_events_returns_chronological() {
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].event_type, EventType::Create);
     assert_eq!(events[1].event_type, EventType::State);
+}
+
+// ---- Commit identity tests ----
+
+/// Helper: read the author name from a git commit.
+fn commit_author_name(repo_path: &std::path::Path, sha: &str) -> String {
+    let output = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%an", sha])
+        .current_dir(repo_path)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .expect("git log failed");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// Helper: read the author email from a git commit.
+fn commit_author_email(repo_path: &std::path::Path, sha: &str) -> String {
+    let output = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%ae", sha])
+        .current_dir(repo_path)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .expect("git log failed");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+#[test]
+fn commit_uses_git_config_by_default() {
+    let (repo, git, _paths) = setup();
+    let ev = sample_create("RFC-0001", ThreadKind::Rfc, "Default identity");
+    let sha = event::write_event(&git, &ev).unwrap();
+
+    // Without a commit identity configured, the author comes from git config.
+    // We verify it's non-empty (actual value depends on the host's git config
+    // since GitOps doesn't isolate from global config in plumbing commands).
+    let name = commit_author_name(repo.path(), &sha);
+    let email = commit_author_email(repo.path(), &sha);
+    assert!(!name.is_empty(), "commit should have an author name");
+    assert!(!email.is_empty(), "commit should have an author email");
+}
+
+#[test]
+fn commit_identity_overrides_author_name_and_email() {
+    let (repo, mut git, _paths) = setup();
+    git.set_commit_identity(CommitIdentity {
+        name: Some("Forum Bot".into()),
+        email: Some("bot@forum.local".into()),
+    });
+    let ev = sample_create("RFC-0001", ThreadKind::Rfc, "Custom identity");
+    let sha = event::write_event(&git, &ev).unwrap();
+
+    assert_eq!(commit_author_name(repo.path(), &sha), "Forum Bot");
+    assert_eq!(commit_author_email(repo.path(), &sha), "bot@forum.local");
+}
+
+#[test]
+fn commit_identity_partial_override_name_only() {
+    let (repo, mut git, _paths) = setup();
+    git.set_commit_identity(CommitIdentity {
+        name: Some("Pseudonym".into()),
+        email: None,
+    });
+    let ev = sample_create("RFC-0001", ThreadKind::Rfc, "Name-only override");
+    let sha = event::write_event(&git, &ev).unwrap();
+
+    assert_eq!(commit_author_name(repo.path(), &sha), "Pseudonym");
+    // Email falls through to git config (not overridden)
+    let email = commit_author_email(repo.path(), &sha);
+    assert!(!email.is_empty(), "email should fall through to git config");
+}
+
+#[test]
+fn commit_identity_partial_override_email_only() {
+    let (repo, mut git, _paths) = setup();
+    git.set_commit_identity(CommitIdentity {
+        name: None,
+        email: Some("private@example.com".into()),
+    });
+    let ev = sample_create("RFC-0001", ThreadKind::Rfc, "Email-only override");
+    let sha = event::write_event(&git, &ev).unwrap();
+
+    // Name falls through to git config (not overridden)
+    let name = commit_author_name(repo.path(), &sha);
+    assert!(!name.is_empty(), "name should fall through to git config");
+    assert_eq!(
+        commit_author_email(repo.path(), &sha),
+        "private@example.com"
+    );
 }
 
 // ---- Thread replay tests ----

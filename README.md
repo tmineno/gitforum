@@ -145,10 +145,14 @@ Authoritative data lives in Git refs, while shared rules and templates live in t
 
 <git-dir>/forum/           # <git-dir> = .git/ or worktree git dir
   index.db
-  local.toml
+  local.toml               # per-clone settings (commit identity, default actor)
 
 refs/forum/threads/*
 ```
+
+`local.toml` is optional. It supports a `[commit_identity]` section to override the Git
+author/committer on forum commits (useful for privacy when pushing refs to shared remotes).
+See [doc/MANUAL.md](./doc/MANUAL.md#local-configuration) for details.
 
 ## Status
 

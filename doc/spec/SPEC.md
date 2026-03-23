@@ -297,6 +297,28 @@ refs/forum/threads/<THREAD_ID>    # tip of thread event chain
 git worktree this is the worktree-specific git directory (e.g.
 `/path/to/main/.git/worktrees/<name>/`). This ensures `git-forum` works correctly in worktrees.
 
+#### 5.3.1 `local.toml` format
+
+```toml
+# Actor used when --as is not specified and GIT_FORUM_ACTOR is unset.
+default_actor = "human/alice"
+
+# Override Git commit author/committer metadata on forum commits.
+# Both fields are optional; unset fields fall through to git config.
+[commit_identity]
+name = "alice"
+email = "alice@example.com"
+```
+
+**`default_actor`** — sets the default actor ID for this clone. Overridden by `--as` and
+`GIT_FORUM_ACTOR`.
+
+**`[commit_identity]`** — controls the Git commit metadata (author name and email) used when
+writing forum events. This is separate from the actor ID stored in `event.json`. Resolution order:
+
+1. `local.toml` `[commit_identity]` name/email (if set)
+2. Git config `user.name` / `user.email` (default)
+
 ## 6. Identity scheme
 
 ### 6.1 Thread display IDs

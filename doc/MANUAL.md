@@ -140,6 +140,10 @@ Use `git forum node add <ID> --type alternative "..."` and `--type assumption ".
   - `--as human/alice` or `--as ai/reviewer` overrides everything
   - `GIT_FORUM_ACTOR=ai/reviewer` persists across commands without repeating `--as`
   - if neither is set, the actor is inferred from Git config as `human/<slug>`
+- commit identity (separate from actor):
+  - controls the Git commit author/committer metadata on forum commits
+  - defaults to Git config `user.name` / `user.email`
+  - override via `[commit_identity]` in `.git/forum/local.toml`
 
 ## Preferred model
 
@@ -165,6 +169,28 @@ git forum reindex
 - `init`: creates `.forum/` and `.git/forum/`, installs the commit-msg hook
 - `doctor`: checks `.forum/` and `.git/forum/` directories exist, validates `policy.toml` syntax, verifies template files are present and non-empty, checks SQLite index health (integrity and freshness), and replays every thread's event log to verify integrity. Reports `[ok]`, `[WARN]`, or `[FAIL]` per check; exits non-zero only on failures (warnings are informational)
 - `reindex`: rebuilds the local index from Git refs
+
+### Local configuration
+
+Per-clone settings live in `.git/forum/local.toml` (never committed). This file is optional;
+defaults apply when it is absent.
+
+#### Commit identity
+
+By default, forum commits use your Git config `user.name` and `user.email` as the commit
+author/committer. To override this (e.g., for privacy when pushing forum refs to a remote),
+add a `[commit_identity]` section:
+
+```toml
+# .git/forum/local.toml
+[commit_identity]
+name = "alice"
+email = "alice@example.com"
+```
+
+Both fields are optional. Unset fields fall through to the Git config defaults. This controls
+only the Git commit metadata (author/committer); the forum actor ID (`human/alice`) in
+`event.json` is controlled separately via `--as` or `GIT_FORUM_ACTOR`.
 
 ## Create threads
 

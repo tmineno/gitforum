@@ -32,10 +32,23 @@ impl RepoPaths {
     }
 }
 
+/// Identity used for git commit author/committer on forum commits.
+///
+/// Resolution order (highest wins):
+/// 1. Actor-level override from `.forum/actors.toml` (future)
+/// 2. `[commit_identity]` in `.git/forum/local.toml`
+/// 3. Git config `user.name` / `user.email` (default)
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct CommitIdentity {
+    pub name: Option<String>,
+    pub email: Option<String>,
+}
+
 /// Minimal local config stored in `.git/forum/local.toml`.
 #[derive(Debug, Default, Deserialize)]
 pub struct LocalConfig {
     pub default_actor: Option<String>,
+    pub commit_identity: Option<CommitIdentity>,
 }
 
 /// Load local config. Returns default if file doesn't exist.
@@ -79,5 +92,40 @@ mod tests {
         let paths = RepoPaths::from_repo_root(Path::new("/nonexistent"));
         let cfg = load_local_config(&paths).unwrap();
         assert!(cfg.default_actor.is_none());
+        assert!(cfg.commit_identity.is_none());
+    }
+
+    #[test]
+    fn commit_identity_deserializes_from_toml() {
+        let toml_str = r#"
+[commit_identity]
+name = "Forum Bot"
+email = "bot@forum.local"
+"#;
+        let cfg: LocalConfig = toml::from_str(toml_str).unwrap();
+        let id = cfg.commit_identity.unwrap();
+        assert_eq!(id.name.as_deref(), Some("Forum Bot"));
+        assert_eq!(id.email.as_deref(), Some("bot@forum.local"));
+    }
+
+    #[test]
+    fn commit_identity_partial_name_only() {
+        let toml_str = r#"
+[commit_identity]
+name = "Pseudonym"
+"#;
+        let cfg: LocalConfig = toml::from_str(toml_str).unwrap();
+        let id = cfg.commit_identity.unwrap();
+        assert_eq!(id.name.as_deref(), Some("Pseudonym"));
+        assert!(id.email.is_none());
+    }
+
+    #[test]
+    fn commit_identity_absent_when_section_missing() {
+        let toml_str = r#"
+default_actor = "human/alice"
+"#;
+        let cfg: LocalConfig = toml::from_str(toml_str).unwrap();
+        assert!(cfg.commit_identity.is_none());
     }
 }
