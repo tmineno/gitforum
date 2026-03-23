@@ -123,8 +123,12 @@ struct Cli {
 enum Commands {
     /// Initialize a git-forum repository
     Init,
-    /// Check repository health
-    Doctor,
+    /// Diagnose repo health (config, index, refs)
+    Doctor {
+        /// Show all checks including passing ones
+        #[arg(long, short)]
+        verbose: bool,
+    },
     /// Rebuild local index from Git refs
     Reindex,
     /// Purge event content from git history (hard-delete)
@@ -1160,21 +1164,83 @@ fn main() -> Result<(), ForumError> {
             hook::install_hook(&hook_path, false)?;
         }
 
-        Commands::Doctor => {
+        Commands::Doctor { verbose } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             let report = doctor::run_doctor(&git, &paths)?;
+
+            // Separate replay checks from non-replay checks
+            let mut replay_ok = 0u32;
+            let mut replay_fail: Vec<&doctor::DoctorCheck> = Vec::new();
+            let mut ok_count = 0u32;
+            let mut warn_count = 0u32;
+            let mut fail_count = 0u32;
+
             for check in &report.checks {
-                let marker = match check.level {
-                    doctor::CheckLevel::Ok => " ok ",
-                    doctor::CheckLevel::Warn => "WARN",
-                    doctor::CheckLevel::Fail => "FAIL",
-                };
-                print!("[{marker}] {}", check.name);
-                if let Some(detail) = &check.detail {
-                    print!(" -- {detail}");
+                match check.level {
+                    doctor::CheckLevel::Ok => ok_count += 1,
+                    doctor::CheckLevel::Warn => warn_count += 1,
+                    doctor::CheckLevel::Fail => fail_count += 1,
                 }
-                println!();
+
+                let is_replay = check.name.starts_with("replay ");
+                if is_replay {
+                    if check.level == doctor::CheckLevel::Ok {
+                        replay_ok += 1;
+                        continue; // suppress passing replays unless verbose
+                    } else {
+                        replay_fail.push(check);
+                        continue; // print replay failures below
+                    }
+                }
+
+                // Non-replay checks: always show failures/warnings, show ok only if verbose
+                if check.level != doctor::CheckLevel::Ok || verbose {
+                    let marker = match check.level {
+                        doctor::CheckLevel::Ok => " ok ",
+                        doctor::CheckLevel::Warn => "WARN",
+                        doctor::CheckLevel::Fail => "FAIL",
+                    };
+                    print!("[{marker}] {}", check.name);
+                    if let Some(detail) = &check.detail {
+                        print!(" -- {detail}");
+                    }
+                    println!();
+                }
             }
+
+            // Collapsed replay summary
+            let total_replay = replay_ok + replay_fail.len() as u32;
+            if total_replay > 0 {
+                if replay_fail.is_empty() {
+                    println!("[ ok ] replay: {replay_ok} threads replayed successfully");
+                } else {
+                    for check in &replay_fail {
+                        let detail = check.detail.as_deref().unwrap_or("unknown error");
+                        println!("[FAIL] {} -- {}", check.name, detail);
+                    }
+                    if replay_ok > 0 {
+                        println!("[ ok ] replay: {replay_ok} other threads ok");
+                    }
+                }
+            }
+
+            // Summary line
+            println!();
+            if fail_count == 0 && warn_count == 0 {
+                println!("All {ok_count} checks passed.");
+            } else {
+                let parts: Vec<String> = [
+                    (fail_count, "failed"),
+                    (warn_count, "warning"),
+                    (ok_count, "passed"),
+                ]
+                .iter()
+                .filter(|(n, _)| *n > 0)
+                .map(|(n, label)| format!("{n} {label}"))
+                .collect();
+                println!("{}", parts.join(", "));
+            }
+
             if !report.all_passed() {
                 std::process::exit(1);
             }
