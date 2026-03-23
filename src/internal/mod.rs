@@ -24,6 +24,7 @@ pub mod init;
 pub mod node;
 pub mod operation_check;
 pub mod policy;
+pub mod purge;
 pub mod refs;
 pub mod reindex;
 pub mod show;

@@ -184,6 +184,37 @@ See [doc/MANUAL.md](./doc/MANUAL.md#local-configuration) for details.
 
 See [doc/ROADMAP.md](./doc/ROADMAP.md) for in-progress and planned work.
 
+## Data retention and privacy
+
+git-forum stores all discussion history as Git commits. When you push forum refs
+(`refs/forum/*`) to a remote or distribute a repository, the following data travels with it:
+
+| Data | Where stored | Removable? |
+|------|-------------|------------|
+| Thread titles and bodies | `event.json` in git commits | Yes, via `git forum purge` |
+| Node bodies (claims, objections, etc.) | `event.json` in git commits | Yes, via `git forum purge` |
+| Actor IDs (e.g., `human/alice`) | `event.json` in git commits | Yes, via `git forum purge --actor` |
+| Git commit author name and email | Git commit metadata | Configurable via `[commit_identity]` in `local.toml` |
+| Timestamps | `event.json` + git commit metadata | Not removable |
+| Thread IDs and state transitions | `event.json` in git commits | Not removable |
+| Retracted node content | Earlier git commits in chain | Yes, via `git forum purge` |
+| Revised body history | Earlier git commits in chain | Yes, via `git forum purge` |
+
+Key points:
+
+- **Retract is soft-delete.** `git forum retract` marks a node inactive but the original body
+  remains in git history. Use `git forum purge` for hard-delete.
+- **Commit identity is configurable.** By default, forum commits use your `git config user.name`
+  and `user.email`. Override this per-clone via `[commit_identity]` in `.git/forum/local.toml`.
+- **Purge rewrites history.** `git forum purge` replaces content with `[purged]` by rewriting
+  git commits. After purging, all clones must re-fetch and `git gc` should be run to remove
+  unreachable objects.
+- **Actor IDs may contain real names.** The default actor ID is derived from `git config
+  user.name` (e.g., `human/taiki-mineno`). Set `GIT_FORUM_ACTOR` or `default_actor` in
+  `local.toml` for privacy.
+
+See [doc/MANUAL.md](./doc/MANUAL.md) for configuration details.
+
 ## Non-goals
 
 The following are out of scope:
