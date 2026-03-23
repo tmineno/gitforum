@@ -25,6 +25,7 @@ use git_forum::internal::index;
 use git_forum::internal::init;
 use git_forum::internal::operation_check;
 use git_forum::internal::policy::Policy;
+use git_forum::internal::purge;
 use git_forum::internal::reindex;
 use git_forum::internal::show;
 use git_forum::internal::state_change;
@@ -126,6 +127,21 @@ enum Commands {
     Doctor,
     /// Rebuild local index from Git refs
     Reindex,
+    /// Purge event content from git history (hard-delete)
+    Purge {
+        /// Purge a specific event in a thread
+        #[arg(long, value_name = "THREAD_ID", requires = "event")]
+        thread: Option<String>,
+        /// Event SHA to purge (requires --thread)
+        #[arg(long, value_name = "EVENT_SHA")]
+        event: Option<String>,
+        /// Purge all events by a specific actor across all threads
+        #[arg(long, value_name = "ACTOR_ID", conflicts_with_all = ["thread", "event"])]
+        actor: Option<String>,
+        /// Show what would be purged without modifying
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Issue sub-commands
     #[command(hide = true)]
     Issue {
@@ -1134,6 +1150,77 @@ fn main() -> Result<(), ForumError> {
             );
             for (id, err) in &report.errors {
                 eprintln!("  error: {id}: {err}");
+            }
+        }
+
+        Commands::Purge {
+            thread,
+            event,
+            actor,
+            dry_run,
+        } => {
+            let (git, paths) = discover_repo_with_init_warning()?;
+            match (thread, event, actor) {
+                (Some(thread_id), Some(event_sha), None) => {
+                    if dry_run {
+                        let plan = purge::plan_purge_event(&git, &thread_id, &event_sha)?;
+                        println!("Would purge {} event(s):", plan.events.len());
+                        for e in &plan.events {
+                            println!(
+                                "  {} {} by {} (has body: {})",
+                                e.thread_id, e.event_type, e.actor, e.has_body
+                            );
+                        }
+                    } else {
+                        let report = purge::purge_event(&git, &thread_id, &event_sha)?;
+                        println!(
+                            "Purged {} event(s), rewrote {} commit(s)",
+                            report.events_purged, report.commits_rewritten
+                        );
+                        // Rebuild index
+                        let db_path = paths.git_forum.join("index.db");
+                        if db_path.exists() {
+                            reindex::run_reindex(&git, &db_path)?;
+                            println!("Index rebuilt");
+                        }
+                        eprintln!("warning: commit SHAs have changed — all clones must re-fetch affected refs");
+                    }
+                }
+                (None, None, Some(actor_id)) => {
+                    if dry_run {
+                        let plan = purge::plan_purge_actor(&git, &actor_id)?;
+                        println!("Would purge {} event(s):", plan.events.len());
+                        for e in &plan.events {
+                            println!(
+                                "  {} {} by {} (has body: {})",
+                                e.thread_id, e.event_type, e.actor, e.has_body
+                            );
+                        }
+                    } else {
+                        let report = purge::purge_actor(&git, &actor_id)?;
+                        println!(
+                            "Purged {} event(s) across {} thread(s), rewrote {} commit(s)",
+                            report.events_purged,
+                            report.threads_affected.len(),
+                            report.commits_rewritten
+                        );
+                        for tid in &report.threads_affected {
+                            println!("  {tid}");
+                        }
+                        // Rebuild index
+                        let db_path = paths.git_forum.join("index.db");
+                        if db_path.exists() {
+                            reindex::run_reindex(&git, &db_path)?;
+                            println!("Index rebuilt");
+                        }
+                        eprintln!("warning: commit SHAs have changed — all clones must re-fetch affected refs");
+                    }
+                }
+                _ => {
+                    return Err(ForumError::Config(
+                        "specify either --thread + --event or --actor".into(),
+                    ));
+                }
             }
         }
 

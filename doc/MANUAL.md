@@ -34,6 +34,8 @@ git forum policy lint                              Check policy for problems
 git forum policy check <ID> --transition from->to  Check guards for transition
 git forum hook install                             Install commit-msg hook
 git forum tui                                      Open interactive TUI
+git forum purge --thread <ID> --event <SHA>        Purge event content
+git forum purge --actor <ACTOR_ID>                 Purge all events by actor
 ```
 
 ### Shorthands (convenience aliases — produce identical events)
@@ -689,6 +691,38 @@ hint: create the thread first, or remove the reference from the commit message.
 The hook path is resolved via `git rev-parse --git-path hooks/commit-msg`, so it works correctly
 with worktrees and `core.hooksPath`. `--force` overwrites any existing hook without backup; users
 with custom hooks should use a hook dispatcher (e.g., the pre-commit framework).
+
+## Purge (hard-delete)
+
+`git forum purge` permanently removes event content from git history by rewriting commits.
+This is destructive: commit SHAs change and all clones must re-fetch affected refs.
+
+### Purge a specific event
+
+```bash
+git forum purge --thread ISSUE-0001 --event <SHA>
+git forum purge --thread ISSUE-0001 --event <SHA> --dry-run
+```
+
+Replaces the event's `body` and `title` with `[purged]`. All downstream commits in the thread
+are rewritten with new parent SHAs. The SQLite index is rebuilt automatically.
+
+### Purge all events by an actor
+
+```bash
+git forum purge --actor human/alice
+git forum purge --actor human/alice --dry-run
+```
+
+Replaces the `actor`, `body`, and `title` with `[purged]` on every event created by the
+specified actor, across all threads. Use `--dry-run` first to review what would be affected.
+
+### After purging
+
+- Commit SHAs change for all rewritten commits. Push with `git push --force-with-lease`.
+- All clones must re-fetch affected refs (`git fetch origin refs/forum/*:refs/forum/*`).
+- Original objects remain in `.git/objects/` until `git gc` prunes them.
+- Run `git gc --prune=now` locally to remove unreachable objects immediately.
 
 ## TUI
 

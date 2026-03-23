@@ -719,6 +719,25 @@ git forum export github-issue <THREAD_ID> --repo <OWNER/REPO>
 
 Scope: GitHub issue interoperability only. RFC import/export is not planned.
 
+### 9.12 Purge (hard-delete)
+
+```text
+git forum purge --thread <THREAD_ID> --event <SHA> [--dry-run]
+git forum purge --actor <ACTOR_ID> [--dry-run]
+```
+
+Purge rewrites git commit chains to permanently remove event content:
+
+- **Event purge**: replaces `body` and `title` with `[purged]` for a specific event.
+- **Actor purge**: replaces `actor`, `body`, and `title` with `[purged]` for all events by the
+  specified actor across all threads.
+
+Both modes rewrite descendant commits (new parent SHAs) and update the thread ref. The SQLite
+index is rebuilt after purge. `--dry-run` reports what would be affected without modifying data.
+
+Post-purge: commit SHAs change; all clones must re-fetch. Original objects remain in
+`.git/objects/` until `git gc`.
+
 ## 10. Command requirements
 
 ### 10.1 `new issue` and `new rfc`
