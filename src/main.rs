@@ -1136,7 +1136,12 @@ fn main() -> Result<(), ForumError> {
                     "hint: edit .git/forum/local.toml to change your actor ID or commit identity"
                 );
             }
-            println!("Initialized git-forum in {}", git.root().display());
+            let dir_name = git
+                .root()
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| ".".to_string());
+            println!("Initialized git-forum in {dir_name}");
             let hook_path = hook::resolve_hook_path(&git)?;
             hook::install_hook(&hook_path, false)?;
         }
