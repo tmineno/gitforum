@@ -285,12 +285,54 @@ impl Event {
         self.created_at = created_at;
         self
     }
+
+    /// Validate event field sizes and content.
+    ///
+    /// Returns an error if any field exceeds safety limits. Called at both
+    /// write-time and read-time to prevent DoS via oversized fields.
+    pub fn validate(&self) -> ForumResult<()> {
+        const MAX_ACTOR: usize = 200;
+        const MAX_TITLE: usize = 500;
+        const MAX_BODY: usize = 10 * 1024 * 1024; // 10 MB
+        const MAX_THREAD_ID: usize = 100;
+
+        if self.actor.len() > MAX_ACTOR {
+            return Err(super::error::ForumError::Config(format!(
+                "actor too long ({} chars, max {MAX_ACTOR})",
+                self.actor.len()
+            )));
+        }
+        if self.thread_id.len() > MAX_THREAD_ID {
+            return Err(super::error::ForumError::Config(format!(
+                "thread_id too long ({} chars, max {MAX_THREAD_ID})",
+                self.thread_id.len()
+            )));
+        }
+        if let Some(ref title) = self.title {
+            if title.len() > MAX_TITLE {
+                return Err(super::error::ForumError::Config(format!(
+                    "title too long ({} chars, max {MAX_TITLE})",
+                    title.len()
+                )));
+            }
+        }
+        if let Some(ref body) = self.body {
+            if body.len() > MAX_BODY {
+                return Err(super::error::ForumError::Config(format!(
+                    "body too long ({} bytes, max {MAX_BODY})",
+                    body.len()
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Write an event as a Git commit and update the thread ref.
 ///
 /// Returns the new commit SHA.
 pub fn write_event(git: &GitOps, event: &Event) -> ForumResult<String> {
+    event.validate()?;
     let json = serde_json::to_string_pretty(event)?;
 
     // Create blob → tree → commit
@@ -324,6 +366,7 @@ pub fn read_event(git: &GitOps, commit_sha: &str) -> ForumResult<Event> {
     let json = git.show_file(commit_sha, "event.json")?;
     let mut event: Event = serde_json::from_str(&json)?;
     event.event_id = commit_sha.to_string();
+    event.validate()?;
     Ok(event)
 }
 
@@ -399,5 +442,41 @@ mod tests {
         assert_eq!(ThreadKind::Rfc.initial_status(), "draft");
         assert_eq!(ThreadKind::Dec.initial_status(), "proposed");
         assert_eq!(ThreadKind::Task.initial_status(), "open");
+    }
+
+    #[test]
+    fn validate_accepts_normal_event() {
+        let event = sample_create_event();
+        assert!(event.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_oversized_actor() {
+        let mut event = sample_create_event();
+        event.actor = "x".repeat(201);
+        assert!(event.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_oversized_title() {
+        let mut event = sample_create_event();
+        event.title = Some("x".repeat(501));
+        assert!(event.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_oversized_body() {
+        let mut event = sample_create_event();
+        event.body = Some("x".repeat(10 * 1024 * 1024 + 1));
+        assert!(event.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_max_size_fields() {
+        let mut event = sample_create_event();
+        event.actor = "x".repeat(200);
+        event.title = Some("x".repeat(500));
+        event.body = Some("x".repeat(10 * 1024 * 1024));
+        assert!(event.validate().is_ok());
     }
 }
