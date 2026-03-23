@@ -1113,6 +1113,29 @@ fn main() -> Result<(), ForumError> {
             let git_dir = git.git_dir()?;
             let paths = RepoPaths::from_repo_root_and_git_dir(git.root(), &git_dir);
             init::init_forum(&paths)?;
+            // Generate local.toml with default_actor if it doesn't exist
+            let local_toml_path = paths.git_forum.join("local.toml");
+            if !local_toml_path.exists() {
+                let default_actor = actor::actor_from_git_config(&git);
+                let content = format!(
+                    "# git-forum local config (per-clone, not committed)\n\
+                     \n\
+                     # Default actor ID for this clone.\n\
+                     # Override per-command with --as or GIT_FORUM_ACTOR env var.\n\
+                     default_actor = \"{default_actor}\"\n\
+                     \n\
+                     # Override git commit author/committer on forum commits.\n\
+                     # Uncomment to use a pseudonym instead of git config user.name/email.\n\
+                     # [commit_identity]\n\
+                     # name = \"pseudonym\"\n\
+                     # email = \"pseudonym@example.com\"\n"
+                );
+                std::fs::write(&local_toml_path, content)?;
+                println!("Default actor: {default_actor}");
+                eprintln!(
+                    "hint: edit .git/forum/local.toml to change your actor ID or commit identity"
+                );
+            }
             println!("Initialized git-forum in {}", git.root().display());
             let hook_path = hook::resolve_hook_path(&git)?;
             hook::install_hook(&hook_path, false)?;
@@ -2870,7 +2893,7 @@ fn print_bulk_report(report: &BulkStateReport) {
 }
 
 fn resolve_actor(as_actor: Option<String>, git: &GitOps) -> String {
-    as_actor.unwrap_or_else(|| actor::current_actor(git))
+    as_actor.unwrap_or_else(|| actor::current_actor(git, git.default_actor()))
 }
 
 fn run_node_lifecycle_bulk(
@@ -2919,10 +2942,13 @@ fn discover_repo_with_init_warning() -> Result<(GitOps, RepoPaths), ForumError> 
             "warning: git-forum is not initialized in this repository; run `git forum init` first"
         );
     }
-    // Load local config and apply commit identity if configured.
+    // Load local config and apply settings.
     let local_cfg = config::load_local_config(&paths).unwrap_or_default();
     if let Some(identity) = local_cfg.commit_identity {
         git.set_commit_identity(identity);
+    }
+    if let Some(default_actor) = local_cfg.default_actor {
+        git.set_default_actor(default_actor);
     }
     Ok((git, paths))
 }

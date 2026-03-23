@@ -88,7 +88,7 @@ pub(super) fn apply_node_status_action(
     action: NodeStatusAction,
 ) -> ForumResult<()> {
     let lookup = thread::find_node_in_thread(git, thread_id, node_id)?;
-    let actor = actor::current_actor(git);
+    let actor = actor::current_actor(git, git.default_actor());
     let clock = SystemClock;
 
     match action {
@@ -122,7 +122,7 @@ pub(super) fn submit_create_thread(
     }
 
     let t = Instant::now();
-    let actor = actor::current_actor(git);
+    let actor = actor::current_actor(git, git.default_actor());
     let clock = SystemClock;
     let kind = thread_kind_values()[app.thread_form.kind_index];
     let body = if app.thread_form.body.trim().is_empty() {
@@ -155,7 +155,7 @@ pub(super) fn submit_create_node(
     }
 
     let t = Instant::now();
-    let actor = actor::current_actor(git);
+    let actor = actor::current_actor(git, git.default_actor());
     let clock = SystemClock;
     let node_type = node_type_values()[app.node_form.node_type_index];
     let node_id = write_ops::say_node(git, thread_id, node_type, body, &actor, &clock, None)?;
@@ -176,7 +176,7 @@ pub(super) fn submit_create_link(
         return Ok(());
     };
 
-    let actor = actor::current_actor(git);
+    let actor = actor::current_actor(git, git.default_actor());
     let clock = SystemClock;
     let relation = link_relation_labels()[app.link_form.relation_index];
     evidence_ops::add_thread_link(git, thread_id, &target_thread_id, relation, &actor, &clock)?;
