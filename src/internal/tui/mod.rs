@@ -19,7 +19,7 @@ use ratatui::layout::Rect;
 use ratatui::widgets::TableState;
 use ratatui::Terminal;
 
-use super::error::ForumResult;
+use super::error::{ForumError, ForumResult};
 use super::git_ops::GitOps;
 use super::index::{self, ThreadRow};
 use super::node::Node;
@@ -218,6 +218,13 @@ struct TreeEntry {
     has_children: bool,
 }
 
+/// An error flash message shown as an overlay in the TUI.
+#[derive(Debug, Clone)]
+pub(crate) struct ErrorFlash {
+    pub message: String,
+    pub hint: Option<String>,
+}
+
 /// Application state for the TUI.
 pub struct App {
     pub view: View,
@@ -267,6 +274,8 @@ pub struct App {
     thread_status: String,
     /// LRU cache for replayed thread states (RFC-0017 Phase 1).
     replay_cache: ReplayCache,
+    /// Error flash message displayed as an overlay, dismissed on next keypress.
+    pub(crate) error_flash: Option<ErrorFlash>,
 }
 
 impl App {
@@ -324,6 +333,7 @@ impl App {
             thread_kind: String::new(),
             thread_status: String::new(),
             replay_cache: ReplayCache::new(),
+            error_flash: None,
         }
     }
 
@@ -715,6 +725,30 @@ pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> For
     result
 }
 
+/// Convert a ForumError into an ErrorFlash with a context-specific CLI hint.
+fn to_error_flash(app: &App, err: &ForumError) -> ErrorFlash {
+    let message = err.to_string();
+    let hint = match &app.view {
+        View::ThreadDetail(id) | View::CreateNode { thread_id: id } => match err {
+            ForumError::Policy(_) => Some(format!(
+                "Try: git forum verify {id}  or  git forum show {id} --what-next"
+            )),
+            _ => Some(format!("Try: git forum show {id} --what-next")),
+        },
+        View::NodeDetail { thread_id, node_id } => match err {
+            ForumError::Policy(_) => Some(format!(
+                "Try: git forum verify {thread_id}  or  git forum show {thread_id} --what-next"
+            )),
+            ForumError::Repo(_) => {
+                Some(format!("Try: git forum show {thread_id}  (node {node_id})"))
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    ErrorFlash { message, hint }
+}
+
 pub(crate) fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
@@ -743,14 +777,28 @@ pub(crate) fn run_app<B: Backend>(
             match event::read()? {
                 Event::Key(key) => {
                     input_start = Some(Instant::now());
-                    if handle_key(app, key, git, conn, db_path, perf)? {
-                        return Ok(());
+                    // If an error flash is showing, dismiss it on any keypress
+                    if app.error_flash.is_some() {
+                        app.error_flash = None;
+                        continue;
+                    }
+                    match handle_key(app, key, git, conn, db_path, perf) {
+                        Ok(true) => return Ok(()),
+                        Ok(false) => {}
+                        Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
                     }
                 }
                 Event::Mouse(mouse) => {
                     input_start = Some(Instant::now());
-                    if handle_mouse(app, mouse, git, conn, db_path, perf)? {
-                        return Ok(());
+                    // If an error flash is showing, dismiss it on any click
+                    if app.error_flash.is_some() {
+                        app.error_flash = None;
+                        continue;
+                    }
+                    match handle_mouse(app, mouse, git, conn, db_path, perf) {
+                        Ok(true) => return Ok(()),
+                        Ok(false) => {}
+                        Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
                     }
                 }
                 _ => {}
@@ -1791,5 +1839,48 @@ mod tests {
         assert_eq!(app.node_table_state.selected(), Some(2));
         app.move_node_down();
         assert_eq!(app.node_table_state.selected(), Some(2));
+    }
+
+    #[test]
+    fn error_flash_renders_overlay() {
+        let mut app = App::new(vec![make_row("RFC-0001", "rfc", "draft", "Test RFC")]);
+        app.error_flash = Some(ErrorFlash {
+            message: "policy error: 2 open objection(s)".into(),
+            hint: Some("Try: git forum verify RFC-0001".into()),
+        });
+        let out = render_to_string(&mut app, 80, 24);
+        assert!(
+            out.contains("policy error"),
+            "expected error message in:\n{out}"
+        );
+        assert!(
+            out.contains("git forum verify"),
+            "expected CLI hint in:\n{out}"
+        );
+        assert!(
+            out.contains("Press any key"),
+            "expected dismiss instruction in:\n{out}"
+        );
+    }
+
+    #[test]
+    fn to_error_flash_includes_thread_hint() {
+        let mut app = App::new(vec![]);
+        app.view = View::ThreadDetail("ISSUE-0042".into());
+        let err = ForumError::Policy("2 open objection(s)".into());
+        let flash = to_error_flash(&app, &err);
+        assert!(flash.message.contains("2 open objection"));
+        let hint = flash.hint.unwrap();
+        assert!(hint.contains("ISSUE-0042"));
+        assert!(hint.contains("verify"));
+    }
+
+    #[test]
+    fn to_error_flash_no_hint_on_list_view() {
+        let mut app = App::new(vec![]);
+        app.view = View::List;
+        let err = ForumError::Repo("not found".into());
+        let flash = to_error_flash(&app, &err);
+        assert!(flash.hint.is_none());
     }
 }
