@@ -122,7 +122,7 @@ struct FilterBar {
     statuses: HashSet<String>,
 }
 
-const FILTER_KIND_LABELS: [&str; 2] = ["issue", "rfc"];
+const FILTER_KIND_LABELS: [&str; 4] = ["issue", "rfc", "dec", "task"];
 const FILTER_STATUS_LABELS: [&str; 9] = [
     "open",
     "draft",
@@ -166,6 +166,8 @@ enum LinkFormField {
 enum LinkTargetKind {
     Issue,
     Rfc,
+    Dec,
+    Task,
     Manual,
 }
 
@@ -1180,12 +1182,12 @@ mod tests {
         app.begin_create_thread();
         let out = render_to_string(&mut app, 80, 20);
         assert!(out.contains("create thread"));
-        assert!(out.contains("kind: rfc"));
+        assert!(out.contains("kind: issue"));
         assert!(out.contains("title:"));
         assert!(out.contains("body: (empty)"));
         assert!(out.contains("submit: [Create thread]"));
         assert!(out.contains("thread kinds"));
-        assert!(out.contains("> rfc"));
+        assert!(out.contains("> issue"));
     }
 
     #[test]
@@ -1455,7 +1457,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(app.view, View::ThreadDetail("RFC-0001".into()));
+        assert_eq!(app.view, View::ThreadDetail("ASK-0001".into()));
         assert!(app.thread_text.contains("Created with mouse"));
     }
 

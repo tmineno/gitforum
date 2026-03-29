@@ -92,6 +92,8 @@ fn kind_color(kind: &str) -> Color {
     match kind {
         "rfc" => Color::Cyan,
         "issue" => Color::Yellow,
+        "dec" => Color::Magenta,
+        "task" => Color::Green,
         _ => Color::Reset,
     }
 }
