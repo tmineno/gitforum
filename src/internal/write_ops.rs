@@ -125,6 +125,27 @@ pub fn revise_node(
     Ok(())
 }
 
+/// Change the type of an existing node.
+///
+/// Preconditions: thread_id and node_id exist.
+/// Postconditions: a Retype event is written with the new node type.
+/// Failure modes: ForumError::Git on subprocess failure.
+/// Side effects: writes git objects, updates ref.
+pub fn retype_node(
+    git: &GitOps,
+    thread_id: &str,
+    node_id: &str,
+    new_type: NodeType,
+    actor: &str,
+    clock: &dyn Clock,
+) -> ForumResult<()> {
+    let ev = Event::base(thread_id, EventType::Retype, actor, clock)
+        .with_target_node_id(node_id)
+        .with_node_type(new_type);
+    super::event::write_event(git, &ev)?;
+    Ok(())
+}
+
 /// Apply a lifecycle event (Retract, Resolve, or Reopen) to a node.
 ///
 /// Preconditions: thread_id and node_id exist; event_type is Retract, Resolve, or Reopen.

@@ -592,6 +592,20 @@ enum Commands {
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
+    /// Change the type of an existing node
+    Retype {
+        thread_id: String,
+        #[arg(
+            value_name = "NODE_ID",
+            help = "Full node ID or unique prefix within the thread"
+        )]
+        node_id: String,
+        /// New node type (claim, question, objection, evidence, summary, action, risk, review, alternative, assumption)
+        #[arg(long = "type", value_name = "TYPE")]
+        new_type: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
     /// Transition a thread to a new state
     State {
         #[command(subcommand)]
@@ -2081,6 +2095,21 @@ fn main() -> Result<(), ForumError> {
             "Reopened",
             &clock,
         )?,
+
+        Commands::Retype {
+            thread_id,
+            node_id,
+            new_type,
+            as_actor,
+        } => {
+            let (git, _paths) = discover_repo_with_init_warning()?;
+            let actor = resolve_actor(as_actor, &git);
+            let parsed_type: git_forum::internal::event::NodeType =
+                new_type.parse().map_err(ForumError::Config)?;
+            let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
+            write_ops::retype_node(&git, &thread_id, &resolved, parsed_type, &actor, &clock)?;
+            println!("Retyped {resolved} -> {parsed_type}");
+        }
 
         Commands::State {
             cmd,

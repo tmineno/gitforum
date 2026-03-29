@@ -81,6 +81,7 @@ pub enum EventType {
     Merge,
     #[serde(rename = "revise-body")]
     ReviseBody,
+    Retype,
 }
 
 impl std::fmt::Display for EventType {
@@ -98,6 +99,7 @@ impl std::fmt::Display for EventType {
             Self::Verify => "verify",
             Self::Merge => "merge",
             Self::ReviseBody => "revise-body",
+            Self::Retype => "retype",
         };
         f.write_str(s)
     }

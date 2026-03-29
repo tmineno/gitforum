@@ -186,6 +186,13 @@ fn apply_event(state: &mut ThreadState, event: &Event) -> ForumResult<()> {
                 }
             }
         }
+        EventType::Retype => {
+            if let (Some(ref node_id), Some(new_type)) = (&event.target_node_id, event.node_type) {
+                if let Some(node) = state.nodes.iter_mut().find(|n| &n.node_id == node_id) {
+                    node.node_type = new_type;
+                }
+            }
+        }
         EventType::ReviseBody => {
             if let Some(ref body) = event.body {
                 state.body = Some(body.clone());
