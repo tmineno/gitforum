@@ -784,7 +784,7 @@ fn resolve_node_id_rejects_short_prefix() {
 
     let short_prefix = &node_id[..thread::MIN_NODE_ID_PREFIX_LEN - 1];
     let err = thread::resolve_node_id_global(&git, short_prefix).unwrap_err();
-    assert!(err.to_string().contains("at least 8 characters"));
+    assert!(err.to_string().contains("too short"));
 }
 
 #[test]

@@ -7,7 +7,7 @@ use super::git_ops::GitOps;
 use super::node::Node;
 use super::refs;
 
-pub const MIN_NODE_ID_PREFIX_LEN: usize = 8;
+pub const MIN_NODE_ID_PREFIX_LEN: usize = 4;
 
 /// A link between two threads.
 #[derive(Debug, Clone)]
