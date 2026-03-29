@@ -927,6 +927,19 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
         .unwrap_or(12)
         .max(12);
     let date_width = 16; // YYYY-MM-DD HH:MM
+    // 6 column gaps of 2 spaces each = 12, plus 2 before the title column
+    let fixed_cols = id_width + kind_width + status_width + branch_width + date_width * 2 + 14;
+    let term_width = crossterm::terminal::size()
+        .map(|(w, _)| w as usize)
+        .ok()
+        .filter(|&w| w >= 40)
+        .unwrap_or(0);
+    // 0 means no truncation (non-terminal or very narrow terminal)
+    let title_max = if term_width > fixed_cols {
+        term_width - fixed_cols
+    } else {
+        0
+    };
     let mut lines: Vec<String> = Vec::new();
     lines.push(format!(
         "{:<id_width$}  {:<kind_width$}  {:<status_width$}  {:<branch_width$}  {:<date_width$}  {:<date_width$}  {}",
@@ -942,6 +955,7 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
             .last()
             .map(|e| e.created_at.format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_else(|| "-".into());
+        let title = truncate_with_ellipsis(&s.title, title_max);
         lines.push(format!(
             "{:<id_width$}  {:<kind_width$}  {:<status_width$}  {:<branch_width$}  {:<date_width$}  {:<date_width$}  {}",
             s.id,
@@ -950,11 +964,19 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
             s.branch.as_deref().unwrap_or("-"),
             created,
             updated,
-            s.title,
+            title,
         ));
     }
     lines.push(String::new());
     lines.join("\n")
+}
+
+fn truncate_with_ellipsis(s: &str, max: usize) -> String {
+    if max == 0 || s.len() <= max {
+        return s.to_string();
+    }
+    let end = s.floor_char_boundary(max.saturating_sub(3));
+    format!("{}...", &s[..end])
 }
 
 #[cfg(test)]
