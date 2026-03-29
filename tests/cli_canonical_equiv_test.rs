@@ -22,12 +22,25 @@ fn run(repo_path: &std::path::Path, args: &[&str]) -> std::process::Output {
         .expect("command failed to execute")
 }
 
-fn setup_issue(repo_path: &std::path::Path) {
-    let out = run(repo_path, &["new", "issue", "Test issue"]);
-    assert!(out.status.success(), "failed to create issue");
+fn extract_created_id(output: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .trim()
+        .strip_prefix("Created ")
+        .unwrap_or(stdout.trim())
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string()
 }
 
-fn setup_rfc(repo_path: &std::path::Path) {
+fn setup_issue(repo_path: &std::path::Path) -> String {
+    let out = run(repo_path, &["new", "issue", "Test issue"]);
+    assert!(out.status.success(), "failed to create issue");
+    extract_created_id(&out)
+}
+
+fn setup_rfc(repo_path: &std::path::Path) -> String {
     let out = run(
         repo_path,
         &[
@@ -39,6 +52,7 @@ fn setup_rfc(repo_path: &std::path::Path) {
         ],
     );
     assert!(out.status.success(), "failed to create rfc");
+    extract_created_id(&out)
 }
 
 fn replay(
@@ -57,29 +71,29 @@ fn claim_shorthand_equals_node_add_claim() {
     let repo_a = support::repo::TestRepo::new();
     let paths_a = RepoPaths::from_repo_root(repo_a.path());
     init::init_forum(&paths_a).unwrap();
-    setup_rfc(repo_a.path());
-    let out = run(repo_a.path(), &["claim", "RFC-0001", "Shorthand claim"]);
+    let id_a = setup_rfc(repo_a.path());
+    let out = run(repo_a.path(), &["claim", &id_a, "Shorthand claim"]);
     assert!(out.status.success());
-    let state_a = replay(repo_a.path(), "RFC-0001");
+    let state_a = replay(repo_a.path(), &id_a);
 
     // Canonical: git forum node add <ID> --type claim "body"
     let repo_b = support::repo::TestRepo::new();
     let paths_b = RepoPaths::from_repo_root(repo_b.path());
     init::init_forum(&paths_b).unwrap();
-    setup_rfc(repo_b.path());
+    let id_b = setup_rfc(repo_b.path());
     let out = run(
         repo_b.path(),
         &[
             "node",
             "add",
-            "RFC-0001",
+            &id_b,
             "--type",
             "claim",
             "Shorthand claim",
         ],
     );
     assert!(out.status.success());
-    let state_b = replay(repo_b.path(), "RFC-0001");
+    let state_b = replay(repo_b.path(), &id_b);
 
     assert_eq!(state_a.nodes.len(), state_b.nodes.len());
     assert_eq!(state_a.nodes[0].node_type, NodeType::Claim);
@@ -92,28 +106,28 @@ fn question_shorthand_equals_node_add_question() {
     let repo_a = support::repo::TestRepo::new();
     let paths_a = RepoPaths::from_repo_root(repo_a.path());
     init::init_forum(&paths_a).unwrap();
-    setup_rfc(repo_a.path());
-    let out = run(repo_a.path(), &["question", "RFC-0001", "Is this safe?"]);
+    let id_a = setup_rfc(repo_a.path());
+    let out = run(repo_a.path(), &["question", &id_a, "Is this safe?"]);
     assert!(out.status.success());
-    let state_a = replay(repo_a.path(), "RFC-0001");
+    let state_a = replay(repo_a.path(), &id_a);
 
     let repo_b = support::repo::TestRepo::new();
     let paths_b = RepoPaths::from_repo_root(repo_b.path());
     init::init_forum(&paths_b).unwrap();
-    setup_rfc(repo_b.path());
+    let id_b = setup_rfc(repo_b.path());
     let out = run(
         repo_b.path(),
         &[
             "node",
             "add",
-            "RFC-0001",
+            &id_b,
             "--type",
             "question",
             "Is this safe?",
         ],
     );
     assert!(out.status.success());
-    let state_b = replay(repo_b.path(), "RFC-0001");
+    let state_b = replay(repo_b.path(), &id_b);
 
     assert_eq!(state_a.nodes.len(), state_b.nodes.len());
     assert_eq!(state_a.nodes[0].node_type, NodeType::Question);
@@ -126,31 +140,31 @@ fn objection_shorthand_equals_node_add_objection() {
     let repo_a = support::repo::TestRepo::new();
     let paths_a = RepoPaths::from_repo_root(repo_a.path());
     init::init_forum(&paths_a).unwrap();
-    setup_rfc(repo_a.path());
+    let id_a = setup_rfc(repo_a.path());
     let out = run(
         repo_a.path(),
-        &["objection", "RFC-0001", "Missing benchmarks"],
+        &["objection", &id_a, "Missing benchmarks"],
     );
     assert!(out.status.success());
-    let state_a = replay(repo_a.path(), "RFC-0001");
+    let state_a = replay(repo_a.path(), &id_a);
 
     let repo_b = support::repo::TestRepo::new();
     let paths_b = RepoPaths::from_repo_root(repo_b.path());
     init::init_forum(&paths_b).unwrap();
-    setup_rfc(repo_b.path());
+    let id_b = setup_rfc(repo_b.path());
     let out = run(
         repo_b.path(),
         &[
             "node",
             "add",
-            "RFC-0001",
+            &id_b,
             "--type",
             "objection",
             "Missing benchmarks",
         ],
     );
     assert!(out.status.success());
-    let state_b = replay(repo_b.path(), "RFC-0001");
+    let state_b = replay(repo_b.path(), &id_b);
 
     assert_eq!(state_a.nodes[0].node_type, NodeType::Objection);
     assert_eq!(state_b.nodes[0].node_type, NodeType::Objection);
@@ -165,19 +179,19 @@ fn close_shorthand_equals_state_closed() {
     let repo_a = support::repo::TestRepo::new();
     let paths_a = RepoPaths::from_repo_root(repo_a.path());
     init::init_forum(&paths_a).unwrap();
-    setup_issue(repo_a.path());
-    let out = run(repo_a.path(), &["close", "ASK-0001"]);
+    let id_a = setup_issue(repo_a.path());
+    let out = run(repo_a.path(), &["close", &id_a]);
     assert!(out.status.success());
-    let state_a = replay(repo_a.path(), "ASK-0001");
+    let state_a = replay(repo_a.path(), &id_a);
 
     // Canonical: git forum state <ID> closed
     let repo_b = support::repo::TestRepo::new();
     let paths_b = RepoPaths::from_repo_root(repo_b.path());
     init::init_forum(&paths_b).unwrap();
-    setup_issue(repo_b.path());
-    let out = run(repo_b.path(), &["state", "ASK-0001", "closed"]);
+    let id_b = setup_issue(repo_b.path());
+    let out = run(repo_b.path(), &["state", &id_b, "closed"]);
     assert!(out.status.success());
-    let state_b = replay(repo_b.path(), "ASK-0001");
+    let state_b = replay(repo_b.path(), &id_b);
 
     assert_eq!(state_a.status, "closed");
     assert_eq!(state_b.status, "closed");
@@ -188,18 +202,18 @@ fn pend_shorthand_equals_state_pending() {
     let repo_a = support::repo::TestRepo::new();
     let paths_a = RepoPaths::from_repo_root(repo_a.path());
     init::init_forum(&paths_a).unwrap();
-    setup_issue(repo_a.path());
-    let out = run(repo_a.path(), &["pend", "ASK-0001"]);
+    let id_a = setup_issue(repo_a.path());
+    let out = run(repo_a.path(), &["pend", &id_a]);
     assert!(out.status.success());
-    let state_a = replay(repo_a.path(), "ASK-0001");
+    let state_a = replay(repo_a.path(), &id_a);
 
     let repo_b = support::repo::TestRepo::new();
     let paths_b = RepoPaths::from_repo_root(repo_b.path());
     init::init_forum(&paths_b).unwrap();
-    setup_issue(repo_b.path());
-    let out = run(repo_b.path(), &["state", "ASK-0001", "pending"]);
+    let id_b = setup_issue(repo_b.path());
+    let out = run(repo_b.path(), &["state", &id_b, "pending"]);
     assert!(out.status.success());
-    let state_b = replay(repo_b.path(), "ASK-0001");
+    let state_b = replay(repo_b.path(), &id_b);
 
     assert_eq!(state_a.status, "pending");
     assert_eq!(state_b.status, "pending");
@@ -210,18 +224,18 @@ fn reject_shorthand_equals_state_rejected() {
     let repo_a = support::repo::TestRepo::new();
     let paths_a = RepoPaths::from_repo_root(repo_a.path());
     init::init_forum(&paths_a).unwrap();
-    setup_issue(repo_a.path());
-    let out = run(repo_a.path(), &["reject", "ASK-0001"]);
+    let id_a = setup_issue(repo_a.path());
+    let out = run(repo_a.path(), &["reject", &id_a]);
     assert!(out.status.success());
-    let state_a = replay(repo_a.path(), "ASK-0001");
+    let state_a = replay(repo_a.path(), &id_a);
 
     let repo_b = support::repo::TestRepo::new();
     let paths_b = RepoPaths::from_repo_root(repo_b.path());
     init::init_forum(&paths_b).unwrap();
-    setup_issue(repo_b.path());
-    let out = run(repo_b.path(), &["state", "ASK-0001", "rejected"]);
+    let id_b = setup_issue(repo_b.path());
+    let out = run(repo_b.path(), &["state", &id_b, "rejected"]);
     assert!(out.status.success());
-    let state_b = replay(repo_b.path(), "ASK-0001");
+    let state_b = replay(repo_b.path(), &id_b);
 
     assert_eq!(state_a.status, "rejected");
     assert_eq!(state_b.status, "rejected");
@@ -232,18 +246,18 @@ fn propose_shorthand_equals_state_proposed() {
     let repo_a = support::repo::TestRepo::new();
     let paths_a = RepoPaths::from_repo_root(repo_a.path());
     init::init_forum(&paths_a).unwrap();
-    setup_rfc(repo_a.path());
-    let out = run(repo_a.path(), &["propose", "RFC-0001"]);
+    let id_a = setup_rfc(repo_a.path());
+    let out = run(repo_a.path(), &["propose", &id_a]);
     assert!(out.status.success());
-    let state_a = replay(repo_a.path(), "RFC-0001");
+    let state_a = replay(repo_a.path(), &id_a);
 
     let repo_b = support::repo::TestRepo::new();
     let paths_b = RepoPaths::from_repo_root(repo_b.path());
     init::init_forum(&paths_b).unwrap();
-    setup_rfc(repo_b.path());
-    let out = run(repo_b.path(), &["state", "RFC-0001", "proposed"]);
+    let id_b = setup_rfc(repo_b.path());
+    let out = run(repo_b.path(), &["state", &id_b, "proposed"]);
     assert!(out.status.success());
-    let state_b = replay(repo_b.path(), "RFC-0001");
+    let state_b = replay(repo_b.path(), &id_b);
 
     assert_eq!(state_a.status, "proposed");
     assert_eq!(state_b.status, "proposed");
@@ -254,38 +268,38 @@ fn accept_shorthand_equals_state_accepted() {
     let repo_a = support::repo::TestRepo::new();
     let paths_a = RepoPaths::from_repo_root(repo_a.path());
     init::init_forum(&paths_a).unwrap();
-    setup_rfc(repo_a.path());
+    let id_a = setup_rfc(repo_a.path());
     // Move to under-review first
-    let out = run(repo_a.path(), &["state", "RFC-0001", "proposed"]);
+    let out = run(repo_a.path(), &["state", &id_a, "proposed"]);
     assert!(out.status.success());
-    let out = run(repo_a.path(), &["state", "RFC-0001", "under-review"]);
+    let out = run(repo_a.path(), &["state", &id_a, "under-review"]);
     assert!(out.status.success());
     // Add required summary
-    let out = run(repo_a.path(), &["summary", "RFC-0001", "Looks good"]);
+    let out = run(repo_a.path(), &["summary", &id_a, "Looks good"]);
     assert!(out.status.success());
     let out = run(
         repo_a.path(),
-        &["accept", "RFC-0001", "--approve", "human/alice"],
+        &["accept", &id_a, "--approve", "human/alice"],
     );
     assert!(out.status.success());
-    let state_a = replay(repo_a.path(), "RFC-0001");
+    let state_a = replay(repo_a.path(), &id_a);
 
     let repo_b = support::repo::TestRepo::new();
     let paths_b = RepoPaths::from_repo_root(repo_b.path());
     init::init_forum(&paths_b).unwrap();
-    setup_rfc(repo_b.path());
-    let out = run(repo_b.path(), &["state", "RFC-0001", "proposed"]);
+    let id_b = setup_rfc(repo_b.path());
+    let out = run(repo_b.path(), &["state", &id_b, "proposed"]);
     assert!(out.status.success());
-    let out = run(repo_b.path(), &["state", "RFC-0001", "under-review"]);
+    let out = run(repo_b.path(), &["state", &id_b, "under-review"]);
     assert!(out.status.success());
-    let out = run(repo_b.path(), &["summary", "RFC-0001", "Looks good"]);
+    let out = run(repo_b.path(), &["summary", &id_b, "Looks good"]);
     assert!(out.status.success());
     let out = run(
         repo_b.path(),
-        &["state", "RFC-0001", "accepted", "--approve", "human/alice"],
+        &["state", &id_b, "accepted", "--approve", "human/alice"],
     );
     assert!(out.status.success());
-    let state_b = replay(repo_b.path(), "RFC-0001");
+    let state_b = replay(repo_b.path(), &id_b);
 
     assert_eq!(state_a.status, "accepted");
     assert_eq!(state_b.status, "accepted");

@@ -1,10 +1,13 @@
 use chrono::{DateTime, Utc};
 
 use super::clock::Clock;
-use super::error::ForumResult;
+use super::error::{ForumError, ForumResult};
 use super::event::{Event, EventType, ThreadKind};
 use super::git_ops::GitOps;
 use super::id_alloc;
+
+/// Maximum number of CAS retries on ref collision during thread creation.
+const MAX_CREATE_RETRIES: usize = 5;
 
 /// Create a new thread, store a `create` event, and return the thread ID.
 ///
@@ -87,17 +90,34 @@ fn create_thread_core(
             )));
         }
     }
-    let thread_id = id_alloc::alloc_thread_id(git, kind)?;
-    let mut event = Event::base(&thread_id, EventType::Create, actor, clock)
-        .with_title(title)
-        .with_kind(kind)
-        .with_branch(branch);
-    if let Some(ts) = created_at {
-        event = event.with_created_at(ts);
+
+    let ts = created_at.unwrap_or_else(|| clock.now());
+    let timestamp_str = ts.to_rfc3339();
+    let mut last_err = None;
+
+    for _ in 0..MAX_CREATE_RETRIES {
+        let thread_id = id_alloc::alloc_thread_id(kind, actor, title, &timestamp_str);
+        let mut event = Event::base(&thread_id, EventType::Create, actor, clock)
+            .with_title(title)
+            .with_kind(kind)
+            .with_branch(branch);
+        if let Some(ts) = created_at {
+            event = event.with_created_at(ts);
+        }
+        if let Some(body) = body {
+            event = event.with_body(body);
+        }
+        match super::event::write_event(git, &event) {
+            Ok(_) => return Ok(thread_id),
+            Err(ForumError::Git(msg)) if msg.contains("already exists") => {
+                last_err = Some(ForumError::Git(msg));
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
     }
-    if let Some(body) = body {
-        event = event.with_body(body);
-    }
-    super::event::write_event(git, &event)?;
-    Ok(thread_id)
+
+    Err(last_err.unwrap_or_else(|| {
+        ForumError::Git("thread ID collision: exhausted retries".into())
+    }))
 }

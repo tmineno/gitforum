@@ -5,6 +5,7 @@ use git_forum::internal::config::{CommitIdentity, RepoPaths};
 use git_forum::internal::doctor::{self, CheckLevel};
 use git_forum::internal::event::{self, Event, EventType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
+use git_forum::internal::id_alloc;
 use git_forum::internal::init;
 use git_forum::internal::reindex;
 use git_forum::internal::thread;
@@ -14,6 +15,18 @@ fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
     let git = GitOps::new(repo.path().to_path_buf());
     let paths = RepoPaths::from_repo_root(repo.path());
     (repo, git, paths)
+}
+
+/// Generate a deterministic opaque thread ID for test fixtures.
+/// Uses a nonce derived from `seed` so each call site gets a distinct but reproducible ID.
+fn test_thread_id(kind: ThreadKind, seed: u8) -> String {
+    id_alloc::alloc_thread_id_with_nonce(
+        kind,
+        "human/alice",
+        "test",
+        "2026-01-01T00:00:00Z",
+        &[seed, seed, seed, seed, seed, seed, seed, seed],
+    )
 }
 
 fn sample_create(thread_id: &str, kind: ThreadKind, title: &str) -> Event {
@@ -100,7 +113,8 @@ fn init_is_idempotent() {
 #[test]
 fn write_and_read_event_roundtrip() {
     let (_repo, git, _paths) = setup();
-    let ev = sample_create("RFC-0001", ThreadKind::Rfc, "Test RFC");
+    let tid = test_thread_id(ThreadKind::Rfc, 1);
+    let ev = sample_create(&tid, ThreadKind::Rfc, "Test RFC");
 
     let commit_sha = event::write_event(&git, &ev).unwrap();
     assert!(!commit_sha.is_empty());
@@ -108,7 +122,7 @@ fn write_and_read_event_roundtrip() {
     let loaded = event::read_event(&git, &commit_sha).unwrap();
     assert_eq!(loaded.event_id, commit_sha);
     assert_eq!(loaded.event_type, EventType::Create);
-    assert_eq!(loaded.thread_id, "RFC-0001");
+    assert_eq!(loaded.thread_id, tid);
     assert_eq!(loaded.title.as_deref(), Some("Test RFC"));
     assert_eq!(loaded.kind, Some(ThreadKind::Rfc));
 }
@@ -116,15 +130,16 @@ fn write_and_read_event_roundtrip() {
 #[test]
 fn write_two_events_creates_parent_chain() {
     let (_repo, git, _paths) = setup();
-    let create = sample_create("RFC-0001", ThreadKind::Rfc, "Test RFC");
-    let state = sample_state("RFC-0001", "proposed");
+    let tid = test_thread_id(ThreadKind::Rfc, 2);
+    let create = sample_create(&tid, ThreadKind::Rfc, "Test RFC");
+    let state = sample_state(&tid, "proposed");
 
     let sha1 = event::write_event(&git, &create).unwrap();
     let sha2 = event::write_event(&git, &state).unwrap();
     assert_ne!(sha1, sha2);
 
     // rev-list from the ref should show both commits
-    let shas = git.rev_list("refs/forum/threads/RFC-0001").unwrap();
+    let shas = git.rev_list(&format!("refs/forum/threads/{tid}")).unwrap();
     assert_eq!(shas.len(), 2);
     assert_eq!(shas[0], sha2); // newest first
     assert_eq!(shas[1], sha1);
@@ -133,12 +148,13 @@ fn write_two_events_creates_parent_chain() {
 #[test]
 fn load_thread_events_returns_chronological() {
     let (_repo, git, _paths) = setup();
-    let create = sample_create("RFC-0001", ThreadKind::Rfc, "Test RFC");
-    let state = sample_state("RFC-0001", "proposed");
+    let tid = test_thread_id(ThreadKind::Rfc, 3);
+    let create = sample_create(&tid, ThreadKind::Rfc, "Test RFC");
+    let state = sample_state(&tid, "proposed");
     event::write_event(&git, &create).unwrap();
     event::write_event(&git, &state).unwrap();
 
-    let events = event::load_thread_events(&git, "RFC-0001").unwrap();
+    let events = event::load_thread_events(&git, &tid).unwrap();
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].event_type, EventType::Create);
     assert_eq!(events[1].event_type, EventType::State);
@@ -173,7 +189,8 @@ fn commit_author_email(repo_path: &std::path::Path, sha: &str) -> String {
 #[test]
 fn commit_uses_git_config_by_default() {
     let (repo, git, _paths) = setup();
-    let ev = sample_create("RFC-0001", ThreadKind::Rfc, "Default identity");
+    let tid = test_thread_id(ThreadKind::Rfc, 10);
+    let ev = sample_create(&tid, ThreadKind::Rfc, "Default identity");
     let sha = event::write_event(&git, &ev).unwrap();
 
     // Without a commit identity configured, the author comes from git config.
@@ -192,7 +209,8 @@ fn commit_identity_overrides_author_name_and_email() {
         name: Some("Forum Bot".into()),
         email: Some("bot@forum.local".into()),
     });
-    let ev = sample_create("RFC-0001", ThreadKind::Rfc, "Custom identity");
+    let tid = test_thread_id(ThreadKind::Rfc, 11);
+    let ev = sample_create(&tid, ThreadKind::Rfc, "Custom identity");
     let sha = event::write_event(&git, &ev).unwrap();
 
     assert_eq!(commit_author_name(repo.path(), &sha), "Forum Bot");
@@ -206,7 +224,8 @@ fn commit_identity_partial_override_name_only() {
         name: Some("Pseudonym".into()),
         email: None,
     });
-    let ev = sample_create("RFC-0001", ThreadKind::Rfc, "Name-only override");
+    let tid = test_thread_id(ThreadKind::Rfc, 12);
+    let ev = sample_create(&tid, ThreadKind::Rfc, "Name-only override");
     let sha = event::write_event(&git, &ev).unwrap();
 
     assert_eq!(commit_author_name(repo.path(), &sha), "Pseudonym");
@@ -222,7 +241,8 @@ fn commit_identity_partial_override_email_only() {
         name: None,
         email: Some("private@example.com".into()),
     });
-    let ev = sample_create("RFC-0001", ThreadKind::Rfc, "Email-only override");
+    let tid = test_thread_id(ThreadKind::Rfc, 13);
+    let ev = sample_create(&tid, ThreadKind::Rfc, "Email-only override");
     let sha = event::write_event(&git, &ev).unwrap();
 
     // Name falls through to git config (not overridden)
@@ -239,13 +259,14 @@ fn commit_identity_partial_override_email_only() {
 #[test]
 fn replay_thread_from_git() {
     let (_repo, git, _paths) = setup();
-    let create = sample_create("RFC-0001", ThreadKind::Rfc, "Test RFC");
-    let state_ev = sample_state("RFC-0001", "proposed");
+    let tid = test_thread_id(ThreadKind::Rfc, 4);
+    let create = sample_create(&tid, ThreadKind::Rfc, "Test RFC");
+    let state_ev = sample_state(&tid, "proposed");
     event::write_event(&git, &create).unwrap();
     event::write_event(&git, &state_ev).unwrap();
 
-    let state = thread::replay_thread(&git, "RFC-0001").unwrap();
-    assert_eq!(state.id, "RFC-0001");
+    let state = thread::replay_thread(&git, &tid).unwrap();
+    assert_eq!(state.id, tid);
     assert_eq!(state.kind, ThreadKind::Rfc);
     assert_eq!(state.title, "Test RFC");
     assert_eq!(state.status, "proposed");
@@ -256,15 +277,23 @@ fn replay_thread_from_git() {
 #[test]
 fn list_thread_ids_finds_stored_threads() {
     let (_repo, git, _paths) = setup();
-    event::write_event(&git, &sample_create("ASK-0001", ThreadKind::Issue, "Bug")).unwrap();
+    let ask_id = test_thread_id(ThreadKind::Issue, 5);
+    let rfc_id = test_thread_id(ThreadKind::Rfc, 6);
+    event::write_event(&git, &sample_create(&ask_id, ThreadKind::Issue, "Bug")).unwrap();
     event::write_event(
         &git,
-        &sample_create("RFC-0001", ThreadKind::Rfc, "Proposal"),
+        &sample_create(&rfc_id, ThreadKind::Rfc, "Proposal"),
     )
     .unwrap();
 
     let ids = thread::list_thread_ids(&git).unwrap();
-    assert_eq!(ids, vec!["ASK-0001", "RFC-0001"]);
+    assert_eq!(ids.len(), 2);
+    assert!(ids.iter().any(|id| id == &ask_id), "should contain ASK thread");
+    assert!(ids.iter().any(|id| id == &rfc_id), "should contain RFC thread");
+    // All returned IDs should be valid opaque IDs
+    for id in &ids {
+        assert!(id_alloc::is_opaque_id(id), "expected opaque ID, got: {id}");
+    }
 }
 
 #[test]
@@ -379,7 +408,7 @@ fn doctor_warns_on_stale_index() {
     let clock = git_forum::internal::clock::FixedClock {
         instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
     };
-    git_forum::internal::create::create_thread(
+    let created_id = git_forum::internal::create::create_thread(
         &git,
         ThreadKind::Issue,
         "Test",
@@ -388,6 +417,8 @@ fn doctor_warns_on_stale_index() {
         &clock,
     )
     .unwrap();
+    assert!(created_id.starts_with("ASK-"), "expected ASK- prefix, got: {created_id}");
+    assert!(id_alloc::is_opaque_id(&created_id), "expected opaque ID, got: {created_id}");
     let report = doctor::run_doctor(&git, &paths).unwrap();
     let freshness_check = report
         .checks
@@ -413,10 +444,12 @@ fn reindex_empty_repo() {
 #[test]
 fn reindex_replays_all_threads() {
     let (_repo, git, paths) = setup();
-    event::write_event(&git, &sample_create("ASK-0001", ThreadKind::Issue, "Bug")).unwrap();
+    let ask_id = test_thread_id(ThreadKind::Issue, 7);
+    let rfc_id = test_thread_id(ThreadKind::Rfc, 8);
+    event::write_event(&git, &sample_create(&ask_id, ThreadKind::Issue, "Bug")).unwrap();
     event::write_event(
         &git,
-        &sample_create("RFC-0001", ThreadKind::Rfc, "Proposal"),
+        &sample_create(&rfc_id, ThreadKind::Rfc, "Proposal"),
     )
     .unwrap();
 
