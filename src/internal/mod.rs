@@ -26,6 +26,7 @@ pub mod operation_check;
 pub mod policy;
 pub mod purge;
 pub mod refs;
+pub mod repair;
 pub mod reindex;
 pub mod show;
 pub mod state_change;
