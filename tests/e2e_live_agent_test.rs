@@ -271,8 +271,7 @@ fn e2e_live_agent_calculator_scenario() {
 
     let expected = scenario::calculator_expected_outcomes(&label_map);
 
-    let mut scenario_report =
-        report::build_report(&git, &expected, &all_agent_results, None);
+    let mut scenario_report = report::build_report(&git, &expected, &all_agent_results, None);
 
     // Populate agent_results so AI analysis can see agent outputs
     scenario_report.agent_results = all_agent_results;

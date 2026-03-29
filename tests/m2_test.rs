@@ -30,20 +30,42 @@ fn fixed_clock() -> FixedClock {
 
 #[test]
 fn alloc_issue_id_has_correct_prefix() {
-    let id = id_alloc::alloc_thread_id(ThreadKind::Issue, "human/alice", "Bug", "2026-01-01T00:00:00Z");
+    let id = id_alloc::alloc_thread_id(
+        ThreadKind::Issue,
+        "human/alice",
+        "Bug",
+        "2026-01-01T00:00:00Z",
+    );
     assert!(id.starts_with("ASK-"), "expected ASK- prefix, got: {id}");
     let token = &id[4..];
-    assert_eq!(token.len(), 8, "token length should be 8, got: {}", token.len());
+    assert_eq!(
+        token.len(),
+        8,
+        "token length should be 8, got: {}",
+        token.len()
+    );
     assert!(
-        token.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
+        token
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
         "token has invalid chars: {token}"
     );
 }
 
 #[test]
 fn alloc_ids_are_unique_with_different_nonces() {
-    let id1 = id_alloc::alloc_thread_id(ThreadKind::Rfc, "human/alice", "Title", "2026-01-01T00:00:00Z");
-    let id2 = id_alloc::alloc_thread_id(ThreadKind::Rfc, "human/alice", "Title", "2026-01-01T00:00:00Z");
+    let id1 = id_alloc::alloc_thread_id(
+        ThreadKind::Rfc,
+        "human/alice",
+        "Title",
+        "2026-01-01T00:00:00Z",
+    );
+    let id2 = id_alloc::alloc_thread_id(
+        ThreadKind::Rfc,
+        "human/alice",
+        "Title",
+        "2026-01-01T00:00:00Z",
+    );
     assert_ne!(id1, id2, "two allocations with random nonces should differ");
 }
 
