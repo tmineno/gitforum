@@ -166,18 +166,18 @@ fn close_shorthand_equals_state_closed() {
     let paths_a = RepoPaths::from_repo_root(repo_a.path());
     init::init_forum(&paths_a).unwrap();
     setup_issue(repo_a.path());
-    let out = run(repo_a.path(), &["close", "ISSUE-0001"]);
+    let out = run(repo_a.path(), &["close", "ASK-0001"]);
     assert!(out.status.success());
-    let state_a = replay(repo_a.path(), "ISSUE-0001");
+    let state_a = replay(repo_a.path(), "ASK-0001");
 
     // Canonical: git forum state <ID> closed
     let repo_b = support::repo::TestRepo::new();
     let paths_b = RepoPaths::from_repo_root(repo_b.path());
     init::init_forum(&paths_b).unwrap();
     setup_issue(repo_b.path());
-    let out = run(repo_b.path(), &["state", "ISSUE-0001", "closed"]);
+    let out = run(repo_b.path(), &["state", "ASK-0001", "closed"]);
     assert!(out.status.success());
-    let state_b = replay(repo_b.path(), "ISSUE-0001");
+    let state_b = replay(repo_b.path(), "ASK-0001");
 
     assert_eq!(state_a.status, "closed");
     assert_eq!(state_b.status, "closed");
@@ -189,17 +189,17 @@ fn pend_shorthand_equals_state_pending() {
     let paths_a = RepoPaths::from_repo_root(repo_a.path());
     init::init_forum(&paths_a).unwrap();
     setup_issue(repo_a.path());
-    let out = run(repo_a.path(), &["pend", "ISSUE-0001"]);
+    let out = run(repo_a.path(), &["pend", "ASK-0001"]);
     assert!(out.status.success());
-    let state_a = replay(repo_a.path(), "ISSUE-0001");
+    let state_a = replay(repo_a.path(), "ASK-0001");
 
     let repo_b = support::repo::TestRepo::new();
     let paths_b = RepoPaths::from_repo_root(repo_b.path());
     init::init_forum(&paths_b).unwrap();
     setup_issue(repo_b.path());
-    let out = run(repo_b.path(), &["state", "ISSUE-0001", "pending"]);
+    let out = run(repo_b.path(), &["state", "ASK-0001", "pending"]);
     assert!(out.status.success());
-    let state_b = replay(repo_b.path(), "ISSUE-0001");
+    let state_b = replay(repo_b.path(), "ASK-0001");
 
     assert_eq!(state_a.status, "pending");
     assert_eq!(state_b.status, "pending");
@@ -211,17 +211,17 @@ fn reject_shorthand_equals_state_rejected() {
     let paths_a = RepoPaths::from_repo_root(repo_a.path());
     init::init_forum(&paths_a).unwrap();
     setup_issue(repo_a.path());
-    let out = run(repo_a.path(), &["reject", "ISSUE-0001"]);
+    let out = run(repo_a.path(), &["reject", "ASK-0001"]);
     assert!(out.status.success());
-    let state_a = replay(repo_a.path(), "ISSUE-0001");
+    let state_a = replay(repo_a.path(), "ASK-0001");
 
     let repo_b = support::repo::TestRepo::new();
     let paths_b = RepoPaths::from_repo_root(repo_b.path());
     init::init_forum(&paths_b).unwrap();
     setup_issue(repo_b.path());
-    let out = run(repo_b.path(), &["state", "ISSUE-0001", "rejected"]);
+    let out = run(repo_b.path(), &["state", "ASK-0001", "rejected"]);
     assert!(out.status.success());
-    let state_b = replay(repo_b.path(), "ISSUE-0001");
+    let state_b = replay(repo_b.path(), "ASK-0001");
 
     assert_eq!(state_a.status, "rejected");
     assert_eq!(state_b.status, "rejected");

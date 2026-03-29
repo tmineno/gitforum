@@ -20,7 +20,8 @@ pub fn alloc_thread_id(git: &GitOps, kind: ThreadKind) -> ForumResult<String> {
         .filter_map(|r| {
             let id = r.strip_prefix(refs::THREADS_PREFIX)?;
             let (pfx, num) = id.split_once('-')?;
-            if pfx == prefix {
+            // Accept both current and legacy prefixes (e.g. ASK and ISSUE)
+            if ThreadKind::from_id_prefix(pfx) == Some(kind) {
                 num.parse::<u32>().ok()
             } else {
                 None
@@ -38,7 +39,9 @@ mod tests {
         // Offline: just verify the format string logic
         let formatted = format!("{}-{:04}", "RFC", 1u32);
         assert_eq!(formatted, "RFC-0001");
-        let formatted2 = format!("{}-{:04}", "ISSUE", 42u32);
-        assert_eq!(formatted2, "ISSUE-0042");
+        let formatted2 = format!("{}-{:04}", "ASK", 42u32);
+        assert_eq!(formatted2, "ASK-0042");
+        let formatted3 = format!("{}-{:04}", "JOB", 1u32);
+        assert_eq!(formatted3, "JOB-0001");
     }
 }

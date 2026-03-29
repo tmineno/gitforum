@@ -1547,7 +1547,7 @@ mod tests {
 
         assert_eq!(app.view, View::ThreadDetail(source_id.clone()));
         assert!(app.thread_text.contains("links: 1"));
-        assert!(app.thread_text.contains("ISSUE-0001  implements"));
+        assert!(app.thread_text.contains("ASK-0001  implements"));
     }
 
     #[test]
@@ -1614,7 +1614,7 @@ mod tests {
             }
         );
         assert!(app.node_detail_text.contains("thread links: 1"));
-        assert!(app.node_detail_text.contains("ISSUE-0001  implements"));
+        assert!(app.node_detail_text.contains("ASK-0001  implements"));
     }
 
     #[test]

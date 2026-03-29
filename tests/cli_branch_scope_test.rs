@@ -49,7 +49,7 @@ fn thread_new_can_bind_branch_scope() {
     assert!(output.status.success());
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    let state = thread::replay_thread(&git, "ASK-0001").unwrap();
     assert_eq!(state.branch.as_deref(), Some("feat/parser-rewrite"));
 }
 
@@ -69,14 +69,14 @@ fn branch_bind_and_clear_update_thread_scope() {
 
     let bind = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["branch", "bind", "ISSUE-0001", "feat/solver"])
+        .args(["branch", "bind", "ASK-0001", "feat/solver"])
         .output()
         .expect("failed to bind branch");
     assert!(bind.status.success());
 
     let show = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["show", "ISSUE-0001"])
+        .args(["show", "ASK-0001"])
         .output()
         .expect("failed to show issue");
     assert!(show.status.success());
@@ -85,13 +85,13 @@ fn branch_bind_and_clear_update_thread_scope() {
 
     let clear = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["branch", "clear", "ISSUE-0001"])
+        .args(["branch", "clear", "ASK-0001"])
         .output()
         .expect("failed to clear branch");
     assert!(clear.status.success());
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    let state = thread::replay_thread(&git, "ASK-0001").unwrap();
     assert_eq!(state.branch, None);
 }
 
@@ -124,7 +124,7 @@ fn issue_ls_can_filter_by_branch() {
     assert!(ls.status.success());
     let stdout = String::from_utf8(ls.stdout).unwrap();
     assert!(stdout.contains("BRANCH"));
-    assert!(stdout.contains("ISSUE-0001"));
+    assert!(stdout.contains("ASK-0001"));
     assert!(stdout.contains("v0.1.0"));
-    assert!(!stdout.contains("ISSUE-0002"));
+    assert!(!stdout.contains("ASK-0002"));
 }

@@ -256,7 +256,7 @@ fn replay_thread_from_git() {
 #[test]
 fn list_thread_ids_finds_stored_threads() {
     let (_repo, git, _paths) = setup();
-    event::write_event(&git, &sample_create("ISSUE-0001", ThreadKind::Issue, "Bug")).unwrap();
+    event::write_event(&git, &sample_create("ASK-0001", ThreadKind::Issue, "Bug")).unwrap();
     event::write_event(
         &git,
         &sample_create("RFC-0001", ThreadKind::Rfc, "Proposal"),
@@ -264,7 +264,7 @@ fn list_thread_ids_finds_stored_threads() {
     .unwrap();
 
     let ids = thread::list_thread_ids(&git).unwrap();
-    assert_eq!(ids, vec!["ISSUE-0001", "RFC-0001"]);
+    assert_eq!(ids, vec!["ASK-0001", "RFC-0001"]);
 }
 
 #[test]
@@ -413,7 +413,7 @@ fn reindex_empty_repo() {
 #[test]
 fn reindex_replays_all_threads() {
     let (_repo, git, paths) = setup();
-    event::write_event(&git, &sample_create("ISSUE-0001", ThreadKind::Issue, "Bug")).unwrap();
+    event::write_event(&git, &sample_create("ASK-0001", ThreadKind::Issue, "Bug")).unwrap();
     event::write_event(
         &git,
         &sample_create("RFC-0001", ThreadKind::Rfc, "Proposal"),

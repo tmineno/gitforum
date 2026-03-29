@@ -68,7 +68,7 @@ fn edit_flag_creates_thread() {
         "edit thread creation failed: stdout={stdout}, stderr={stderr}"
     );
 
-    let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    let state = thread::replay_thread(&git, "ASK-0001").unwrap();
     assert_eq!(state.body.as_deref(), Some("Body from editor"));
 }
 
@@ -92,7 +92,7 @@ fn edit_flag_creates_node() {
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
         .env("GIT_FORUM_EDITOR_FORCE", "1")
-        .args(["claim", "ISSUE-0001", "--edit"])
+        .args(["claim", "ASK-0001", "--edit"])
         .output()
         .expect("failed to run");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -103,7 +103,7 @@ fn edit_flag_creates_node() {
     );
     assert!(stdout.contains("Added claim"));
 
-    let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    let state = thread::replay_thread(&git, "ASK-0001").unwrap();
     assert_eq!(state.nodes.len(), 1);
     assert_eq!(state.nodes[0].body, "Claim from editor");
 }
@@ -128,7 +128,7 @@ fn edit_flag_revises_body() {
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
         .env("GIT_FORUM_EDITOR_FORCE", "1")
-        .args(["revise", "ISSUE-0001", "--edit"])
+        .args(["revise", "ASK-0001", "--edit"])
         .output()
         .expect("failed to run");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -139,7 +139,7 @@ fn edit_flag_revises_body() {
     );
     assert!(stdout.contains("Body revised"));
 
-    let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    let state = thread::replay_thread(&git, "ASK-0001").unwrap();
     assert_eq!(state.body.as_deref(), Some("Revised from editor"));
 }
 
@@ -242,7 +242,7 @@ fn edit_strips_comment_lines() {
         "edit with comments failed: stdout={stdout}, stderr={stderr}"
     );
 
-    let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    let state = thread::replay_thread(&git, "ASK-0001").unwrap();
     let body = state.body.unwrap();
     assert!(!body.contains("# This is a comment"));
     assert!(!body.contains("# Another comment"));
@@ -271,7 +271,7 @@ fn edit_uses_visual_env_var() {
         "VISUAL editor failed: stdout={stdout}, stderr={stderr}"
     );
 
-    let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    let state = thread::replay_thread(&git, "ASK-0001").unwrap();
     assert_eq!(state.body.as_deref(), Some("Body from VISUAL"));
 }
 
@@ -295,7 +295,7 @@ fn edit_flag_with_revise_body_subcommand() {
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
         .env("GIT_FORUM_EDITOR_FORCE", "1")
-        .args(["revise", "body", "ISSUE-0001", "--edit"])
+        .args(["revise", "body", "ASK-0001", "--edit"])
         .output()
         .expect("failed to run");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -305,7 +305,7 @@ fn edit_flag_with_revise_body_subcommand() {
         "edit revise body subcommand failed: stdout={stdout}, stderr={stderr}"
     );
 
-    let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    let state = thread::replay_thread(&git, "ASK-0001").unwrap();
     assert_eq!(state.body.as_deref(), Some("Revised via subcommand"));
 }
 

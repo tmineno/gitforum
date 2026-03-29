@@ -1,4 +1,4 @@
 ID            KIND        STATUS          BRANCH        CREATED           UPDATED           TITLE
 ----------------------------------------------------------------------------------------------
 RFC-0001      rfc         draft           -             2026-01-01 00:00  2026-01-01 00:00  Test RFC
-ISSUE-0001    issue       open            feat/parser   2026-01-01 00:00  2026-01-01 00:00  Implement trait backend
+ASK-0001      issue       open            feat/parser   2026-01-01 00:00  2026-01-01 00:00  Implement trait backend

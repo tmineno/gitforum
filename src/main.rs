@@ -43,7 +43,9 @@ setup and repo health
    reindex     Rebuild local index from Git refs
 
 create and browse threads
-   new         Create a new thread
+   new         Create a new thread (kinds: ask, rfc, dec, job)
+   ask         Ask (issue) sub-commands
+   job         Job (task) sub-commands
    ls          List threads (filter by kind, status, or branch)
    show        Show thread details (use --what-next for diagnostics)
    diff        Show diff between body revisions
@@ -159,7 +161,12 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Issue sub-commands
+    /// Ask (issue) sub-commands
+    Ask {
+        #[command(subcommand)]
+        cmd: ThreadCmd,
+    },
+    /// Issue sub-commands (legacy alias for ask)
     #[command(hide = true)]
     Issue {
         #[command(subcommand)]
@@ -177,7 +184,12 @@ enum Commands {
         #[command(subcommand)]
         cmd: ThreadCmd,
     },
-    /// TASK sub-commands
+    /// Job (task) sub-commands
+    Job {
+        #[command(subcommand)]
+        cmd: ThreadCmd,
+    },
+    /// Task sub-commands (legacy alias for job)
     #[command(hide = true)]
     Task {
         #[command(subcommand)]
@@ -1153,6 +1165,59 @@ fn main() -> Result<(), ForumError> {
                     "hint: edit .git/forum/local.toml to change your actor ID or commit identity"
                 );
             }
+            // Configure fetch refspecs for forum refs on all remotes
+            match init::ensure_forum_refspecs(&git) {
+                Ok(modified) => {
+                    for remote in &modified {
+                        eprintln!("Added forum fetch refspec for remote '{remote}'");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("warning: could not configure forum fetch refspecs: {e}");
+                }
+            }
+
+            // Fetch forum refs from all remotes
+            let mut fetched_any = false;
+            if let Ok(remotes_output) = git.run(&["remote"]) {
+                for remote in remotes_output.lines() {
+                    let remote = remote.trim();
+                    if remote.is_empty() {
+                        continue;
+                    }
+                    match git.run(&["fetch", remote, init::FORUM_REFSPEC]) {
+                        Ok(_) => {
+                            eprintln!("Fetched forum refs from '{remote}'");
+                            fetched_any = true;
+                        }
+                        Err(e) => {
+                            eprintln!("warning: could not fetch forum refs from '{remote}': {e}");
+                        }
+                    }
+                }
+            }
+
+            // Reindex if we fetched forum refs
+            if fetched_any {
+                let thread_ids = git
+                    .list_refs("refs/forum/threads/")
+                    .unwrap_or_default();
+                if !thread_ids.is_empty() {
+                    let db_path = paths.git_forum.join("index.db");
+                    match reindex::run_reindex(&git, &db_path) {
+                        Ok(report) => {
+                            eprintln!(
+                                "Reindexed {} threads",
+                                report.threads_replayed.len()
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("warning: reindex failed: {e}");
+                        }
+                    }
+                }
+            }
+
             let dir_name = git
                 .root()
                 .file_name()
@@ -1468,7 +1533,7 @@ fn main() -> Result<(), ForumError> {
             }
         },
 
-        Commands::Issue { cmd } => {
+        Commands::Ask { cmd } | Commands::Issue { cmd } => {
             run_thread_cmd(cmd, ThreadKind::Issue, &clock)?;
         }
         Commands::Rfc { cmd } => {
@@ -1477,7 +1542,7 @@ fn main() -> Result<(), ForumError> {
         Commands::Dec { cmd } => {
             run_thread_cmd(cmd, ThreadKind::Dec, &clock)?;
         }
-        Commands::Task { cmd } => {
+        Commands::Job { cmd } | Commands::Task { cmd } => {
             run_thread_cmd(cmd, ThreadKind::Task, &clock)?;
         }
 
@@ -2865,12 +2930,12 @@ fn thread_matches_filters(
 
 fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
     match kind {
-        "issue" => Ok(ThreadKind::Issue),
+        "ask" | "issue" => Ok(ThreadKind::Issue),
         "rfc" => Ok(ThreadKind::Rfc),
         "dec" => Ok(ThreadKind::Dec),
-        "task" => Ok(ThreadKind::Task),
+        "job" | "task" => Ok(ThreadKind::Task),
         other => Err(ForumError::Config(format!(
-            "unknown kind '{other}'; valid: issue, rfc, dec, task"
+            "unknown kind '{other}'; valid: ask, rfc, dec, job (aliases: issue, task)"
         ))),
     }
 }
@@ -2878,12 +2943,12 @@ fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
 fn parse_thread_kind_filter(kind: Option<&str>) -> Result<Option<ThreadKind>, ForumError> {
     match kind {
         None => Ok(None),
-        Some("issue") => Ok(Some(ThreadKind::Issue)),
+        Some("ask") | Some("issue") => Ok(Some(ThreadKind::Issue)),
         Some("rfc") => Ok(Some(ThreadKind::Rfc)),
         Some("dec") => Ok(Some(ThreadKind::Dec)),
-        Some("task") => Ok(Some(ThreadKind::Task)),
+        Some("job") | Some("task") => Ok(Some(ThreadKind::Task)),
         Some(other) => Err(ForumError::Config(format!(
-            "unknown kind '{other}'; valid: issue, rfc, dec, task"
+            "unknown kind '{other}'; valid: ask, rfc, dec, job (aliases: issue, task)"
         ))),
     }
 }

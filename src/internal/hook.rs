@@ -18,7 +18,7 @@ git-forum hook check-commit-msg "$1"
 "#;
 
 /// Known thread ID prefixes (must match ThreadKind::id_prefix values).
-const KNOWN_PREFIXES: &[&str] = &["ISSUE", "RFC", "DEC", "TASK"];
+const KNOWN_PREFIXES: &[&str] = &["ASK", "ISSUE", "RFC", "DEC", "JOB", "TASK"];
 
 /// Result of checking a commit message for thread references.
 pub struct HookCheckResult {
