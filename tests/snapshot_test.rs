@@ -162,6 +162,13 @@ fn show_rich_rfc() {
     assert_snapshot("show_rich_rfc", &out);
 }
 
+#[test]
+fn show_rich_rfc_compact() {
+    let state = rich_state();
+    let out = show::render_show(&state, true);
+    assert_snapshot("show_rich_rfc_compact", &out);
+}
+
 // ---- node show ----
 
 #[test]
