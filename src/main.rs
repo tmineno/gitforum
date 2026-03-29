@@ -27,6 +27,7 @@ use git_forum::internal::operation_check;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::purge;
 use git_forum::internal::reindex;
+use git_forum::internal::repair;
 use git_forum::internal::show;
 use git_forum::internal::state_change;
 use git_forum::internal::thread;
@@ -40,6 +41,7 @@ These are common git-forum commands:
 setup and repo health
    init        Initialize a git-forum repository
    doctor      Diagnose repo health (config, index, refs)
+   repair      Detect and fix thread ID conflicts with a remote
    reindex     Rebuild local index from Git refs
 
 create and browse threads
@@ -133,6 +135,15 @@ enum Commands {
     },
     /// Rebuild local index from Git refs
     Reindex,
+    /// Detect and fix thread ID conflicts with a remote
+    Repair {
+        /// Remote to compare against
+        #[arg(long, default_value = "origin")]
+        remote: String,
+        /// Show what would be repaired without modifying
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Purge event content from git history (hard-delete)
     Purge {
         /// Thread ID (required with --event or --node)
@@ -1346,6 +1357,35 @@ fn main() -> Result<(), ForumError> {
             );
             for (id, err) in &report.errors {
                 eprintln!("  error: {id}: {err}");
+            }
+        }
+
+        Commands::Repair { remote, dry_run } => {
+            let (git, paths) = discover_repo_with_init_warning()?;
+            let report = repair::repair_conflicts(&git, &remote, dry_run)?;
+            if report.reallocated.is_empty() {
+                println!("No thread ID conflicts found with remote '{remote}'");
+            } else if dry_run {
+                println!("Found {} conflict(s):", report.reallocated.len());
+                for (old_id, _) in &report.reallocated {
+                    println!("  {old_id}");
+                }
+                println!("\nRun without --dry-run to re-allocate conflicting thread IDs");
+            } else {
+                for (old_id, new_id) in &report.reallocated {
+                    println!("Reallocated {old_id} -> {new_id}");
+                }
+                // Reindex if index exists
+                let db_path = paths.git_forum.join("index.db");
+                if db_path.exists() {
+                    if let Err(e) = reindex::run_reindex(&git, &db_path) {
+                        eprintln!("warning: reindex failed: {e}");
+                    }
+                }
+                println!("\nYou can now push with: git push");
+            }
+            for err in &report.errors {
+                eprintln!("warning: {err}");
             }
         }
 

@@ -236,6 +236,37 @@ impl GitOps {
         Ok(())
     }
 
+    /// Delete a ref.
+    pub fn delete_ref(&self, refname: &str) -> ForumResult<()> {
+        self.run(&["update-ref", "-d", refname])?;
+        Ok(())
+    }
+
+    /// Query remote refs without fetching. Returns `Vec<(refname, sha)>`.
+    pub fn ls_remote(&self, remote: &str, pattern: &str) -> ForumResult<Vec<(String, String)>> {
+        let output = self.run(&["ls-remote", remote, pattern])?;
+        if output.is_empty() {
+            return Ok(vec![]);
+        }
+        Ok(output
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.split_whitespace();
+                let sha = parts.next()?.to_string();
+                let refname = parts.next()?.to_string();
+                Some((refname, sha))
+            })
+            .collect())
+    }
+
+    /// Check whether `maybe_ancestor` is an ancestor of `descendant`.
+    pub fn is_ancestor(&self, maybe_ancestor: &str, descendant: &str) -> ForumResult<bool> {
+        match self.run(&["merge-base", "--is-ancestor", maybe_ancestor, descendant]) {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
     /// Resolve a ref to a commit SHA. Returns None if the ref doesn't exist.
     pub fn resolve_ref(&self, refname: &str) -> ForumResult<Option<String>> {
         match self.run(&["rev-parse", "--verify", refname]) {
