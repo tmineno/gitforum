@@ -629,6 +629,10 @@ fn event_detail(event: &Event) -> String {
         EventType::Say | EventType::Edit | EventType::ReviseBody => {
             event.body.clone().unwrap_or_default()
         }
+        EventType::Retype => event
+            .node_type
+            .map(|t| format!("-> {t}"))
+            .unwrap_or_default(),
         _ => String::new(),
     }
 }
