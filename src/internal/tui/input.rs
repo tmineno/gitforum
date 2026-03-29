@@ -114,14 +114,7 @@ pub(super) fn handle_key(
             }
             KeyCode::Char('z') => app.toggle_collapse(),
             KeyCode::Char('t') => {
-                if app.tree_fullscreen {
-                    app.detail_split = app.saved_detail_split;
-                    app.tree_fullscreen = false;
-                } else {
-                    app.saved_detail_split = app.detail_split;
-                    app.detail_split = 0;
-                    app.tree_fullscreen = true;
-                }
+                app.split_horizontal = !app.split_horizontal;
             }
             KeyCode::Char('r') => {
                 let selected = app.selected_node_id();
@@ -294,12 +287,20 @@ pub(super) fn handle_mouse(
                 if let (Some(body_area), Some(nodes_area)) =
                     (app.ui_rects.thread_body, app.ui_rects.thread_nodes)
                 {
-                    let border_col = body_area.x + body_area.width;
-                    if mouse.column >= border_col.saturating_sub(1)
-                        && mouse.column <= nodes_area.x
-                        && mouse.row >= body_area.y
-                        && mouse.row < body_area.y + body_area.height
-                    {
+                    let on_border = if app.split_horizontal {
+                        let border_row = body_area.y + body_area.height;
+                        mouse.row >= border_row.saturating_sub(1)
+                            && mouse.row <= nodes_area.y
+                            && mouse.column >= body_area.x
+                            && mouse.column < body_area.x + body_area.width
+                    } else {
+                        let border_col = body_area.x + body_area.width;
+                        mouse.column >= border_col.saturating_sub(1)
+                            && mouse.column <= nodes_area.x
+                            && mouse.row >= body_area.y
+                            && mouse.row < body_area.y + body_area.height
+                    };
+                    if on_border {
                         app.dragging_border = true;
                         return Ok(false);
                     }
@@ -340,13 +341,26 @@ pub(super) fn handle_mouse(
             MouseEventKind::Drag(MouseButton::Left) => {
                 if app.dragging_border {
                     if let Some(body_area) = app.ui_rects.thread_body {
-                        let total_width = body_area.width
-                            + app.ui_rects.thread_nodes.map(|a| a.width).unwrap_or(0);
-                        if total_width > 0 {
-                            let relative = mouse.column.saturating_sub(body_area.x);
-                            let pct = ((relative as u32 * 100) / total_width as u32) as u16;
-                            app.detail_split = pct.clamp(20, 80);
-                        }
+                        let pct = if app.split_horizontal {
+                            let total_height = body_area.height
+                                + app.ui_rects.thread_nodes.map(|a| a.height).unwrap_or(0);
+                            if total_height > 0 {
+                                let relative = mouse.row.saturating_sub(body_area.y);
+                                ((relative as u32 * 100) / total_height as u32) as u16
+                            } else {
+                                app.detail_split
+                            }
+                        } else {
+                            let total_width = body_area.width
+                                + app.ui_rects.thread_nodes.map(|a| a.width).unwrap_or(0);
+                            if total_width > 0 {
+                                let relative = mouse.column.saturating_sub(body_area.x);
+                                ((relative as u32 * 100) / total_width as u32) as u16
+                            } else {
+                                app.detail_split
+                            }
+                        };
+                        app.detail_split = pct.clamp(20, 80);
                     }
                 }
             }

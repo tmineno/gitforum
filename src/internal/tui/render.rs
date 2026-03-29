@@ -463,10 +463,10 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         height: 1,
     });
     let md_indicator = if app.markdown_mode { "md:on" } else { "md:off" };
-    let tree_indicator = if app.tree_fullscreen {
-        "t:full"
+    let tree_indicator = if app.split_horizontal {
+        "t:horiz"
     } else {
-        "t:split"
+        "t:vert"
     };
     f.render_widget(
         Paragraph::new(format!(
@@ -481,15 +481,20 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         ""
     };
 
-    // Feature 2: full-width tree toggle
+    // Feature 2: split direction toggle (horizontal = top/bottom, vertical = left/right)
     if app.tree_fullscreen {
         app.ui_rects.thread_body = None;
         app.ui_rects.thread_nodes = Some(chunks[1]);
     } else {
         let left_pct = app.detail_split;
         let right_pct = 100u16.saturating_sub(left_pct);
+        let direction = if app.split_horizontal {
+            Direction::Vertical
+        } else {
+            Direction::Horizontal
+        };
         let main = Layout::default()
-            .direction(Direction::Horizontal)
+            .direction(direction)
             .constraints([
                 Constraint::Percentage(left_pct),
                 Constraint::Percentage(right_pct),
