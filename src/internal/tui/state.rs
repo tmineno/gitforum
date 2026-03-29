@@ -50,7 +50,7 @@ pub(super) fn open_thread_detail(
     app.thread_title = state.title.clone();
     app.thread_kind = state.kind.to_string();
     app.thread_status = state.status.to_string();
-    app.thread_text = show::render_show(&state, true);
+    app.thread_text = show::render_show(&state, false);
     app.thread_scroll = 0;
     app.thread_nodes = state.nodes;
     app.tree_entries = build_tree_entries(&app.thread_nodes);
