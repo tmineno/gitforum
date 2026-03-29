@@ -47,6 +47,70 @@ fn thread_new_accepts_body_from_stdin() {
 }
 
 #[test]
+fn thread_new_body_stdin_rejects_empty_input() {
+    let repo = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(repo.path());
+    init::init_forum(&paths).unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["issue", "new", "Empty body", "--body", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to run git-forum issue new");
+
+    // Close stdin immediately without writing anything
+    drop(child.stdin.take());
+
+    let output = child.wait_with_output().expect("failed to wait on child");
+    assert!(
+        !output.status.success(),
+        "empty stdin should cause failure"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("empty input"),
+        "error should mention empty input: {stderr}"
+    );
+}
+
+#[test]
+fn thread_new_body_stdin_rejects_whitespace_only() {
+    let repo = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(repo.path());
+    init::init_forum(&paths).unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["issue", "new", "Whitespace body", "--body", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to run git-forum issue new");
+
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin should be piped")
+        .write_all(b"   \n  \n  ")
+        .expect("failed to write whitespace");
+
+    let output = child.wait_with_output().expect("failed to wait on child");
+    assert!(
+        !output.status.success(),
+        "whitespace-only stdin should cause failure"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("empty input"),
+        "error should mention empty input: {stderr}"
+    );
+}
+
+#[test]
 fn thread_new_can_create_link_immediately() {
     let repo = support::repo::TestRepo::new();
     let paths = RepoPaths::from_repo_root(repo.path());

@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::Read;
+use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -3198,8 +3198,18 @@ fn resolve_thread_body(
     }
     match (body, body_file) {
         (Some(body), None) if body == "-" => {
+            if std::io::stdin().is_terminal() {
+                return Err(ForumError::Config(
+                    "--body - requires piped input; use --body <text>, --body-file, or --edit instead".into(),
+                ));
+            }
             let mut buf = String::new();
             std::io::stdin().read_to_string(&mut buf)?;
+            if buf.trim().is_empty() {
+                return Err(ForumError::Config(
+                    "--body - received empty input; provide non-empty content via stdin".into(),
+                ));
+            }
             Ok(Some(buf))
         }
         (Some(body), None) => Ok(Some(body)),
