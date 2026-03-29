@@ -981,6 +981,9 @@ enum ThreadCmd {
     Ls {
         #[arg(long, value_name = "BRANCH")]
         branch: Option<String>,
+        /// Filter by thread status (open, closed, draft, etc.)
+        #[arg(long, value_name = "STATUS")]
+        status: Option<String>,
     },
     /// Close a thread (shorthand for state <ID> closed)
     Close {
@@ -2806,11 +2809,14 @@ fn run_thread_cmd(
                 }
             }
         }
-        ThreadCmd::Ls { branch } => {
+        ThreadCmd::Ls { branch, status } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
             let states = list_thread_states(&git, Some(kind), branch.as_deref())?;
-            let refs: Vec<&thread::ThreadState> = states.iter().collect();
-            print!("{}", show::render_ls(&refs));
+            let filtered: Vec<&thread::ThreadState> = states
+                .iter()
+                .filter(|s| status.as_deref().is_none_or(|st| s.status == st))
+                .collect();
+            print!("{}", show::render_ls(&filtered));
         }
         ThreadCmd::Revise {
             thread_id,
