@@ -136,12 +136,14 @@ pub fn retype_node(
     thread_id: &str,
     node_id: &str,
     new_type: NodeType,
+    old_type: NodeType,
     actor: &str,
     clock: &dyn Clock,
 ) -> ForumResult<()> {
     let ev = Event::base(thread_id, EventType::Retype, actor, clock)
         .with_target_node_id(node_id)
-        .with_node_type(new_type);
+        .with_node_type(new_type)
+        .with_old_node_type(old_type);
     super::event::write_event(git, &ev)?;
     Ok(())
 }

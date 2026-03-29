@@ -289,7 +289,12 @@ pub(super) fn build_tree_entries(nodes: &[Node]) -> Vec<TreeEntry> {
 }
 
 pub(super) fn thread_kind_values() -> [ThreadKind; 4] {
-    [ThreadKind::Issue, ThreadKind::Rfc, ThreadKind::Dec, ThreadKind::Task]
+    [
+        ThreadKind::Issue,
+        ThreadKind::Rfc,
+        ThreadKind::Dec,
+        ThreadKind::Task,
+    ]
 }
 
 pub(super) fn thread_kind_labels() -> [&'static str; 4] {

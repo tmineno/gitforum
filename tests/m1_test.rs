@@ -50,6 +50,7 @@ fn sample_create(thread_id: &str, kind: ThreadKind, title: &str) -> Event {
         link_rel: None,
         incorporated_node_ids: vec![],
         reply_to: None,
+        old_node_type: None,
     }
 }
 
@@ -74,6 +75,7 @@ fn sample_state(thread_id: &str, new_state: &str) -> Event {
         link_rel: None,
         incorporated_node_ids: vec![],
         reply_to: None,
+        old_node_type: None,
     }
 }
 
@@ -280,16 +282,18 @@ fn list_thread_ids_finds_stored_threads() {
     let ask_id = test_thread_id(ThreadKind::Issue, 5);
     let rfc_id = test_thread_id(ThreadKind::Rfc, 6);
     event::write_event(&git, &sample_create(&ask_id, ThreadKind::Issue, "Bug")).unwrap();
-    event::write_event(
-        &git,
-        &sample_create(&rfc_id, ThreadKind::Rfc, "Proposal"),
-    )
-    .unwrap();
+    event::write_event(&git, &sample_create(&rfc_id, ThreadKind::Rfc, "Proposal")).unwrap();
 
     let ids = thread::list_thread_ids(&git).unwrap();
     assert_eq!(ids.len(), 2);
-    assert!(ids.iter().any(|id| id == &ask_id), "should contain ASK thread");
-    assert!(ids.iter().any(|id| id == &rfc_id), "should contain RFC thread");
+    assert!(
+        ids.iter().any(|id| id == &ask_id),
+        "should contain ASK thread"
+    );
+    assert!(
+        ids.iter().any(|id| id == &rfc_id),
+        "should contain RFC thread"
+    );
     // All returned IDs should be valid opaque IDs
     for id in &ids {
         assert!(id_alloc::is_opaque_id(id), "expected opaque ID, got: {id}");
@@ -417,8 +421,14 @@ fn doctor_warns_on_stale_index() {
         &clock,
     )
     .unwrap();
-    assert!(created_id.starts_with("ASK-"), "expected ASK- prefix, got: {created_id}");
-    assert!(id_alloc::is_opaque_id(&created_id), "expected opaque ID, got: {created_id}");
+    assert!(
+        created_id.starts_with("ASK-"),
+        "expected ASK- prefix, got: {created_id}"
+    );
+    assert!(
+        id_alloc::is_opaque_id(&created_id),
+        "expected opaque ID, got: {created_id}"
+    );
     let report = doctor::run_doctor(&git, &paths).unwrap();
     let freshness_check = report
         .checks
@@ -447,11 +457,7 @@ fn reindex_replays_all_threads() {
     let ask_id = test_thread_id(ThreadKind::Issue, 7);
     let rfc_id = test_thread_id(ThreadKind::Rfc, 8);
     event::write_event(&git, &sample_create(&ask_id, ThreadKind::Issue, "Bug")).unwrap();
-    event::write_event(
-        &git,
-        &sample_create(&rfc_id, ThreadKind::Rfc, "Proposal"),
-    )
-    .unwrap();
+    event::write_event(&git, &sample_create(&rfc_id, ThreadKind::Rfc, "Proposal")).unwrap();
 
     let db_path = paths.git_forum.join("index.db");
     let report = reindex::run_reindex(&git, &db_path).unwrap();

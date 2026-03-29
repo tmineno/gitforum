@@ -335,10 +335,7 @@ mod tests {
 
     #[test]
     fn extract_opaque_after_punctuation() {
-        assert_eq!(
-            extract_thread_ids("(JOB-x8n2q1d4)"),
-            vec!["JOB-x8n2q1d4"]
-        );
+        assert_eq!(extract_thread_ids("(JOB-x8n2q1d4)"), vec!["JOB-x8n2q1d4"]);
     }
 
     #[test]

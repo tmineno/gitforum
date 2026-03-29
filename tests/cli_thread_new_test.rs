@@ -78,10 +78,7 @@ fn thread_new_body_stdin_rejects_empty_input() {
     drop(child.stdin.take());
 
     let output = child.wait_with_output().expect("failed to wait on child");
-    assert!(
-        !output.status.success(),
-        "empty stdin should cause failure"
-    );
+    assert!(!output.status.success(), "empty stdin should cause failure");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("empty input"),

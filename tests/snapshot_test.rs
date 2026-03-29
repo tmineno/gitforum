@@ -61,6 +61,7 @@ fn base_state() -> ThreadState {
             branch: None,
             incorporated_node_ids: vec![],
             reply_to: None,
+            old_node_type: None,
         }],
         nodes: vec![],
         evidence_items: vec![],
@@ -121,6 +122,7 @@ fn rich_state() -> ThreadState {
         branch: None,
         incorporated_node_ids: vec![],
         reply_to: None,
+        old_node_type: None,
     });
     state.events.push(Event {
         event_id: "evt-0003".into(),
@@ -142,6 +144,7 @@ fn rich_state() -> ThreadState {
         branch: None,
         incorporated_node_ids: vec![],
         reply_to: None,
+        old_node_type: None,
     });
     state
 }
@@ -213,6 +216,7 @@ fn node_show_question() {
             branch: None,
             incorporated_node_ids: vec![],
             reply_to: None,
+            old_node_type: None,
         }],
     };
     let out = show::render_node_show(&lookup);

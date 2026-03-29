@@ -1239,17 +1239,12 @@ fn main() -> Result<(), ForumError> {
 
             // Reindex if we fetched forum refs
             if fetched_any {
-                let thread_ids = git
-                    .list_refs("refs/forum/threads/")
-                    .unwrap_or_default();
+                let thread_ids = git.list_refs("refs/forum/threads/").unwrap_or_default();
                 if !thread_ids.is_empty() {
                     let db_path = paths.git_forum.join("index.db");
                     match reindex::run_reindex(&git, &db_path) {
                         Ok(report) => {
-                            eprintln!(
-                                "Reindexed {} threads",
-                                report.threads_replayed.len()
-                            );
+                            eprintln!("Reindexed {} threads", report.threads_replayed.len());
                         }
                         Err(e) => {
                             eprintln!("warning: reindex failed: {e}");
@@ -1522,9 +1517,7 @@ fn main() -> Result<(), ForumError> {
 
         Commands::Tui { thread_id } => {
             let (git, paths) = discover_repo_with_init_warning()?;
-            let thread_id = thread_id
-                .map(|id| resolve_tid(&git, &id))
-                .transpose()?;
+            let thread_id = thread_id.map(|id| resolve_tid(&git, &id)).transpose()?;
             let db_path = paths.git_forum.join("index.db");
             forum_tui::run(&git, &db_path, thread_id.as_deref())?;
         }
@@ -2189,7 +2182,25 @@ fn main() -> Result<(), ForumError> {
             apply_operation_checks(&violations, force, policy.checks.strict)?;
 
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
-            write_ops::retype_node(&git, &thread_id, &resolved, parsed_type, &actor, &clock)?;
+            let old_type = state
+                .nodes
+                .iter()
+                .find(|n| n.node_id == resolved)
+                .map(|n| n.node_type)
+                .ok_or_else(|| {
+                    ForumError::Repo(format!(
+                        "node '{resolved}' not found in thread '{thread_id}'"
+                    ))
+                })?;
+            write_ops::retype_node(
+                &git,
+                &thread_id,
+                &resolved,
+                parsed_type,
+                old_type,
+                &actor,
+                &clock,
+            )?;
             println!("Retyped {resolved} -> {parsed_type}");
         }
 
@@ -2293,7 +2304,12 @@ fn main() -> Result<(), ForumError> {
                         for target in &link_to {
                             let resolved_target = resolve_tid(&git, target)?;
                             evidence_ops::add_thread_link(
-                                &git, &thread_id, &resolved_target, rel, &actor, &clock,
+                                &git,
+                                &thread_id,
+                                &resolved_target,
+                                rel,
+                                &actor,
+                                &clock,
                             )?;
                         }
                     }
@@ -2993,7 +3009,6 @@ fn run_thread_cmd(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 fn run_state_shorthand(
     thread_id: &str,
