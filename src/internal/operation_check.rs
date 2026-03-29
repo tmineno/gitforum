@@ -205,7 +205,7 @@ pub fn check_evidence(policy: &Policy, status: &str) -> Vec<OperationViolation> 
 /// A section is considered empty if there's no non-whitespace content between it and the next heading (or EOF).
 fn extract_heading_texts(body: &str) -> Vec<(String, bool)> {
     let lines: Vec<&str> = body.lines().collect();
-    let mut headings: Vec<(String, usize)> = Vec::new();
+    let mut headings: Vec<(String, usize, usize)> = Vec::new(); // (text, line_idx, level)
 
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
@@ -217,10 +217,9 @@ fn extract_heading_texts(body: &str) -> Vec<(String, bool)> {
                 hashes += 1;
                 chars.next();
             }
-            let _ = hashes; // heading level is ignored per spec
             let heading_text = chars.as_str().trim().to_string();
             if !heading_text.is_empty() {
-                headings.push((heading_text, i));
+                headings.push((heading_text, i, hashes));
             }
         }
     }
@@ -228,12 +227,13 @@ fn extract_heading_texts(body: &str) -> Vec<(String, bool)> {
     headings
         .iter()
         .enumerate()
-        .map(|(idx, (text, line_idx))| {
-            let next_heading_line = if idx + 1 < headings.len() {
-                headings[idx + 1].1
-            } else {
-                lines.len()
-            };
+        .map(|(idx, (text, line_idx, level))| {
+            // Find the next heading at the same or higher level (lower number)
+            let next_heading_line = headings[idx + 1..]
+                .iter()
+                .find(|(_, _, l)| *l <= *level)
+                .map(|(_, li, _)| *li)
+                .unwrap_or(lines.len());
             let content_between = lines[line_idx + 1..next_heading_line]
                 .iter()
                 .any(|l| !l.trim().is_empty());
@@ -379,6 +379,18 @@ mod tests {
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].severity, Severity::Warning);
         assert_eq!(violations[0].rule, "body_section_empty");
+    }
+
+    #[test]
+    fn check_create_rfc_section_with_subheadings_not_empty() {
+        let policy = policy_with_creation_rules();
+        let body =
+            "## Goal\ntext\n## Non-goals\ntext\n## Design\n\n### Option A\nDetails\n\n### Option B\nMore";
+        let violations = check_create(&policy, ThreadKind::Rfc, "Test", Some(body));
+        assert!(
+            violations.is_empty(),
+            "sub-headings should count as content: {violations:?}"
+        );
     }
 
     #[test]
