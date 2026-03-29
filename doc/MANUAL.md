@@ -66,7 +66,7 @@ git forum review <ID> "body"                       node add <ID> --type review
 This manual describes the preferred `git-forum` workflow:
 
 - start work with `rfc`
-- implement with `issue`
+- implement with `ask`
 - use typed discussion instead of plain comments
 - let humans and agents use the same CLI surface
 
@@ -110,26 +110,26 @@ Before creating a thread, select the appropriate kind:
 |---------------------------------------------------|-------|
 | Affects multiple teams, hard to reverse            | rfc   |
 | Is a local design decision worth recording         | dec   |
-| Is an implementable unit of work with clear scope  | task  |
-| Is a bug report or feature request                 | issue |
+| Is an implementable unit of work with clear scope  | job   |
+| Is a bug report or feature request                 | ask   |
 
 Rules of thumb:
 - If you are comparing alternatives → dec
-- If you are defining acceptance criteria → task
+- If you are defining acceptance criteria → job
 - If you need cross-team sign-off → rfc
-- If something is broken or missing → issue
+- If something is broken or missing → ask
 - When in doubt between dec and rfc, start with dec — it can be escalated to an rfc later
-- When in doubt between task and issue, prefer task if you know the implementation path
+- When in doubt between job and ask, prefer job if you know the implementation path
 
 DEC threads should include at least one `alternative` node documenting what was not chosen.
-TASK threads should include `assumption` nodes for any dependencies the work relies on.
+JOB threads should include `assumption` nodes for any dependencies the work relies on.
 
 Use `git forum node add <ID> --type alternative "..."` and `--type assumption "..."` to create these nodes.
 
 ## Conventions
 
-- thread kinds: `issue`, `rfc`, `dec`, `task`
-- thread IDs: `ISSUE-0001`, `RFC-0001`, `DEC-0001`, `TASK-0001`
+- thread kinds: `ask` (alias: `issue`), `rfc`, `dec`, `job` (alias: `task`)
+- thread IDs: `ASK-0001`, `RFC-0001`, `DEC-0001`, `JOB-0001`
 - node IDs: printed by shorthand node commands (e.g. `claim`, `question`); canonical IDs are Git commit OIDs of the say event
 - CLI/TUI displays of node and event OIDs usually show the first 16 characters
 - node IDs in CLI arguments:
@@ -163,12 +163,12 @@ These trade-offs keep the tool lightweight and Git-native. Cryptographic signing
 
 - `rfc` is the starting point for cross-cutting design decisions
 - `dec` records local design decisions worth preserving (lighter than RFC)
-- `task` tracks implementable work units through design/implementation/review phases
-- `issue` tracks bugs and feature requests
+- `job` tracks implementable work units through design/implementation/review phases
+- `ask` tracks bugs and feature requests
 - agents are participants, not a separate control plane
 
 For cross-cutting alignment, start with an RFC. For team-internal design reasoning, use a DEC.
-Break implementation into TASKs. Track bugs and requests as ISSUEs.
+Break implementation into JOBs. Track bugs and requests as ASKs.
 
 ## Repository setup
 
@@ -234,38 +234,42 @@ git forum state DEC-0001 accepted
 
 DEC lifecycle: `proposed` → `accepted` / `rejected` → `deprecated`
 
-### TASK
+### JOB
 
-Use TASKs for implementable work units with clear scope.
+Use JOBs for implementable work units with clear scope.
+
+> **Alias:** `task` still works as an alias for `job` in all commands.
 
 ```bash
-git forum new task "Implement Redis cache client wrapper"
-git forum state TASK-0001 designing
-git forum state TASK-0001 implementing
-git forum state TASK-0001 reviewing
-git forum state TASK-0001 closed
+git forum new job "Implement Redis cache client wrapper"
+git forum state JOB-0001 designing
+git forum state JOB-0001 implementing
+git forum state JOB-0001 reviewing
+git forum state JOB-0001 closed
 
-# Fast-track for trivial tasks:
-git forum new task "Add cache-control headers"
-git forum state TASK-0002 closed
+# Fast-track for trivial jobs:
+git forum new job "Add cache-control headers"
+git forum state JOB-0002 closed
 ```
 
-TASK lifecycle: `open` → `designing` → `implementing` → `reviewing` → `closed`
+JOB lifecycle: `open` → `designing` → `implementing` → `reviewing` → `closed`
 Back-transitions: `implementing` → `designing`, `reviewing` → `implementing`
-Fast-track: `open` → `closed` (for trivial tasks)
+Fast-track: `open` → `closed` (for trivial jobs)
 
-### Issue
+### Ask
 
-Use issues for implementation work, especially when code or a branch is involved.
+Use asks for implementation work, especially when code or a branch is involved.
+
+> **Alias:** `issue` still works as an alias for `ask` in all commands.
 
 ```bash
-git forum new issue "Implement trait backend"
-git forum new issue "Implement trait backend" --body "Initial implementation checklist"
-git forum new issue "Implement trait backend" --body -
-git forum new issue "Implement trait backend" --body-file ./tmp/issue.md
-git forum new issue "Implement trait backend" --edit
-git forum new issue "Implement trait backend" --branch feat/trait-backend
-git forum new issue "Implement trait backend" \
+git forum new ask "Implement trait backend"
+git forum new ask "Implement trait backend" --body "Initial implementation checklist"
+git forum new ask "Implement trait backend" --body -
+git forum new ask "Implement trait backend" --body-file ./tmp/issue.md
+git forum new ask "Implement trait backend" --edit
+git forum new ask "Implement trait backend" --branch feat/trait-backend
+git forum new ask "Implement trait backend" \
   --link-to RFC-0001 --rel implements
 git forum new rfc "Error handling" \
   --claim "All errors should be typed" --action "Define error enum"
@@ -297,8 +301,8 @@ from the new thread to existing threads.
 ### Create from a commit
 
 ```bash
-git forum new issue --from-commit HEAD
-git forum new issue --from-commit abc123 --link-to RFC-0001 --rel implements
+git forum new ask --from-commit HEAD
+git forum new ask --from-commit abc123 --link-to RFC-0001 --rel implements
 ```
 
 `--from-commit <REV>` uses the commit subject as the title, the commit body as the thread body,
@@ -308,8 +312,8 @@ and automatically adds the commit as evidence. An explicit title argument overri
 
 ```bash
 git forum new rfc --from-thread RFC-0003
-git forum new issue --from-thread ISSUE-0001
-git forum new rfc --from-thread ISSUE-0005 "Custom title"
+git forum new ask --from-thread ASK-0001
+git forum new rfc --from-thread ASK-0005 "Custom title"
 ```
 
 `--from-thread <THREAD_ID>` copies the title (prefixed with `v2: `) and body from the source
@@ -319,22 +323,22 @@ overrides the default title.
 Behavior depends on the source and target kinds:
 
 - **RFC → new RFC**: source RFC is auto-deprecated (supersession).
-- **Issue → new issue**: source issue is unchanged (respin/split).
-- **Issue → new RFC**: source issue is unchanged (elevation to formal proposal).
-- **RFC → new issue**: not allowed — use `git forum link --rel implements` instead.
+- **Ask → new ask**: source ask is unchanged (respin/split).
+- **Ask → new RFC**: source ask is unchanged (elevation to formal proposal).
+- **RFC → new ask**: not allowed — use `git forum link --rel implements` instead.
 
 ### List by kind
 
 ```bash
-git forum ls --kind issue
-git forum ls --kind issue --branch feat/trait-backend
+git forum ls --kind ask
+git forum ls --kind ask --branch feat/trait-backend
 git forum ls --kind rfc
 git forum ls dec                                   # positional shorthand
-git forum ls task
+git forum ls job
 ```
 
-The old forms `git forum issue ls` and `git forum rfc ls` remain as hidden aliases for backward
-compatibility.
+The old forms `git forum issue ls`, `git forum rfc ls`, etc. remain as hidden aliases for backward
+compatibility. `--kind issue` and `--kind task` also still work.
 
 ## List and inspect threads
 
@@ -346,7 +350,8 @@ git forum show RFC-0001 --what-next
 ```
 
 `git forum ls` shows `ID`, `KIND`, `STATUS`, `BRANCH`, `CREATED`, `UPDATED`, and `TITLE`.
-`--kind rfc`, `--kind issue`, `--kind dec`, or `--kind task` filters by thread kind.
+`--kind rfc`, `--kind ask`, `--kind dec`, or `--kind job` filters by thread kind
+(`issue` and `task` still work as aliases).
 `--branch <BRANCH>` filters the listing to threads currently bound to that branch.
 
 `git forum show <THREAD_ID>` shows:
@@ -403,7 +408,7 @@ evidence: 1
   - a1b2c3d4  benchmark  bench/result.csv
 
 links: 1
-  - ISSUE-0001  implements
+  - ASK-0001  implements
 ```
 
 ## Search
@@ -439,8 +444,8 @@ git forum claim RFC-0001 "Need a stable plugin-facing boundary."
 git forum question RFC-0001 "What compatibility risks remain?"
 git forum objection RFC-0001 "Benchmarks are missing."
 git forum summary RFC-0001 "Direction is sound, but migration evidence is missing."
-git forum action ISSUE-0001 "Add branch-local benchmark fixture."
-git forum risk ISSUE-0001 "Parser behavior may diverge under edge inputs."
+git forum action ASK-0001 "Add branch-local benchmark fixture."
+git forum risk ASK-0001 "Parser behavior may diverge under edge inputs."
 git forum review RFC-0001 "Overall analysis of the RFC."
 git forum objection RFC-0001 --body-file ./tmp/detailed-objection.md
 git forum claim RFC-0001 --body -
@@ -474,7 +479,7 @@ Valid node types used in the preferred workflow:
 
 ```bash
 git forum node add DEC-0001 --type alternative "Use Memcached instead"
-git forum node add TASK-0001 --type assumption "Redis cluster is available"
+git forum node add JOB-0001 --type assumption "Redis cluster is available"
 ```
 
 `review` is a holistic analysis of the entire thread, distinct from `claim` (single assertion) and
@@ -619,11 +624,11 @@ If a prefix is ambiguous, the command fails and prints candidate full IDs.
 
 ```bash
 git forum evidence add RFC-0001 --kind benchmark --ref bench/result.csv
-git forum evidence add ISSUE-0001 --kind commit --ref HEAD~1
-git forum evidence add ISSUE-0001 --kind commit --ref abc123def456
-git forum evidence add ISSUE-0001 --kind commit --ref abc123 def456 789012
-git forum evidence add ISSUE-0001 --kind file --ref src/lib.rs
-git forum evidence add ISSUE-0001 --kind test --ref tests/backend_trait.rs
+git forum evidence add ASK-0001 --kind commit --ref HEAD~1
+git forum evidence add ASK-0001 --kind commit --ref abc123def456
+git forum evidence add ASK-0001 --kind commit --ref abc123 def456 789012
+git forum evidence add ASK-0001 --kind file --ref src/lib.rs
+git forum evidence add ASK-0001 --kind test --ref tests/backend_trait.rs
 ```
 
 `--ref` accepts multiple values in a single command. Each ref creates its own evidence event.
@@ -644,16 +649,16 @@ Evidence added (a1b2c3d4)
 ### Link two threads
 
 ```bash
-git forum link ISSUE-0001 RFC-0001 --rel implements
-git forum link ISSUE-0002 ISSUE-0001 --rel depends-on
-git forum link ISSUE-0003 ISSUE-0002 --rel blocks
+git forum link ASK-0001 RFC-0001 --rel implements
+git forum link ASK-0002 ASK-0001 --rel depends-on
+git forum link ASK-0003 ASK-0002 --rel blocks
 git forum link RFC-0002 RFC-0001 --rel relates-to
 ```
 
 On success:
 
 ```text
-ISSUE-0001 -> RFC-0001 (implements)
+ASK-0001 -> RFC-0001 (implements)
 ```
 
 `--rel` is currently free-form. Common values are `implements`, `relates-to`, `depends-on`, and
@@ -662,8 +667,8 @@ ISSUE-0001 -> RFC-0001 (implements)
 ### Bind a thread to a Git branch
 
 ```bash
-git forum branch bind ISSUE-0001 feat/parser-rewrite
-git forum branch clear ISSUE-0001
+git forum branch bind ASK-0001 feat/parser-rewrite
+git forum branch clear ASK-0001
 ```
 
 This updates the thread's `scope.branch`. It is most useful for issues that track implementation
@@ -685,7 +690,7 @@ git forum hook uninstall            # remove the git-forum hook
 The hook delegates to `git-forum hook check-commit-msg <file>`, which:
 
 1. Strips Git comment lines (respecting `core.commentChar`) and scissors sections.
-2. Scans the cleaned message for thread ID patterns (`ISSUE-NNNN`, `RFC-NNNN`, `DEC-NNNN`, `TASK-NNNN`).
+2. Scans the cleaned message for thread ID patterns (`ASK-NNNN`, `RFC-NNNN`, `DEC-NNNN`, `JOB-NNNN`; legacy prefixes `ISSUE-NNNN` and `TASK-NNNN` are also recognized).
 3. Validates each referenced thread exists in `refs/forum/threads/`.
 
 **Behavior:**
@@ -696,7 +701,7 @@ The hook delegates to `git-forum hook check-commit-msg <file>`, which:
 
 ```text
 git-forum: commit message references non-existent thread(s):
-  ISSUE-9999 — not found
+  ASK-9999 — not found
 hint: create the thread first, or remove the reference from the commit message.
 ```
 
@@ -712,8 +717,8 @@ This is destructive: commit SHAs change and all clones must re-fetch affected re
 ### Purge a specific event
 
 ```bash
-git forum purge --thread ISSUE-0001 --event <SHA>
-git forum purge --thread ISSUE-0001 --event <SHA> --dry-run
+git forum purge --thread ASK-0001 --event <SHA>
+git forum purge --thread ASK-0001 --event <SHA> --dry-run
 ```
 
 Replaces the event's `body` and `title` with `[purged]`. All downstream commits in the thread
@@ -747,7 +752,7 @@ git forum tui RFC-0001
 
 The TUI uses color to distinguish kinds, statuses, and node types:
 
-- **Thread kind**: cyan = rfc, yellow = issue, magenta = dec, green = task
+- **Thread kind**: cyan = rfc, yellow = ask, magenta = dec, green = job
 - **Thread status**: green = open/draft, yellow = pending/proposed/under-review/designing/implementing/reviewing,
   magenta = accepted/closed, red = rejected, gray = deprecated
 - **Node type**: red = objection/risk, yellow = question, green = summary, cyan = action,
@@ -826,14 +831,14 @@ actions, and open questions.
 State shorthands are top-level convenience aliases (verb-first):
 
 ```bash
-git forum close ISSUE-0001
-git forum close ISSUE-0001 --comment "Fixed in abc123"
-git forum close ISSUE-0001 --link-to RFC-0001 --rel implements
-git forum close ISSUE-0001 --resolve-open-actions
-git forum pend ISSUE-0001                              # mark as pending
-git forum pend ISSUE-0001 --comment "Waiting on review"
-git forum state ISSUE-0001 open                       # thread state reopen
-git forum reject ISSUE-0001 --comment "Won't fix"
+git forum close ASK-0001
+git forum close ASK-0001 --comment "Fixed in abc123"
+git forum close ASK-0001 --link-to RFC-0001 --rel implements
+git forum close ASK-0001 --resolve-open-actions
+git forum pend ASK-0001                              # mark as pending
+git forum pend ASK-0001 --comment "Waiting on review"
+git forum state ASK-0001 open                       # thread state reopen
+git forum reject ASK-0001 --comment "Won't fix"
 git forum propose RFC-0001
 git forum accept RFC-0001 --approve human/alice
 git forum deprecate RFC-0001 --comment "Superseded by RFC-0005"
@@ -854,7 +859,7 @@ Available shorthands:
 - `deprecate` — transition to `deprecated` (from `accepted` or `rejected`)
 
 The old kind-prefixed forms (`git forum issue close`, `git forum rfc accept`, etc.) remain as hidden
-aliases for backward compatibility. The same applies to `git forum dec` and `git forum task`.
+aliases for backward compatibility. The same applies to `git forum dec`, `git forum task`, and `git forum job`.
 
 ### Generic state command
 
@@ -862,10 +867,10 @@ aliases for backward compatibility. The same applies to `git forum dec` and `git
 git forum state RFC-0001 proposed
 git forum state RFC-0001 under-review
 git forum state RFC-0001 accepted --approve human/alice
-git forum state ISSUE-0001 closed --resolve-open-actions
-git forum state ISSUE-0001 closed --comment "Done" --link-to RFC-0001 --rel implements
+git forum state ASK-0001 closed --resolve-open-actions
+git forum state ASK-0001 closed --comment "Done" --link-to RFC-0001 --rel implements
 git forum state bulk --to closed --branch v0.1.0
-git forum state bulk --to closed ISSUE-0001 ISSUE-0002 --dry-run
+git forum state bulk --to closed ASK-0001 ASK-0002 --dry-run
 ```
 
 - `--approve` is recorded as an approval on the event
@@ -876,14 +881,14 @@ git forum state bulk --to closed ISSUE-0001 ISSUE-0002 --dry-run
 - for RFCs, `proposed` means the author is declaring the RFC review-ready
 - for RFCs, `under-review` means active review is in progress
 - an accepted RFC is the decision record; there is no separate decision workflow in the preferred model
-- issues support `open`, `pending`, `closed`, and `rejected` states; `pending` is for
-  work-in-progress or waiting, `rejected` is for invalid or won't-fix issues, `closed` means
+- asks support `open`, `pending`, `closed`, and `rejected` states; `pending` is for
+  work-in-progress or waiting, `rejected` is for invalid or won't-fix asks, `closed` means
   completed
 - DECs support `proposed`, `accepted`, `rejected`, and `deprecated` states
-- TASKs support `open`, `designing`, `implementing`, `reviewing`, `closed`, and `rejected` states;
-  use `git forum state TASK-0001 designing` for phase transitions
-- if policy requires `no_open_actions`, closing an issue or task with open `action` nodes fails
-- `--resolve-open-actions` is an explicit escape hatch for issue/task close; it resolves open `action`
+- JOBs support `open`, `designing`, `implementing`, `reviewing`, `closed`, and `rejected` states;
+  use `git forum state JOB-0001 designing` for phase transitions
+- if policy requires `no_open_actions`, closing an ask or job with open `action` nodes fails
+- `--resolve-open-actions` is an explicit escape hatch for ask/job close; it resolves open `action`
   nodes before writing the closing state event
 - `state bulk` evaluates each target independently, applies successful transitions, reports
   failures inline, and exits non-zero if any target failed
@@ -938,7 +943,7 @@ strict = false
 required_body = true
 body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
 
-[creation_rules.issue]
+[creation_rules.ask]
 required_body = false
 body_sections = []
 
@@ -946,7 +951,7 @@ body_sections = []
 required_body = true
 body_sections = ["Context", "Decision", "Rationale", "Impact"]
 
-[creation_rules.task]
+[creation_rules.job]
 required_body = false
 body_sections = ["Background", "Acceptance criteria", "Exceptions"]
 
@@ -969,7 +974,7 @@ allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "desig
 
 - `[checks]`: global check settings
   - `strict`: when `true`, warnings become errors (unless `--force` is used). Default: `false`.
-- `[creation_rules.<kind>]`: rules for creating threads of a given kind (e.g., `rfc`, `issue`)
+- `[creation_rules.<kind>]`: rules for creating threads of a given kind (e.g., `rfc`, `ask`)
   - `required_body`: if `true`, the thread must have a non-empty body (Error if missing)
   - `body_sections`: list of section headings to check for in the body (Warning if missing)
 - `[node_rules]`: maps state names to lists of allowed node types in that state (Error if violated). An absent state means all node types are allowed.
@@ -1043,10 +1048,10 @@ printed to stderr regardless of `--force`.
 
 It evaluates policy guards for the thread's next forward transition:
 
-- Issue in `open` → checks guards for `open->closed`
+- Ask in `open` → checks guards for `open->closed`
 - RFC in `under-review` → checks guards for `under-review->accepted`
 - DEC in `proposed` → checks guards for `proposed->accepted`
-- TASK in `reviewing` → checks guards for `reviewing->closed`
+- JOB in `reviewing` → checks guards for `reviewing->closed`
 - Other states → reports `ready` (no preflight target defined)
 
 Use it right before an acceptance-like transition. It answers:
@@ -1090,11 +1095,11 @@ git forum propose RFC-0001
 git forum state RFC-0001 under-review
 git forum verify RFC-0001
 git forum accept RFC-0001 --approve human/alice
-git forum new issue "Implement trait backend" --link-to RFC-0001 --rel implements
-git forum branch bind ISSUE-0001 feat/trait-backend
-git forum action ISSUE-0001 "Wire trait backend behind feature flag."
-git forum evidence add ISSUE-0001 --kind test --ref tests/backend_trait.rs
-git forum close ISSUE-0001
+git forum new ask "Implement trait backend" --link-to RFC-0001 --rel implements
+git forum branch bind ASK-0001 feat/trait-backend
+git forum action ASK-0001 "Wire trait backend behind feature flag."
+git forum evidence add ASK-0001 --kind test --ref tests/backend_trait.rs
+git forum close ASK-0001
 ```
 
 ## AI-agent workflow pattern
@@ -1139,19 +1144,19 @@ cat /tmp/review.md | git forum revise RFC-0001 --body -
 
 ## Linking implementation commits as evidence
 
-After implementing work on a branch, link the commits back to the RFC or issue so that the
+After implementing work on a branch, link the commits back to the RFC or ask so that the
 decision trail connects to the code:
 
 ```bash
 # Link the commit that implements the feature
-git forum evidence add ISSUE-0001 --kind commit --ref HEAD
-git forum evidence add ISSUE-0001 --kind commit --ref abc123
+git forum evidence add ASK-0001 --kind commit --ref HEAD
+git forum evidence add ASK-0001 --kind commit --ref abc123
 
 # Link a test file as evidence
-git forum evidence add ISSUE-0001 --kind test --ref tests/cache_test.rs
+git forum evidence add ASK-0001 --kind test --ref tests/cache_test.rs
 
-# Link back to the RFC that motivated this issue
-git forum evidence add ISSUE-0001 --kind thread --ref RFC-0001
+# Link back to the RFC that motivated this ask
+git forum evidence add ASK-0001 --kind thread --ref RFC-0001
 ```
 
 `--kind commit --ref` accepts any Git revision expression (SHA, branch, tag, `HEAD~1`). The
@@ -1186,7 +1191,7 @@ resolve non-conflicting concurrent writes to the same thread.
 This manual currently covers:
 
 - init / doctor / reindex
-- thread create (`new issue`, `new rfc`) and list (`ls --kind`)
+- thread create (`new ask`, `new rfc`) and list (`ls --kind`)
 - thread show
 - node show
 - search
