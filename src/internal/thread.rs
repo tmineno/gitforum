@@ -80,8 +80,7 @@ impl ThreadState {
     pub fn latest_summary(&self) -> Option<&Node> {
         self.nodes
             .iter()
-            .filter(|n| n.node_type == NodeType::Summary && !n.retracted)
-            .next_back()
+            .rfind(|n| n.node_type == NodeType::Summary && !n.retracted)
     }
 }
 
@@ -422,8 +421,7 @@ fn resolve_from_list(all_ids: &[String], user_input: &str) -> ForumResult<String
             0 => {}
             1 => return Ok(ci_prefix_matches[0].clone()),
             _ => {
-                let candidates: Vec<&str> =
-                    ci_prefix_matches.iter().map(|s| s.as_str()).collect();
+                let candidates: Vec<&str> = ci_prefix_matches.iter().map(|s| s.as_str()).collect();
                 return Err(ForumError::Repo(format!(
                     "ambiguous thread reference '{user_input}'; did you mean one of:\n  {}",
                     candidates.join("\n  ")
@@ -437,18 +435,14 @@ fn resolve_from_list(all_ids: &[String], user_input: &str) -> ForumResult<String
         let ci_token_matches: Vec<&String> = all_ids
             .iter()
             .filter(|id| {
-                id.split_once('-').is_some_and(|(_, token)| {
-                    token
-                        .to_ascii_uppercase()
-                        .starts_with(&input_upper)
-                })
+                id.split_once('-')
+                    .is_some_and(|(_, token)| token.to_ascii_uppercase().starts_with(&input_upper))
             })
             .collect();
         match ci_token_matches.len() {
             1 => return Ok(ci_token_matches[0].clone()),
             n if n > 1 => {
-                let candidates: Vec<&str> =
-                    ci_token_matches.iter().map(|s| s.as_str()).collect();
+                let candidates: Vec<&str> = ci_token_matches.iter().map(|s| s.as_str()).collect();
                 return Err(ForumError::Repo(format!(
                     "ambiguous thread reference '{user_input}'; did you mean one of:\n  {}",
                     candidates.join("\n  ")
@@ -675,19 +669,13 @@ mod tests {
     #[test]
     fn resolve_prefix_match() {
         let all = ids(&["RFC-a7f3b2x1", "ASK-0001"]);
-        assert_eq!(
-            resolve_from_list(&all, "RFC-a7f3").unwrap(),
-            "RFC-a7f3b2x1"
-        );
+        assert_eq!(resolve_from_list(&all, "RFC-a7f3").unwrap(), "RFC-a7f3b2x1");
     }
 
     #[test]
     fn resolve_token_only_match() {
         let all = ids(&["RFC-a7f3b2x1", "ASK-0001"]);
-        assert_eq!(
-            resolve_from_list(&all, "a7f3b2x1").unwrap(),
-            "RFC-a7f3b2x1"
-        );
+        assert_eq!(resolve_from_list(&all, "a7f3b2x1").unwrap(), "RFC-a7f3b2x1");
     }
 
     #[test]
@@ -699,19 +687,13 @@ mod tests {
     #[test]
     fn resolve_case_insensitive_prefix() {
         let all = ids(&["RFC-a7f3b2x1", "ASK-0001"]);
-        assert_eq!(
-            resolve_from_list(&all, "rfc-a7f3").unwrap(),
-            "RFC-a7f3b2x1"
-        );
+        assert_eq!(resolve_from_list(&all, "rfc-a7f3").unwrap(), "RFC-a7f3b2x1");
     }
 
     #[test]
     fn resolve_case_insensitive_token() {
         let all = ids(&["RFC-a7f3b2x1", "ASK-0001"]);
-        assert_eq!(
-            resolve_from_list(&all, "A7F3B2X1").unwrap(),
-            "RFC-a7f3b2x1"
-        );
+        assert_eq!(resolve_from_list(&all, "A7F3B2X1").unwrap(), "RFC-a7f3b2x1");
     }
 
     #[test]

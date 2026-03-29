@@ -83,14 +83,7 @@ fn claim_shorthand_equals_node_add_claim() {
     let id_b = setup_rfc(repo_b.path());
     let out = run(
         repo_b.path(),
-        &[
-            "node",
-            "add",
-            &id_b,
-            "--type",
-            "claim",
-            "Shorthand claim",
-        ],
+        &["node", "add", &id_b, "--type", "claim", "Shorthand claim"],
     );
     assert!(out.status.success());
     let state_b = replay(repo_b.path(), &id_b);
@@ -117,14 +110,7 @@ fn question_shorthand_equals_node_add_question() {
     let id_b = setup_rfc(repo_b.path());
     let out = run(
         repo_b.path(),
-        &[
-            "node",
-            "add",
-            &id_b,
-            "--type",
-            "question",
-            "Is this safe?",
-        ],
+        &["node", "add", &id_b, "--type", "question", "Is this safe?"],
     );
     assert!(out.status.success());
     let state_b = replay(repo_b.path(), &id_b);
@@ -141,10 +127,7 @@ fn objection_shorthand_equals_node_add_objection() {
     let paths_a = RepoPaths::from_repo_root(repo_a.path());
     init::init_forum(&paths_a).unwrap();
     let id_a = setup_rfc(repo_a.path());
-    let out = run(
-        repo_a.path(),
-        &["objection", &id_a, "Missing benchmarks"],
-    );
+    let out = run(repo_a.path(), &["objection", &id_a, "Missing benchmarks"]);
     assert!(out.status.success());
     let state_a = replay(repo_a.path(), &id_a);
 

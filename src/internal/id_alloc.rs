@@ -56,7 +56,9 @@ pub fn is_opaque_id(id: &str) -> bool {
     };
     ThreadKind::from_id_prefix(prefix).is_some()
         && token.len() == 8
-        && token.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && token
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
         && !token.chars().all(|c| c.is_ascii_digit())
 }
 
@@ -92,7 +94,9 @@ mod tests {
         let token = &id[4..];
         assert_eq!(token.len(), 8, "token length: {}", token.len());
         assert!(
-            token.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
+            token
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
             "token contains invalid chars: {token}"
         );
     }
@@ -118,8 +122,18 @@ mod tests {
 
     #[test]
     fn nonce_randomness_produces_unique_ids() {
-        let id1 = alloc_thread_id(ThreadKind::Rfc, "human/alice", "Title", "2026-01-01T00:00:00Z");
-        let id2 = alloc_thread_id(ThreadKind::Rfc, "human/alice", "Title", "2026-01-01T00:00:00Z");
+        let id1 = alloc_thread_id(
+            ThreadKind::Rfc,
+            "human/alice",
+            "Title",
+            "2026-01-01T00:00:00Z",
+        );
+        let id2 = alloc_thread_id(
+            ThreadKind::Rfc,
+            "human/alice",
+            "Title",
+            "2026-01-01T00:00:00Z",
+        );
         assert_ne!(id1, id2);
     }
 
@@ -177,6 +191,8 @@ mod tests {
         let input = [0u8, 1, 35, 36, 37, 255, 100, 200];
         let result = base36_encode(&input, 8);
         assert_eq!(result.len(), 8);
-        assert!(result.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+        assert!(result
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
     }
 }

@@ -117,7 +117,10 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
         &alice.clock,
     )
     .unwrap();
-    assert!(rfc_0001.starts_with("RFC-"), "expected RFC prefix, got {rfc_0001}");
+    assert!(
+        rfc_0001.starts_with("RFC-"),
+        "expected RFC prefix, got {rfc_0001}"
+    );
 
     // Nodes for RFC-0001
     let rfc1_nodes: Vec<&_> = phase
@@ -190,7 +193,10 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
         &bob.clock,
     )
     .unwrap();
-    assert!(rfc_0002.starts_with("RFC-"), "expected RFC prefix, got {rfc_0002}");
+    assert!(
+        rfc_0002.starts_with("RFC-"),
+        "expected RFC prefix, got {rfc_0002}"
+    );
 
     // Nodes for RFC-0002
     for node_def in phase.nodes.iter().filter(|n| n.thread_ref == "RFC-0002") {
@@ -242,7 +248,10 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
         &copilot.clock,
     )
     .unwrap();
-    assert!(rfc_0003.starts_with("RFC-"), "expected RFC prefix, got {rfc_0003}");
+    assert!(
+        rfc_0003.starts_with("RFC-"),
+        "expected RFC prefix, got {rfc_0003}"
+    );
 
     let state = thread::replay_thread(&alice.git, &rfc_0003).unwrap();
     assert_eq!(state.status, "draft");
@@ -285,7 +294,10 @@ fn phase_implementation(
         &alice.clock,
     )
     .unwrap();
-    assert!(issue_0001.starts_with("ASK-"), "expected ASK prefix, got {issue_0001}");
+    assert!(
+        issue_0001.starts_with("ASK-"),
+        "expected ASK prefix, got {issue_0001}"
+    );
 
     // Links for ISSUE-0001
     for link in phase
@@ -337,7 +349,10 @@ fn phase_implementation(
         &bob.clock,
     )
     .unwrap();
-    assert!(issue_0002.starts_with("ASK-"), "expected ASK prefix, got {issue_0002}");
+    assert!(
+        issue_0002.starts_with("ASK-"),
+        "expected ASK prefix, got {issue_0002}"
+    );
 
     for link in phase
         .links
@@ -387,7 +402,10 @@ fn phase_implementation(
         &carol.clock,
     )
     .unwrap();
-    assert!(issue_0003.starts_with("ASK-"), "expected ASK prefix, got {issue_0003}");
+    assert!(
+        issue_0003.starts_with("ASK-"),
+        "expected ASK prefix, got {issue_0003}"
+    );
 
     // Create a commit to use as evidence
     std::fs::write(repo_path.join("div_guard.rs"), "fn div(a: f64, b: f64) -> Result<f64, &'static str> { if b == 0.0 { Err(\"div by zero\") } else { Ok(a / b) } }\n").unwrap();
@@ -413,11 +431,7 @@ fn phase_implementation(
         .unwrap();
 
     // Add evidence from scenario
-    for ev in phase
-        .evidence
-        .iter()
-        .filter(|e| e.thread_ref == "ASK-0003")
-    {
+    for ev in phase.evidence.iter().filter(|e| e.thread_ref == "ASK-0003") {
         let agent = agent_by_name(agents, &ev.actor);
         evidence_ops::add_evidence(
             &agent.git,
@@ -462,7 +476,10 @@ fn phase_implementation(
         &issue_creator.clock,
     )
     .unwrap();
-    assert!(issue_0004.starts_with("ASK-"), "expected ASK prefix, got {issue_0004}");
+    assert!(
+        issue_0004.starts_with("ASK-"),
+        "expected ASK prefix, got {issue_0004}"
+    );
 
     // Verify closed issues
     for id in [&issue_0001, &issue_0002, &issue_0003] {
@@ -635,7 +652,10 @@ fn phase_expanded_lifecycle(
         &bob.clock,
     )
     .unwrap();
-    assert!(rfc_0004.starts_with("RFC-"), "expected RFC prefix, got {rfc_0004}");
+    assert!(
+        rfc_0004.starts_with("RFC-"),
+        "expected RFC prefix, got {rfc_0004}"
+    );
 
     let t1 = &phase.threads[1]; // ISSUE-0005
     let carol = agent_by_name(agents, &t1.creator);
@@ -648,7 +668,10 @@ fn phase_expanded_lifecycle(
         &carol.clock,
     )
     .unwrap();
-    assert!(issue_0005.starts_with("ASK-"), "expected ASK prefix, got {issue_0005}");
+    assert!(
+        issue_0005.starts_with("ASK-"),
+        "expected ASK prefix, got {issue_0005}"
+    );
 
     // Build label map for this phase's new threads
     let mut local_map = label_map.clone();
@@ -680,7 +703,8 @@ fn phase_expanded_lifecycle(
     let state = thread::replay_thread(&alice.git, rfc_0003_id).unwrap();
     assert_eq!(
         state.status, "draft",
-        "{} should be reverted to draft", rfc_0003_id
+        "{} should be reverted to draft",
+        rfc_0003_id
     );
 
     let state = thread::replay_thread(&alice.git, &rfc_0004).unwrap();
@@ -691,7 +715,11 @@ fn phase_expanded_lifecycle(
 
     let ask_0001_id = &local_map["ASK-0001"];
     let state = thread::replay_thread(&alice.git, ask_0001_id).unwrap();
-    assert_eq!(state.status, "closed", "{} should be re-closed", ask_0001_id);
+    assert_eq!(
+        state.status, "closed",
+        "{} should be re-closed",
+        ask_0001_id
+    );
 
     (rfc_0004, issue_0005)
 }
@@ -714,7 +742,10 @@ fn cli_smoke_tests(repo_path: &Path, rfc_id: &str, issue_id: &str) {
     assert!(output.status.success(), "ls failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(rfc_id), "ls output should contain {rfc_id}");
-    assert!(stdout.contains(issue_id), "ls output should contain {issue_id}");
+    assert!(
+        stdout.contains(issue_id),
+        "ls output should contain {issue_id}"
+    );
 
     // 2. show a specific thread
     let output = std::process::Command::new(binary)
@@ -748,7 +779,10 @@ fn cli_smoke_tests(repo_path: &Path, rfc_id: &str, issue_id: &str) {
         .unwrap();
     assert!(output.status.success(), "rfc ls failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(rfc_id), "rfc ls output should contain {rfc_id}");
+    assert!(
+        stdout.contains(rfc_id),
+        "rfc ls output should contain {rfc_id}"
+    );
     assert!(!stdout.contains("ASK-"), "rfc ls should not show issues");
 
     // 5. issue ls
@@ -761,7 +795,10 @@ fn cli_smoke_tests(repo_path: &Path, rfc_id: &str, issue_id: &str) {
         .unwrap();
     assert!(output.status.success(), "issue ls failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(issue_id), "issue ls output should contain {issue_id}");
+    assert!(
+        stdout.contains(issue_id),
+        "issue ls output should contain {issue_id}"
+    );
     assert!(!stdout.contains("RFC-"), "issue ls should not show RFCs");
 }
 

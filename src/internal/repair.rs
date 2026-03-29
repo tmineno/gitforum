@@ -38,13 +38,11 @@ pub struct RepairReport {
 /// thread ID, but the local commit is NOT an ancestor of the remote commit
 /// (i.e., they diverged rather than one being ahead of the other).
 pub fn detect_conflicts(git: &GitOps, remote: &str) -> ForumResult<Vec<ConflictInfo>> {
-    let remote_refs = git
-        .ls_remote(remote, "refs/forum/threads/*")
-        .map_err(|e| {
-            ForumError::Git(format!(
-                "could not query remote '{remote}': {e}\n  hint: check that the remote is reachable"
-            ))
-        })?;
+    let remote_refs = git.ls_remote(remote, "refs/forum/threads/*").map_err(|e| {
+        ForumError::Git(format!(
+            "could not query remote '{remote}': {e}\n  hint: check that the remote is reachable"
+        ))
+    })?;
 
     let local_refs = git.list_refs_with_shas(refs::THREADS_PREFIX)?;
 
@@ -157,11 +155,7 @@ fn rewrite_chain_with_new_id(
 }
 
 /// Detect and fix all ID conflicts with a remote.
-pub fn repair_conflicts(
-    git: &GitOps,
-    remote: &str,
-    dry_run: bool,
-) -> ForumResult<RepairReport> {
+pub fn repair_conflicts(git: &GitOps, remote: &str, dry_run: bool) -> ForumResult<RepairReport> {
     let conflicts = detect_conflicts(git, remote)?;
     let mut report = RepairReport {
         reallocated: Vec::new(),
@@ -183,9 +177,7 @@ pub fn repair_conflicts(
                 report.reallocated.push((old_id, new_id));
             }
             Err(e) => {
-                report
-                    .errors
-                    .push(format!("{}: {e}", conflict.thread_id));
+                report.errors.push(format!("{}: {e}", conflict.thread_id));
             }
         }
     }

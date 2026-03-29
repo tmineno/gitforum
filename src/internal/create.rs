@@ -117,7 +117,6 @@ fn create_thread_core(
         }
     }
 
-    Err(last_err.unwrap_or_else(|| {
-        ForumError::Git("thread ID collision: exhausted retries".into())
-    }))
+    Err(last_err
+        .unwrap_or_else(|| ForumError::Git("thread ID collision: exhausted retries".into())))
 }
