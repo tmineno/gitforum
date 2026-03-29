@@ -1,3 +1,4 @@
+exclude: '^\.forum/'
 repos:
   - repo: local
     hooks:
