@@ -181,9 +181,11 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
             }
             lines.push(format!("next:     {}", target_parts.join(", ")));
         }
-        lines.push("transitions:".into());
-        for diagram_line in render_state_diagram(state.kind, &state.status) {
-            lines.push(diagram_line);
+        if !compact {
+            lines.push("transitions:".into());
+            for diagram_line in render_state_diagram(state.kind, &state.status) {
+                lines.push(diagram_line);
+            }
         }
     }
     lines.push(format!(
@@ -196,30 +198,57 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
     }
     if let Some(body) = &state.body {
         lines.push("body:".into());
-        for line in body.lines() {
-            lines.push(format!("  {line}"));
-        }
-        if body.is_empty() {
-            lines.push("  ".into());
+        if compact {
+            let body_lines: Vec<&str> = body.lines().collect();
+            let shown = body_lines.len().min(5);
+            for line in &body_lines[..shown] {
+                lines.push(format!("  {line}"));
+            }
+            if body_lines.len() > 5 {
+                let size = body.len();
+                let size_str = if size >= 1024 {
+                    format!("{:.1} KB", size as f64 / 1024.0)
+                } else {
+                    format!("{size} B")
+                };
+                let rev_hint = if state.body_revision_count > 0 {
+                    format!(", {} revision(s)", state.body_revision_count)
+                } else {
+                    String::new()
+                };
+                lines.push(format!(
+                    "  ... ({size_str}{rev_hint} — use 'show {}' for full body)",
+                    state.id
+                ));
+            }
+        } else {
+            for line in body.lines() {
+                lines.push(format!("  {line}"));
+            }
+            if body.is_empty() {
+                lines.push("  ".into());
+            }
         }
     }
     lines.push(String::new());
 
-    if state.body_revision_count > 0 {
+    if !compact && state.body_revision_count > 0 {
         lines.push(format!("body revisions: {}", state.body_revision_count));
     }
 
-    let incorporated: Vec<&super::node::Node> =
-        state.nodes.iter().filter(|n| n.incorporated).collect();
-    render_item_list(&mut lines, "incorporated nodes", &incorporated, |node| {
-        let preview = body_or_truncated(&node.body, 60, compact);
-        format!(
-            "  - {} {} {}",
-            short_oid(&node.node_id),
-            node.node_type,
-            preview
-        )
-    });
+    if !compact {
+        let incorporated: Vec<&super::node::Node> =
+            state.nodes.iter().filter(|n| n.incorporated).collect();
+        render_item_list(&mut lines, "incorporated nodes", &incorporated, |node| {
+            let preview = body_or_truncated(&node.body, 60, false);
+            format!(
+                "  - {} {} {}",
+                short_oid(&node.node_id),
+                node.node_type,
+                preview
+            )
+        });
+    }
 
     let open_obj = state.open_objections();
     if !open_obj.is_empty() {
@@ -262,10 +291,12 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
         lines.push(String::new());
     }
 
-    render_item_list(&mut lines, "evidence", &state.evidence_items, |ev| {
-        let id_short = &ev.evidence_id[..ev.evidence_id.len().min(8)];
-        format!("  - {}  {}  {}", id_short, ev.kind, ev.ref_target)
-    });
+    if !compact {
+        render_item_list(&mut lines, "evidence", &state.evidence_items, |ev| {
+            let id_short = &ev.evidence_id[..ev.evidence_id.len().min(8)];
+            format!("  - {}  {}  {}", id_short, ev.kind, ev.ref_target)
+        });
+    }
 
     render_item_list(&mut lines, "links", &state.links, |link| {
         format!("  - {}  {}", link.target_thread_id, link.rel)
@@ -274,51 +305,81 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
     // Conversation grouping: show reply chains grouped by root node
     let conversations = build_conversations(&state.nodes);
     if !conversations.is_empty() {
-        lines.push(format!("conversations: {}", conversations.len()));
-        for convo in &conversations {
-            let root = convo[0];
-            let status = node_status(root);
+        if compact {
+            let inc_count = state.nodes.iter().filter(|n| n.incorporated).count();
+            let inc_hint = if inc_count > 0 {
+                format!(" ({inc_count} incorporated)")
+            } else {
+                String::new()
+            };
             lines.push(format!(
-                "  {} {} [{}] {}",
-                short_oid(&root.node_id),
-                root.node_type,
-                status,
-                body_or_truncated(&root.body, 50, compact)
+                "conversations: {}{}",
+                conversations.len(),
+                inc_hint
             ));
-            if !compact {
-                render_indented_body(&mut lines, &root.body, "      ");
-            }
-            for reply in &convo[1..] {
+            for convo in &conversations {
+                let root = convo[0];
+                let status = node_status(root);
                 lines.push(format!(
-                    "    -> {} {} {} {}",
-                    short_oid(&reply.node_id),
-                    reply.node_type,
-                    reply.actor,
-                    body_or_truncated(&reply.body, 50, compact)
+                    "  {} {} [{}] {} — {}",
+                    short_oid(&root.node_id),
+                    root.node_type,
+                    status,
+                    root.actor,
+                    single_line_preview(&root.body, 60)
                 ));
-                if !compact {
+            }
+        } else {
+            lines.push(format!("conversations: {}", conversations.len()));
+            for convo in &conversations {
+                let root = convo[0];
+                let status = node_status(root);
+                lines.push(format!(
+                    "  {} {} [{}] {}",
+                    short_oid(&root.node_id),
+                    root.node_type,
+                    status,
+                    body_or_truncated(&root.body, 50, false)
+                ));
+                render_indented_body(&mut lines, &root.body, "      ");
+                for reply in &convo[1..] {
+                    lines.push(format!(
+                        "    -> {} {} {} {}",
+                        short_oid(&reply.node_id),
+                        reply.node_type,
+                        reply.actor,
+                        body_or_truncated(&reply.body, 50, false)
+                    ));
                     render_indented_body(&mut lines, &reply.body, "        ");
                 }
-            }
-            // Show follow-up hint for the last node in the conversation if it's open
-            let last = convo.last().unwrap();
-            if last.is_open() {
-                lines.push(format!(
-                    "    reply: git forum claim {} --reply-to {} --body \"...\"",
-                    state.id,
-                    short_oid(&last.node_id)
-                ));
+                // Show follow-up hint for the last node in the conversation if it's open
+                let last = convo.last().unwrap();
+                if last.is_open() {
+                    lines.push(format!(
+                        "    reply: git forum claim {} --reply-to {} --body \"...\"",
+                        state.id,
+                        short_oid(&last.node_id)
+                    ));
+                }
             }
         }
         lines.push(String::new());
     }
 
     if !options.no_timeline {
-        lines.push("timeline:".into());
-        let widths = timeline_widths(&state.events);
-        lines.push(format_timeline_header(&widths));
-        for event in &state.events {
-            lines.push(format_timeline_entry(event, &widths, compact));
+        if compact {
+            lines.push(format!(
+                "timeline: {} events (use 'log {}' for full view)",
+                state.events.len(),
+                state.id
+            ));
+        } else {
+            lines.push("timeline:".into());
+            let widths = timeline_widths(&state.events);
+            lines.push(format_timeline_header(&widths));
+            for event in &state.events {
+                lines.push(format_timeline_entry(event, &widths, false));
+            }
         }
         lines.push(String::new());
     }
