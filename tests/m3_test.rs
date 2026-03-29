@@ -821,6 +821,7 @@ fn resolve_node_id_in_thread_scopes_prefix_lookup() {
         branch: None,
         incorporated_node_ids: vec![],
         reply_to: None,
+        old_node_type: None,
     };
     let second_event = Event {
         event_id: String::new(),
@@ -842,6 +843,7 @@ fn resolve_node_id_in_thread_scopes_prefix_lookup() {
         branch: None,
         incorporated_node_ids: vec![],
         reply_to: None,
+        old_node_type: None,
     };
     event::write_event(&git, &first_event).unwrap();
     event::write_event(&git, &second_event).unwrap();

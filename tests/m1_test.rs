@@ -50,6 +50,7 @@ fn sample_create(thread_id: &str, kind: ThreadKind, title: &str) -> Event {
         link_rel: None,
         incorporated_node_ids: vec![],
         reply_to: None,
+        old_node_type: None,
     }
 }
 
@@ -74,6 +75,7 @@ fn sample_state(thread_id: &str, new_state: &str) -> Event {
         link_rel: None,
         incorporated_node_ids: vec![],
         reply_to: None,
+        old_node_type: None,
     }
 }
 

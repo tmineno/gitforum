@@ -629,10 +629,11 @@ fn event_detail(event: &Event) -> String {
         EventType::Say | EventType::Edit | EventType::ReviseBody => {
             event.body.clone().unwrap_or_default()
         }
-        EventType::Retype => event
-            .node_type
-            .map(|t| format!("-> {t}"))
-            .unwrap_or_default(),
+        EventType::Retype => match (event.old_node_type, event.node_type) {
+            (Some(old), Some(new)) => format!("{old} -> {new}"),
+            (None, Some(new)) => format!("-> {new}"),
+            _ => String::new(),
+        },
         _ => String::new(),
     }
 }
@@ -1079,6 +1080,7 @@ mod tests {
                 branch: None,
                 incorporated_node_ids: vec![],
                 reply_to: None,
+                old_node_type: None,
             }],
             nodes: vec![],
             evidence_items: vec![],
@@ -1147,6 +1149,7 @@ mod tests {
                 branch: None,
                 incorporated_node_ids: vec![],
                 reply_to: None,
+                old_node_type: None,
             }],
         };
 
