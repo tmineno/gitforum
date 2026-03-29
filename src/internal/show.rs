@@ -222,16 +222,39 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
     });
 
     let open_obj = state.open_objections();
-    render_item_list(&mut lines, "open objections", &open_obj, |node| {
-        let preview = body_or_truncated(&node.body, 60, compact);
-        format!("  - {} {}", short_oid(&node.node_id), preview)
-    });
+    if !open_obj.is_empty() {
+        lines.push(format!("open objections: {}", open_obj.len()));
+        for node in &open_obj {
+            let preview = body_or_truncated(&node.body, 60, compact);
+            lines.push(format!("  - {} {}", short_oid(&node.node_id), preview));
+            lines.push(format!(
+                "    resolve: git forum resolve {} {}",
+                state.id,
+                short_oid(&node.node_id)
+            ));
+            lines.push(format!(
+                "    reply:   git forum claim {} --reply-to {} --body \"...\"",
+                state.id,
+                short_oid(&node.node_id)
+            ));
+        }
+        lines.push(String::new());
+    }
 
     let open_act = state.open_actions();
-    render_item_list(&mut lines, "open actions", &open_act, |node| {
-        let preview = body_or_truncated(&node.body, 60, compact);
-        format!("  - {} {}", short_oid(&node.node_id), preview)
-    });
+    if !open_act.is_empty() {
+        lines.push(format!("open actions: {}", open_act.len()));
+        for node in &open_act {
+            let preview = body_or_truncated(&node.body, 60, compact);
+            lines.push(format!("  - {} {}", short_oid(&node.node_id), preview));
+            lines.push(format!(
+                "    resolve: git forum resolve {} {}",
+                state.id,
+                short_oid(&node.node_id)
+            ));
+        }
+        lines.push(String::new());
+    }
 
     if let Some(summary) = state.latest_summary() {
         lines.push("latest summary:".into());
@@ -276,6 +299,15 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
                 if !compact {
                     render_indented_body(&mut lines, &reply.body, "        ");
                 }
+            }
+            // Show follow-up hint for the last node in the conversation if it's open
+            let last = convo.last().unwrap();
+            if last.is_open() {
+                lines.push(format!(
+                    "    reply: git forum claim {} --reply-to {} --body \"...\"",
+                    state.id,
+                    short_oid(&last.node_id)
+                ));
             }
         }
         lines.push(String::new());

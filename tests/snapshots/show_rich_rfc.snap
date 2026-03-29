@@ -9,6 +9,8 @@ body:
 
 open objections: 1
   - node-0001 Benchmarks are missing.
+    resolve: git forum resolve RFC-0001 node-0001
+    reply:   git forum claim RFC-0001 --reply-to node-0001 --body "..."
 
 latest summary:
   Direction is sound; migration evidence needed.
