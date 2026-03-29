@@ -288,16 +288,19 @@ fn reopen_without_node_ids_is_rejected() {
         .expect("failed to run");
     assert!(output.status.success());
 
-    // Reopen without node IDs should fail (requires at least one node ID)
+    // Reopen without node IDs should reopen the thread itself
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
         .args(["reopen", &thread_id])
         .output()
         .expect("failed to run");
     assert!(
-        !output.status.success(),
-        "reopen without node IDs should fail"
+        output.status.success(),
+        "reopen without node IDs should reopen the thread: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.status, "open");
 }
 
 #[test]

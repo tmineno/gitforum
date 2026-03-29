@@ -409,7 +409,7 @@ enum Commands {
         #[arg(long, conflicts_with_all = ["body", "body_file"])]
         edit: bool,
         /// Node IDs to mark as incorporated into this body revision
-        #[arg(long = "incorporates", value_name = "NODE_ID")]
+        #[arg(long = "incorporates", alias = "incorporate", value_name = "NODE_ID")]
         incorporates: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
@@ -579,14 +579,13 @@ enum Commands {
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
-    /// Reopen resolved/retracted node(s)
+    /// Reopen resolved/retracted node(s), or reopen a closed thread (when no NODE_ID given)
     Reopen {
         thread_id: String,
         #[arg(
             num_args = 1..,
-            required = true,
             value_name = "NODE_ID",
-            help = "Full node ID(s) or unique prefix within the thread (8+ chars unless exact match)"
+            help = "Full node ID(s) or unique prefix within the thread; omit to reopen the thread itself"
         )]
         node_ids: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
@@ -715,7 +714,7 @@ enum ReviseCmd {
         #[arg(long, conflicts_with_all = ["body", "body_file"])]
         edit: bool,
         /// Node IDs to mark as incorporated into this body revision
-        #[arg(long = "incorporates", value_name = "NODE_ID")]
+        #[arg(long = "incorporates", alias = "incorporate", value_name = "NODE_ID")]
         incorporates: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
@@ -1065,7 +1064,7 @@ enum ThreadCmd {
         #[arg(long, conflicts_with_all = ["body", "body_file"])]
         edit: bool,
         /// Node IDs to mark as incorporated into this body revision
-        #[arg(long = "incorporates", value_name = "NODE_ID")]
+        #[arg(long = "incorporates", alias = "incorporate", value_name = "NODE_ID")]
         incorporates: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
@@ -2087,14 +2086,32 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             node_ids,
             as_actor,
-        } => run_node_lifecycle_bulk(
-            &thread_id,
-            &node_ids,
-            as_actor,
-            git_forum::internal::event::EventType::Reopen,
-            "Reopened",
-            &clock,
-        )?,
+        } => {
+            if node_ids.is_empty() {
+                run_state_shorthand(
+                    &thread_id,
+                    "open",
+                    &[],
+                    as_actor,
+                    false,
+                    &[],
+                    None,
+                    None,
+                    false,
+                    false,
+                    &clock,
+                )?;
+            } else {
+                run_node_lifecycle_bulk(
+                    &thread_id,
+                    &node_ids,
+                    as_actor,
+                    git_forum::internal::event::EventType::Reopen,
+                    "Reopened",
+                    &clock,
+                )?;
+            }
+        }
 
         Commands::Retype {
             thread_id,
