@@ -28,13 +28,27 @@ impl ThreadKind {
         }
     }
 
-    /// Display ID prefix (e.g. "ISSUE", "RFC").
+    /// Display ID prefix (e.g. "ASK", "RFC").
     pub fn id_prefix(self) -> &'static str {
         match self {
-            Self::Issue => "ISSUE",
+            Self::Issue => "ASK",
             Self::Rfc => "RFC",
             Self::Dec => "DEC",
-            Self::Task => "TASK",
+            Self::Task => "JOB",
+        }
+    }
+
+    /// Parse a thread kind from an ID prefix string.
+    ///
+    /// Accepts both current prefixes (ASK, JOB) and legacy prefixes (ISSUE, TASK)
+    /// for backward compatibility.
+    pub fn from_id_prefix(prefix: &str) -> Option<ThreadKind> {
+        match prefix {
+            "ASK" | "ISSUE" => Some(Self::Issue),
+            "RFC" => Some(Self::Rfc),
+            "DEC" => Some(Self::Dec),
+            "JOB" | "TASK" => Some(Self::Task),
+            _ => None,
         }
     }
 }

@@ -272,38 +272,38 @@ pub fn calculator_scenario() -> ScenarioDef {
                 nodes: vec![],
                 transitions: vec![
                     StateTransitionDef {
-                        thread_ref: "ISSUE-0001".to_string(),
+                        thread_ref: "ASK-0001".to_string(),
                         new_state: "closed".to_string(),
                         actor: "human/alice".to_string(),
                         approve_actors: vec![],
                     },
                     StateTransitionDef {
-                        thread_ref: "ISSUE-0002".to_string(),
+                        thread_ref: "ASK-0002".to_string(),
                         new_state: "closed".to_string(),
                         actor: "human/bob".to_string(),
                         approve_actors: vec![],
                     },
                     StateTransitionDef {
-                        thread_ref: "ISSUE-0003".to_string(),
+                        thread_ref: "ASK-0003".to_string(),
                         new_state: "closed".to_string(),
                         actor: "human/carol".to_string(),
                         approve_actors: vec![],
                     },
                 ],
                 evidence: vec![EvidenceDef {
-                    thread_ref: "ISSUE-0003".to_string(),
+                    thread_ref: "ASK-0003".to_string(),
                     kind: EvidenceKind::Commit,
                     actor: "human/carol".to_string(),
                 }],
                 links: vec![
                     LinkDef {
-                        from_thread_ref: "ISSUE-0001".to_string(),
+                        from_thread_ref: "ASK-0001".to_string(),
                         to_thread_ref: "RFC-0001".to_string(),
                         rel: "implements".to_string(),
                         actor: "human/alice".to_string(),
                     },
                     LinkDef {
-                        from_thread_ref: "ISSUE-0002".to_string(),
+                        from_thread_ref: "ASK-0002".to_string(),
                         to_thread_ref: "RFC-0001".to_string(),
                         rel: "implements".to_string(),
                         actor: "human/bob".to_string(),
@@ -373,26 +373,26 @@ pub fn calculator_scenario() -> ScenarioDef {
                     },
                     // ISSUE-0005: open -> rejected -> open (reopen from rejected)
                     StateTransitionDef {
-                        thread_ref: "ISSUE-0005".to_string(),
+                        thread_ref: "ASK-0005".to_string(),
                         new_state: "rejected".to_string(),
                         actor: "human/alice".to_string(),
                         approve_actors: vec![],
                     },
                     StateTransitionDef {
-                        thread_ref: "ISSUE-0005".to_string(),
+                        thread_ref: "ASK-0005".to_string(),
                         new_state: "open".to_string(),
                         actor: "human/carol".to_string(),
                         approve_actors: vec![],
                     },
                     // ISSUE-0001: closed -> open (reopen, then close again)
                     StateTransitionDef {
-                        thread_ref: "ISSUE-0001".to_string(),
+                        thread_ref: "ASK-0001".to_string(),
                         new_state: "open".to_string(),
                         actor: "human/alice".to_string(),
                         approve_actors: vec![],
                     },
                     StateTransitionDef {
-                        thread_ref: "ISSUE-0001".to_string(),
+                        thread_ref: "ASK-0001".to_string(),
                         new_state: "closed".to_string(),
                         actor: "human/alice".to_string(),
                         approve_actors: vec![],
@@ -407,14 +407,14 @@ pub fn calculator_scenario() -> ScenarioDef {
                 threads: vec![],
                 nodes: vec![
                     NodeDef {
-                        thread_ref: "ISSUE-0004".to_string(),
+                        thread_ref: "ASK-0004".to_string(),
                         node_type: NodeType::Claim,
                         body: "Alice's concurrent note".to_string(),
                         actor: "human/alice".to_string(),
                         should_resolve: false,
                     },
                     NodeDef {
-                        thread_ref: "ISSUE-0004".to_string(),
+                        thread_ref: "ASK-0004".to_string(),
                         node_type: NodeType::Claim,
                         body: "Bob's concurrent note".to_string(),
                         actor: "human/bob".to_string(),
@@ -457,7 +457,7 @@ pub fn calculator_expected_outcomes() -> Vec<ExpectedOutcome> {
             expected_link_count: 0,
         },
         ExpectedOutcome {
-            thread_ref: "ISSUE-0001".to_string(),
+            thread_ref: "ASK-0001".to_string(),
             expected_status: "closed".to_string(),
             acceptable_statuses: vec!["pending".to_string()],
             min_nodes: 0,
@@ -465,7 +465,7 @@ pub fn calculator_expected_outcomes() -> Vec<ExpectedOutcome> {
             expected_link_count: 1,
         },
         ExpectedOutcome {
-            thread_ref: "ISSUE-0002".to_string(),
+            thread_ref: "ASK-0002".to_string(),
             expected_status: "closed".to_string(),
             acceptable_statuses: vec![],
             min_nodes: 0,
@@ -473,7 +473,7 @@ pub fn calculator_expected_outcomes() -> Vec<ExpectedOutcome> {
             expected_link_count: 1,
         },
         ExpectedOutcome {
-            thread_ref: "ISSUE-0003".to_string(),
+            thread_ref: "ASK-0003".to_string(),
             expected_status: "closed".to_string(),
             acceptable_statuses: vec!["pending".to_string()],
             min_nodes: 0,
@@ -481,7 +481,7 @@ pub fn calculator_expected_outcomes() -> Vec<ExpectedOutcome> {
             expected_link_count: 0,
         },
         ExpectedOutcome {
-            thread_ref: "ISSUE-0004".to_string(),
+            thread_ref: "ASK-0004".to_string(),
             expected_status: "open".to_string(),
             acceptable_statuses: vec![],
             min_nodes: 2,
@@ -501,7 +501,7 @@ pub fn calculator_expected_outcomes() -> Vec<ExpectedOutcome> {
             expected_link_count: 0,
         },
         ExpectedOutcome {
-            thread_ref: "ISSUE-0005".to_string(),
+            thread_ref: "ASK-0005".to_string(),
             expected_status: "open".to_string(),
             acceptable_statuses: vec!["pending".to_string()],
             min_nodes: 0,

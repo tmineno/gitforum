@@ -39,7 +39,7 @@ fn thread_new_accepts_body_from_stdin() {
     assert!(output.status.success());
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    let state = thread::replay_thread(&git, "ASK-0001").unwrap();
     assert_eq!(
         state.body.as_deref(),
         Some("Long body from stdin\nwith another line\n")
@@ -81,7 +81,7 @@ fn thread_new_can_create_link_immediately() {
     assert!(create_issue.status.success());
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    let state = thread::replay_thread(&git, "ASK-0001").unwrap();
     assert_eq!(state.links.len(), 1);
     assert_eq!(state.links[0].target_thread_id, "RFC-0001");
     assert_eq!(state.links[0].rel, "implements");
@@ -177,7 +177,7 @@ fn from_thread_issue_to_issue_does_not_deprecate_source() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "new", "--from-thread", "ISSUE-0001"])
+        .args(["issue", "new", "--from-thread", "ASK-0001"])
         .output()
         .expect("failed to run git-forum issue new --from-thread");
     assert!(
@@ -187,18 +187,18 @@ fn from_thread_issue_to_issue_does_not_deprecate_source() {
     );
 
     // New issue has links and copied content
-    let new_state = thread::replay_thread(&git, "ISSUE-0002").unwrap();
+    let new_state = thread::replay_thread(&git, "ASK-0002").unwrap();
     assert_eq!(new_state.title, "v2: Original bug");
     assert_eq!(new_state.body.as_deref(), Some("Body of original issue"));
     assert_eq!(new_state.links.len(), 1);
-    assert_eq!(new_state.links[0].target_thread_id, "ISSUE-0001");
+    assert_eq!(new_state.links[0].target_thread_id, "ASK-0001");
     assert_eq!(new_state.links[0].rel, "supersedes");
 
     // Source issue is NOT deprecated — remains in its prior state
-    let source = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    let source = thread::replay_thread(&git, "ASK-0001").unwrap();
     assert_eq!(source.status, "open");
     assert_eq!(source.links.len(), 1);
-    assert_eq!(source.links[0].target_thread_id, "ISSUE-0002");
+    assert_eq!(source.links[0].target_thread_id, "ASK-0002");
     assert_eq!(source.links[0].rel, "superseded-by");
 }
 
@@ -222,7 +222,7 @@ fn from_thread_issue_to_rfc_does_not_deprecate_source() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["rfc", "new", "--from-thread", "ISSUE-0001"])
+        .args(["rfc", "new", "--from-thread", "ASK-0001"])
         .output()
         .expect("failed to run git-forum rfc new --from-thread");
     assert!(
@@ -236,11 +236,11 @@ fn from_thread_issue_to_rfc_does_not_deprecate_source() {
     assert_eq!(new_state.title, "v2: Feature request");
     assert_eq!(new_state.body.as_deref(), Some("We need a better API"));
     assert_eq!(new_state.links.len(), 1);
-    assert_eq!(new_state.links[0].target_thread_id, "ISSUE-0001");
+    assert_eq!(new_state.links[0].target_thread_id, "ASK-0001");
     assert_eq!(new_state.links[0].rel, "supersedes");
 
     // Source issue is NOT deprecated
-    let source = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    let source = thread::replay_thread(&git, "ASK-0001").unwrap();
     assert_eq!(source.status, "open");
     assert_eq!(source.links.len(), 1);
     assert_eq!(source.links[0].target_thread_id, "RFC-0001");

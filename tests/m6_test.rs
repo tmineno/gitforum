@@ -285,7 +285,7 @@ fn task_create_sets_open_state() {
     let state = thread::replay_thread(&git, &id).unwrap();
     assert_eq!(state.status, "open");
     assert_eq!(state.kind, ThreadKind::Task);
-    assert!(id.starts_with("TASK-"));
+    assert!(id.starts_with("JOB-"));
 }
 
 #[test]

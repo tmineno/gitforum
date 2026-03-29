@@ -284,13 +284,13 @@ fn phase_implementation(
         &alice.clock,
     )
     .unwrap();
-    assert_eq!(issue_0001, "ISSUE-0001");
+    assert_eq!(issue_0001, "ASK-0001");
 
     // Links for ISSUE-0001
     for link in phase
         .links
         .iter()
-        .filter(|l| l.from_thread_ref == "ISSUE-0001")
+        .filter(|l| l.from_thread_ref == "ASK-0001")
     {
         let agent = agent_by_name(agents, &link.actor);
         evidence_ops::add_thread_link(
@@ -308,7 +308,7 @@ fn phase_implementation(
     for trans in phase
         .transitions
         .iter()
-        .filter(|t| t.thread_ref == "ISSUE-0001")
+        .filter(|t| t.thread_ref == "ASK-0001")
     {
         let agent = agent_by_name(agents, &trans.actor);
         state_change::change_state(
@@ -336,12 +336,12 @@ fn phase_implementation(
         &bob.clock,
     )
     .unwrap();
-    assert_eq!(issue_0002, "ISSUE-0002");
+    assert_eq!(issue_0002, "ASK-0002");
 
     for link in phase
         .links
         .iter()
-        .filter(|l| l.from_thread_ref == "ISSUE-0002")
+        .filter(|l| l.from_thread_ref == "ASK-0002")
     {
         let agent = agent_by_name(agents, &link.actor);
         evidence_ops::add_thread_link(
@@ -358,7 +358,7 @@ fn phase_implementation(
     for trans in phase
         .transitions
         .iter()
-        .filter(|t| t.thread_ref == "ISSUE-0002")
+        .filter(|t| t.thread_ref == "ASK-0002")
     {
         let agent = agent_by_name(agents, &trans.actor);
         state_change::change_state(
@@ -386,7 +386,7 @@ fn phase_implementation(
         &carol.clock,
     )
     .unwrap();
-    assert_eq!(issue_0003, "ISSUE-0003");
+    assert_eq!(issue_0003, "ASK-0003");
 
     // Create a commit to use as evidence
     std::fs::write(repo_path.join("div_guard.rs"), "fn div(a: f64, b: f64) -> Result<f64, &'static str> { if b == 0.0 { Err(\"div by zero\") } else { Ok(a / b) } }\n").unwrap();
@@ -415,7 +415,7 @@ fn phase_implementation(
     for ev in phase
         .evidence
         .iter()
-        .filter(|e| e.thread_ref == "ISSUE-0003")
+        .filter(|e| e.thread_ref == "ASK-0003")
     {
         let agent = agent_by_name(agents, &ev.actor);
         evidence_ops::add_evidence(
@@ -433,7 +433,7 @@ fn phase_implementation(
     for trans in phase
         .transitions
         .iter()
-        .filter(|t| t.thread_ref == "ISSUE-0003")
+        .filter(|t| t.thread_ref == "ASK-0003")
     {
         let agent = agent_by_name(agents, &trans.actor);
         state_change::change_state(
@@ -461,7 +461,7 @@ fn phase_implementation(
         &issue_creator.clock,
     )
     .unwrap();
-    assert_eq!(issue_0004, "ISSUE-0004");
+    assert_eq!(issue_0004, "ASK-0004");
 
     // Verify closed issues
     for id in [&issue_0001, &issue_0002, &issue_0003] {
@@ -597,7 +597,7 @@ fn phase_contention(agents: &[Agent], issue_id: &str) -> report::ContentionRepor
     assert_eq!(success_count, 2, "both concurrent writes should succeed");
 
     // Verify final state has exactly 2 nodes
-    let state = thread::replay_thread(&alice.git, "ISSUE-0004").unwrap();
+    let state = thread::replay_thread(&alice.git, "ASK-0004").unwrap();
     assert_eq!(
         state.nodes.len(),
         2,
@@ -643,7 +643,7 @@ fn phase_expanded_lifecycle(agents: &[Agent], scenario: &ScenarioDef) {
         &carol.clock,
     )
     .unwrap();
-    assert_eq!(issue_0005, "ISSUE-0005");
+    assert_eq!(issue_0005, "ASK-0005");
 
     // Execute all transitions in order
     for trans in &phase.transitions {
@@ -673,10 +673,10 @@ fn phase_expanded_lifecycle(agents: &[Agent], scenario: &ScenarioDef) {
     assert_eq!(state.status, "deprecated");
 
     let state = thread::replay_thread(&alice.git, &issue_0005).unwrap();
-    assert_eq!(state.status, "open", "ISSUE-0005 should be reopened");
+    assert_eq!(state.status, "open", "ASK-0005 should be reopened");
 
-    let state = thread::replay_thread(&alice.git, "ISSUE-0001").unwrap();
-    assert_eq!(state.status, "closed", "ISSUE-0001 should be re-closed");
+    let state = thread::replay_thread(&alice.git, "ASK-0001").unwrap();
+    assert_eq!(state.status, "closed", "ASK-0001 should be re-closed");
 }
 
 // ---------------------------------------------------------------------------
@@ -697,7 +697,7 @@ fn cli_smoke_tests(repo_path: &Path) {
     assert!(output.status.success(), "ls failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("RFC-0001"));
-    assert!(stdout.contains("ISSUE-0001"));
+    assert!(stdout.contains("ASK-0001"));
 
     // 2. show a specific thread
     let output = std::process::Command::new(binary)
@@ -713,13 +713,13 @@ fn cli_smoke_tests(repo_path: &Path) {
 
     // 3. verify a thread
     let output = std::process::Command::new(binary)
-        .args(["verify", "ISSUE-0001"])
+        .args(["verify", "ASK-0001"])
         .current_dir(repo_path)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .output()
         .unwrap();
-    assert!(output.status.success(), "verify ISSUE-0001 failed");
+    assert!(output.status.success(), "verify ASK-0001 failed");
 
     // 4. rfc ls
     let output = std::process::Command::new(binary)
@@ -732,7 +732,7 @@ fn cli_smoke_tests(repo_path: &Path) {
     assert!(output.status.success(), "rfc ls failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("RFC-0001"));
-    assert!(!stdout.contains("ISSUE"), "rfc ls should not show issues");
+    assert!(!stdout.contains("ASK-"), "rfc ls should not show issues");
 
     // 5. issue ls
     let output = std::process::Command::new(binary)
@@ -744,7 +744,7 @@ fn cli_smoke_tests(repo_path: &Path) {
         .unwrap();
     assert!(output.status.success(), "issue ls failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("ISSUE-0001"));
+    assert!(stdout.contains("ASK-0001"));
     assert!(!stdout.contains("RFC"), "issue ls should not show RFCs");
 }
 

@@ -183,7 +183,7 @@ fn node_show_question() {
             reply_to: None,
         },
         links: vec![ThreadLink {
-            target_thread_id: "ISSUE-0001".into(),
+            target_thread_id: "ASK-0001".into(),
             rel: "implements".into(),
         }],
         events: vec![Event {
@@ -224,7 +224,7 @@ fn ls_empty() {
 fn ls_two_threads() {
     let s1 = base_state();
     let mut s2 = base_state();
-    s2.id = "ISSUE-0001".into();
+    s2.id = "ASK-0001".into();
     s2.kind = ThreadKind::Issue;
     s2.title = "Implement trait backend".into();
     s2.status = "open".into();

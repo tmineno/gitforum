@@ -8,7 +8,7 @@ body:
   What is the migration plan?
 
 thread links: 1
-  - ISSUE-0001  implements
+  - ASK-0001  implements
 
 history:
   date                  node_id           event_id          author              type        body

@@ -51,7 +51,7 @@ fn state_bulk_partial_apply_reports_failures() {
 
     let action = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["action", "ISSUE-0002", "Implement evaluator"])
+        .args(["action", "ASK-0002", "Implement evaluator"])
         .output()
         .expect("failed to add action");
     assert!(action.status.success());
@@ -65,13 +65,13 @@ fn state_bulk_partial_apply_reports_failures() {
     let stdout = String::from_utf8(bulk.stdout).unwrap();
     assert!(stdout.contains("OK"));
     assert!(stdout.contains("FAIL"));
-    assert!(stdout.contains("ISSUE-0001"));
-    assert!(stdout.contains("ISSUE-0002"));
+    assert!(stdout.contains("ASK-0001"));
+    assert!(stdout.contains("ASK-0002"));
     assert!(stdout.contains("no_open_actions"));
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let issue_a = thread::replay_thread(&git, "ISSUE-0001").unwrap();
-    let issue_b = thread::replay_thread(&git, "ISSUE-0002").unwrap();
+    let issue_a = thread::replay_thread(&git, "ASK-0001").unwrap();
+    let issue_b = thread::replay_thread(&git, "ASK-0002").unwrap();
     assert_eq!(issue_a.status, "closed");
     assert_eq!(issue_b.status, "open");
 }
@@ -92,7 +92,7 @@ fn state_bulk_can_resolve_open_actions_before_close() {
 
     let action = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["action", "ISSUE-0001", "Implement evaluator"])
+        .args(["action", "ASK-0001", "Implement evaluator"])
         .output()
         .expect("failed to add action");
     assert!(action.status.success());
@@ -113,10 +113,10 @@ fn state_bulk_can_resolve_open_actions_before_close() {
     assert!(bulk.status.success());
     let stdout = String::from_utf8(bulk.stdout).unwrap();
     assert!(stdout.contains("OK"));
-    assert!(stdout.contains("ISSUE-0001"));
+    assert!(stdout.contains("ASK-0001"));
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    let state = thread::replay_thread(&git, "ASK-0001").unwrap();
     assert_eq!(state.status, "closed");
     assert_eq!(state.open_actions().len(), 0);
 }

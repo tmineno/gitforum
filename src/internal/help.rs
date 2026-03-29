@@ -39,7 +39,7 @@ git forum node add <THREAD> --type <TYPE> "body"
 
 This works for all 10 node types. All accept a positional body argument, --body, --body-file,
 --edit, --reply-to, and --as. Priority: positional > --body > --body-file.
-Pass "-" as the positional body to read from stdin (e.g. `echo "body" | git forum claim ISSUE-0001 --body -`).
+Pass "-" as the positional body to read from stdin (e.g. `echo "body" | git forum claim ASK-0001 --body -`).
 --edit opens $VISUAL / $EDITOR / vi for interactive composition (requires a TTY; conflicts with body args).
 In scripts or agent workflows, use --body, --body-file, or --body - instead of --edit.
 

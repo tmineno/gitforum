@@ -65,7 +65,7 @@ fn ls_does_not_warn_when_forum_refs_exist_without_init() {
         .to_string();
 
     let update = Command::new("git")
-        .args(["update-ref", "refs/forum/threads/ISSUE-0001", &commit])
+        .args(["update-ref", "refs/forum/threads/ASK-0001", &commit])
         .current_dir(repo.path())
         .output()
         .expect("update-ref failed");

@@ -32,7 +32,7 @@ fn fixed_clock() -> FixedClock {
 fn alloc_first_issue_id() {
     let (_repo, git, _paths) = setup();
     let id = id_alloc::alloc_thread_id(&git, ThreadKind::Issue).unwrap();
-    assert_eq!(id, "ISSUE-0001");
+    assert_eq!(id, "ASK-0001");
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn create_issue_returns_id() {
         &fixed_clock(),
     )
     .unwrap();
-    assert_eq!(id, "ISSUE-0001");
+    assert_eq!(id, "ASK-0001");
 }
 
 #[test]
@@ -167,7 +167,7 @@ fn ls_shows_all_kinds() {
     }
     let refs: Vec<&thread::ThreadState> = states.iter().collect();
     let out = show::render_ls(&refs);
-    assert!(out.contains("ISSUE-0001"));
+    assert!(out.contains("ASK-0001"));
     assert!(out.contains("RFC-0001"));
     assert!(out.contains("Bug"));
     assert!(out.contains("Proposal"));
@@ -204,7 +204,7 @@ fn ls_filtered_by_kind() {
     }
     let refs: Vec<&thread::ThreadState> = rfc_states.iter().collect();
     let out = show::render_ls(&refs);
-    assert!(!out.contains("ISSUE-0001"));
+    assert!(!out.contains("ASK-0001"));
     assert!(out.contains("RFC-0001"));
 }
 
@@ -378,7 +378,7 @@ fn say_node_with_timestamp_uses_override() {
     let custom_ts = Utc.with_ymd_and_hms(2020, 3, 10, 8, 0, 0).unwrap();
     write_ops::say_node_with_timestamp(
         &git,
-        "ISSUE-0001",
+        "ASK-0001",
         NodeType::Claim,
         "Imported comment",
         "human/bob",
@@ -387,7 +387,7 @@ fn say_node_with_timestamp_uses_override() {
         custom_ts,
     )
     .unwrap();
-    let state = thread::replay_thread(&git, "ISSUE-0001").unwrap();
+    let state = thread::replay_thread(&git, "ASK-0001").unwrap();
     // Event 0 is Create, Event 1 is Say
     assert_eq!(state.events[1].created_at, custom_ts);
     assert_eq!(state.nodes[0].created_at, custom_ts);

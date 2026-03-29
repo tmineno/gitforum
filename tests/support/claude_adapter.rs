@@ -486,7 +486,7 @@ mod tests {
         assert!(prompt.contains("show <ID> --what-next"));
         assert!(prompt.contains("Other actors in this phase are running concurrently"));
         assert!(!prompt.contains("RFC-0001"));
-        assert!(!prompt.contains("ISSUE-0001"));
+        assert!(!prompt.contains("ASK-0001"));
         assert!(!prompt.contains("### State transitions"));
         assert!(!prompt.contains("Change RFC-0001"));
     }

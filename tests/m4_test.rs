@@ -148,7 +148,7 @@ fn add_thread_link_appears_in_thread_state() {
     evidence_ops::add_thread_link(
         &git,
         &thread_id,
-        "ISSUE-0001",
+        "ASK-0001",
         "implements",
         "human/alice",
         &fixed_clock(),
@@ -157,7 +157,7 @@ fn add_thread_link_appears_in_thread_state() {
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(state.links.len(), 1);
-    assert_eq!(state.links[0].target_thread_id, "ISSUE-0001");
+    assert_eq!(state.links[0].target_thread_id, "ASK-0001");
     assert_eq!(state.links[0].rel, "implements");
 }
 
@@ -169,7 +169,7 @@ fn show_includes_links_section() {
     evidence_ops::add_thread_link(
         &git,
         &thread_id,
-        "ISSUE-0001",
+        "ASK-0001",
         "implements",
         "human/alice",
         &fixed_clock(),
@@ -179,9 +179,9 @@ fn show_includes_links_section() {
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     let out = show::render_show(&state, false);
     assert!(out.contains("links: 1"));
-    assert!(out.contains("ISSUE-0001"));
+    assert!(out.contains("ASK-0001"));
     assert!(out.contains("implements"));
-    assert!(out.contains("ISSUE-0001 (implements)"));
+    assert!(out.contains("ASK-0001 (implements)"));
 }
 
 #[test]

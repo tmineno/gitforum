@@ -61,7 +61,7 @@ fn check_commit_msg_valid_ref_exits_0() {
     let repo = support::repo::TestRepo::new();
     init_repo(&repo);
     create_issue(&repo, "Test issue");
-    let msg_path = write_msg_file(&repo, "fix ISSUE-0001 bug");
+    let msg_path = write_msg_file(&repo, "fix ASK-0001 bug");
 
     let output = git_forum_cmd(repo.path())
         .args(["hook", "check-commit-msg"])
@@ -78,7 +78,7 @@ fn check_commit_msg_valid_ref_exits_0() {
 fn check_commit_msg_missing_ref_exits_1() {
     let repo = support::repo::TestRepo::new();
     init_repo(&repo);
-    let msg_path = write_msg_file(&repo, "fix ISSUE-9999 bug");
+    let msg_path = write_msg_file(&repo, "fix ASK-9999 bug");
 
     let output = git_forum_cmd(repo.path())
         .args(["hook", "check-commit-msg"])
@@ -89,7 +89,7 @@ fn check_commit_msg_missing_ref_exits_1() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("non-existent thread"));
-    assert!(stderr.contains("ISSUE-9999"));
+    assert!(stderr.contains("ASK-9999"));
 }
 
 #[test]
@@ -97,7 +97,7 @@ fn check_commit_msg_mixed_refs() {
     let repo = support::repo::TestRepo::new();
     init_repo(&repo);
     create_issue(&repo, "Real issue");
-    let msg_path = write_msg_file(&repo, "fix ISSUE-0001 and ISSUE-9999");
+    let msg_path = write_msg_file(&repo, "fix ASK-0001 and ASK-9999");
 
     let output = git_forum_cmd(repo.path())
         .args(["hook", "check-commit-msg"])
@@ -107,15 +107,15 @@ fn check_commit_msg_mixed_refs() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("ISSUE-9999"));
-    assert!(!stderr.contains("ISSUE-0001"));
+    assert!(stderr.contains("ASK-9999"));
+    assert!(!stderr.contains("ASK-0001"));
 }
 
 #[test]
 fn check_commit_msg_strips_comments() {
     let repo = support::repo::TestRepo::new();
     init_repo(&repo);
-    let msg_path = write_msg_file(&repo, "fix typo\n# ISSUE-9999 is in a comment");
+    let msg_path = write_msg_file(&repo, "fix typo\n# ASK-9999 is in a comment");
 
     let output = git_forum_cmd(repo.path())
         .args(["hook", "check-commit-msg"])
