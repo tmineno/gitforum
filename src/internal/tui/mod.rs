@@ -268,8 +268,8 @@ pub struct App {
     visible_tree_indices: Vec<usize>,
     /// Whether the tree pane is shown full-width (body pane hidden).
     tree_fullscreen: bool,
-    /// Saved detail_split value to restore when leaving fullscreen tree mode.
-    saved_detail_split: u16,
+    /// Whether to use horizontal split (body top / tree bottom) instead of vertical (body left / tree right).
+    split_horizontal: bool,
     /// Metadata of the currently viewed thread (for display as root row in nodes pane).
     thread_title: String,
     thread_kind: String,
@@ -330,7 +330,7 @@ impl App {
             collapsed: HashSet::new(),
             visible_tree_indices: Vec::new(),
             tree_fullscreen: false,
-            saved_detail_split: 60,
+            split_horizontal: false,
             thread_title: String::new(),
             thread_kind: String::new(),
             thread_status: String::new(),
