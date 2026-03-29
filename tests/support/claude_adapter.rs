@@ -33,6 +33,9 @@ impl ClaudeCodeAdapter {
         }
     }
 
+    /// Build a map from scenario labels (e.g. "RFC-0001", "ASK-0001") to
+    /// thread metadata. Labels use the same prefixes as `ThreadKind::id_prefix()`
+    /// so they match the `thread_ref` values in scenario definitions.
     fn thread_catalog(scenario: &ScenarioDef) -> HashMap<String, (ThreadKind, String, String)> {
         let mut refs = HashMap::new();
         let mut rfc_counter = 0u32;
@@ -40,27 +43,23 @@ impl ClaudeCodeAdapter {
 
         for phase in &scenario.phases {
             for thread in &phase.threads {
-                let prefix = match thread.kind {
+                let (prefix, counter) = match thread.kind {
                     ThreadKind::Rfc => {
                         rfc_counter += 1;
-                        "RFC"
+                        ("RFC", rfc_counter)
                     }
                     ThreadKind::Issue => {
                         issue_counter += 1;
-                        "ISSUE"
+                        ("ASK", issue_counter)
                     }
                     ThreadKind::Dec => {
                         rfc_counter += 1;
-                        "DEC"
+                        ("DEC", rfc_counter)
                     }
                     ThreadKind::Task => {
                         issue_counter += 1;
-                        "TASK"
+                        ("JOB", issue_counter)
                     }
-                };
-                let counter = match thread.kind {
-                    ThreadKind::Rfc | ThreadKind::Dec => rfc_counter,
-                    ThreadKind::Issue | ThreadKind::Task => issue_counter,
                 };
                 refs.insert(
                     format!("{prefix}-{counter:04}"),

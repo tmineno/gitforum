@@ -1,5 +1,5 @@
 node-0001          question
-thread:   RFC-0001 Test RFC
+thread:   RFC-a1b2c3d4 Test RFC
 kind:     rfc
 status:   open
 created:  2026-01-01T00:00:00Z
@@ -8,7 +8,7 @@ body:
   What is the migration plan?
 
 thread links: 1
-  - ASK-0001  implements
+  - ASK-e5f6a7b8  implements
 
 history:
   date                  node_id           event_id          author              type        body

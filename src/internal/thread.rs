@@ -330,6 +330,69 @@ pub fn list_thread_ids(git: &GitOps) -> ForumResult<Vec<String>> {
     Ok(ids)
 }
 
+/// Resolve a user-supplied thread reference to a canonical full thread ID.
+///
+/// Accepts:
+/// - Full ID (e.g. `RFC-0001`, `ASK-a7f3b2x1`) — returned as-is if the ref exists
+/// - KIND-prefix (e.g. `RFC-a7f3`) — expanded if unambiguous
+/// - Token-only (e.g. `a7f3b2x1`) — matched against all thread IDs if unambiguous
+///
+/// Returns an error if the reference is ambiguous (with candidates listed)
+/// or if no matching thread is found.
+pub fn resolve_thread_id(git: &GitOps, user_input: &str) -> ForumResult<String> {
+    let all_ids = list_thread_ids(git)?;
+
+    // 1. Exact match
+    if all_ids.iter().any(|id| id == user_input) {
+        return Ok(user_input.to_string());
+    }
+
+    // 2. KIND-prefix match (e.g. "RFC-a7f3" matches "RFC-a7f3b2x1")
+    if user_input.contains('-') {
+        let matches: Vec<&String> = all_ids
+            .iter()
+            .filter(|id| id.starts_with(user_input))
+            .collect();
+        match matches.len() {
+            0 => {} // fall through to token-only
+            1 => return Ok(matches[0].clone()),
+            _ => {
+                let candidates: Vec<&str> = matches.iter().map(|s| s.as_str()).collect();
+                return Err(ForumError::Repo(format!(
+                    "ambiguous thread reference '{user_input}'; candidates:\n  {}",
+                    candidates.join("\n  ")
+                )));
+            }
+        }
+    }
+
+    // 3. Token-only match (e.g. "a7f3b2x1" matches "RFC-a7f3b2x1")
+    if !user_input.contains('-') {
+        let matches: Vec<&String> = all_ids
+            .iter()
+            .filter(|id| {
+                id.split_once('-')
+                    .is_some_and(|(_, token)| token.starts_with(user_input))
+            })
+            .collect();
+        match matches.len() {
+            1 => return Ok(matches[0].clone()),
+            n if n > 1 => {
+                let candidates: Vec<&str> = matches.iter().map(|s| s.as_str()).collect();
+                return Err(ForumError::Repo(format!(
+                    "ambiguous thread reference '{user_input}'; candidates:\n  {}",
+                    candidates.join("\n  ")
+                )));
+            }
+            _ => {}
+        }
+    }
+
+    Err(ForumError::Repo(format!(
+        "thread '{user_input}' not found"
+    )))
+}
+
 fn all_node_lookups(git: &GitOps) -> ForumResult<Vec<NodeLookup>> {
     let mut lookups = Vec::new();
     for thread_id in list_thread_ids(git)? {

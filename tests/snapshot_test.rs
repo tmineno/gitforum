@@ -33,7 +33,7 @@ fn fixed_time() -> chrono::DateTime<chrono::Utc> {
 fn base_state() -> ThreadState {
     let t = fixed_time();
     ThreadState {
-        id: "RFC-0001".into(),
+        id: "RFC-a1b2c3d4".into(),
         kind: ThreadKind::Rfc,
         title: "Test RFC".into(),
         body: Some("Initial thread body.".into()),
@@ -43,7 +43,7 @@ fn base_state() -> ThreadState {
         created_by: "human/alice".into(),
         events: vec![Event {
             event_id: "evt-0001".into(),
-            thread_id: "RFC-0001".into(),
+            thread_id: "RFC-a1b2c3d4".into(),
             event_type: EventType::Create,
             created_at: t,
             actor: "human/alice".into(),
@@ -103,7 +103,7 @@ fn rich_state() -> ThreadState {
     ];
     state.events.push(Event {
         event_id: "evt-0002".into(),
-        thread_id: "RFC-0001".into(),
+        thread_id: "RFC-a1b2c3d4".into(),
         event_type: EventType::Say,
         created_at: t2,
         actor: "ai/reviewer".into(),
@@ -124,7 +124,7 @@ fn rich_state() -> ThreadState {
     });
     state.events.push(Event {
         event_id: "evt-0003".into(),
-        thread_id: "RFC-0001".into(),
+        thread_id: "RFC-a1b2c3d4".into(),
         event_type: EventType::Say,
         created_at: t3,
         actor: "human/alice".into(),
@@ -168,7 +168,7 @@ fn show_rich_rfc() {
 fn node_show_question() {
     let t = fixed_time();
     let lookup = NodeLookup {
-        thread_id: "RFC-0001".into(),
+        thread_id: "RFC-a1b2c3d4".into(),
         thread_title: "Test RFC".into(),
         thread_kind: ThreadKind::Rfc,
         node: Node {
@@ -183,12 +183,12 @@ fn node_show_question() {
             reply_to: None,
         },
         links: vec![ThreadLink {
-            target_thread_id: "ASK-0001".into(),
+            target_thread_id: "ASK-e5f6a7b8".into(),
             rel: "implements".into(),
         }],
         events: vec![Event {
             event_id: "evt-0010".into(),
-            thread_id: "RFC-0001".into(),
+            thread_id: "RFC-a1b2c3d4".into(),
             event_type: EventType::Say,
             created_at: t,
             actor: "ai/reviewer".into(),
@@ -224,7 +224,7 @@ fn ls_empty() {
 fn ls_two_threads() {
     let s1 = base_state();
     let mut s2 = base_state();
-    s2.id = "ASK-0001".into();
+    s2.id = "ASK-e5f6a7b8".into();
     s2.kind = ThreadKind::Issue;
     s2.title = "Implement trait backend".into();
     s2.status = "open".into();

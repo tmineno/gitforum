@@ -1,5 +1,6 @@
 mod support;
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use chrono::{TimeZone, Utc};
@@ -116,7 +117,7 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
         &alice.clock,
     )
     .unwrap();
-    assert_eq!(rfc_0001, "RFC-0001");
+    assert!(rfc_0001.starts_with("RFC-"), "expected RFC prefix, got {rfc_0001}");
 
     // Nodes for RFC-0001
     let rfc1_nodes: Vec<&_> = phase
@@ -189,7 +190,7 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
         &bob.clock,
     )
     .unwrap();
-    assert_eq!(rfc_0002, "RFC-0002");
+    assert!(rfc_0002.starts_with("RFC-"), "expected RFC prefix, got {rfc_0002}");
 
     // Nodes for RFC-0002
     for node_def in phase.nodes.iter().filter(|n| n.thread_ref == "RFC-0002") {
@@ -241,7 +242,7 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
         &copilot.clock,
     )
     .unwrap();
-    assert_eq!(rfc_0003, "RFC-0003");
+    assert!(rfc_0003.starts_with("RFC-"), "expected RFC prefix, got {rfc_0003}");
 
     let state = thread::replay_thread(&alice.git, &rfc_0003).unwrap();
     assert_eq!(state.status, "draft");
@@ -284,7 +285,7 @@ fn phase_implementation(
         &alice.clock,
     )
     .unwrap();
-    assert_eq!(issue_0001, "ASK-0001");
+    assert!(issue_0001.starts_with("ASK-"), "expected ASK prefix, got {issue_0001}");
 
     // Links for ISSUE-0001
     for link in phase
@@ -336,7 +337,7 @@ fn phase_implementation(
         &bob.clock,
     )
     .unwrap();
-    assert_eq!(issue_0002, "ASK-0002");
+    assert!(issue_0002.starts_with("ASK-"), "expected ASK prefix, got {issue_0002}");
 
     for link in phase
         .links
@@ -386,7 +387,7 @@ fn phase_implementation(
         &carol.clock,
     )
     .unwrap();
-    assert_eq!(issue_0003, "ASK-0003");
+    assert!(issue_0003.starts_with("ASK-"), "expected ASK prefix, got {issue_0003}");
 
     // Create a commit to use as evidence
     std::fs::write(repo_path.join("div_guard.rs"), "fn div(a: f64, b: f64) -> Result<f64, &'static str> { if b == 0.0 { Err(\"div by zero\") } else { Ok(a / b) } }\n").unwrap();
@@ -461,7 +462,7 @@ fn phase_implementation(
         &issue_creator.clock,
     )
     .unwrap();
-    assert_eq!(issue_0004, "ASK-0004");
+    assert!(issue_0004.starts_with("ASK-"), "expected ASK prefix, got {issue_0004}");
 
     // Verify closed issues
     for id in [&issue_0001, &issue_0002, &issue_0003] {
@@ -597,7 +598,7 @@ fn phase_contention(agents: &[Agent], issue_id: &str) -> report::ContentionRepor
     assert_eq!(success_count, 2, "both concurrent writes should succeed");
 
     // Verify final state has exactly 2 nodes
-    let state = thread::replay_thread(&alice.git, "ASK-0004").unwrap();
+    let state = thread::replay_thread(&alice.git, issue_id).unwrap();
     assert_eq!(
         state.nodes.len(),
         2,
@@ -615,7 +616,11 @@ fn phase_contention(agents: &[Agent], issue_id: &str) -> report::ContentionRepor
 // Phase: Expanded lifecycle (missing transitions)
 // ---------------------------------------------------------------------------
 
-fn phase_expanded_lifecycle(agents: &[Agent], scenario: &ScenarioDef) {
+fn phase_expanded_lifecycle(
+    agents: &[Agent],
+    scenario: &ScenarioDef,
+    label_map: &HashMap<String, String>,
+) -> (String, String) {
     let phase = &scenario.phases[2]; // expanded-lifecycle
 
     // Create RFC-0004 and ISSUE-0005
@@ -630,7 +635,7 @@ fn phase_expanded_lifecycle(agents: &[Agent], scenario: &ScenarioDef) {
         &bob.clock,
     )
     .unwrap();
-    assert_eq!(rfc_0004, "RFC-0004");
+    assert!(rfc_0004.starts_with("RFC-"), "expected RFC prefix, got {rfc_0004}");
 
     let t1 = &phase.threads[1]; // ISSUE-0005
     let carol = agent_by_name(agents, &t1.creator);
@@ -643,14 +648,22 @@ fn phase_expanded_lifecycle(agents: &[Agent], scenario: &ScenarioDef) {
         &carol.clock,
     )
     .unwrap();
-    assert_eq!(issue_0005, "ASK-0005");
+    assert!(issue_0005.starts_with("ASK-"), "expected ASK prefix, got {issue_0005}");
 
-    // Execute all transitions in order
+    // Build label map for this phase's new threads
+    let mut local_map = label_map.clone();
+    local_map.insert("RFC-0004".to_string(), rfc_0004.clone());
+    local_map.insert("ASK-0005".to_string(), issue_0005.clone());
+
+    // Execute all transitions in order, resolving labels to actual IDs
     for trans in &phase.transitions {
         let agent = agent_by_name(agents, &trans.actor);
+        let actual_id = local_map
+            .get(&trans.thread_ref)
+            .unwrap_or_else(|| panic!("unknown thread label: {}", trans.thread_ref));
         state_change::change_state(
             &agent.git,
-            &trans.thread_ref,
+            actual_id,
             &trans.new_state,
             &trans.approve_actors,
             &agent.name,
@@ -663,27 +676,31 @@ fn phase_expanded_lifecycle(agents: &[Agent], scenario: &ScenarioDef) {
 
     // Verify final states
     let alice = agent_by_name(agents, "human/alice");
-    let state = thread::replay_thread(&alice.git, "RFC-0003").unwrap();
+    let rfc_0003_id = &local_map["RFC-0003"];
+    let state = thread::replay_thread(&alice.git, rfc_0003_id).unwrap();
     assert_eq!(
         state.status, "draft",
-        "RFC-0003 should be reverted to draft"
+        "{} should be reverted to draft", rfc_0003_id
     );
 
     let state = thread::replay_thread(&alice.git, &rfc_0004).unwrap();
     assert_eq!(state.status, "deprecated");
 
     let state = thread::replay_thread(&alice.git, &issue_0005).unwrap();
-    assert_eq!(state.status, "open", "ASK-0005 should be reopened");
+    assert_eq!(state.status, "open", "{} should be reopened", issue_0005);
 
-    let state = thread::replay_thread(&alice.git, "ASK-0001").unwrap();
-    assert_eq!(state.status, "closed", "ASK-0001 should be re-closed");
+    let ask_0001_id = &local_map["ASK-0001"];
+    let state = thread::replay_thread(&alice.git, ask_0001_id).unwrap();
+    assert_eq!(state.status, "closed", "{} should be re-closed", ask_0001_id);
+
+    (rfc_0004, issue_0005)
 }
 
 // ---------------------------------------------------------------------------
 // Phase 6: CLI smoke tests
 // ---------------------------------------------------------------------------
 
-fn cli_smoke_tests(repo_path: &Path) {
+fn cli_smoke_tests(repo_path: &Path, rfc_id: &str, issue_id: &str) {
     let binary = env!("CARGO_BIN_EXE_git-forum");
 
     // 1. list all threads
@@ -696,30 +713,30 @@ fn cli_smoke_tests(repo_path: &Path) {
         .unwrap();
     assert!(output.status.success(), "ls failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("RFC-0001"));
-    assert!(stdout.contains("ASK-0001"));
+    assert!(stdout.contains(rfc_id), "ls output should contain {rfc_id}");
+    assert!(stdout.contains(issue_id), "ls output should contain {issue_id}");
 
     // 2. show a specific thread
     let output = std::process::Command::new(binary)
-        .args(["show", "RFC-0001"])
+        .args(["show", rfc_id])
         .current_dir(repo_path)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .output()
         .unwrap();
-    assert!(output.status.success(), "show RFC-0001 failed");
+    assert!(output.status.success(), "show {rfc_id} failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Calculator engine"));
 
     // 3. verify a thread
     let output = std::process::Command::new(binary)
-        .args(["verify", "ASK-0001"])
+        .args(["verify", issue_id])
         .current_dir(repo_path)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .output()
         .unwrap();
-    assert!(output.status.success(), "verify ASK-0001 failed");
+    assert!(output.status.success(), "verify {issue_id} failed");
 
     // 4. rfc ls
     let output = std::process::Command::new(binary)
@@ -731,7 +748,7 @@ fn cli_smoke_tests(repo_path: &Path) {
         .unwrap();
     assert!(output.status.success(), "rfc ls failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("RFC-0001"));
+    assert!(stdout.contains(rfc_id), "rfc ls output should contain {rfc_id}");
     assert!(!stdout.contains("ASK-"), "rfc ls should not show issues");
 
     // 5. issue ls
@@ -744,8 +761,8 @@ fn cli_smoke_tests(repo_path: &Path) {
         .unwrap();
     assert!(output.status.success(), "issue ls failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("ASK-0001"));
-    assert!(!stdout.contains("RFC"), "issue ls should not show RFCs");
+    assert!(stdout.contains(issue_id), "issue ls output should contain {issue_id}");
+    assert!(!stdout.contains("RFC-"), "issue ls should not show RFCs");
 }
 
 // ---------------------------------------------------------------------------
@@ -755,7 +772,6 @@ fn cli_smoke_tests(repo_path: &Path) {
 #[test]
 fn e2e_multiagent_calculator_scenario() {
     let scenario = scenario::calculator_scenario();
-    let expected = scenario::calculator_expected_outcomes();
     let (repo, agents, policy) = setup_scenario(&scenario);
 
     // Phase 1: RFC review
@@ -767,19 +783,32 @@ fn e2e_multiagent_calculator_scenario() {
     // Phase 3: Verify all threads against policy
     phase_verify(&agents, &rfcs, &issues, &policy);
 
+    // Build label-to-actual-ID mapping for cross-phase references
+    let mut label_map: HashMap<String, String> = HashMap::new();
+    label_map.insert("RFC-0001".to_string(), rfcs.rfc_0001.clone());
+    label_map.insert("RFC-0002".to_string(), rfcs.rfc_0002.clone());
+    label_map.insert("RFC-0003".to_string(), rfcs.rfc_0003.clone());
+    label_map.insert("ASK-0001".to_string(), issues.issue_0001.clone());
+    label_map.insert("ASK-0002".to_string(), issues.issue_0002.clone());
+    label_map.insert("ASK-0003".to_string(), issues.issue_0003.clone());
+    label_map.insert("ASK-0004".to_string(), issues.issue_0004.clone());
+
     // Phase 3b: Expanded lifecycle (missing transitions + node types)
-    phase_expanded_lifecycle(&agents, &scenario);
+    let (rfc_0004, issue_0005) = phase_expanded_lifecycle(&agents, &scenario, &label_map);
 
     // Phase 4: Contention (concurrent writes to ISSUE-0004)
     let contention = phase_contention(&agents, &issues.issue_0004);
 
     // Phase 5: Report (using shared report module)
+    label_map.insert("RFC-0004".to_string(), rfc_0004);
+    label_map.insert("ASK-0005".to_string(), issue_0005);
+    let expected = scenario::calculator_expected_outcomes(&label_map);
     let scenario_report = report::build_report(&agents[0].git, &expected, &[], Some(contention));
     let markdown = report::render_markdown(&scenario_report);
     println!("{markdown}");
 
     // Phase 6: CLI smoke tests
-    cli_smoke_tests(repo.path());
+    cli_smoke_tests(repo.path(), &rfcs.rfc_0001, &issues.issue_0001);
 
     // Cross-cutting assertions
     let all_ids = thread::list_thread_ids(&agents[0].git).unwrap();
