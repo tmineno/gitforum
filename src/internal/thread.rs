@@ -336,12 +336,18 @@ pub fn list_thread_ids(git: &GitOps) -> ForumResult<Vec<String>> {
 /// - Full ID (e.g. `RFC-0001`, `ASK-a7f3b2x1`) — returned as-is if the ref exists
 /// - KIND-prefix (e.g. `RFC-a7f3`) — expanded if unambiguous
 /// - Token-only (e.g. `a7f3b2x1`) — matched against all thread IDs if unambiguous
+/// - Case-insensitive variants of the above (e.g. `rfc-0001` resolves to `RFC-0001`)
 ///
 /// Returns an error if the reference is ambiguous (with candidates listed)
 /// or if no matching thread is found.
 pub fn resolve_thread_id(git: &GitOps, user_input: &str) -> ForumResult<String> {
     let all_ids = list_thread_ids(git)?;
+    resolve_from_list(&all_ids, user_input)
+}
 
+/// Pure resolution logic for testability — matches user input against a list of
+/// known thread IDs using exact, prefix, token, and case-insensitive strategies.
+fn resolve_from_list(all_ids: &[String], user_input: &str) -> ForumResult<String> {
     // 1. Exact match
     if all_ids.iter().any(|id| id == user_input) {
         return Ok(user_input.to_string());
@@ -388,8 +394,72 @@ pub fn resolve_thread_id(git: &GitOps, user_input: &str) -> ForumResult<String> 
         }
     }
 
+    // 4. Case-insensitive exact match (e.g. "rfc-0001" matches "RFC-0001")
+    let input_upper = user_input.to_ascii_uppercase();
+    let ci_matches: Vec<&String> = all_ids
+        .iter()
+        .filter(|id| id.to_ascii_uppercase() == input_upper)
+        .collect();
+    match ci_matches.len() {
+        1 => return Ok(ci_matches[0].clone()),
+        n if n > 1 => {
+            let candidates: Vec<&str> = ci_matches.iter().map(|s| s.as_str()).collect();
+            return Err(ForumError::Repo(format!(
+                "ambiguous thread reference '{user_input}'; did you mean one of:\n  {}",
+                candidates.join("\n  ")
+            )));
+        }
+        _ => {}
+    }
+
+    // 5. Case-insensitive prefix match (e.g. "rfc-a7f3" matches "RFC-a7f3b2x1")
+    if user_input.contains('-') {
+        let ci_prefix_matches: Vec<&String> = all_ids
+            .iter()
+            .filter(|id| id.to_ascii_uppercase().starts_with(&input_upper))
+            .collect();
+        match ci_prefix_matches.len() {
+            0 => {}
+            1 => return Ok(ci_prefix_matches[0].clone()),
+            _ => {
+                let candidates: Vec<&str> =
+                    ci_prefix_matches.iter().map(|s| s.as_str()).collect();
+                return Err(ForumError::Repo(format!(
+                    "ambiguous thread reference '{user_input}'; did you mean one of:\n  {}",
+                    candidates.join("\n  ")
+                )));
+            }
+        }
+    }
+
+    // 6. Case-insensitive token match (e.g. "A7F3B2X1" matches "RFC-a7f3b2x1")
+    if !user_input.contains('-') {
+        let ci_token_matches: Vec<&String> = all_ids
+            .iter()
+            .filter(|id| {
+                id.split_once('-').is_some_and(|(_, token)| {
+                    token
+                        .to_ascii_uppercase()
+                        .starts_with(&input_upper)
+                })
+            })
+            .collect();
+        match ci_token_matches.len() {
+            1 => return Ok(ci_token_matches[0].clone()),
+            n if n > 1 => {
+                let candidates: Vec<&str> =
+                    ci_token_matches.iter().map(|s| s.as_str()).collect();
+                return Err(ForumError::Repo(format!(
+                    "ambiguous thread reference '{user_input}'; did you mean one of:\n  {}",
+                    candidates.join("\n  ")
+                )));
+            }
+            _ => {}
+        }
+    }
+
     Err(ForumError::Repo(format!(
-        "thread '{user_input}' not found"
+        "thread '{user_input}' not found\n  hint: run `git forum ls` to see all threads"
     )))
 }
 
@@ -588,5 +658,92 @@ mod tests {
         let events = vec![make_create("ISSUE-0001", ThreadKind::Issue, "Bug")];
         let state = replay(&events).unwrap();
         assert_eq!(state.status, "open");
+    }
+
+    // --- resolve_from_list tests ---
+
+    fn ids(strs: &[&str]) -> Vec<String> {
+        strs.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn resolve_exact_match() {
+        let all = ids(&["RFC-0001", "ASK-a7f3b2x1"]);
+        assert_eq!(resolve_from_list(&all, "RFC-0001").unwrap(), "RFC-0001");
+    }
+
+    #[test]
+    fn resolve_prefix_match() {
+        let all = ids(&["RFC-a7f3b2x1", "ASK-0001"]);
+        assert_eq!(
+            resolve_from_list(&all, "RFC-a7f3").unwrap(),
+            "RFC-a7f3b2x1"
+        );
+    }
+
+    #[test]
+    fn resolve_token_only_match() {
+        let all = ids(&["RFC-a7f3b2x1", "ASK-0001"]);
+        assert_eq!(
+            resolve_from_list(&all, "a7f3b2x1").unwrap(),
+            "RFC-a7f3b2x1"
+        );
+    }
+
+    #[test]
+    fn resolve_case_insensitive_exact() {
+        let all = ids(&["RFC-0030", "ASK-0001"]);
+        assert_eq!(resolve_from_list(&all, "rfc-0030").unwrap(), "RFC-0030");
+    }
+
+    #[test]
+    fn resolve_case_insensitive_prefix() {
+        let all = ids(&["RFC-a7f3b2x1", "ASK-0001"]);
+        assert_eq!(
+            resolve_from_list(&all, "rfc-a7f3").unwrap(),
+            "RFC-a7f3b2x1"
+        );
+    }
+
+    #[test]
+    fn resolve_case_insensitive_token() {
+        let all = ids(&["RFC-a7f3b2x1", "ASK-0001"]);
+        assert_eq!(
+            resolve_from_list(&all, "A7F3B2X1").unwrap(),
+            "RFC-a7f3b2x1"
+        );
+    }
+
+    #[test]
+    fn resolve_not_found_includes_hint() {
+        let all = ids(&["RFC-0001"]);
+        let err = resolve_from_list(&all, "nonexistent").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("not found"), "got: {msg}");
+        assert!(msg.contains("hint"), "should include hint; got: {msg}");
+    }
+
+    #[test]
+    fn resolve_ambiguous_shows_candidates() {
+        let all = ids(&["RFC-a7f30001", "RFC-a7f30002"]);
+        let err = resolve_from_list(&all, "RFC-a7f3").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("ambiguous"), "got: {msg}");
+        assert!(msg.contains("RFC-a7f30001"), "got: {msg}");
+        assert!(msg.contains("RFC-a7f30002"), "got: {msg}");
+    }
+
+    #[test]
+    fn resolve_case_insensitive_ambiguous_shows_did_you_mean() {
+        // Use a case where only the case-insensitive path triggers
+        let all2 = ids(&["RFC-abcd1234", "RFC-ABCD1234"]);
+        // This won't actually happen since thread IDs are always uppercase prefix + lowercase token,
+        // but test the logic anyway
+        let err = resolve_from_list(&all2, "rfc-abcd1234").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("did you mean"),
+            "should show 'did you mean'; got: {msg}"
+        );
     }
 }
