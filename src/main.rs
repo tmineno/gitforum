@@ -615,6 +615,9 @@ enum Commands {
         new_type: String,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
     },
     /// Transition a thread to a new state
     State {
@@ -2172,11 +2175,19 @@ fn main() -> Result<(), ForumError> {
             node_id,
             new_type,
             as_actor,
+            force,
         } => {
-            let (git, _paths) = discover_repo_with_init_warning()?;
+            let (git, paths) = discover_repo_with_init_warning()?;
+            let thread_id = resolve_tid(&git, &thread_id)?;
+            let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
             let actor = resolve_actor(as_actor, &git);
             let parsed_type: git_forum::internal::event::NodeType =
                 new_type.parse().map_err(ForumError::Config)?;
+
+            let state = thread::replay_thread(&git, &thread_id)?;
+            let violations = operation_check::check_revise(&policy, &state.status, false);
+            apply_operation_checks(&violations, force, policy.checks.strict)?;
+
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
             write_ops::retype_node(&git, &thread_id, &resolved, parsed_type, &actor, &clock)?;
             println!("Retyped {resolved} -> {parsed_type}");
