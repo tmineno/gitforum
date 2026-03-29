@@ -129,7 +129,7 @@ Use `git forum node add <ID> --type alternative "..."` and `--type assumption ".
 ## Conventions
 
 - thread kinds: `ask` (alias: `issue`), `rfc`, `dec`, `job` (alias: `task`)
-- thread IDs: `ASK-0001`, `RFC-0001`, `DEC-0001`, `JOB-0001`
+- thread IDs: opaque `KIND-XXXXXXXX` (e.g. `RFC-a7f3b2x1`) for new threads; legacy sequential `KIND-NNNN` (e.g. `ASK-0001`) also accepted. Unambiguous prefixes work (e.g. `RFC-a7f3`).
 - node IDs: printed by shorthand node commands (e.g. `claim`, `question`); canonical IDs are Git commit OIDs of the say event
 - CLI/TUI displays of node and event OIDs usually show the first 16 characters
 - node IDs in CLI arguments:
@@ -690,7 +690,7 @@ git forum hook uninstall            # remove the git-forum hook
 The hook delegates to `git-forum hook check-commit-msg <file>`, which:
 
 1. Strips Git comment lines (respecting `core.commentChar`) and scissors sections.
-2. Scans the cleaned message for thread ID patterns (`ASK-NNNN`, `RFC-NNNN`, `DEC-NNNN`, `JOB-NNNN`; legacy prefixes `ISSUE-NNNN` and `TASK-NNNN` are also recognized).
+2. Scans the cleaned message for thread ID patterns: both legacy sequential (`ASK-NNNN`, `RFC-NNNN`, `DEC-NNNN`, `JOB-NNNN`, `ISSUE-NNNN`, `TASK-NNNN`) and opaque content-addressed (`KIND-XXXXXXXX` where X is base36).
 3. Validates each referenced thread exists in `refs/forum/threads/`.
 
 **Behavior:**

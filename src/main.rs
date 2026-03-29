@@ -1336,6 +1336,7 @@ fn main() -> Result<(), ForumError> {
             let (git, paths) = discover_repo_with_init_warning()?;
             match (thread, event, node, actor) {
                 (Some(thread_id), None, Some(node_id), None) => {
+                    let thread_id = resolve_tid(&git, &thread_id)?;
                     let resolved_node_id =
                         thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
                     let state = thread::replay_thread(&git, &thread_id)?;
@@ -1379,6 +1380,7 @@ fn main() -> Result<(), ForumError> {
                     }
                 }
                 (Some(thread_id), Some(event_sha), None, None) => {
+                    let thread_id = resolve_tid(&git, &thread_id)?;
                     if dry_run {
                         let plan = purge::plan_purge_event(&git, &thread_id, &event_sha)?;
                         println!("Would purge {} event(s):", plan.events.len());
@@ -1451,6 +1453,9 @@ fn main() -> Result<(), ForumError> {
 
         Commands::Tui { thread_id } => {
             let (git, paths) = discover_repo_with_init_warning()?;
+            let thread_id = thread_id
+                .map(|id| resolve_tid(&git, &id))
+                .transpose()?;
             let db_path = paths.git_forum.join("index.db");
             forum_tui::run(&git, &db_path, thread_id.as_deref())?;
         }
@@ -1514,6 +1519,7 @@ fn main() -> Result<(), ForumError> {
                 dry_run,
             } => {
                 let (git, _paths) = discover_repo_with_init_warning()?;
+                let thread_id = resolve_tid(&git, &thread_id)?;
                 let actor = resolve_actor(as_actor, &git);
                 if dry_run {
                     let plan = github_export::plan_export(&git, &thread_id)?;
@@ -1759,6 +1765,7 @@ fn main() -> Result<(), ForumError> {
             no_timeline,
         } => {
             let (git, paths) = discover_repo_with_init_warning()?;
+            let thread_id = resolve_tid(&git, &thread_id)?;
             let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
             let state = thread::replay_thread(&git, &thread_id)?;
             if what_next {
@@ -1780,6 +1787,7 @@ fn main() -> Result<(), ForumError> {
 
         Commands::Diff { thread_id, rev } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
+            let thread_id = resolve_tid(&git, &thread_id)?;
             let state = thread::replay_thread(&git, &thread_id)?;
             let output = diff::diff_body(&git, &state, rev.as_deref())?;
             println!("{output}");
@@ -1787,6 +1795,7 @@ fn main() -> Result<(), ForumError> {
 
         Commands::Status { thread_id } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
+            let thread_id = resolve_tid(&git, &thread_id)?;
             let state = thread::replay_thread(&git, &thread_id)?;
             print!("{}", show::render_status(&state));
         }
@@ -1828,6 +1837,7 @@ fn main() -> Result<(), ForumError> {
                 as_actor,
             } => {
                 let (git, _paths) = discover_repo_with_init_warning()?;
+                let thread_id = resolve_tid(&git, &thread_id)?;
                 let actor = resolve_actor(as_actor, &git);
                 branch_ops::set_branch(&git, &thread_id, Some(&branch), &actor, &clock)?;
                 println!("{thread_id} -> branch {branch}");
@@ -1837,6 +1847,7 @@ fn main() -> Result<(), ForumError> {
                 as_actor,
             } => {
                 let (git, _paths) = discover_repo_with_init_warning()?;
+                let thread_id = resolve_tid(&git, &thread_id)?;
                 let actor = resolve_actor(as_actor, &git);
                 branch_ops::set_branch(&git, &thread_id, None, &actor, &clock)?;
                 println!("{thread_id} -> branch <cleared>");
@@ -2110,6 +2121,7 @@ fn main() -> Result<(), ForumError> {
                                 .into(),
                         )
                     })?;
+                    let thread_id = resolve_tid(&git, &thread_id)?;
                     let new_state = new_state.ok_or_else(|| {
                         ForumError::Config(
                             "usage: git forum state <THREAD_ID> <NEW_STATE> [--approve <ACTOR_ID>]... [--resolve-open-actions]"
@@ -2147,8 +2159,9 @@ fn main() -> Result<(), ForumError> {
                             ForumError::Config("--rel is required when --link-to is used".into())
                         })?;
                         for target in &link_to {
+                            let resolved_target = resolve_tid(&git, target)?;
                             evidence_ops::add_thread_link(
-                                &git, &thread_id, target, rel, &actor, &clock,
+                                &git, &thread_id, &resolved_target, rel, &actor, &clock,
                             )?;
                         }
                     }
@@ -2161,6 +2174,7 @@ fn main() -> Result<(), ForumError> {
 
         Commands::Verify { thread_id } => {
             let (git, paths) = discover_repo_with_init_warning()?;
+            let thread_id = resolve_tid(&git, &thread_id)?;
             let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
             let report = verify::verify_thread(&git, &thread_id, &policy)?;
             if report.passed() {
@@ -2186,6 +2200,7 @@ fn main() -> Result<(), ForumError> {
                     return Err(ForumError::Config("--ref is required".into()));
                 }
                 let (git, paths) = discover_repo_with_init_warning()?;
+                let thread_id = resolve_tid(&git, &thread_id)?;
                 let actor = resolve_actor(as_actor, &git);
                 let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
                 let state = thread::replay_thread(&git, &thread_id)?;
@@ -2216,6 +2231,8 @@ fn main() -> Result<(), ForumError> {
             as_actor,
         } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
+            let thread_id = resolve_tid(&git, &thread_id)?;
+            let target_thread_id = resolve_tid(&git, &target_thread_id)?;
             let actor = resolve_actor(as_actor, &git);
             evidence_ops::add_thread_link(
                 &git,
@@ -2288,6 +2305,7 @@ fn main() -> Result<(), ForumError> {
                     thread_id,
                     transition,
                 } => {
+                    let thread_id = resolve_tid(&git, &thread_id)?;
                     let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
                     let state = thread::replay_thread(&git, &thread_id)?;
                     let parts: Vec<&str> = transition.splitn(2, "->").collect();
@@ -2347,6 +2365,7 @@ fn run_revise_cmd(
             force,
         } => {
             let (git, paths) = discover_repo_with_init_warning()?;
+            let thread_id = resolve_tid(&git, &thread_id)?;
             let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
             let actor = resolve_actor(as_actor, &git);
             let body_text = resolve_body_required(
@@ -2373,6 +2392,7 @@ fn run_revise_cmd(
             force,
         } => {
             let (git, paths) = discover_repo_with_init_warning()?;
+            let thread_id = resolve_tid(&git, &thread_id)?;
             let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
             let actor = resolve_actor(as_actor, &git);
             let body_text = resolve_body_required(
@@ -2415,6 +2435,7 @@ fn run_revise_dispatch(
                 )
             })?;
             let (git, paths) = discover_repo_with_init_warning()?;
+            let thread_id = resolve_tid(&git, &thread_id)?;
             let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
             let actor = resolve_actor(as_actor, &git);
             let body_text = resolve_body_required(
@@ -2449,6 +2470,7 @@ fn run_shorthand_say(
     clock: &dyn git_forum::internal::clock::Clock,
 ) -> Result<(), ForumError> {
     let (git, paths) = discover_repo_with_init_warning()?;
+    let thread_id = &resolve_tid(&git, thread_id)?;
     let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
     let actor = resolve_actor(as_actor, &git);
     let body = body_positional.or(body_flag);
@@ -2526,6 +2548,7 @@ fn run_thread_cmd(
                 ref source_id,
             ) = from_thread
             {
+                let source_id = &resolve_tid(&git, source_id)?;
                 let source = thread::replay_thread(&git, source_id)?;
                 // Reject RFC -> issue: an issue does not supersede an RFC
                 if source.kind == ThreadKind::Rfc && kind == ThreadKind::Issue {
@@ -2589,7 +2612,15 @@ fn run_thread_cmd(
                     ForumError::Config("--rel is required when --link-to is used".into())
                 })?;
                 for target in &link_to {
-                    evidence_ops::add_thread_link(&git, &thread_id, target, rel, &actor, clock)?;
+                    let resolved_target = resolve_tid(&git, target)?;
+                    evidence_ops::add_thread_link(
+                        &git,
+                        &thread_id,
+                        &resolved_target,
+                        rel,
+                        &actor,
+                        clock,
+                    )?;
                 }
             }
             if let Some(sha) = commit_ref {
@@ -2843,6 +2874,7 @@ fn run_state_shorthand(
     clock: &dyn git_forum::internal::clock::Clock,
 ) -> Result<(), ForumError> {
     let (git, paths) = discover_repo_with_init_warning()?;
+    let thread_id = &resolve_tid(&git, thread_id)?;
     let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
     let actor = resolve_actor(as_actor, &git);
     let options = state_change::StateChangeOptions {
@@ -2871,7 +2903,8 @@ fn run_state_shorthand(
         let rel = rel
             .ok_or_else(|| ForumError::Config("--rel is required when --link-to is used".into()))?;
         for target in link_to {
-            evidence_ops::add_thread_link(&git, thread_id, target, rel, &actor, clock)?;
+            let resolved_target = resolve_tid(&git, target)?;
+            evidence_ops::add_thread_link(&git, thread_id, &resolved_target, rel, &actor, clock)?;
         }
     }
     if let Ok(state) = thread::replay_thread(&git, thread_id) {
@@ -2914,6 +2947,7 @@ fn list_thread_states(
             states.push(state);
         }
     }
+    states.sort_by_key(|s| s.created_at);
     Ok(states)
 }
 
@@ -3100,6 +3134,7 @@ fn run_node_lifecycle_bulk(
     clock: &dyn git_forum::internal::clock::Clock,
 ) -> Result<(), ForumError> {
     let (git, _paths) = discover_repo_with_init_warning()?;
+    let thread_id = &resolve_tid(&git, thread_id)?;
     let actor = resolve_actor(as_actor, &git);
     let mut failures = 0usize;
     for node_id in node_ids {
@@ -3223,6 +3258,13 @@ fn print_import_plan(plan: &github_import::ImportPlan) {
     if plan.would_close {
         println!("  State: would be closed after import");
     }
+}
+
+/// Resolve a user-supplied thread reference to its canonical full ID.
+///
+/// Wraps `thread::resolve_thread_id` for use from CLI command handlers.
+fn resolve_tid(git: &GitOps, user_input: &str) -> Result<String, ForumError> {
+    thread::resolve_thread_id(git, user_input)
 }
 
 fn print_export_plan(plan: &github_export::ExportPlan) {

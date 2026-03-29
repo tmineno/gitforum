@@ -145,10 +145,20 @@ fn add_thread_link_appears_in_thread_state() {
     let (_repo, git) = setup();
     let thread_id = make_thread(&git);
 
+    let target_id = create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Target issue",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
     evidence_ops::add_thread_link(
         &git,
         &thread_id,
-        "ASK-0001",
+        &target_id,
         "implements",
         "human/alice",
         &fixed_clock(),
@@ -157,7 +167,7 @@ fn add_thread_link_appears_in_thread_state() {
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(state.links.len(), 1);
-    assert_eq!(state.links[0].target_thread_id, "ASK-0001");
+    assert_eq!(state.links[0].target_thread_id, target_id);
     assert_eq!(state.links[0].rel, "implements");
 }
 
@@ -166,10 +176,20 @@ fn show_includes_links_section() {
     let (_repo, git) = setup();
     let thread_id = make_thread(&git);
 
+    let target_id = create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Target issue",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
     evidence_ops::add_thread_link(
         &git,
         &thread_id,
-        "ASK-0001",
+        &target_id,
         "implements",
         "human/alice",
         &fixed_clock(),
@@ -179,9 +199,9 @@ fn show_includes_links_section() {
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     let out = show::render_show(&state, false);
     assert!(out.contains("links: 1"));
-    assert!(out.contains("ASK-0001"));
+    assert!(out.contains(&target_id));
     assert!(out.contains("implements"));
-    assert!(out.contains("ASK-0001 (implements)"));
+    assert!(out.contains(&format!("{target_id} (implements)")));
 }
 
 #[test]
@@ -200,10 +220,20 @@ fn node_show_includes_parent_thread_links() {
     )
     .unwrap();
 
+    let target_id = create::create_thread(
+        &git,
+        ThreadKind::Rfc,
+        "Target RFC",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
     evidence_ops::add_thread_link(
         &git,
         &thread_id,
-        "RFC-0001",
+        &target_id,
         "implements",
         "human/alice",
         &fixed_clock(),
@@ -213,6 +243,6 @@ fn node_show_includes_parent_thread_links() {
     let lookup = thread::find_node(&git, &node_id).unwrap();
     let out = show::render_node_show(&lookup);
     assert!(out.contains("thread links: 1"));
-    assert!(out.contains("RFC-0001"));
+    assert!(out.contains(&target_id));
     assert!(out.contains("implements"));
 }

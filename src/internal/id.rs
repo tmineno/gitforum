@@ -55,6 +55,16 @@ fn rand_u64() -> u64 {
     RandomState::new().build_hasher().finish()
 }
 
+/// Generate N random bytes using system entropy.
+pub fn rand_bytes<const N: usize>() -> [u8; N] {
+    let mut buf = [0u8; N];
+    for chunk in buf.chunks_mut(8) {
+        let r = rand_u64().to_le_bytes();
+        chunk.copy_from_slice(&r[..chunk.len()]);
+    }
+    buf
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

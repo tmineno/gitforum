@@ -27,34 +27,44 @@ fn parse_model_env() -> String {
         .unwrap_or_else(|_| claude_adapter::DEFAULT_MODEL.to_string())
 }
 
-/// Build a map from expected thread refs to actual thread IDs by matching titles.
+/// Build a label-to-actual-ID map by matching thread titles from the scenario
+/// definition against live threads in the repo.
 ///
-/// The scenario defines threads with expected sequential IDs (RFC-0001, ISSUE-0001, etc.)
-/// but live agents create threads in unpredictable order. This function discovers actual
+/// The scenario defines threads with labels like "RFC-0001", "ASK-0001", etc.
+/// but live agents create threads with opaque IDs. This function discovers actual
 /// IDs by replaying all threads and matching their titles to the scenario definitions.
-fn remap_expected_outcomes(
+fn build_label_map_from_repo(
     git: &GitOps,
-    expected: &[scenario::ExpectedOutcome],
     scenario: &scenario::ScenarioDef,
-) -> Vec<scenario::ExpectedOutcome> {
+) -> std::collections::HashMap<String, String> {
     use std::collections::HashMap;
 
-    // Build expected_ref -> title map from scenario thread definitions
-    // The scenario assumes sequential IDs: first RFC created = RFC-0001, etc.
-    let mut ref_to_title: HashMap<String, String> = HashMap::new();
+    // Build label -> title map from scenario thread definitions
+    let mut label_to_title: HashMap<String, String> = HashMap::new();
     let mut rfc_counter = 0u32;
     let mut issue_counter = 0u32;
     for phase in &scenario.phases {
         for t in &phase.threads {
             let (prefix, counter) = match t.kind {
-                git_forum::internal::event::ThreadKind::Rfc => ("RFC", &mut rfc_counter),
-                git_forum::internal::event::ThreadKind::Issue => ("ISSUE", &mut issue_counter),
-                git_forum::internal::event::ThreadKind::Dec => ("DEC", &mut rfc_counter),
-                git_forum::internal::event::ThreadKind::Task => ("TASK", &mut issue_counter),
+                git_forum::internal::event::ThreadKind::Rfc => {
+                    rfc_counter += 1;
+                    ("RFC", rfc_counter)
+                }
+                git_forum::internal::event::ThreadKind::Issue => {
+                    issue_counter += 1;
+                    ("ASK", issue_counter)
+                }
+                git_forum::internal::event::ThreadKind::Dec => {
+                    rfc_counter += 1;
+                    ("DEC", rfc_counter)
+                }
+                git_forum::internal::event::ThreadKind::Task => {
+                    issue_counter += 1;
+                    ("JOB", issue_counter)
+                }
             };
-            *counter += 1;
-            let expected_ref = format!("{prefix}-{counter:04}");
-            ref_to_title.insert(expected_ref, t.title.clone());
+            let label = format!("{prefix}-{counter:04}");
+            label_to_title.insert(label, t.title.clone());
         }
     }
 
@@ -69,26 +79,18 @@ fn remap_expected_outcomes(
         }
     }
 
-    // Remap each expected outcome
-    expected
-        .iter()
-        .map(|exp| {
-            let actual_ref = ref_to_title
-                .get(&exp.thread_ref)
-                .and_then(|title| title_to_actual.get(title))
-                .cloned()
-                .unwrap_or_else(|| exp.thread_ref.clone());
+    // Build label -> actual_id map
+    let mut label_map = HashMap::new();
+    for (label, title) in &label_to_title {
+        if let Some(actual_id) = title_to_actual.get(title) {
+            label_map.insert(label.clone(), actual_id.clone());
+        } else {
+            // Thread not found in repo -- use label as fallback
+            label_map.insert(label.clone(), label.clone());
+        }
+    }
 
-            scenario::ExpectedOutcome {
-                thread_ref: actual_ref,
-                expected_status: exp.expected_status.clone(),
-                acceptable_statuses: exp.acceptable_statuses.clone(),
-                min_nodes: exp.min_nodes,
-                expected_evidence_count: exp.expected_evidence_count,
-                expected_link_count: exp.expected_link_count,
-            }
-        })
-        .collect()
+    label_map
 }
 
 #[test]
@@ -100,7 +102,6 @@ fn e2e_live_agent_calculator_scenario() {
     }
 
     let scenario = scenario::calculator_scenario();
-    let expected = scenario::calculator_expected_outcomes();
     let timeout = parse_timeout_env();
     let model = parse_model_env();
     println!("Using model: {model}");
@@ -260,18 +261,18 @@ fn e2e_live_agent_calculator_scenario() {
     // 5. Build report (all 6 RFC-0003 sections)
     let git = GitOps::new(repo.path().to_path_buf());
 
-    // Remap expected outcomes using title-based discovery (agents create threads in
-    // unpredictable order, so expected IDs like RFC-0001 may not match actual IDs)
-    let remapped_expected = remap_expected_outcomes(&git, &expected, &scenario);
-    println!("--- Thread ID remapping ---");
-    for (orig, remapped) in expected.iter().zip(remapped_expected.iter()) {
-        if orig.thread_ref != remapped.thread_ref {
-            println!("  {} -> {}", orig.thread_ref, remapped.thread_ref);
-        }
+    // Build label-to-actual-ID map using title-based discovery (agents create threads
+    // in unpredictable order with opaque IDs)
+    let label_map = build_label_map_from_repo(&git, &scenario);
+    println!("--- Thread ID label map ---");
+    for (label, actual) in &label_map {
+        println!("  {label} -> {actual}");
     }
 
+    let expected = scenario::calculator_expected_outcomes(&label_map);
+
     let mut scenario_report =
-        report::build_report(&git, &remapped_expected, &all_agent_results, None);
+        report::build_report(&git, &expected, &all_agent_results, None);
 
     // Populate agent_results so AI analysis can see agent outputs
     scenario_report.agent_results = all_agent_results;
