@@ -601,7 +601,7 @@ fn revise_body_summary(event: &Event) -> String {
     }
 }
 
-struct TimelineWidths {
+pub struct TimelineWidths {
     date: usize,
     node_id: usize,
     event_id: usize,
@@ -609,7 +609,7 @@ struct TimelineWidths {
     r#type: usize,
 }
 
-fn timeline_widths(events: &[Event]) -> TimelineWidths {
+pub fn timeline_widths(events: &[Event]) -> TimelineWidths {
     let mut widths = TimelineWidths {
         date: 20,
         node_id: 16,
@@ -640,7 +640,7 @@ fn timeline_widths(events: &[Event]) -> TimelineWidths {
     widths
 }
 
-fn format_timeline_header(widths: &TimelineWidths) -> String {
+pub fn format_timeline_header(widths: &TimelineWidths) -> String {
     format!(
         "  {:<date$}  {:<node_id$}  {:<event_id$}  {:<author$}  {:<type$}  {}",
         "date",
@@ -657,7 +657,7 @@ fn format_timeline_header(widths: &TimelineWidths) -> String {
     )
 }
 
-fn format_timeline_entry(event: &Event, widths: &TimelineWidths, compact: bool) -> String {
+pub fn format_timeline_entry(event: &Event, widths: &TimelineWidths, compact: bool) -> String {
     format!(
         "  {:<date$}  {:<node_id$}  {:<event_id$}  {:<author$}  {:<type$}  {}",
         event.created_at.format("%Y-%m-%dT%H:%M:%SZ"),

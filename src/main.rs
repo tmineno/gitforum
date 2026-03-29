@@ -365,6 +365,16 @@ enum Commands {
         #[arg(long)]
         no_timeline: bool,
     },
+    /// Show event timeline for a thread
+    Log {
+        thread_id: String,
+        /// Show newest events first
+        #[arg(long)]
+        reverse: bool,
+        /// Limit to the last N events
+        #[arg(short = 'n', long)]
+        last: Option<usize>,
+    },
     /// Show unified diff between body revisions
     Diff {
         thread_id: String,
@@ -1775,6 +1785,28 @@ fn main() -> Result<(), ForumError> {
                         }
                     )
                 );
+            }
+        }
+
+        Commands::Log {
+            thread_id,
+            reverse,
+            last,
+        } => {
+            let (git, _paths) = discover_repo_with_init_warning()?;
+            let state = thread::replay_thread(&git, &thread_id)?;
+            let widths = show::timeline_widths(&state.events);
+            println!("{}", show::format_timeline_header(&widths));
+            let len = state.events.len();
+            let skip = last.map(|n| len.saturating_sub(n)).unwrap_or(0);
+            if reverse {
+                for event in state.events.iter().rev().take(len - skip) {
+                    println!("{}", show::format_timeline_entry(event, &widths, false));
+                }
+            } else {
+                for event in state.events.iter().skip(skip) {
+                    println!("{}", show::format_timeline_entry(event, &widths, false));
+                }
             }
         }
 
