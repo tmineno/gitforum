@@ -968,30 +968,32 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
     if states.is_empty() {
         return "no threads found\n".into();
     }
+    // Column widths are clamped between a minimum (header width) and a maximum
+    // to prevent a single outlier from blowing out alignment.
     let id_width = states
         .iter()
         .map(|s| s.id.len())
         .max()
         .unwrap_or(12)
-        .max(12);
+        .clamp(12, 20);
     let kind_width = states
         .iter()
         .map(|s| s.kind.to_string().len())
         .max()
         .unwrap_or(10)
-        .max(10);
+        .clamp(10, 16);
     let status_width = states
         .iter()
         .map(|s| s.status.len())
         .max()
         .unwrap_or(14)
-        .max(14);
+        .clamp(14, 20);
     let branch_width = states
         .iter()
         .map(|s| s.branch.as_deref().unwrap_or("-").len())
         .max()
         .unwrap_or(12)
-        .max(12);
+        .clamp(12, 30);
     let date_width = 16; // YYYY-MM-DD HH:MM
                          // 6 column gaps of 2 spaces each = 12, plus 2 before the title column
     let fixed_cols = id_width + kind_width + status_width + branch_width + date_width * 2 + 14;
@@ -1000,7 +1002,9 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
         .ok()
         .filter(|&w| w >= 40)
         .unwrap_or(0);
-    // 0 means no truncation (non-terminal or very narrow terminal)
+    // When output is piped (non-TTY) or the terminal is very narrow (< 40 cols),
+    // term_width is 0 and title_max becomes 0, meaning titles are not truncated.
+    // This is by design: piped output should be lossless for downstream processing.
     let title_max = term_width.saturating_sub(fixed_cols);
     let mut lines: Vec<String> = Vec::new();
     lines.push(format!(
