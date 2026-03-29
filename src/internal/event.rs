@@ -204,6 +204,9 @@ pub struct Event {
     /// Node ID this node is replying to (Say events).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,
+    /// Previous node type before a Retype event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_node_type: Option<NodeType>,
 }
 
 impl Event {
@@ -234,7 +237,13 @@ impl Event {
             branch: None,
             incorporated_node_ids: vec![],
             reply_to: None,
+            old_node_type: None,
         }
+    }
+
+    pub fn with_old_node_type(mut self, old_type: NodeType) -> Self {
+        self.old_node_type = Some(old_type);
+        self
     }
 
     pub fn with_body(mut self, body: &str) -> Self {
@@ -424,6 +433,7 @@ mod tests {
             branch: None,
             incorporated_node_ids: vec![],
             reply_to: None,
+            old_node_type: None,
         }
     }
 

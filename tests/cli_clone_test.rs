@@ -42,11 +42,18 @@ fn init_adds_refspec_for_existing_remote() {
     let repo = support::repo::TestRepo::new();
 
     // Add a dummy remote
-    git(repo.path(), &["remote", "add", "origin", "https://example.com/repo.git"]);
+    git(
+        repo.path(),
+        &["remote", "add", "origin", "https://example.com/repo.git"],
+    );
 
     // Run init
     let output = git_forum_cmd(repo.path(), &["init"]);
-    assert!(output.status.success(), "init failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // Check refspec was added
     let refspecs = git(repo.path(), &["config", "--get-all", "remote.origin.fetch"]);
@@ -60,7 +67,10 @@ fn init_adds_refspec_for_existing_remote() {
 fn init_refspec_is_idempotent() {
     let repo = support::repo::TestRepo::new();
 
-    git(repo.path(), &["remote", "add", "origin", "https://example.com/repo.git"]);
+    git(
+        repo.path(),
+        &["remote", "add", "origin", "https://example.com/repo.git"],
+    );
 
     // Run init twice
     git_forum_cmd(repo.path(), &["init"]);
@@ -72,7 +82,10 @@ fn init_refspec_is_idempotent() {
         .lines()
         .filter(|l| l.trim() == "+refs/forum/*:refs/forum/*")
         .count();
-    assert_eq!(count, 1, "refspec should appear exactly once, got {count} in:\n{refspecs}");
+    assert_eq!(
+        count, 1,
+        "refspec should appear exactly once, got {count} in:\n{refspecs}"
+    );
 }
 
 #[test]
@@ -88,7 +101,10 @@ fn init_fetches_forum_refs_from_remote() {
 
     // Create a forum thread ref in the upstream repo
     let tree = git(upstream.path(), &["hash-object", "-t", "tree", "/dev/null"]);
-    let commit = git(upstream.path(), &["commit-tree", &tree, "-m", "forum event"]);
+    let commit = git(
+        upstream.path(),
+        &["commit-tree", &tree, "-m", "forum event"],
+    );
     git(
         upstream.path(),
         &["update-ref", "refs/forum/threads/ASK-0001", &commit],
@@ -137,7 +153,10 @@ fn doctor_warns_on_missing_refspec() {
     let repo = support::repo::TestRepo::new();
 
     // Init first (adds refspec)
-    git(repo.path(), &["remote", "add", "origin", "https://example.com/repo.git"]);
+    git(
+        repo.path(),
+        &["remote", "add", "origin", "https://example.com/repo.git"],
+    );
     git_forum_cmd(repo.path(), &["init"]);
 
     // Remove the refspec

@@ -273,6 +273,7 @@ mod tests {
             branch: None,
             incorporated_node_ids: vec![],
             reply_to: None,
+            old_node_type: None,
         };
         purge_event_content(&mut ev);
         assert_eq!(ev.body.as_deref(), Some("[purged]"));
@@ -302,6 +303,7 @@ mod tests {
             branch: None,
             incorporated_node_ids: vec![],
             reply_to: None,
+            old_node_type: None,
         };
         purge_event_content(&mut ev);
         assert!(ev.body.is_none());

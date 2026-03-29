@@ -1431,7 +1431,9 @@ mod tests {
         submit_create_thread(&mut app, &git, &conn, &db_path, &mut Perf::disabled()).unwrap();
 
         match &app.view {
-            View::ThreadDetail(id) => assert!(id.starts_with("RFC-"), "expected RFC- prefix, got: {id}"),
+            View::ThreadDetail(id) => {
+                assert!(id.starts_with("RFC-"), "expected RFC- prefix, got: {id}")
+            }
             other => panic!("expected ThreadDetail, got: {other:?}"),
         }
         assert!(app.thread_text.contains("Created in TUI"));
@@ -1461,7 +1463,9 @@ mod tests {
         .unwrap();
 
         match &app.view {
-            View::ThreadDetail(id) => assert!(id.starts_with("ASK-"), "expected ASK- prefix, got: {id}"),
+            View::ThreadDetail(id) => {
+                assert!(id.starts_with("ASK-"), "expected ASK- prefix, got: {id}")
+            }
             other => panic!("expected ThreadDetail, got: {other:?}"),
         }
         assert!(app.thread_text.contains("Created with mouse"));
@@ -1555,7 +1559,10 @@ mod tests {
 
         assert_eq!(app.view, View::ThreadDetail(source_id.clone()));
         assert!(app.thread_text.contains("links: 1"));
-        assert!(app.thread_text.contains("implements"), "expected 'implements' in thread_text");
+        assert!(
+            app.thread_text.contains("implements"),
+            "expected 'implements' in thread_text"
+        );
     }
 
     #[test]
@@ -1622,7 +1629,10 @@ mod tests {
             }
         );
         assert!(app.node_detail_text.contains("thread links: 1"));
-        assert!(app.node_detail_text.contains("implements"), "expected 'implements' in node_detail_text");
+        assert!(
+            app.node_detail_text.contains("implements"),
+            "expected 'implements' in node_detail_text"
+        );
     }
 
     #[test]

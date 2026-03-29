@@ -511,6 +511,7 @@ mod tests {
                 branch: None,
                 incorporated_node_ids: vec![],
                 reply_to: None,
+                old_node_type: None,
             }],
             nodes: vec![],
             evidence_items: vec![],
