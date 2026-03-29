@@ -384,6 +384,19 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
         lines.push(String::new());
     }
 
+    // Show --what-next hint when there are actionable items (skip in compact mode)
+    if !compact {
+        let has_actionable =
+            !state.open_objections().is_empty() || !state.open_actions().is_empty();
+        if has_actionable {
+            lines.push(format!(
+                "tip: run `git forum show {} --what-next` for action guidance",
+                state.id
+            ));
+            lines.push(String::new());
+        }
+    }
+
     lines.join("\n")
 }
 
