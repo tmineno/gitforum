@@ -1,0 +1,18 @@
+RFC-a1b2c3d4 Test RFC
+kind:     rfc
+status:   under-review
+created:  2026-01-01T00:00:00Z
+by:       human/alice
+branch:   feat/solver
+body:
+  Initial thread body.
+
+open objections: 1
+  - node-0001 Benchmarks are missing.
+    resolve: git forum resolve RFC-a1b2c3d4 node-0001
+    reply:   git forum claim RFC-a1b2c3d4 --reply-to node-0001 --body "..."
+
+latest summary:
+  Direction is sound; migration evidence needed.
+
+timeline: 3 events (use 'log RFC-a1b2c3d4' for full view)
