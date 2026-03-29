@@ -57,7 +57,8 @@ pub fn strip_comments(message: &str, comment_char: char) -> String {
 
 /// Extract git-forum thread IDs from a commit message.
 ///
-/// Matches `ISSUE-NNNN` and `RFC-NNNN` patterns with word boundaries.
+/// Matches both legacy sequential IDs (`ISSUE-0001`, `RFC-0042`) and
+/// opaque content-addressed IDs (`RFC-a7f3b2x1`, `ASK-0a1b2c3d`).
 /// Returns deduplicated results.
 pub fn extract_thread_ids(message: &str) -> Vec<String> {
     let mut ids = Vec::new();
@@ -76,7 +77,7 @@ pub fn extract_thread_ids(message: &str) -> Vec<String> {
             let prefix_chars: Vec<char> = prefix.chars().collect();
             let prefix_len = prefix_chars.len();
 
-            // Check if prefix matches at position i
+            // Need at least prefix + '-' + 4 chars (minimum token length)
             if i + prefix_len + 1 + 4 > len {
                 continue;
             }
@@ -97,29 +98,39 @@ pub fn extract_thread_ids(message: &str) -> Vec<String> {
                 continue;
             }
 
-            // Check for exactly 4 digits
-            let digit_start = i + prefix_len + 1;
-            let mut digit_count = 0;
-            while digit_start + digit_count < len
-                && chars[digit_start + digit_count].is_ascii_digit()
+            // Collect the token: digits and lowercase letters after the dash
+            let token_start = i + prefix_len + 1;
+            let mut token_len = 0;
+            while token_start + token_len < len
+                && (chars[token_start + token_len].is_ascii_digit()
+                    || chars[token_start + token_len].is_ascii_lowercase())
             {
-                digit_count += 1;
-            }
-            if digit_count != 4 {
-                continue;
+                token_len += 1;
             }
 
             // Check trailing word boundary
-            let end = digit_start + 4;
+            let end = token_start + token_len;
             if end < len && (chars[end].is_alphanumeric() || chars[end] == '_') {
                 continue;
             }
 
-            let id: String = chars[i..end].iter().collect();
-            if !ids.contains(&id) {
-                ids.push(id);
+            // Match legacy sequential: exactly 4 digits
+            let is_sequential =
+                token_len == 4 && chars[token_start..end].iter().all(|c| c.is_ascii_digit());
+            // Match opaque: exactly 8 base36 chars (not all digits)
+            let is_opaque = token_len == 8
+                && chars[token_start..end]
+                    .iter()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+                && !chars[token_start..end].iter().all(|c| c.is_ascii_digit());
+
+            if is_sequential || is_opaque {
+                let id: String = chars[i..end].iter().collect();
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+                break;
             }
-            break;
         }
 
         i += 1;
@@ -282,6 +293,51 @@ mod tests {
         assert_eq!(
             extract_thread_ids("subject line\n\nISSUE-0001"),
             vec!["ISSUE-0001"]
+        );
+    }
+
+    // Tests for opaque content-addressed IDs
+    #[test]
+    fn extract_opaque_id() {
+        assert_eq!(
+            extract_thread_ids("implement RFC-a7f3b2x1 design"),
+            vec!["RFC-a7f3b2x1"]
+        );
+    }
+
+    #[test]
+    fn extract_opaque_ask_id() {
+        assert_eq!(
+            extract_thread_ids("fix ASK-0a1b2c3d bug"),
+            vec!["ASK-0a1b2c3d"]
+        );
+    }
+
+    #[test]
+    fn extract_mixed_legacy_and_opaque() {
+        assert_eq!(
+            extract_thread_ids("RFC-0001 and RFC-a7f3b2x1"),
+            vec!["RFC-0001", "RFC-a7f3b2x1"]
+        );
+    }
+
+    #[test]
+    fn extract_opaque_respects_word_boundary() {
+        assert!(extract_thread_ids("XRFC-a7f3b2x1").is_empty());
+        assert!(extract_thread_ids("RFC-a7f3b2x1z").is_empty());
+    }
+
+    #[test]
+    fn extract_opaque_rejects_all_digits() {
+        // 8 digits is neither sequential (4 digits) nor opaque (must have letters)
+        assert!(extract_thread_ids("RFC-12345678").is_empty());
+    }
+
+    #[test]
+    fn extract_opaque_after_punctuation() {
+        assert_eq!(
+            extract_thread_ids("(JOB-x8n2q1d4)"),
+            vec!["JOB-x8n2q1d4"]
         );
     }
 

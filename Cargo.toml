@@ -16,5 +16,6 @@ ratatui = { version = "0.30", default-features = false, features = ["crossterm"]
 crossterm = "0.28"
 pulldown-cmark = { version = "0.13.1", default-features = false }
 tempfile = "3"
+sha2 = "0.10"
 
 [dev-dependencies]

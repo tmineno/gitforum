@@ -19,7 +19,7 @@ fn init_repo(repo: &support::repo::TestRepo) {
     init::init_forum(&paths).unwrap();
 }
 
-fn create_issue(repo: &support::repo::TestRepo, title: &str) {
+fn create_issue(repo: &support::repo::TestRepo, title: &str) -> String {
     let output = git_forum_cmd(repo.path())
         .args(["issue", "new", title])
         .output()
@@ -29,6 +29,13 @@ fn create_issue(repo: &support::repo::TestRepo, title: &str) {
         "issue creation failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    // CLI prints "Created <THREAD_ID>" — extract the ID.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .trim()
+        .strip_prefix("Created ")
+        .expect("expected 'Created <ID>' on stdout")
+        .to_string()
 }
 
 fn write_msg_file(repo: &support::repo::TestRepo, content: &str) -> std::path::PathBuf {
@@ -60,8 +67,8 @@ fn check_commit_msg_no_refs_warns_and_exits_0() {
 fn check_commit_msg_valid_ref_exits_0() {
     let repo = support::repo::TestRepo::new();
     init_repo(&repo);
-    create_issue(&repo, "Test issue");
-    let msg_path = write_msg_file(&repo, "fix ASK-0001 bug");
+    let tid = create_issue(&repo, "Test issue");
+    let msg_path = write_msg_file(&repo, &format!("fix {tid} bug"));
 
     let output = git_forum_cmd(repo.path())
         .args(["hook", "check-commit-msg"])
@@ -96,8 +103,8 @@ fn check_commit_msg_missing_ref_exits_1() {
 fn check_commit_msg_mixed_refs() {
     let repo = support::repo::TestRepo::new();
     init_repo(&repo);
-    create_issue(&repo, "Real issue");
-    let msg_path = write_msg_file(&repo, "fix ASK-0001 and ASK-9999");
+    let tid = create_issue(&repo, "Real issue");
+    let msg_path = write_msg_file(&repo, &format!("fix {tid} and ASK-9999"));
 
     let output = git_forum_cmd(repo.path())
         .args(["hook", "check-commit-msg"])
@@ -108,7 +115,7 @@ fn check_commit_msg_mixed_refs() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("ASK-9999"));
-    assert!(!stderr.contains("ASK-0001"));
+    assert!(!stderr.contains(&tid));
 }
 
 #[test]

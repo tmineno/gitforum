@@ -991,7 +991,7 @@ mod tests {
     #[test]
     fn mouse_double_click_opens_thread_detail() {
         let (_dir, git, _paths, conn, db_path) = setup_repo();
-        crate::internal::create::create_thread(
+        let created_id = crate::internal::create::create_thread(
             &git,
             crate::internal::event::ThreadKind::Rfc,
             "Test RFC",
@@ -1018,7 +1018,7 @@ mod tests {
         assert_eq!(app.view, View::List);
         // Second click (same position, quick) opens
         handle_mouse(&mut app, click, &git, &conn, &db_path, &mut perf).unwrap();
-        assert_eq!(app.view, View::ThreadDetail("RFC-0001".into()));
+        assert_eq!(app.view, View::ThreadDetail(created_id));
     }
 
     #[test]
@@ -1430,7 +1430,10 @@ mod tests {
 
         submit_create_thread(&mut app, &git, &conn, &db_path, &mut Perf::disabled()).unwrap();
 
-        assert_eq!(app.view, View::ThreadDetail("RFC-0001".into()));
+        match &app.view {
+            View::ThreadDetail(id) => assert!(id.starts_with("RFC-"), "expected RFC- prefix, got: {id}"),
+            other => panic!("expected ThreadDetail, got: {other:?}"),
+        }
         assert!(app.thread_text.contains("Created in TUI"));
         let rows = index::list_threads(&conn).unwrap();
         assert_eq!(rows.len(), 1);
@@ -1457,7 +1460,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(app.view, View::ThreadDetail("ASK-0001".into()));
+        match &app.view {
+            View::ThreadDetail(id) => assert!(id.starts_with("ASK-"), "expected ASK- prefix, got: {id}"),
+            other => panic!("expected ThreadDetail, got: {other:?}"),
+        }
         assert!(app.thread_text.contains("Created with mouse"));
     }
 
@@ -1549,7 +1555,7 @@ mod tests {
 
         assert_eq!(app.view, View::ThreadDetail(source_id.clone()));
         assert!(app.thread_text.contains("links: 1"));
-        assert!(app.thread_text.contains("ASK-0001  implements"));
+        assert!(app.thread_text.contains("implements"), "expected 'implements' in thread_text");
     }
 
     #[test]
@@ -1616,7 +1622,7 @@ mod tests {
             }
         );
         assert!(app.node_detail_text.contains("thread links: 1"));
-        assert!(app.node_detail_text.contains("ASK-0001  implements"));
+        assert!(app.node_detail_text.contains("implements"), "expected 'implements' in node_detail_text");
     }
 
     #[test]

@@ -179,7 +179,7 @@ Required fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Display ID (`RFC-0001`, `ISSUE-0001`, `DEC-0001`, `TASK-0001`) |
+| `id` | string | Thread ID: opaque `KIND-XXXXXXXX` (e.g. `RFC-a7f3b2x1`) or legacy sequential `KIND-NNNN` (e.g. `RFC-0001`) |
 | `kind` | enum | `rfc`, `issue`, `dec`, or `task` |
 | `title` | string | Human-readable title |
 | `status` | string | Current state (derived from events) |
@@ -327,14 +327,22 @@ writing forum events. This is separate from the actor ID stored in `event.json`.
 
 ## 6. Identity scheme
 
-### 6.1 Thread display IDs
+### 6.1 Thread IDs
 
-- Issue: `ISSUE-0001`, `ISSUE-0002`, ...
-- RFC: `RFC-0001`, `RFC-0002`, ...
-- DEC: `DEC-0001`, `DEC-0002`, ...
-- TASK: `TASK-0001`, `TASK-0002`, ...
+New threads use opaque content-addressed IDs: `KIND-XXXXXXXX` where `XXXXXXXX` is 8 characters
+of base36 (`[a-z0-9]`). Generated via `sha256(actor || timestamp || title || nonce)`, encoded as
+base36, first 8 characters. On ref-creation collision, a new nonce is generated and the ID is
+recomputed (bounded retry).
 
-Allocated sequentially per kind by scanning existing refs.
+Examples: `RFC-a7f3b2x1`, `ASK-0a1b2c3d`, `JOB-x8n2q1d4`.
+
+Legacy sequential IDs (`ASK-0001`, `RFC-0029`, etc.) remain valid for reading and referencing.
+The ID parser accepts both formats: sequential (`KIND-NNNN`, all-digit, 4 chars) and opaque
+(`KIND-XXXXXXXX`, 8 chars, mixed alphanumeric, not all digits).
+
+Unambiguous prefixes are accepted when referencing threads (e.g. `RFC-a7f3` resolves to
+`RFC-a7f3b2x1` if unique). Token-only references (e.g. `a7f3b2x1`) are also accepted.
+Ambiguous prefixes produce an error listing candidates.
 
 ### 6.2 Canonical IDs (ADR-001)
 
@@ -702,7 +710,9 @@ git forum hook check-commit-msg <FILE>
 ```
 
 `git forum init` auto-installs the commit-msg hook. The hook validates that thread IDs referenced
-in commit messages (`ISSUE-NNNN`, `RFC-NNNN`, `DEC-NNNN`, `TASK-NNNN`) exist as git-forum refs. Comment lines (respecting
+in commit messages exist as git-forum refs. It recognizes both legacy sequential IDs
+(`ISSUE-NNNN`, `RFC-NNNN`, `DEC-NNNN`, `TASK-NNNN`) and opaque content-addressed IDs
+(`KIND-XXXXXXXX` where `XXXXXXXX` is 8 base36 chars, not all digits). Comment lines (respecting
 `core.commentChar`) and scissors sections are stripped before scanning.
 
 - No thread IDs found: warn, exit 0 (non-blocking).
@@ -849,7 +859,7 @@ Read-only preflight check for the next forward transition:
 - `hook uninstall` removes the hook only if it matches the git-forum template.
 - `hook check-commit-msg <FILE>`:
   - Query `core.commentChar` (default `#`), strip comment lines and scissors sections.
-  - Extract thread IDs matching known prefixes (`ISSUE`, `RFC`, `DEC`, `TASK`) with 4-digit suffixes.
+  - Extract thread IDs matching known prefixes (`ASK`, `ISSUE`, `RFC`, `DEC`, `JOB`, `TASK`) with either 4-digit sequential suffixes or 8-char base36 opaque tokens.
   - Validate each ID against `refs/forum/threads/<ID>`.
   - No IDs found: warn, exit 0. All valid: exit 0. Any missing: warn, exit 1.
 

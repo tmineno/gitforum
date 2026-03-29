@@ -1,11 +1,23 @@
 mod support;
 
-use std::process::Command;
+use std::process::{Command, Output};
 
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::thread;
+
+fn extract_created_id(output: &Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .trim()
+        .strip_prefix("Created ")
+        .unwrap_or(stdout.trim())
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string()
+}
 
 fn git(repo: &support::repo::TestRepo, args: &[&str]) {
     let output = Command::new("git")
@@ -41,6 +53,7 @@ fn state_bulk_partial_apply_reports_failures() {
         .output()
         .expect("failed to create issue A");
     assert!(issue_a.status.success());
+    let id_a = extract_created_id(&issue_a);
 
     let issue_b = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
@@ -48,10 +61,11 @@ fn state_bulk_partial_apply_reports_failures() {
         .output()
         .expect("failed to create issue B");
     assert!(issue_b.status.success());
+    let id_b = extract_created_id(&issue_b);
 
     let action = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["action", "ASK-0002", "Implement evaluator"])
+        .args(["action", &id_b, "Implement evaluator"])
         .output()
         .expect("failed to add action");
     assert!(action.status.success());
@@ -65,13 +79,13 @@ fn state_bulk_partial_apply_reports_failures() {
     let stdout = String::from_utf8(bulk.stdout).unwrap();
     assert!(stdout.contains("OK"));
     assert!(stdout.contains("FAIL"));
-    assert!(stdout.contains("ASK-0001"));
-    assert!(stdout.contains("ASK-0002"));
+    assert!(stdout.contains(&id_a));
+    assert!(stdout.contains(&id_b));
     assert!(stdout.contains("no_open_actions"));
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let issue_a = thread::replay_thread(&git, "ASK-0001").unwrap();
-    let issue_b = thread::replay_thread(&git, "ASK-0002").unwrap();
+    let issue_a = thread::replay_thread(&git, &id_a).unwrap();
+    let issue_b = thread::replay_thread(&git, &id_b).unwrap();
     assert_eq!(issue_a.status, "closed");
     assert_eq!(issue_b.status, "open");
 }
@@ -89,10 +103,11 @@ fn state_bulk_can_resolve_open_actions_before_close() {
         .output()
         .expect("failed to create issue");
     assert!(issue.status.success());
+    let thread_id = extract_created_id(&issue);
 
     let action = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["action", "ASK-0001", "Implement evaluator"])
+        .args(["action", &thread_id, "Implement evaluator"])
         .output()
         .expect("failed to add action");
     assert!(action.status.success());
@@ -113,10 +128,10 @@ fn state_bulk_can_resolve_open_actions_before_close() {
     assert!(bulk.status.success());
     let stdout = String::from_utf8(bulk.stdout).unwrap();
     assert!(stdout.contains("OK"));
-    assert!(stdout.contains("ASK-0001"));
+    assert!(stdout.contains(&thread_id));
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let state = thread::replay_thread(&git, "ASK-0001").unwrap();
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(state.status, "closed");
     assert_eq!(state.open_actions().len(), 0);
 }

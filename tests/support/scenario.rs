@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::collections::HashMap;
+
 use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::evidence::EvidenceKind;
 
@@ -430,18 +432,28 @@ pub fn calculator_scenario() -> ScenarioDef {
 }
 
 /// Expected outcomes for the calculator scenario.
-pub fn calculator_expected_outcomes() -> Vec<ExpectedOutcome> {
+///
+/// `label_map` maps scenario labels (e.g. "RFC-0001") to actual opaque thread IDs.
+/// The `thread_ref` in each outcome is set to the actual ID so that
+/// `thread::replay_thread` can look it up.
+pub fn calculator_expected_outcomes(label_map: &HashMap<String, String>) -> Vec<ExpectedOutcome> {
+    let resolve = |label: &str| -> String {
+        label_map
+            .get(label)
+            .unwrap_or_else(|| panic!("missing label in map: {label}"))
+            .clone()
+    };
     vec![
         ExpectedOutcome {
-            thread_ref: "RFC-0001".to_string(),
+            thread_ref: resolve("RFC-0001"),
             expected_status: "accepted".to_string(),
             acceptable_statuses: vec![],
-            min_nodes: 4, // agents create discussion organically, may not hit exactly 10
+            min_nodes: 4,
             expected_evidence_count: 0,
             expected_link_count: 0,
         },
         ExpectedOutcome {
-            thread_ref: "RFC-0002".to_string(),
+            thread_ref: resolve("RFC-0002"),
             expected_status: "rejected".to_string(),
             acceptable_statuses: vec![],
             min_nodes: 1,
@@ -449,7 +461,7 @@ pub fn calculator_expected_outcomes() -> Vec<ExpectedOutcome> {
             expected_link_count: 0,
         },
         ExpectedOutcome {
-            thread_ref: "RFC-0003".to_string(),
+            thread_ref: resolve("RFC-0003"),
             expected_status: "draft".to_string(),
             acceptable_statuses: vec!["rejected".to_string()],
             min_nodes: 0,
@@ -457,7 +469,7 @@ pub fn calculator_expected_outcomes() -> Vec<ExpectedOutcome> {
             expected_link_count: 0,
         },
         ExpectedOutcome {
-            thread_ref: "ASK-0001".to_string(),
+            thread_ref: resolve("ASK-0001"),
             expected_status: "closed".to_string(),
             acceptable_statuses: vec!["pending".to_string()],
             min_nodes: 0,
@@ -465,7 +477,7 @@ pub fn calculator_expected_outcomes() -> Vec<ExpectedOutcome> {
             expected_link_count: 1,
         },
         ExpectedOutcome {
-            thread_ref: "ASK-0002".to_string(),
+            thread_ref: resolve("ASK-0002"),
             expected_status: "closed".to_string(),
             acceptable_statuses: vec![],
             min_nodes: 0,
@@ -473,7 +485,7 @@ pub fn calculator_expected_outcomes() -> Vec<ExpectedOutcome> {
             expected_link_count: 1,
         },
         ExpectedOutcome {
-            thread_ref: "ASK-0003".to_string(),
+            thread_ref: resolve("ASK-0003"),
             expected_status: "closed".to_string(),
             acceptable_statuses: vec!["pending".to_string()],
             min_nodes: 0,
@@ -481,7 +493,7 @@ pub fn calculator_expected_outcomes() -> Vec<ExpectedOutcome> {
             expected_link_count: 0,
         },
         ExpectedOutcome {
-            thread_ref: "ASK-0004".to_string(),
+            thread_ref: resolve("ASK-0004"),
             expected_status: "open".to_string(),
             acceptable_statuses: vec![],
             min_nodes: 2,
@@ -489,7 +501,7 @@ pub fn calculator_expected_outcomes() -> Vec<ExpectedOutcome> {
             expected_link_count: 0,
         },
         ExpectedOutcome {
-            thread_ref: "RFC-0004".to_string(),
+            thread_ref: resolve("RFC-0004"),
             expected_status: "deprecated".to_string(),
             acceptable_statuses: vec![
                 "rejected".to_string(),
@@ -501,7 +513,7 @@ pub fn calculator_expected_outcomes() -> Vec<ExpectedOutcome> {
             expected_link_count: 0,
         },
         ExpectedOutcome {
-            thread_ref: "ASK-0005".to_string(),
+            thread_ref: resolve("ASK-0005"),
             expected_status: "open".to_string(),
             acceptable_statuses: vec!["pending".to_string()],
             min_nodes: 0,
