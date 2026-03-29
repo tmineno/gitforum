@@ -2,6 +2,7 @@ use super::config::RepoPaths;
 use super::error::ForumResult;
 use super::git_ops::GitOps;
 use super::index;
+use super::init;
 use super::refs;
 use super::thread;
 
@@ -89,7 +90,46 @@ pub fn run_doctor(git: &GitOps, paths: &RepoPaths) -> ForumResult<DoctorReport> 
     // 4. .git/forum/ directory
     checks.push(check_dir(".git/forum/ directory", &paths.git_forum));
 
-    // 5. Thread refs (informational)
+    // 5. Forum fetch refspec for each remote
+    match git.run(&["remote"]) {
+        Ok(remotes_output) => {
+            let remotes: Vec<&str> = remotes_output
+                .lines()
+                .map(|l| l.trim())
+                .filter(|l| !l.is_empty())
+                .collect();
+            if remotes.is_empty() {
+                checks.push(ok("forum refspec (no remotes)"));
+            } else {
+                for remote in &remotes {
+                    match init::has_forum_refspec(git, remote) {
+                        Ok(true) => {
+                            checks.push(ok(&format!("forum refspec ({remote})")));
+                        }
+                        Ok(false) => {
+                            checks.push(warn(
+                                &format!("forum refspec ({remote})"),
+                                &format!(
+                                    "remote '{remote}' lacks refs/forum/* fetch refspec; run `git forum init` to fix"
+                                ),
+                            ));
+                        }
+                        Err(e) => {
+                            checks.push(warn(
+                                &format!("forum refspec ({remote})"),
+                                &format!("could not check: {e}"),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        Err(_) => {
+            checks.push(ok("forum refspec (no remotes)"));
+        }
+    }
+
+    // 6. Thread refs (informational)
     let thread_ids = thread::list_thread_ids(git).ok();
     let thread_count = thread_ids.as_ref().map_or(0, |ids| ids.len());
     match &thread_ids {
