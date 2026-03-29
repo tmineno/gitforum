@@ -288,18 +288,21 @@ pub(super) fn build_tree_entries(nodes: &[Node]) -> Vec<TreeEntry> {
     entries
 }
 
-pub(super) fn thread_kind_values() -> [ThreadKind; 2] {
-    [ThreadKind::Issue, ThreadKind::Rfc]
+pub(super) fn thread_kind_values() -> [ThreadKind; 4] {
+    [ThreadKind::Issue, ThreadKind::Rfc, ThreadKind::Dec, ThreadKind::Task]
 }
 
-pub(super) fn thread_kind_labels() -> [&'static str; 2] {
-    ["issue", "rfc"]
+pub(super) fn thread_kind_labels() -> [&'static str; 4] {
+    ["issue", "rfc", "dec", "task"]
 }
 
 pub(super) fn default_thread_kind_index(kind_filter: Option<&str>) -> usize {
     match kind_filter {
-        Some("issue") => 0,
-        _ => 1,
+        Some("issue") | Some("ask") => 0,
+        Some("rfc") => 1,
+        Some("dec") => 2,
+        Some("task") | Some("job") => 3,
+        _ => 0,
     }
 }
 
@@ -331,22 +334,26 @@ pub(super) fn link_relation_labels() -> [&'static str; 4] {
     ["implements", "relates-to", "depends-on", "blocks"]
 }
 
-pub(super) fn link_target_kind_values() -> [LinkTargetKind; 3] {
+pub(super) fn link_target_kind_values() -> [LinkTargetKind; 5] {
     [
         LinkTargetKind::Issue,
         LinkTargetKind::Rfc,
+        LinkTargetKind::Dec,
+        LinkTargetKind::Task,
         LinkTargetKind::Manual,
     ]
 }
 
-pub(super) fn link_target_kind_labels() -> [&'static str; 3] {
-    ["issue", "rfc", "manual"]
+pub(super) fn link_target_kind_labels() -> [&'static str; 5] {
+    ["issue", "rfc", "dec", "task", "manual"]
 }
 
 pub(super) fn thread_kind_matches_target(kind: &str, target_kind: LinkTargetKind) -> bool {
     match target_kind {
         LinkTargetKind::Issue => kind == "issue",
         LinkTargetKind::Rfc => kind == "rfc",
+        LinkTargetKind::Dec => kind == "dec",
+        LinkTargetKind::Task => kind == "task",
         LinkTargetKind::Manual => false,
     }
 }
