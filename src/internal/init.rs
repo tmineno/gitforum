@@ -2,6 +2,7 @@ use std::fs;
 
 use super::config::RepoPaths;
 use super::error::ForumResult;
+use super::git_ops::GitOps;
 
 const DEFAULT_POLICY: &str = r#"# git-forum default policy
 #
@@ -193,6 +194,48 @@ pub fn init_forum(paths: &RepoPaths) -> ForumResult<()> {
     }
 
     Ok(())
+}
+
+/// The fetch refspec that maps remote forum refs into the local namespace.
+///
+/// The `+` prefix allows force-updates (forum refs are amended by design).
+pub const FORUM_REFSPEC: &str = "+refs/forum/*:refs/forum/*";
+
+/// Check whether a remote already has the forum fetch refspec configured.
+pub fn has_forum_refspec(git: &GitOps, remote: &str) -> ForumResult<bool> {
+    let key = format!("remote.{remote}.fetch");
+    match git.run(&["config", "--get-all", &key]) {
+        Ok(output) => Ok(output.lines().any(|line| line.trim() == FORUM_REFSPEC)),
+        Err(_) => Ok(false),
+    }
+}
+
+/// For every configured remote, add the forum fetch refspec if not already present.
+///
+/// Idempotent: skips remotes that already have the refspec.
+/// Returns the list of remote names that were modified.
+pub fn ensure_forum_refspecs(git: &GitOps) -> ForumResult<Vec<String>> {
+    let remotes_output = match git.run(&["remote"]) {
+        Ok(o) => o,
+        Err(_) => return Ok(vec![]),
+    };
+    let mut modified = Vec::new();
+    for remote in remotes_output.lines() {
+        let remote = remote.trim();
+        if remote.is_empty() {
+            continue;
+        }
+        if !has_forum_refspec(git, remote)? {
+            git.run(&[
+                "config",
+                "--add",
+                &format!("remote.{remote}.fetch"),
+                FORUM_REFSPEC,
+            ])?;
+            modified.push(remote.to_string());
+        }
+    }
+    Ok(modified)
 }
 
 fn write_if_missing(path: &std::path::Path, content: &str) -> ForumResult<()> {
