@@ -79,6 +79,56 @@ pub fn edit_body(hint: &str) -> Result<String, ForumError> {
     Ok(body)
 }
 
+/// Open `$VISUAL` / `$EDITOR` / `vi` with existing body content for editing.
+///
+/// Like [`edit_body`] but pre-fills the temp file with `current_body`.
+/// Designed for use from the TUI where stdin is already an interactive terminal.
+///
+/// **Postconditions:** Returns the edited body, or `Err` if the editor fails
+/// or the result is empty.
+///
+/// **Side effects:** Spawns an external editor process; creates a temp file (auto-cleaned).
+pub fn edit_body_with_content(current_body: &str) -> Result<String, ForumError> {
+    let editor = resolve_editor();
+
+    let mut tmp = Builder::new()
+        .prefix("git-forum-")
+        .suffix(".md")
+        .tempfile()
+        .map_err(|e| ForumError::Config(format!("failed to create temp file: {e}")))?;
+
+    let template = format!(
+        "{current_body}\n\n# Lines starting with '#' will be stripped.\n# Save and quit to submit; leave empty to abort.\n"
+    );
+    tmp.write_all(template.as_bytes())?;
+    tmp.flush()?;
+
+    let path = tmp.path().to_path_buf();
+
+    let status = Command::new(&editor)
+        .arg(&path)
+        .status()
+        .map_err(|e| ForumError::Config(format!("failed to launch editor '{editor}': {e}")))?;
+
+    if !status.success() {
+        return Err(ForumError::Config(format!(
+            "editor '{editor}' exited with {}",
+            status
+                .code()
+                .map_or("signal".to_string(), |c| c.to_string())
+        )));
+    }
+
+    let content = std::fs::read_to_string(&path)?;
+    let body = strip_comments(&content);
+
+    if body.is_empty() {
+        return Err(ForumError::Config("aborted: empty body from editor".into()));
+    }
+
+    Ok(body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

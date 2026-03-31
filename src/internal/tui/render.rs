@@ -480,7 +480,7 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
     };
     f.render_widget(
         Paragraph::new(format!(
-            " [esc/q]back [enter]node [c]create [l]link [m]{md_indicator} [S]select [r]refresh [j/k]nodes [z]fold [{tree_indicator}]",
+            " [esc/q]back [enter]node [e]edit [c]create [l]link [m]{md_indicator} [S]select [r]refresh [j/k]nodes [z]fold [{tree_indicator}]",
         )),
         chunks[0],
     );
