@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::approval::Approval;
-use super::error::ForumResult;
+use super::error::{ForumError, ForumResult};
 use super::evidence::Evidence;
 use super::git_ops::GitOps;
 use super::refs;
@@ -388,7 +388,11 @@ pub fn write_event(git: &GitOps, event: &Event) -> ForumResult<String> {
 
 /// Read an event from a commit SHA.
 pub fn read_event(git: &GitOps, commit_sha: &str) -> ForumResult<Event> {
-    let json = git.show_file(commit_sha, "event.json")?;
+    let json = git.show_file(commit_sha, "event.json").map_err(|e| {
+        ForumError::Git(format!(
+            "commit {commit_sha} has no event.json (corrupt thread history): {e}"
+        ))
+    })?;
     let mut event: Event = serde_json::from_str(&json)?;
     event.event_id = commit_sha.to_string();
     event.validate()?;
