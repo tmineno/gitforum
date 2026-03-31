@@ -847,13 +847,19 @@ where
         .clear()
         .map_err(|e| -> std::io::Error { e.into() })?;
 
-    // Process result
-    let new_body = editor_result?;
-
-    if new_body.trim() == current_body.trim() {
-        app.info_flash = Some("No changes".into());
-        return Ok(());
-    }
+    // Process result — treat editor abort or unchanged content as no-op
+    let new_body = match editor_result {
+        Ok(body) if body.trim() == current_body.trim() => {
+            app.info_flash = Some("No changes".into());
+            return Ok(());
+        }
+        Ok(body) => body,
+        Err(_) => {
+            // Editor exited abnormally or body was empty (user quit without saving)
+            app.info_flash = Some("Edit cancelled".into());
+            return Ok(());
+        }
+    };
 
     let actor_id = actor::current_actor(git, git.default_actor());
     let clock = SystemClock;
