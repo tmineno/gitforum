@@ -52,6 +52,7 @@ create and browse threads
    show        Show thread details (use --what-next for diagnostics)
    diff        Show diff between body revisions
    search      Search threads and nodes
+   shortlog    List threads resolved since a date or tag
    status      Show unresolved items for a thread
 
 structured discussion (see also: git forum node add --help)
@@ -264,6 +265,15 @@ enum Commands {
         /// Filter by thread status (open, closed, draft, etc.)
         #[arg(long, value_name = "STATUS")]
         status: Option<String>,
+    },
+    /// List threads that reached terminal state since a date or tag
+    Shortlog {
+        /// Show threads resolved after this date (ISO) or git revision (tag/SHA)
+        #[arg(long, value_name = "DATE_OR_REV")]
+        since: String,
+        /// Filter by thread kind (ask, rfc, dec, job)
+        #[arg(long, value_name = "KIND")]
+        kind: Option<String>,
     },
     /// Close a thread (issue shorthand)
     Close {
@@ -1820,6 +1830,23 @@ fn main() -> Result<(), ForumError> {
             print!("{}", show::render_ls(&filtered));
         }
 
+        Commands::Shortlog { since, kind } => {
+            let (git, _paths) = discover_repo_with_init_warning()?;
+            let kind_filter = kind.as_deref().map(parse_thread_kind).transpose()?;
+            let since_dt = parse_since_date(&since, &git)?;
+            let states = list_thread_states(&git, kind_filter, None)?;
+            let mut entries: Vec<(&thread::ThreadState, chrono::DateTime<chrono::Utc>)> =
+                Vec::new();
+            for state in &states {
+                if let Some(term_date) = terminal_state_date(state) {
+                    if term_date >= since_dt {
+                        entries.push((state, term_date));
+                    }
+                }
+            }
+            print!("{}", show::render_shortlog(&entries));
+        }
+
         Commands::Show {
             thread_id,
             what_next,
@@ -3122,6 +3149,42 @@ fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
             "unknown kind '{other}'; valid: ask, rfc, dec, job (aliases: issue, task)"
         ))),
     }
+}
+
+fn parse_since_date(
+    since: &str,
+    git: &GitOps,
+) -> Result<chrono::DateTime<chrono::Utc>, ForumError> {
+    use chrono::{DateTime, NaiveDate, Utc};
+    // Try ISO date: YYYY-MM-DD (treat as start of day UTC)
+    if let Ok(naive) = NaiveDate::parse_from_str(since, "%Y-%m-%d") {
+        return Ok(naive.and_hms_opt(0, 0, 0).unwrap().and_utc());
+    }
+    // Try full RFC 3339 / ISO 8601
+    if let Ok(dt) = DateTime::parse_from_rfc3339(since) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+    // Try as git revision (tag, branch, SHA)
+    git.commit_timestamp(since)
+}
+
+fn terminal_state_date(state: &thread::ThreadState) -> Option<chrono::DateTime<chrono::Utc>> {
+    use git_forum::internal::policy::TERMINAL_STATES;
+
+    if !TERMINAL_STATES.contains(&state.status.as_str()) {
+        return None;
+    }
+    // Scan events in reverse for the most recent State event that set the current
+    // terminal status (handles reopen-then-close scenarios correctly).
+    state.events.iter().rev().find_map(|e| {
+        if e.event_type == git_forum::internal::event::EventType::State
+            && e.new_state.as_deref() == Some(&state.status)
+        {
+            Some(e.created_at)
+        } else {
+            None
+        }
+    })
 }
 
 fn parse_thread_kind_filter(kind: Option<&str>) -> Result<Option<ThreadKind>, ForumError> {

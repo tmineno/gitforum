@@ -1,3 +1,5 @@
+use chrono::{DateTime, Utc};
+
 use super::event::{Event, EventType, ThreadKind};
 use super::policy::{self, Policy};
 use super::state_machine;
@@ -1046,6 +1048,81 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
             title,
         ));
     }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+pub fn render_shortlog(entries: &[(&ThreadState, DateTime<Utc>)]) -> String {
+    if entries.is_empty() {
+        return "no threads reached terminal state in the given period\n".into();
+    }
+
+    let kind_order = [
+        ThreadKind::Issue,
+        ThreadKind::Rfc,
+        ThreadKind::Dec,
+        ThreadKind::Task,
+    ];
+
+    let mut lines: Vec<String> = Vec::new();
+
+    for kind in &kind_order {
+        let mut group: Vec<(&ThreadState, DateTime<Utc>)> = entries
+            .iter()
+            .filter(|(s, _)| s.kind == *kind)
+            .copied()
+            .collect();
+        if group.is_empty() {
+            continue;
+        }
+        group.sort_by_key(|(_, dt)| *dt);
+
+        let kind_label = kind.to_string();
+        let count = group.len();
+        let thread_word = if count == 1 { "thread" } else { "threads" };
+
+        if !lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines.push(format!("## {kind_label} ({count} {thread_word})"));
+
+        let id_width = group
+            .iter()
+            .map(|(s, _)| s.id.len())
+            .max()
+            .unwrap_or(12)
+            .clamp(12, 20);
+        let status_width = group
+            .iter()
+            .map(|(s, _)| s.status.len())
+            .max()
+            .unwrap_or(10)
+            .clamp(10, 16);
+        let date_width = 16; // YYYY-MM-DD HH:MM
+
+        let fixed_cols = id_width + status_width + date_width + 8;
+        let term_width = crossterm::terminal::size()
+            .map(|(w, _)| w as usize)
+            .ok()
+            .filter(|&w| w >= 40)
+            .unwrap_or(0);
+        let title_max = term_width.saturating_sub(fixed_cols);
+
+        lines.push(format!(
+            "{:<id_width$}  {:<status_width$}  {:<date_width$}  {}",
+            "ID", "STATUS", "RESOLVED", "TITLE"
+        ));
+
+        for (state, term_date) in &group {
+            let resolved = term_date.format("%Y-%m-%d %H:%M").to_string();
+            let title = truncate_with_ellipsis(&state.title, title_max);
+            lines.push(format!(
+                "{:<id_width$}  {:<status_width$}  {:<date_width$}  {}",
+                state.id, state.status, resolved, title,
+            ));
+        }
+    }
+
     lines.push(String::new());
     lines.join("\n")
 }

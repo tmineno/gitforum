@@ -16,6 +16,7 @@ git forum log <ID>                                 Show event timeline for a thr
 git forum log <ID> --reverse                       Show newest events first
 git forum log <ID> -n <N>                          Limit to last N events
 git forum search <query>                           Search threads and nodes
+git forum shortlog --since <DATE_OR_REV>           Threads resolved after date/tag
 git forum status <ID>                              Check open items
 git forum node show <NODE_ID>                      Inspect a single node
 

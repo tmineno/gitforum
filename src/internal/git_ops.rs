@@ -2,6 +2,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use chrono::{DateTime, Utc};
+
 use super::config::CommitIdentity;
 use super::error::{ForumError, ForumResult};
 
@@ -280,6 +282,17 @@ impl GitOps {
         let revspec = format!("{rev}^{{commit}}");
         self.run(&["rev-parse", "--verify", &revspec])
             .map_err(|_| ForumError::Repo(format!("revision '{rev}' does not resolve to a commit")))
+    }
+
+    /// Get the author timestamp of a commit as a `DateTime<Utc>`.
+    ///
+    /// Accepts any revision expression (tag, branch, SHA).
+    pub fn commit_timestamp(&self, rev: &str) -> ForumResult<DateTime<Utc>> {
+        let sha = self.resolve_commit(rev)?;
+        let iso = self.run(&["log", "--format=%aI", "-1", &sha])?;
+        DateTime::parse_from_rfc3339(iso.trim())
+            .map(|dt| dt.with_timezone(&Utc))
+            .map_err(|e| ForumError::Git(format!("cannot parse timestamp for '{rev}': {e}")))
     }
 
     /// List all ref names under a given prefix.

@@ -494,7 +494,7 @@ fn sorted_states(states: &std::collections::HashSet<&str>) -> String {
 }
 
 /// Terminal states are resolution/conclusion states where a thread's primary work is done.
-const TERMINAL_STATES: &[&str] = &["closed", "rejected", "accepted", "deprecated"];
+pub const TERMINAL_STATES: &[&str] = &["closed", "rejected", "accepted", "deprecated"];
 
 /// Return non-terminal states for a thread kind (states where active work happens).
 fn non_terminal_states(kind: ThreadKind) -> Vec<&'static str> {
