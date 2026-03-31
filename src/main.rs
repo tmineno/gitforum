@@ -27,6 +27,7 @@ use git_forum::internal::init;
 use git_forum::internal::operation_check;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::purge;
+use git_forum::internal::refs;
 use git_forum::internal::reindex;
 use git_forum::internal::repair;
 use git_forum::internal::show;
@@ -3129,9 +3130,20 @@ fn list_thread_states(
     let all_ids = thread::list_thread_ids(git)?;
     let mut states = Vec::new();
     for id in &all_ids {
-        let state = thread::replay_thread(git, id)?;
-        if thread_matches_filters(&state, kind, branch, None) {
-            states.push(state);
+        match thread::replay_thread(git, id) {
+            Ok(state) => {
+                if thread_matches_filters(&state, kind, branch, None) {
+                    states.push(state);
+                }
+            }
+            Err(e) => {
+                let ref_name = refs::thread_ref(id);
+                eprintln!(
+                    "warning: skipping {id}: failed to replay {ref_name}: {e}\n  \
+                     hint: run `git forum doctor` to diagnose, \
+                     or `git forum repair` to attempt recovery"
+                );
+            }
         }
     }
     states.sort_by_key(|s| s.created_at);
