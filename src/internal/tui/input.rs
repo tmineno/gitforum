@@ -130,6 +130,9 @@ pub(super) fn handle_key(
                 reindex::run_reindex(git, db_path)?;
                 open_thread_detail(app, git, &thread_id, selected.as_deref(), perf)?;
             }
+            KeyCode::Char('e') => {
+                app.pending_external_edit = Some(thread_id.clone());
+            }
             KeyCode::Char('y') => {
                 let id = app.selected_node_id().unwrap_or_else(|| thread_id.clone());
                 match copy_to_clipboard(&id) {

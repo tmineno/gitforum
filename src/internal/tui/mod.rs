@@ -283,6 +283,9 @@ pub struct App {
     /// When true, a "Discard unsaved changes?" confirmation overlay is shown.
     /// The next `y` keypress performs the pending discard; any other key cancels.
     pub(crate) confirm_discard: bool,
+    /// When set, the event loop should suspend the terminal, open `$EDITOR`
+    /// for the thread body, and submit a revision on save.
+    pub(crate) pending_external_edit: Option<String>,
 }
 
 impl App {
@@ -343,6 +346,7 @@ impl App {
             error_flash: None,
             info_flash: None,
             confirm_discard: false,
+            pending_external_edit: None,
         }
     }
 
@@ -805,6 +809,69 @@ fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
     ))
 }
 
+/// Suspend the terminal, open `$EDITOR` for the thread body, and submit a revision.
+fn handle_external_edit<B: Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    git: &GitOps,
+    db_path: &Path,
+    perf: &mut Perf,
+    thread_id: &str,
+) -> ForumResult<()>
+where
+    B::Error: Into<std::io::Error>,
+{
+    use super::actor;
+    use super::clock::SystemClock;
+    use super::editor;
+    use super::reindex;
+    use super::thread;
+    use super::write_ops;
+
+    // Replay thread to get the current body
+    let state = thread::replay_thread(git, thread_id)?;
+    let current_body = state.body.as_deref().unwrap_or("");
+
+    // Suspend terminal
+    disable_raw_mode().ok();
+    execute!(std::io::stdout(), LeaveAlternateScreen, DisableMouseCapture).ok();
+    terminal.show_cursor().ok();
+
+    // Run editor
+    let editor_result = editor::edit_body_with_content(current_body);
+
+    // Restore terminal
+    enable_raw_mode()?;
+    execute!(std::io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+    terminal
+        .clear()
+        .map_err(|e| -> std::io::Error { e.into() })?;
+
+    // Process result — treat editor abort or unchanged content as no-op
+    let new_body = match editor_result {
+        Ok(body) if body.trim() == current_body.trim() => {
+            app.info_flash = Some("No changes".into());
+            return Ok(());
+        }
+        Ok(body) => body,
+        Err(_) => {
+            // Editor exited abnormally or body was empty (user quit without saving)
+            app.info_flash = Some("Edit cancelled".into());
+            return Ok(());
+        }
+    };
+
+    let actor_id = actor::current_actor(git, git.default_actor());
+    let clock = SystemClock;
+    write_ops::revise_body(git, thread_id, &new_body, &[], &actor_id, &clock)?;
+
+    reindex::run_reindex(git, db_path)?;
+    let selected = app.selected_node_id();
+    state::open_thread_detail(app, git, thread_id, selected.as_deref(), perf)?;
+    app.info_flash = Some("Body revised".into());
+    Ok(())
+}
+
 /// Convert a ForumError into an ErrorFlash with a context-specific CLI hint.
 fn to_error_flash(app: &App, err: &ForumError) -> ErrorFlash {
     let message = err.to_string();
@@ -886,6 +953,13 @@ where
                         Ok(true) => return Ok(()),
                         Ok(false) => {}
                         Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
+                    }
+                    // Handle pending external editor request (terminal suspend required)
+                    if let Some(thread_id) = app.pending_external_edit.take() {
+                        match handle_external_edit(terminal, app, git, db_path, perf, &thread_id) {
+                            Ok(()) => {}
+                            Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
+                        }
                     }
                 }
                 Event::Mouse(mouse) => {
