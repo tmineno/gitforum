@@ -145,6 +145,7 @@ Design proposals not yet proposed/accepted:
 - RFC-0019 — Web UI: embedded HTTP server via `git forum serve`
 - RFC-0022 — Advisory workflow features: brief, scope tracking, spec-delta warnings,
   escalation hints
+- RFC-6m4kap23 — Spawn Claude Code to fix selected issue (`git forum fix`)
 
 ## Future considerations
 
