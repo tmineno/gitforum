@@ -160,7 +160,7 @@ fn doctor_warns_on_missing_refspec() {
     git_forum_cmd(repo.path(), &["init"]);
 
     // Remove the refspec
-    Command::new("git")
+    let unset_output = Command::new("git")
         .args([
             "config",
             "--unset",
@@ -169,8 +169,15 @@ fn doctor_warns_on_missing_refspec() {
         ])
         .current_dir(repo.path())
         .envs(isolation_env())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
         .output()
         .expect("unset failed");
+    assert!(
+        unset_output.status.success(),
+        "git config --unset failed: {}",
+        String::from_utf8_lossy(&unset_output.stderr)
+    );
 
     // Run doctor
     let output = git_forum_cmd(repo.path(), &["doctor"]);

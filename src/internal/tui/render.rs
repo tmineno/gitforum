@@ -43,6 +43,16 @@ pub(super) fn render(f: &mut Frame, app: &mut App) {
         View::CreateLink { .. } => render_create_link(f, f.area(), app),
     }
 
+    // Discard confirmation overlay
+    if app.confirm_discard {
+        render_confirm_discard(f, f.area());
+    }
+
+    // Info flash overlay (e.g. "Copied: RFC-0025")
+    if let Some(ref msg) = app.info_flash {
+        render_info_flash(f, f.area(), msg);
+    }
+
     // Error flash overlay (rendered last, on top of everything)
     if let Some(ref flash) = app.error_flash {
         render_error_flash(f, f.area(), flash);
@@ -1116,6 +1126,66 @@ fn render_error_flash(f: &mut Frame, area: Rect, flash: &ErrorFlash) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Red))
         .title(" Error ");
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
+    f.render_widget(paragraph, popup_area);
+}
+
+/// Render a brief info flash as a small centered overlay (e.g. "Copied: RFC-0025").
+fn render_info_flash(f: &mut Frame, area: Rect, message: &str) {
+    let text = format!("  {message}  ");
+    let width = (text.len() as u16 + 4).min(area.width.saturating_sub(4));
+    let height: u16 = 3;
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let popup_area = Rect::new(x, y, width, height);
+
+    f.render_widget(Clear, popup_area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Green));
+    let paragraph = Paragraph::new(Line::styled(
+        text,
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    ))
+    .block(block);
+    f.render_widget(paragraph, popup_area);
+}
+
+/// Render a confirmation prompt for discarding unsaved form input.
+fn render_confirm_discard(f: &mut Frame, area: Rect) {
+    let lines = vec![
+        Line::from(""),
+        Line::styled(
+            "  Unsaved changes will be lost. Quit?",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Line::from(""),
+        Line::styled(
+            "  Press y to discard, any other key to cancel",
+            Style::default().fg(Color::DarkGray),
+        ),
+        Line::from(""),
+    ];
+
+    let height = lines.len() as u16 + 2;
+    let width: u16 = 50;
+    let popup_width = width.min(area.width.saturating_sub(4));
+    let popup_height = height.min(area.height.saturating_sub(2));
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    f.render_widget(Clear, popup_area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow))
+        .title(" Confirm ");
     let paragraph = Paragraph::new(lines)
         .block(block)
         .wrap(Wrap { trim: false });

@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::Instant;
 
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -278,6 +278,11 @@ pub struct App {
     replay_cache: ReplayCache,
     /// Error flash message displayed as an overlay, dismissed on next keypress.
     pub(crate) error_flash: Option<ErrorFlash>,
+    /// Brief info flash (e.g. "Copied: RFC-0025"), dismissed on next keypress.
+    pub(crate) info_flash: Option<String>,
+    /// When true, a "Discard unsaved changes?" confirmation overlay is shown.
+    /// The next `y` keypress performs the pending discard; any other key cancels.
+    pub(crate) confirm_discard: bool,
 }
 
 impl App {
@@ -336,6 +341,8 @@ impl App {
             thread_status: String::new(),
             replay_cache: ReplayCache::new(),
             error_flash: None,
+            info_flash: None,
+            confirm_discard: false,
         }
     }
 
@@ -522,6 +529,18 @@ impl App {
             })
             .and_then(|&ti| self.tree_entries.get(ti))
             .map(|entry| self.thread_nodes[entry.node_index].node_id.clone())
+    }
+
+    /// Returns true if the current form view has unsaved user input.
+    fn has_unsaved_form_input(&self) -> bool {
+        match &self.view {
+            View::CreateThread => {
+                !self.thread_form.title.is_empty() || !self.thread_form.body.is_empty()
+            }
+            View::CreateNode { .. } => !self.node_form.body.is_empty(),
+            View::CreateLink { .. } => !self.link_form.manual_target.is_empty(),
+            _ => false,
+        }
     }
 
     fn move_node_down(&mut self) {
@@ -727,6 +746,65 @@ pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> For
     result
 }
 
+/// Copy text to the system clipboard.
+///
+/// Tries platform-specific commands in order:
+/// - macOS: `pbcopy`
+/// - Linux/Wayland: `wl-copy`
+/// - Linux/X11: `xclip -selection clipboard`
+/// - Linux/X11 fallback: `xsel --clipboard --input`
+///
+/// Returns `Ok(())` on success or an error if no clipboard tool is available.
+fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
+    use std::process::{Command, Stdio};
+
+    let candidates: &[&[&str]] = &[
+        &["pbcopy"],
+        &["wl-copy"],
+        &["xclip", "-selection", "clipboard"],
+        &["xsel", "--clipboard", "--input"],
+    ];
+
+    for args in candidates {
+        let program = args[0];
+        let extra = &args[1..];
+        if let Ok(mut child) = Command::new(program)
+            .args(extra)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            use std::io::Write;
+            // Write data and drop stdin so the child sees EOF
+            let write_ok = match child.stdin.take() {
+                Some(mut stdin) => {
+                    let res = stdin.write_all(text.as_bytes());
+                    drop(stdin);
+                    res.is_ok()
+                }
+                None => false,
+            };
+            if write_ok {
+                if let Ok(status) = child.wait() {
+                    if status.success() {
+                        return Ok(());
+                    }
+                }
+            } else {
+                child.kill().ok();
+                child.wait().ok();
+            }
+            // This candidate failed; try the next one
+        }
+    }
+
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "no clipboard tool found (install pbcopy, wl-copy, xclip, or xsel)",
+    ))
+}
+
 /// Convert a ForumError into an ErrorFlash with a context-specific CLI hint.
 fn to_error_flash(app: &App, err: &ForumError) -> ErrorFlash {
     let message = err.to_string();
@@ -784,6 +862,21 @@ where
             match event::read()? {
                 Event::Key(key) => {
                     input_start = Some(Instant::now());
+                    // Dismiss info flash on any keypress
+                    app.info_flash = None;
+                    // If a discard confirmation is showing, handle y/n
+                    if app.confirm_discard {
+                        app.confirm_discard = false;
+                        if key.code == KeyCode::Char('y') || key.code == KeyCode::Char('Y') {
+                            // Perform the discard: reset form and navigate away
+                            match input::confirm_discard_action(app, git, perf) {
+                                Ok(()) => {}
+                                Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
+                            }
+                        }
+                        // On any other key, just dismiss the confirmation
+                        continue;
+                    }
                     // If an error flash is showing, dismiss it on any keypress
                     if app.error_flash.is_some() {
                         app.error_flash = None;
@@ -797,6 +890,8 @@ where
                 }
                 Event::Mouse(mouse) => {
                     input_start = Some(Instant::now());
+                    // Dismiss info flash on any click
+                    app.info_flash = None;
                     // If an error flash is showing, dismiss it on any click
                     if app.error_flash.is_some() {
                         app.error_flash = None;

@@ -127,6 +127,10 @@ pub fn state_transition_map() -> String {
         "`git forum show <ID> --compact` truncates all sections to single-line previews.\n",
     );
     out.push_str("`git forum show <ID> --no-timeline` omits the timeline section.\n");
+    out.push_str(
+        "`git forum log <ID> --since <DATE>` shows only events after a date (ISO date, RFC 3339, or git revision).\n",
+    );
+    out.push_str("`git forum log <ID> -n <N>` limits output to the last N events.\n");
 
     out
 }

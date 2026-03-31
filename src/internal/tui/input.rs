@@ -13,6 +13,7 @@ use crate::internal::git_ops::GitOps;
 use crate::internal::index;
 use crate::internal::reindex;
 
+use super::copy_to_clipboard;
 use super::perf::Perf;
 use super::state::{
     apply_node_status_action, auto_link_candidates, link_relation_labels, link_target_kind_labels,
@@ -71,6 +72,14 @@ pub(super) fn handle_key(
                         app.table_state
                             .select(if n > 0 { Some(sel.min(n - 1)) } else { None });
                     }
+                    KeyCode::Char('y') => {
+                        if let Some(id) = app.selected_thread_id() {
+                            match copy_to_clipboard(&id) {
+                                Ok(()) => app.info_flash = Some(format!("Copied: {id}")),
+                                Err(e) => app.info_flash = Some(format!("Copy failed: {e}")),
+                            }
+                        }
+                    }
                     KeyCode::Enter => {
                         if let Some(id) = app.selected_thread_id() {
                             open_thread_detail(app, git, &id, None, perf)?;
@@ -121,6 +130,13 @@ pub(super) fn handle_key(
                 reindex::run_reindex(git, db_path)?;
                 open_thread_detail(app, git, &thread_id, selected.as_deref(), perf)?;
             }
+            KeyCode::Char('y') => {
+                let id = app.selected_node_id().unwrap_or_else(|| thread_id.clone());
+                match copy_to_clipboard(&id) {
+                    Ok(()) => app.info_flash = Some(format!("Copied: {id}")),
+                    Err(e) => app.info_flash = Some(format!("Copy failed: {e}")),
+                }
+            }
             KeyCode::Enter => {
                 if let Some(node_id) = app.selected_node_id() {
                     open_node_detail(app, git, &thread_id, &node_id)?;
@@ -132,6 +148,10 @@ pub(super) fn handle_key(
             KeyCode::Char('q') | KeyCode::Esc => {
                 open_thread_detail(app, git, &thread_id, Some(&node_id), perf)?;
             }
+            KeyCode::Char('y') => match copy_to_clipboard(&node_id) {
+                Ok(()) => app.info_flash = Some(format!("Copied: {node_id}")),
+                Err(e) => app.info_flash = Some(format!("Copy failed: {e}")),
+            },
             KeyCode::Char('c') => app.begin_create_node(&thread_id),
             KeyCode::Char('l') => app.begin_create_link_from_node(&thread_id, &node_id),
             KeyCode::Char('m') => app.markdown_mode = !app.markdown_mode,
@@ -201,6 +221,32 @@ pub(super) fn handle_key(
         }
     }
     Ok(false)
+}
+
+/// Perform the actual discard: reset the form and navigate away.
+/// Called when the user confirms "y" on the discard prompt.
+pub(super) fn confirm_discard_action(
+    app: &mut App,
+    git: &super::GitOps,
+    perf: &mut Perf,
+) -> crate::internal::error::ForumResult<()> {
+    match app.view.clone() {
+        View::CreateThread => {
+            app.thread_form.title.clear();
+            app.thread_form.body.clear();
+            app.view = View::List;
+        }
+        View::CreateNode { thread_id } => {
+            app.node_form.body.clear();
+            open_thread_detail(app, git, &thread_id, None, perf)?;
+        }
+        View::CreateLink { thread_id, origin } => {
+            app.link_form.manual_target.clear();
+            super::state::return_from_link_form(app, git, &thread_id, &origin, perf)?;
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 pub(super) fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
@@ -627,7 +673,13 @@ pub(super) fn handle_create_thread_key(
     perf: &mut Perf,
 ) -> ForumResult<()> {
     match key.code {
-        KeyCode::Esc => app.view = View::List,
+        KeyCode::Esc => {
+            if app.has_unsaved_form_input() {
+                app.confirm_discard = true;
+            } else {
+                app.view = View::List;
+            }
+        }
         KeyCode::Tab => {
             app.thread_form.field = match app.thread_form.field {
                 ThreadFormField::Kind => ThreadFormField::Title,
@@ -707,7 +759,13 @@ pub(super) fn handle_create_node_key(
     perf: &mut Perf,
 ) -> ForumResult<()> {
     match key.code {
-        KeyCode::Esc => open_thread_detail(app, git, thread_id, None, perf)?,
+        KeyCode::Esc => {
+            if app.has_unsaved_form_input() {
+                app.confirm_discard = true;
+            } else {
+                open_thread_detail(app, git, thread_id, None, perf)?;
+            }
+        }
         KeyCode::Tab => {
             app.node_form.field = match app.node_form.field {
                 NodeFormField::Type => NodeFormField::Body,
@@ -784,7 +842,13 @@ pub(super) fn handle_create_link_key(
     perf: &mut Perf,
 ) -> ForumResult<()> {
     match key.code {
-        KeyCode::Esc => super::state::return_from_link_form(app, git, thread_id, origin, perf)?,
+        KeyCode::Esc => {
+            if app.has_unsaved_form_input() {
+                app.confirm_discard = true;
+            } else {
+                super::state::return_from_link_form(app, git, thread_id, origin, perf)?;
+            }
+        }
         KeyCode::Tab => {
             app.link_form.field = match app.link_form.field {
                 LinkFormField::Relation => LinkFormField::TargetKind,

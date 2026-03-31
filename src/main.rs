@@ -13,6 +13,7 @@ use git_forum::internal::diff;
 use git_forum::internal::doctor;
 use git_forum::internal::editor;
 use git_forum::internal::error::ForumError;
+use git_forum::internal::event;
 use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::evidence_ops;
@@ -395,6 +396,9 @@ enum Commands {
         /// Limit to the last N events
         #[arg(short = 'n', long)]
         last: Option<usize>,
+        /// Show only events after this date (ISO date, RFC 3339, or git revision)
+        #[arg(long)]
+        since: Option<String>,
     },
     /// Show unified diff between body revisions
     Diff {
@@ -1878,19 +1882,25 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             reverse,
             last,
+            since,
         } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
             let state = thread::replay_thread(&git, &thread_id)?;
-            let widths = show::timeline_widths(&state.events);
+            let mut events: Vec<&event::Event> = state.events.iter().collect();
+            if let Some(ref since_str) = since {
+                let since_dt = parse_since_date(since_str, &git)?;
+                events.retain(|e| e.created_at >= since_dt);
+            }
+            let widths = show::timeline_widths_refs(&events);
             println!("{}", show::format_timeline_header(&widths));
-            let len = state.events.len();
+            let len = events.len();
             let skip = last.map(|n| len.saturating_sub(n)).unwrap_or(0);
             if reverse {
-                for event in state.events.iter().rev().take(len - skip) {
+                for event in events.iter().rev().take(len - skip) {
                     println!("{}", show::format_timeline_entry(event, &widths, false));
                 }
             } else {
-                for event in state.events.iter().skip(skip) {
+                for event in events.iter().skip(skip) {
                     println!("{}", show::format_timeline_entry(event, &widths, false));
                 }
             }

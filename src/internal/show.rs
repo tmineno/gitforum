@@ -723,6 +723,11 @@ pub struct TimelineWidths {
 }
 
 pub fn timeline_widths(events: &[Event]) -> TimelineWidths {
+    timeline_widths_refs(&events.iter().collect::<Vec<_>>())
+}
+
+/// Calculate column widths from a slice of event references.
+pub fn timeline_widths_refs(events: &[&Event]) -> TimelineWidths {
     let mut widths = TimelineWidths {
         date: 20,
         node_id: 16,
