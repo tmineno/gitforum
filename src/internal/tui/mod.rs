@@ -2,6 +2,7 @@ mod cache;
 mod input;
 mod markdown;
 pub(crate) mod perf;
+mod persist;
 pub(crate) mod render;
 mod state;
 
@@ -725,8 +726,50 @@ pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> For
     let mut perf = Perf::new();
 
     let mut app = App::new(threads);
+
+    // Restore persisted state (display settings first, then view navigation)
+    let persisted = persist::load_state(db_path);
+    if let Some(ref saved) = persisted {
+        saved.apply_to_app(&mut app);
+    }
+
     if let Some(thread_id) = initial_thread_id {
+        // CLI argument takes precedence over persisted view
         state::open_thread_detail(&mut app, git, thread_id, None, &mut perf)?;
+    } else if let Some(ref saved) = persisted {
+        // Restore persisted view if thread/node still exist
+        let thread_exists = saved
+            .thread_id
+            .as_ref()
+            .is_some_and(|tid| app.threads.iter().any(|t| t.id == *tid));
+        match saved.view.as_str() {
+            "thread" if thread_exists => {
+                let tid = saved.thread_id.as_ref().unwrap();
+                if state::open_thread_detail(&mut app, git, tid, None, &mut perf).is_ok() {
+                    app.thread_scroll = saved.thread_scroll;
+                    app.tree_fullscreen = saved.tree_fullscreen;
+                    for nid in &saved.collapsed {
+                        app.collapsed.insert(nid.clone());
+                    }
+                    app.recompute_visible_tree();
+                    if let Some(sel) = saved.node_table_selected {
+                        let n = app.visible_tree_indices.len() + 1;
+                        if n > 0 {
+                            app.node_table_state.select(Some(sel.min(n - 1)));
+                        }
+                    }
+                }
+            }
+            "node" if thread_exists => {
+                let tid = saved.thread_id.as_ref().unwrap();
+                if let Some(ref nid) = saved.node_id {
+                    if state::open_node_detail(&mut app, git, tid, nid).is_ok() {
+                        app.node_detail_scroll = saved.node_detail_scroll;
+                    }
+                }
+            }
+            _ => {} // "list" or invalid — stay on list with restored filters/sort
+        }
     }
 
     enable_raw_mode()?;
@@ -950,7 +993,10 @@ where
                         continue;
                     }
                     match handle_key(app, key, git, conn, db_path, perf) {
-                        Ok(true) => return Ok(()),
+                        Ok(true) => {
+                            persist::save_state(app, db_path);
+                            return Ok(());
+                        }
                         Ok(false) => {}
                         Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
                     }
@@ -972,7 +1018,10 @@ where
                         continue;
                     }
                     match handle_mouse(app, mouse, git, conn, db_path, perf) {
-                        Ok(true) => return Ok(()),
+                        Ok(true) => {
+                            persist::save_state(app, db_path);
+                            return Ok(());
+                        }
                         Ok(false) => {}
                         Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
                     }

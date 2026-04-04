@@ -26,6 +26,7 @@ use super::{
     ThreadFormField, View, FILTER_KIND_LABELS, FILTER_STATUS_LABELS,
 };
 
+use super::persist;
 use super::PAGE_SCROLL;
 
 pub(super) fn handle_key(
@@ -91,6 +92,7 @@ pub(super) fn handle_key(
         }
         View::ThreadDetail(thread_id) => match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
+                persist::save_state(app, db_path);
                 app.view = View::List;
                 app.thread_text.clear();
                 app.thread_scroll = 0;
@@ -279,8 +281,8 @@ pub(super) fn handle_mouse(
     app: &mut App,
     mouse: MouseEvent,
     git: &GitOps,
-    _conn: &rusqlite::Connection,
-    _db_path: &Path,
+    conn: &rusqlite::Connection,
+    db_path: &Path,
     perf: &mut Perf,
 ) -> ForumResult<bool> {
     match app.view.clone() {
@@ -364,14 +366,17 @@ pub(super) fn handle_mouse(
                     .help_line
                     .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
                 {
+                    persist::save_state(app, db_path);
                     app.view = View::List;
                     app.thread_text.clear();
+                    app.thread_scroll = 0;
                     app.thread_nodes.clear();
                     app.tree_entries.clear();
                     app.visible_tree_indices.clear();
                     app.collapsed.clear();
                     app.tree_fullscreen = false;
-                    app.thread_scroll = 0;
+                    app.node_detail_text.clear();
+                    app.node_detail_scroll = 0;
                 } else if let Some(area) = app.ui_rects.thread_nodes {
                     if let Some(index) = table_row_at(area, mouse.row) {
                         // +1 for thread root row at index 0
@@ -479,7 +484,7 @@ pub(super) fn handle_mouse(
                     .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
                 {
                     app.thread_form.field = ThreadFormField::Submit;
-                    submit_create_thread(app, git, _conn, _db_path, perf)?;
+                    submit_create_thread(app, git, conn, db_path, perf)?;
                 } else if let Some(area) = app.ui_rects.dropdown {
                     if let Some(index) = dropdown_item_at(area, mouse.row) {
                         let max = thread_kind_labels().len();
@@ -515,7 +520,7 @@ pub(super) fn handle_mouse(
                     .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
                 {
                     app.node_form.field = NodeFormField::Submit;
-                    submit_create_node(app, git, _conn, _db_path, &thread_id, perf)?;
+                    submit_create_node(app, git, conn, db_path, &thread_id, perf)?;
                 } else if let Some(area) = app.ui_rects.dropdown {
                     if let Some(index) = dropdown_item_at(area, mouse.row) {
                         let max = node_type_labels().len();
