@@ -115,6 +115,7 @@ pub(super) fn handle_key(
             }
             KeyCode::End => {
                 app.thread_scroll = u16::MAX;
+                app.clamp_thread_scroll();
             }
             KeyCode::Char('c') => app.begin_create_node(&thread_id),
             KeyCode::Char('l') => app.begin_create_link_from_thread(&thread_id),
@@ -187,12 +188,14 @@ pub(super) fn handle_key(
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 app.node_detail_scroll = app.node_detail_scroll.saturating_add(1);
+                app.clamp_node_detail_scroll();
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 app.node_detail_scroll = app.node_detail_scroll.saturating_sub(1);
             }
             KeyCode::PageDown => {
                 app.node_detail_scroll = app.node_detail_scroll.saturating_add(PAGE_SCROLL);
+                app.clamp_node_detail_scroll();
             }
             KeyCode::PageUp => {
                 app.node_detail_scroll = app.node_detail_scroll.saturating_sub(PAGE_SCROLL);
@@ -202,6 +205,7 @@ pub(super) fn handle_key(
             }
             KeyCode::End => {
                 app.node_detail_scroll = u16::MAX;
+                app.clamp_node_detail_scroll();
             }
             KeyCode::Char('r') => {
                 reindex::run_reindex(git, db_path)?;
@@ -464,6 +468,7 @@ pub(super) fn handle_mouse(
                 if let Some(area) = app.ui_rects.node_detail {
                     if rect_contains(area, mouse.column, mouse.row) {
                         app.node_detail_scroll = app.node_detail_scroll.saturating_add(1);
+                        app.clamp_node_detail_scroll();
                     }
                 }
             }

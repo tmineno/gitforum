@@ -34,6 +34,64 @@ use render::render;
 const PAGE_SCROLL: u16 = 20;
 use state::{auto_refresh, default_thread_kind_index};
 
+/// Compute the maximum scroll offset for wrapped text in a bordered area.
+///
+/// Returns the highest scroll value that still shows the last line of content
+/// at the bottom of the viewport. Returns 0 if content fits without scrolling.
+fn max_scroll(text: &str, area: Rect, markdown_mode: bool) -> u16 {
+    // Inner width after block borders (1 char each side)
+    let inner_width = area.width.saturating_sub(2) as usize;
+    // Inner height after block borders (1 char top + 1 char bottom)
+    let viewport_height = area.height.saturating_sub(2) as usize;
+    if inner_width == 0 || viewport_height == 0 {
+        return 0;
+    }
+
+    let total_lines = if markdown_mode {
+        let md = markdown::markdown_to_text(text);
+        // ratatui Text is a Vec<Line>; each Line wraps at inner_width
+        md.lines
+            .iter()
+            .map(|line| {
+                let len: usize = line.spans.iter().map(|s| s.content.len()).sum();
+                if len == 0 {
+                    1
+                } else {
+                    len.div_ceil(inner_width)
+                }
+            })
+            .sum::<usize>()
+            .max(1)
+    } else {
+        wrapped_line_count(text, inner_width)
+    };
+
+    total_lines.saturating_sub(viewport_height) as u16
+}
+
+/// Count the number of wrapped lines for plain text at a given width.
+fn wrapped_line_count(text: &str, width: usize) -> usize {
+    if text.is_empty() {
+        return 0;
+    }
+    let mut count: usize = text
+        .lines()
+        .map(|line| {
+            let len = line.len();
+            if len == 0 {
+                1
+            } else {
+                len.div_ceil(width)
+            }
+        })
+        .sum();
+    // Trailing newline adds an empty line
+    if text.ends_with('\n') {
+        count += 1;
+    }
+    count
+}
+
 // Re-export for external tests
 #[doc(hidden)]
 pub use state::load_threads;
@@ -643,6 +701,7 @@ impl App {
 
     fn scroll_thread_down(&mut self) {
         self.thread_scroll = self.thread_scroll.saturating_add(1);
+        self.clamp_thread_scroll();
     }
 
     fn scroll_thread_up(&mut self) {
@@ -651,10 +710,31 @@ impl App {
 
     fn scroll_thread_page_down(&mut self) {
         self.thread_scroll = self.thread_scroll.saturating_add(PAGE_SCROLL);
+        self.clamp_thread_scroll();
     }
 
     fn scroll_thread_page_up(&mut self) {
         self.thread_scroll = self.thread_scroll.saturating_sub(PAGE_SCROLL);
+    }
+
+    /// Clamp thread_scroll so the viewport doesn't scroll past the last line of content.
+    fn clamp_thread_scroll(&mut self) {
+        let area = match self.ui_rects.thread_body {
+            Some(a) => a,
+            None => return,
+        };
+        let max = max_scroll(&self.thread_text, area, self.markdown_mode);
+        self.thread_scroll = self.thread_scroll.min(max);
+    }
+
+    /// Clamp node_detail_scroll so the viewport doesn't scroll past the last line.
+    fn clamp_node_detail_scroll(&mut self) {
+        let area = match self.ui_rects.node_detail {
+            Some(a) => a,
+            None => return,
+        };
+        let max = max_scroll(&self.node_detail_text, area, self.markdown_mode);
+        self.node_detail_scroll = self.node_detail_scroll.min(max);
     }
 
     fn begin_create_thread(&mut self) {
@@ -1335,7 +1415,8 @@ mod tests {
         let git = GitOps::new(dir.path().to_path_buf());
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         app.view = View::ThreadDetail("RFC-0001".into());
-        app.thread_text = (0..20)
+        // Use enough lines to exceed the viewport height so scroll is not clamped to 0
+        app.thread_text = (0..50)
             .map(|n| format!("line {n}"))
             .collect::<Vec<_>>()
             .join("\n");
