@@ -138,7 +138,7 @@ fn check_commit_msg_strips_comments() {
 // --- hook install/uninstall tests ---
 
 #[test]
-fn hook_install_creates_executable_file() {
+fn hook_install_creates_executable_files() {
     let repo = support::repo::TestRepo::new();
     init_repo(&repo);
 
@@ -149,17 +149,31 @@ fn hook_install_creates_executable_file() {
 
     assert!(output.status.success());
 
-    let hook_path = repo.path().join(".git/hooks/commit-msg");
-    assert!(hook_path.exists());
-
-    let content = fs::read_to_string(&hook_path).unwrap();
+    // commit-msg hook
+    let commit_msg_path = repo.path().join(".git/hooks/commit-msg");
+    assert!(commit_msg_path.exists());
+    let content = fs::read_to_string(&commit_msg_path).unwrap();
     assert!(content.contains("git-forum"));
+
+    // post-checkout hook
+    let post_checkout_path = repo.path().join(".git/hooks/post-checkout");
+    assert!(post_checkout_path.exists());
+    let pc_content = fs::read_to_string(&post_checkout_path).unwrap();
+    assert!(pc_content.contains("fix-index"));
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let perms = fs::metadata(&hook_path).unwrap().permissions();
-        assert!(perms.mode() & 0o111 != 0, "hook should be executable");
+        let perms = fs::metadata(&commit_msg_path).unwrap().permissions();
+        assert!(
+            perms.mode() & 0o111 != 0,
+            "commit-msg hook should be executable"
+        );
+        let perms = fs::metadata(&post_checkout_path).unwrap().permissions();
+        assert!(
+            perms.mode() & 0o111 != 0,
+            "post-checkout hook should be executable"
+        );
     }
 }
 
@@ -225,7 +239,7 @@ fn hook_install_force_overwrites() {
 }
 
 #[test]
-fn hook_uninstall_removes_hook() {
+fn hook_uninstall_removes_hooks() {
     let repo = support::repo::TestRepo::new();
     init_repo(&repo);
 
@@ -235,8 +249,10 @@ fn hook_uninstall_removes_hook() {
         .output()
         .unwrap();
 
-    let hook_path = repo.path().join(".git/hooks/commit-msg");
-    assert!(hook_path.exists());
+    let commit_msg_path = repo.path().join(".git/hooks/commit-msg");
+    let post_checkout_path = repo.path().join(".git/hooks/post-checkout");
+    assert!(commit_msg_path.exists());
+    assert!(post_checkout_path.exists());
 
     // Uninstall
     let output = git_forum_cmd(repo.path())
@@ -244,7 +260,8 @@ fn hook_uninstall_removes_hook() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert!(!hook_path.exists());
+    assert!(!commit_msg_path.exists());
+    assert!(!post_checkout_path.exists());
 }
 
 #[test]
@@ -266,7 +283,7 @@ fn hook_uninstall_refuses_foreign_hook() {
 }
 
 #[test]
-fn init_also_installs_hook() {
+fn init_also_installs_hooks() {
     let repo = support::repo::TestRepo::new();
 
     let output = git_forum_cmd(repo.path())
@@ -275,9 +292,30 @@ fn init_also_installs_hook() {
         .expect("failed to run init");
     assert!(output.status.success());
 
-    let hook_path = repo.path().join(".git/hooks/commit-msg");
+    let commit_msg_path = repo.path().join(".git/hooks/commit-msg");
     assert!(
-        hook_path.exists(),
+        commit_msg_path.exists(),
         "init should install the commit-msg hook"
     );
+
+    let post_checkout_path = repo.path().join(".git/hooks/post-checkout");
+    assert!(
+        post_checkout_path.exists(),
+        "init should install the post-checkout hook"
+    );
+}
+
+#[test]
+fn fix_index_subcommand_succeeds_on_clean_repo() {
+    let repo = support::repo::TestRepo::new();
+    init_repo(&repo);
+
+    let output = git_forum_cmd(repo.path())
+        .args(["hook", "fix-index"])
+        .output()
+        .expect("failed to run fix-index");
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("all index blobs present"));
 }

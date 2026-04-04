@@ -78,7 +78,7 @@ policy and preflight
    policy      Policy sub-commands (show, lint, check)
 
 hooks and maintenance
-   hook        Manage the commit-msg hook
+   hook        Manage git-forum hooks (commit-msg, post-checkout)
 
 interactive
    tui         Open the interactive TUI
@@ -692,7 +692,7 @@ enum Commands {
         /// Search query (matched against title, id, kind, and status)
         query: String,
     },
-    /// Hook sub-commands
+    /// Manage git-forum hooks (commit-msg, post-checkout)
     Hook {
         #[command(subcommand)]
         cmd: HookCmd,
@@ -855,19 +855,21 @@ enum BranchCmd {
 
 #[derive(Subcommand)]
 enum HookCmd {
-    /// Install git-forum commit-msg hook into the Git hooks directory
+    /// Install git-forum hooks (commit-msg + post-checkout)
     Install {
-        /// Overwrite existing hook without backup
+        /// Overwrite existing hooks without backup
         #[arg(long)]
         force: bool,
     },
-    /// Remove git-forum commit-msg hook
+    /// Remove git-forum hooks
     Uninstall,
     /// Validate thread references in a commit message file (used by the hook)
     CheckCommitMsg {
         /// Path to the commit message file (provided by Git)
         file: PathBuf,
     },
+    /// Repair missing blob references in the git index (used by post-checkout hook)
+    FixIndex,
 }
 
 #[derive(Subcommand)]
@@ -1275,8 +1277,7 @@ fn main() -> Result<(), ForumError> {
                 .unwrap_or_else(|| ".".to_string());
             println!("Initialized git-forum in {dir_name}");
             eprintln!("note: actor IDs (--as) are claimed identities, not authenticated. Approvals are recorded, not cryptographically verified.");
-            let hook_path = hook::resolve_hook_path(&git)?;
-            hook::install_hook(&hook_path, false)?;
+            hook::install_all_hooks(&git, false)?;
         }
 
         Commands::Doctor { verbose } => {
@@ -2435,12 +2436,10 @@ fn main() -> Result<(), ForumError> {
             let git = GitOps::discover()?;
             match cmd {
                 HookCmd::Install { force } => {
-                    let hook_path = hook::resolve_hook_path(&git)?;
-                    hook::install_hook(&hook_path, force)?;
+                    hook::install_all_hooks(&git, force)?;
                 }
                 HookCmd::Uninstall => {
-                    let hook_path = hook::resolve_hook_path(&git)?;
-                    hook::uninstall_hook(&hook_path)?;
+                    hook::uninstall_all_hooks(&git)?;
                 }
                 HookCmd::CheckCommitMsg { file } => {
                     let raw = fs::read_to_string(&file)?;
@@ -2461,6 +2460,20 @@ fn main() -> Result<(), ForumError> {
                             "hint: create the thread first, or remove the reference from the commit message."
                         );
                         std::process::exit(1);
+                    }
+                }
+                HookCmd::FixIndex => {
+                    let result = hook::fix_index_blobs(&git)?;
+                    for (path, sha) in &result.fixed {
+                        eprintln!("fix-index: re-hashed {path} (missing blob {sha})");
+                    }
+                    for (path, sha) in &result.warnings {
+                        eprintln!(
+                            "fix-index: WARNING — {path} has missing blob {sha} and no working-tree copy"
+                        );
+                    }
+                    if result.fixed.is_empty() && result.warnings.is_empty() {
+                        eprintln!("fix-index: all index blobs present");
                     }
                 }
             }

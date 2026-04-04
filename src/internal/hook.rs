@@ -1,7 +1,9 @@
 //! Git hook support for git-forum.
 //!
-//! Provides a commit-msg hook that validates thread ID references
-//! in commit messages against existing git-forum threads.
+//! Provides:
+//! - A commit-msg hook that validates thread ID references in commit messages.
+//! - A post-checkout hook that repairs missing blob references in the index.
+//! - A `fix-index` subcommand that detects and re-hashes missing blobs.
 
 use std::fs;
 use std::path::Path;
@@ -10,12 +12,80 @@ use super::error::{ForumError, ForumResult};
 use super::git_ops::GitOps;
 use super::refs;
 
-const HOOK_MARKER: &str = "# git-forum advisory commit-msg hook";
+// ── commit-msg hook ─────────────────────────────────────────────────
 
-const HOOK_SCRIPT: &str = r#"#!/bin/sh
+const COMMIT_MSG_HOOK_MARKER: &str = "# git-forum advisory commit-msg hook";
+
+const COMMIT_MSG_HOOK_SCRIPT: &str = r#"#!/bin/sh
 # git-forum advisory commit-msg hook
 git-forum hook check-commit-msg "$1"
 "#;
+
+// ── post-checkout hook ──────────────────────────────────────────────
+
+const POST_CHECKOUT_HOOK_MARKER: &str = "# git-forum post-checkout hook";
+
+const POST_CHECKOUT_HOOK_SCRIPT: &str = r#"#!/bin/sh
+# git-forum post-checkout hook
+git-forum hook fix-index
+"#;
+
+// ── fix-index result ────────────────────────────────────────────────
+
+/// Result of running fix-index-blobs.
+pub struct FixIndexResult {
+    /// (path, old_sha) pairs that were re-hashed from the working tree.
+    pub fixed: Vec<(String, String)>,
+    /// (path, sha) pairs where the blob is missing AND no working-tree copy exists.
+    pub warnings: Vec<(String, String)>,
+}
+
+/// Repair missing blob references in the git index.
+///
+/// Iterates every staged entry via `git ls-files --stage`. For each entry
+/// whose blob object is absent, re-hashes the working-tree copy to recreate
+/// it and force-updates the index entry.  Entries with no working-tree file
+/// are reported as warnings.
+///
+/// Also runs `git worktree prune` first to clean up stale worktree metadata
+/// that could cause GC to skip dead worktree indices.
+pub fn fix_index_blobs(git: &GitOps) -> ForumResult<FixIndexResult> {
+    // Prune stale worktrees so GC doesn't skip dead indices
+    let _ = git.run(&["worktree", "prune"]);
+
+    let output = git.run(&["ls-files", "--stage"])?;
+    let mut fixed = Vec::new();
+    let mut warnings = Vec::new();
+
+    for line in output.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        // Format: "100644 <sha> <stage>\t<path>"
+        let Some((mode_sha_stage, path)) = line.split_once('\t') else {
+            continue;
+        };
+        let fields: Vec<&str> = mode_sha_stage.split_whitespace().collect();
+        if fields.len() < 2 {
+            continue;
+        }
+        let sha = fields[1];
+
+        // Check if blob exists
+        if git.run(&["cat-file", "-e", sha]).is_err() {
+            let full_path = git.root().join(path);
+            if full_path.is_file() {
+                git.run(&["update-index", "--force-remove", path])?;
+                git.run(&["add", path])?;
+                fixed.push((path.to_string(), sha.to_string()));
+            } else {
+                warnings.push((path.to_string(), sha.to_string()));
+            }
+        }
+    }
+
+    Ok(FixIndexResult { fixed, warnings })
+}
 
 /// Known thread ID prefixes (must match ThreadKind::id_prefix values).
 const KNOWN_PREFIXES: &[&str] = &["ASK", "ISSUE", "RFC", "DEC", "JOB", "TASK"];
@@ -158,9 +228,14 @@ pub fn check_thread_refs(git: &GitOps, ids: &[String]) -> ForumResult<HookCheckR
     })
 }
 
-/// Resolve the hook file path using `git rev-parse --git-path`.
-pub fn resolve_hook_path(git: &GitOps) -> ForumResult<std::path::PathBuf> {
-    let path_str = git.run(&["rev-parse", "--git-path", "hooks/commit-msg"])?;
+// ── hook path resolution ────────────────────────────────────────────
+
+/// Resolve the file path for a named git hook using `git rev-parse --git-path`.
+///
+/// Works correctly in both normal repos and worktrees.
+pub fn resolve_hook_path(git: &GitOps, hook_name: &str) -> ForumResult<std::path::PathBuf> {
+    let git_path_arg = format!("hooks/{hook_name}");
+    let path_str = git.run(&["rev-parse", "--git-path", &git_path_arg])?;
     let path = Path::new(path_str.trim());
     if path.is_relative() {
         Ok(git.root().join(path))
@@ -169,18 +244,26 @@ pub fn resolve_hook_path(git: &GitOps) -> ForumResult<std::path::PathBuf> {
     }
 }
 
-/// Install the commit-msg hook.
-pub fn install_hook(hook_path: &Path, force: bool) -> ForumResult<()> {
+// ── generic install / uninstall ─────────────────────────────────────
+
+/// Install a git-forum managed hook.
+fn install_hook_generic(
+    hook_path: &Path,
+    hook_name: &str,
+    marker: &str,
+    script: &str,
+    force: bool,
+) -> ForumResult<()> {
     if hook_path.exists() {
         let content = fs::read_to_string(hook_path)?;
-        if content.contains(HOOK_MARKER) {
-            eprintln!("git-forum: commit-msg hook already installed");
+        if content.contains(marker) {
+            eprintln!("git-forum: {hook_name} hook already installed");
             return Ok(());
         }
         if !force {
-            return Err(ForumError::Config(
-                "commit-msg hook already exists; use --force to overwrite".into(),
-            ));
+            return Err(ForumError::Config(format!(
+                "{hook_name} hook already exists; use --force to overwrite"
+            )));
         }
     }
 
@@ -188,7 +271,7 @@ pub fn install_hook(hook_path: &Path, force: bool) -> ForumResult<()> {
         fs::create_dir_all(parent)?;
     }
 
-    fs::write(hook_path, HOOK_SCRIPT)?;
+    fs::write(hook_path, script)?;
 
     #[cfg(unix)]
     {
@@ -197,26 +280,82 @@ pub fn install_hook(hook_path: &Path, force: bool) -> ForumResult<()> {
         fs::set_permissions(hook_path, perms)?;
     }
 
-    eprintln!("git-forum: commit-msg hook installed");
+    eprintln!("git-forum: {hook_name} hook installed");
     Ok(())
 }
 
-/// Uninstall the commit-msg hook (only if it matches the git-forum template).
-pub fn uninstall_hook(hook_path: &Path) -> ForumResult<()> {
+/// Uninstall a git-forum managed hook (only if it matches the marker).
+fn uninstall_hook_generic(hook_path: &Path, hook_name: &str, marker: &str) -> ForumResult<()> {
     if !hook_path.exists() {
-        eprintln!("git-forum: no commit-msg hook installed");
+        eprintln!("git-forum: no {hook_name} hook installed");
         return Ok(());
     }
 
     let content = fs::read_to_string(hook_path)?;
-    if !content.contains(HOOK_MARKER) {
-        return Err(ForumError::Config(
-            "commit-msg hook was not installed by git-forum; refusing to remove".into(),
-        ));
+    if !content.contains(marker) {
+        return Err(ForumError::Config(format!(
+            "{hook_name} hook was not installed by git-forum; refusing to remove"
+        )));
     }
 
     fs::remove_file(hook_path)?;
-    eprintln!("git-forum: commit-msg hook removed");
+    eprintln!("git-forum: {hook_name} hook removed");
+    Ok(())
+}
+
+// ── public install / uninstall per hook type ────────────────────────
+
+/// Install the commit-msg hook.
+pub fn install_commit_msg_hook(hook_path: &Path, force: bool) -> ForumResult<()> {
+    install_hook_generic(
+        hook_path,
+        "commit-msg",
+        COMMIT_MSG_HOOK_MARKER,
+        COMMIT_MSG_HOOK_SCRIPT,
+        force,
+    )
+}
+
+/// Uninstall the commit-msg hook.
+pub fn uninstall_commit_msg_hook(hook_path: &Path) -> ForumResult<()> {
+    uninstall_hook_generic(hook_path, "commit-msg", COMMIT_MSG_HOOK_MARKER)
+}
+
+/// Install the post-checkout hook.
+pub fn install_post_checkout_hook(hook_path: &Path, force: bool) -> ForumResult<()> {
+    install_hook_generic(
+        hook_path,
+        "post-checkout",
+        POST_CHECKOUT_HOOK_MARKER,
+        POST_CHECKOUT_HOOK_SCRIPT,
+        force,
+    )
+}
+
+/// Uninstall the post-checkout hook.
+pub fn uninstall_post_checkout_hook(hook_path: &Path) -> ForumResult<()> {
+    uninstall_hook_generic(hook_path, "post-checkout", POST_CHECKOUT_HOOK_MARKER)
+}
+
+/// Install all git-forum hooks (commit-msg + post-checkout).
+pub fn install_all_hooks(git: &GitOps, force: bool) -> ForumResult<()> {
+    let commit_msg_path = resolve_hook_path(git, "commit-msg")?;
+    install_commit_msg_hook(&commit_msg_path, force)?;
+
+    let post_checkout_path = resolve_hook_path(git, "post-checkout")?;
+    install_post_checkout_hook(&post_checkout_path, force)?;
+
+    Ok(())
+}
+
+/// Uninstall all git-forum hooks.
+pub fn uninstall_all_hooks(git: &GitOps) -> ForumResult<()> {
+    let commit_msg_path = resolve_hook_path(git, "commit-msg")?;
+    uninstall_commit_msg_hook(&commit_msg_path)?;
+
+    let post_checkout_path = resolve_hook_path(git, "post-checkout")?;
+    uninstall_post_checkout_hook(&post_checkout_path)?;
+
     Ok(())
 }
 
@@ -360,5 +499,178 @@ mod tests {
     fn strip_comments_preserves_non_comment_hash() {
         let msg = "fix #123 issue\nISSUE-0001";
         assert_eq!(strip_comments(msg, '#'), "fix #123 issue\nISSUE-0001");
+    }
+
+    // ── hook install / uninstall tests ──────────────────────────────
+
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::TempDir;
+
+    fn make_hook_dir() -> TempDir {
+        TempDir::new().expect("create temp dir")
+    }
+
+    #[test]
+    fn install_commit_msg_hook_creates_executable() {
+        let dir = make_hook_dir();
+        let hook_path = dir.path().join("commit-msg");
+        install_commit_msg_hook(&hook_path, false).unwrap();
+        assert!(hook_path.exists());
+        let content = fs::read_to_string(&hook_path).unwrap();
+        assert!(content.contains(COMMIT_MSG_HOOK_MARKER));
+        let perms = fs::metadata(&hook_path).unwrap().permissions();
+        assert_ne!(perms.mode() & 0o111, 0, "hook must be executable");
+    }
+
+    #[test]
+    fn install_post_checkout_hook_creates_executable() {
+        let dir = make_hook_dir();
+        let hook_path = dir.path().join("post-checkout");
+        install_post_checkout_hook(&hook_path, false).unwrap();
+        assert!(hook_path.exists());
+        let content = fs::read_to_string(&hook_path).unwrap();
+        assert!(content.contains(POST_CHECKOUT_HOOK_MARKER));
+        assert!(content.contains("git-forum hook fix-index"));
+    }
+
+    #[test]
+    fn install_hook_refuses_overwrite_without_force() {
+        let dir = make_hook_dir();
+        let hook_path = dir.path().join("post-checkout");
+        fs::write(&hook_path, "#!/bin/sh\necho existing").unwrap();
+        let result = install_post_checkout_hook(&hook_path, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn install_hook_overwrites_with_force() {
+        let dir = make_hook_dir();
+        let hook_path = dir.path().join("post-checkout");
+        fs::write(&hook_path, "#!/bin/sh\necho existing").unwrap();
+        install_post_checkout_hook(&hook_path, true).unwrap();
+        let content = fs::read_to_string(&hook_path).unwrap();
+        assert!(content.contains(POST_CHECKOUT_HOOK_MARKER));
+    }
+
+    #[test]
+    fn install_hook_is_idempotent() {
+        let dir = make_hook_dir();
+        let hook_path = dir.path().join("commit-msg");
+        install_commit_msg_hook(&hook_path, false).unwrap();
+        // Second install should succeed (already installed)
+        install_commit_msg_hook(&hook_path, false).unwrap();
+    }
+
+    #[test]
+    fn uninstall_commit_msg_hook_removes_file() {
+        let dir = make_hook_dir();
+        let hook_path = dir.path().join("commit-msg");
+        install_commit_msg_hook(&hook_path, false).unwrap();
+        uninstall_commit_msg_hook(&hook_path).unwrap();
+        assert!(!hook_path.exists());
+    }
+
+    #[test]
+    fn uninstall_refuses_foreign_hook() {
+        let dir = make_hook_dir();
+        let hook_path = dir.path().join("commit-msg");
+        fs::write(&hook_path, "#!/bin/sh\necho foreign").unwrap();
+        let result = uninstall_commit_msg_hook(&hook_path);
+        assert!(result.is_err());
+        assert!(hook_path.exists(), "foreign hook must not be deleted");
+    }
+
+    // ── fix_index_blobs tests ───────────────────────────────────────
+
+    fn init_test_repo() -> (TempDir, GitOps) {
+        let dir = TempDir::new().expect("create temp dir");
+        let root = dir.path().to_path_buf();
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .expect("git init");
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&root)
+            .output()
+            .expect("config name");
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(&root)
+            .output()
+            .expect("config email");
+        let git = GitOps::new(root);
+        (dir, git)
+    }
+
+    #[test]
+    fn fix_index_no_staged_files() {
+        let (_dir, git) = init_test_repo();
+        let result = fix_index_blobs(&git).unwrap();
+        assert!(result.fixed.is_empty());
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn fix_index_healthy_repo() {
+        let (dir, git) = init_test_repo();
+        let file = dir.path().join("hello.txt");
+        fs::write(&file, "hello").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "hello.txt"])
+            .current_dir(dir.path())
+            .output()
+            .expect("git add");
+        let result = fix_index_blobs(&git).unwrap();
+        assert!(result.fixed.is_empty());
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn fix_index_repairs_missing_blob() {
+        let (dir, git) = init_test_repo();
+        let file = dir.path().join("hello.txt");
+        fs::write(&file, "hello").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "hello.txt"])
+            .current_dir(dir.path())
+            .output()
+            .expect("git add");
+
+        // Get the blob SHA for hello.txt
+        let output = std::process::Command::new("git")
+            .args(["ls-files", "--stage", "hello.txt"])
+            .current_dir(dir.path())
+            .output()
+            .expect("ls-files");
+        let ls_line = String::from_utf8_lossy(&output.stdout);
+        let sha: &str = ls_line.split_whitespace().nth(1).unwrap();
+
+        // Delete the blob object file to simulate a missing blob
+        let obj_dir = dir.path().join(".git/objects").join(&sha[..2]);
+        let obj_file = obj_dir.join(&sha[2..]);
+        assert!(
+            obj_file.exists(),
+            "blob object file must exist before deletion"
+        );
+        fs::remove_file(&obj_file).unwrap();
+
+        // fix_index_blobs should detect and repair
+        let result = fix_index_blobs(&git).unwrap();
+        assert_eq!(result.fixed.len(), 1);
+        assert_eq!(result.fixed[0].0, "hello.txt");
+        assert!(result.warnings.is_empty());
+
+        // Verify the blob is now accessible again
+        assert!(
+            git.run(&["cat-file", "-e", sha]).is_ok() || {
+                // SHA may have changed after re-hash; just verify git status is clean
+                let status = git.run(&["status", "--porcelain"]).unwrap_or_default();
+                !status.contains("hello.txt")
+            }
+        );
     }
 }

@@ -1,6 +1,7 @@
 use super::config::RepoPaths;
 use super::error::ForumResult;
 use super::git_ops::GitOps;
+use super::hook;
 use super::index;
 use super::init;
 use super::refs;
@@ -188,7 +189,32 @@ pub fn run_doctor(git: &GitOps, paths: &RepoPaths) -> ForumResult<DoctorReport> 
         ));
     }
 
-    // 7. Replay each thread
+    // 7. Index blob integrity
+    match hook::fix_index_blobs(git) {
+        Ok(result) => {
+            if result.fixed.is_empty() && result.warnings.is_empty() {
+                checks.push(ok("index blobs"));
+            } else {
+                let mut details = Vec::new();
+                for (path, sha) in &result.fixed {
+                    details.push(format!("re-hashed {path} (was {sha})"));
+                }
+                for (path, sha) in &result.warnings {
+                    details.push(format!("{path} missing blob {sha}, no working-tree copy"));
+                }
+                if result.warnings.is_empty() {
+                    checks.push(warn("index blobs", &details.join("; ")));
+                } else {
+                    checks.push(fail("index blobs", &details.join("; ")));
+                }
+            }
+        }
+        Err(e) => {
+            checks.push(warn("index blobs", &format!("could not check: {e}")));
+        }
+    }
+
+    // 8. Replay each thread
     if let Some(ids) = &thread_ids {
         for id in ids {
             let ref_name = refs::thread_ref(id);
