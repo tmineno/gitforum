@@ -180,8 +180,8 @@ See [doc/MANUAL.md](./doc/MANUAL.md#local-configuration) for details.
   severity model, `--force` bypass, and strict mode
 - Concurrency safety via atomic ref updates
 - Git worktree support
-- Advisory commit-msg hook (validates thread ID references, auto-installed on init)
-- Health checks via `doctor` (refs, templates, index integrity, fetch refspec)
+- Git hooks auto-installed on init: commit-msg (validates thread ID references) and post-checkout (worktree auto-init, index blob repair)
+- Health checks via `doctor` (refs, templates, index integrity, index blobs, fetch refspec)
 - Auto-configure forum fetch refspec on `init` for seamless clone workflows
 
 See [doc/ROADMAP.md](./doc/ROADMAP.md) for in-progress and planned work.

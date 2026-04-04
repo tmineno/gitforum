@@ -707,19 +707,25 @@ git forum tui [<THREAD_ID>]
 git forum hook install [--force]
 git forum hook uninstall
 git forum hook check-commit-msg <FILE>
+git forum hook fix-index
+git forum hook worktree-init
 ```
 
-`git forum init` auto-installs the commit-msg hook. The hook validates that thread IDs referenced
-in commit messages exist as git-forum refs. It recognizes both legacy sequential IDs
-(`ISSUE-NNNN`, `RFC-NNNN`, `DEC-NNNN`, `TASK-NNNN`) and opaque content-addressed IDs
-(`KIND-XXXXXXXX` where `XXXXXXXX` is 8 base36 chars, not all digits). Comment lines (respecting
-`core.commentChar`) and scissors sections are stripped before scanning.
+`git forum init` auto-installs two hooks: **commit-msg** and **post-checkout**.
+
+**commit-msg hook:** Validates that thread IDs referenced in commit messages exist as git-forum
+refs. Recognizes both legacy sequential IDs (`ISSUE-NNNN`, `RFC-NNNN`, `DEC-NNNN`, `TASK-NNNN`)
+and opaque content-addressed IDs (`KIND-XXXXXXXX` where `XXXXXXXX` is 8 base36 chars, not all
+digits). Comment lines (respecting `core.commentChar`) and scissors sections are stripped.
 
 - No thread IDs found: warn, exit 0 (non-blocking).
 - All referenced threads exist: exit 0.
 - Any missing: warn, exit 1 (blocks commit).
 
-Hook path is resolved via `git rev-parse --git-path hooks/commit-msg` (worktree and
+**post-checkout hook:** Runs `worktree-init` (auto-initializes git-forum in new worktrees) then
+`fix-index` (repairs missing blob references in the git index caused by GC in worktrees).
+
+Hook paths are resolved via `git rev-parse --git-path hooks/<name>` (worktree and
 `core.hooksPath` safe). `--force` overwrites without backup.
 
 ### 9.11 Import / export (planned)

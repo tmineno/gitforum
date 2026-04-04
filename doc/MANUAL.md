@@ -249,8 +249,8 @@ overrides the default title.
 Behavior depends on the source and target kinds:
 
 - **RFC → new RFC**: source RFC is auto-deprecated (supersession).
-- **Ask → new ask**: source ask is unchanged (respin/split).
-- **Ask → new RFC**: source ask is unchanged (elevation to formal proposal).
+- **Ask → new ask**: source ask is unchanged (respin/split). Prints a hint to close the source.
+- **Ask → new RFC**: source ask is unchanged (elevation to formal proposal). Prints a hint to close the source.
 - **RFC → new ask**: not allowed — use `git forum link --rel implements` instead.
 
 ### List by kind
@@ -1008,8 +1008,8 @@ git forum doctor
 git forum reindex
 ```
 
-- `init`: creates `.forum/` and `.git/forum/`, installs the commit-msg hook
-- `doctor`: checks `.forum/` and `.git/forum/` directories exist, validates `policy.toml` syntax, verifies template files are present and non-empty, checks SQLite index health (integrity and freshness), and replays every thread's event log to verify integrity. Reports `[ok]`, `[WARN]`, or `[FAIL]` per check; exits non-zero only on failures (warnings are informational)
+- `init`: creates `.forum/` and `.git/forum/`, installs git-forum hooks (commit-msg and post-checkout)
+- `doctor`: checks `.forum/` and `.git/forum/` directories exist, validates `policy.toml` syntax, verifies template files are present and non-empty, checks SQLite index health (integrity and freshness), checks for missing blob references in the git index, and replays every thread's event log to verify integrity. Reports `[ok]`, `[WARN]`, or `[FAIL]` per check; exits non-zero only on failures (warnings are informational)
 - `reindex`: rebuilds the local index from Git refs
 
 #### Local configuration
@@ -1036,18 +1036,18 @@ only the Git commit metadata (author/committer); the forum actor ID (`human/alic
 
 ### Hooks
 
-#### Commit-msg hook
-
-`git forum init` automatically installs an advisory `commit-msg` hook that validates thread ID
-references in commit messages. The hook can also be managed manually:
+`git forum init` automatically installs two git hooks:
 
 ```bash
-git forum hook install              # install the commit-msg hook
-git forum hook install --force      # overwrite an existing hook (no backup)
-git forum hook uninstall            # remove the git-forum hook
+git forum hook install              # install all git-forum hooks
+git forum hook install --force      # overwrite existing hooks (no backup)
+git forum hook uninstall            # remove all git-forum hooks
 ```
 
-The hook delegates to `git-forum hook check-commit-msg <file>`, which:
+#### Commit-msg hook
+
+An advisory hook that validates thread ID references in commit messages. Delegates to
+`git-forum hook check-commit-msg <file>`, which:
 
 1. Strips Git comment lines (respecting `core.commentChar`) and scissors sections.
 2. Scans the cleaned message for thread ID patterns: both legacy sequential (`ASK-NNNN`, `RFC-NNNN`, `DEC-NNNN`, `JOB-NNNN`, `ISSUE-NNNN`, `TASK-NNNN`) and opaque content-addressed (`KIND-XXXXXXXX` where X is base36).
@@ -1065,7 +1065,20 @@ git-forum: commit message references non-existent thread(s):
 hint: create the thread first, or remove the reference from the commit message.
 ```
 
-The hook path is resolved via `git rev-parse --git-path hooks/commit-msg`, so it works correctly
+#### Post-checkout hook
+
+Runs after `git checkout`, `git switch`, and `git worktree add`. Performs two actions:
+
+1. **`git-forum hook worktree-init`** — auto-initializes git-forum in new worktrees (creates
+   `.git/forum/`, `local.toml`, installs hooks). No-op if already initialized.
+2. **`git-forum hook fix-index`** — repairs missing blob references in the git index. Worktrees
+   can end up with index entries pointing at blobs that were garbage-collected. This proactively
+   re-hashes working-tree files to recreate missing blobs, preventing pre-commit framework
+   crashes during the stash/restore cycle.
+
+#### Hook path resolution
+
+Hook paths are resolved via `git rev-parse --git-path hooks/<name>`, so they work correctly
 with worktrees and `core.hooksPath`. `--force` overwrites any existing hook without backup; users
 with custom hooks should use a hook dispatcher (e.g., the pre-commit framework).
 

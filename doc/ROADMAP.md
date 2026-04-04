@@ -87,6 +87,8 @@ The following capabilities are implemented and tested:
 - Suggest shorthand commands on unrecognized subcommand (ISSUE-0109)
 - Post-action next-actions hints printed to stderr (ISSUE-0048)
 - Advisory commit-msg hook: validates thread ID references, auto-installed on init (RFC-0020)
+- Post-checkout hook: worktree auto-init and index blob repair, auto-installed on init
+- Consistent 16-char OID truncation across all CLI output
 - Trust model documented in init and help surfaces; command-role guide (ISSUE-0139, ISSUE-0140)
 - Retract documented as soft-delete with stderr warning (ISSUE-0129)
 
@@ -124,7 +126,7 @@ The following capabilities are implemented and tested:
 ### Infrastructure
 
 - Lexical search over SQLite index
-- Git worktree support (ISSUE-0026)
+- Git worktree support with auto-init via post-checkout hook (ISSUE-0026)
 - Snapshot and integration test infrastructure
 - E2E multi-agent test harness with Claude Code adapter and worktree-per-actor setup
   (RFC-0003, ISSUE-0042 through ISSUE-0047)
