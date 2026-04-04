@@ -717,13 +717,64 @@ impl App {
         self.thread_scroll = self.thread_scroll.saturating_sub(PAGE_SCROLL);
     }
 
+    /// Return the text currently displayed in the body pane.
+    ///
+    /// When a node is selected (row > 0), the body pane shows the node's
+    /// metadata + body. Otherwise it shows the thread text.
+    fn body_pane_content(&self) -> String {
+        let selected_node: Option<&super::node::Node> = self
+            .node_table_state
+            .selected()
+            .and_then(|i| i.checked_sub(1))
+            .and_then(|i| self.visible_tree_indices.get(i))
+            .and_then(|&ti| self.tree_entries.get(ti))
+            .map(|entry| &self.thread_nodes[entry.node_index]);
+
+        if let Some(node) = selected_node {
+            let mut content = String::new();
+            content.push_str(&format!("**type:**     {}\n", node.node_type));
+            let status = if node.retracted {
+                "retracted"
+            } else if node.incorporated {
+                "incorporated"
+            } else if node.resolved {
+                "resolved"
+            } else {
+                "open"
+            };
+            content.push_str(&format!("**status:**   {status}\n"));
+            content.push_str(&format!("**actor:**    {}\n", node.actor));
+            content.push_str(&format!(
+                "**created:**  {}\n",
+                node.created_at.format("%Y-%m-%dT%H:%M:%SZ")
+            ));
+            if let Some(ref reply_to) = node.reply_to {
+                content.push_str(&format!(
+                    "**reply-to:** {}\n",
+                    &reply_to[..reply_to.len().min(16)]
+                ));
+            }
+            content.push_str("\n---\n\n");
+            for line in node.body.lines() {
+                content.push_str(&format!("{line}\n"));
+            }
+            if node.body.is_empty() {
+                content.push('\n');
+            }
+            content
+        } else {
+            self.thread_text.clone()
+        }
+    }
+
     /// Clamp thread_scroll so the viewport doesn't scroll past the last line of content.
     fn clamp_thread_scroll(&mut self) {
         let area = match self.ui_rects.thread_body {
             Some(a) => a,
             None => return,
         };
-        let max = max_scroll(&self.thread_text, area, self.markdown_mode);
+        let content = self.body_pane_content();
+        let max = max_scroll(&content, area, self.markdown_mode);
         self.thread_scroll = self.thread_scroll.min(max);
     }
 
