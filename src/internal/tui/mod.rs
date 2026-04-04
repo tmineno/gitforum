@@ -182,7 +182,7 @@ struct FilterBar {
 }
 
 const FILTER_KIND_LABELS: [&str; 4] = ["issue", "rfc", "dec", "task"];
-const FILTER_STATUS_LABELS: [&str; 9] = [
+const FILTER_STATUS_LABELS: [&str; 10] = [
     "open",
     "draft",
     "pending",
@@ -192,6 +192,7 @@ const FILTER_STATUS_LABELS: [&str; 9] = [
     "closed",
     "rejected",
     "deprecated",
+    "withdrawn",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

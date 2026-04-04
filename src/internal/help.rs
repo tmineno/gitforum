@@ -130,7 +130,8 @@ pub fn state_transition_map() -> String {
     out.push_str(
         "`git forum log <ID> --since <DATE>` shows only events after a date (ISO date, RFC 3339, or git revision).\n",
     );
-    out.push_str("`git forum log <ID> -n <N>` limits output to the last N events.\n\n");
+    out.push_str("`git forum log <ID> -n <N>` limits output to the last N events.\n");
+    out.push_str("`git forum log <ID> --type <TYPE>` filters by displayed event type (e.g. review, state, claim, revise-body).\n\n");
     out.push_str("## Hooks\n\n");
     out.push_str("`git forum hook install` installs commit-msg and post-checkout hooks.\n");
     out.push_str("`git forum hook fix-index` repairs missing blob references in the index.\n");

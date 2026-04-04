@@ -354,7 +354,7 @@ fn change_state_invalid_transition_fails() {
     );
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("valid transitions from 'draft': [proposed, rejected]"));
+    assert!(err.contains("valid transitions from 'draft': [proposed, rejected, withdrawn]"));
 }
 
 #[test]

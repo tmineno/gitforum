@@ -210,7 +210,7 @@ pub fn fast_track_state(
     Ok(walked)
 }
 
-fn remediation_hint(rule: &str, state: &thread::ThreadState, thread_id: &str) -> String {
+pub fn remediation_hint(rule: &str, state: &thread::ThreadState, thread_id: &str) -> String {
     match rule {
         "no_open_actions" => {
             let ids: Vec<String> = state

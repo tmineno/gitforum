@@ -27,6 +27,8 @@ pub fn render_state_diagram(kind: ThreadKind, current_status: &str) -> Vec<Strin
             vec![
                 ("open", "rejected"),
                 ("open", "closed"),
+                ("open", "withdrawn"),
+                ("pending", "withdrawn"),
                 ("rejected", "open"),
                 ("closed", "open"),
             ],
@@ -41,9 +43,12 @@ pub fn render_state_diagram(kind: ThreadKind, current_status: &str) -> Vec<Strin
             ],
             vec![
                 ("draft", "rejected"),
+                ("draft", "withdrawn"),
                 ("proposed", "draft"),
+                ("proposed", "withdrawn"),
                 ("under-review", "rejected"),
                 ("under-review", "draft"),
+                ("under-review", "withdrawn"),
                 ("rejected", "deprecated"),
             ],
         ),
@@ -52,6 +57,7 @@ pub fn render_state_diagram(kind: ThreadKind, current_status: &str) -> Vec<Strin
             vec![
                 ("proposed", "rejected"),
                 ("proposed", "deprecated"),
+                ("proposed", "withdrawn"),
                 ("rejected", "deprecated"),
             ],
         ),
@@ -60,12 +66,16 @@ pub fn render_state_diagram(kind: ThreadKind, current_status: &str) -> Vec<Strin
             vec![
                 ("open", "rejected"),
                 ("open", "closed"),
+                ("open", "withdrawn"),
                 ("designing", "rejected"),
                 ("designing", "open"),
+                ("designing", "withdrawn"),
                 ("implementing", "rejected"),
                 ("implementing", "designing"),
+                ("implementing", "withdrawn"),
                 ("reviewing", "rejected"),
                 ("reviewing", "implementing"),
+                ("reviewing", "withdrawn"),
                 ("closed", "open"),
                 ("rejected", "open"),
             ],
@@ -507,6 +517,16 @@ pub fn render_what_next(state: &ThreadState, policy: &Policy) -> String {
         lines.push(String::new());
     }
 
+    // Lookahead: policy prerequisites for milestone states via intermediate transitions
+    let lookahead = super::verify::build_lookahead(state.kind, &state.status, state, policy);
+    for entry in &lookahead {
+        lines.push(format!("lookahead ({}):", entry.path));
+        for v in &entry.violations {
+            lines.push(format!("  [{}] {}", v.rule, v.reason));
+        }
+        lines.push(String::new());
+    }
+
     // Open items
     let obj = state.open_objections().len();
     let act = state.open_actions().len();
@@ -698,7 +718,7 @@ fn event_node_id(event: &Event) -> Option<&str> {
     }
 }
 
-fn event_display_type(event: &Event) -> String {
+pub fn event_display_type(event: &Event) -> String {
     match event.event_type {
         EventType::Say => event
             .node_type

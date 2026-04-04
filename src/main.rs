@@ -94,6 +94,7 @@ state shorthands (convenience aliases for 'state <ID> <target>')
    propose     state <ID> proposed
    reject      state <ID> rejected
    deprecate   state <ID> deprecated
+   withdraw    state <ID> withdrawn
 
 node shorthands (convenience aliases for 'node add <ID> --type <type>')
    claim       node add --type claim
@@ -375,6 +376,20 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Withdraw a thread (shorthand for state <ID> withdrawn)
+    Withdraw {
+        thread_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        #[arg(long)]
+        comment: Option<String>,
+        /// Walk through intermediate states to reach the target
+        #[arg(long)]
+        fast_track: bool,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
+    },
     /// Show thread details
     Show {
         thread_id: String,
@@ -400,6 +415,9 @@ enum Commands {
         /// Show only events after this date (ISO date, RFC 3339, or git revision)
         #[arg(long)]
         since: Option<String>,
+        /// Filter events by displayed type (e.g. review, state, claim, revise-body)
+        #[arg(long = "type", value_name = "TYPE")]
+        event_type: Option<String>,
     },
     /// Show unified diff between body revisions
     Diff {
@@ -1085,6 +1103,15 @@ enum ThreadCmd {
         #[arg(long)]
         comment: Option<String>,
     },
+    /// Withdraw a thread (shorthand for state <ID> withdrawn)
+    Withdraw {
+        thread_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        /// Attach a comment to the state-change event
+        #[arg(long)]
+        comment: Option<String>,
+    },
     /// Revise thread body (default) or node body
     #[command(args_conflicts_with_subcommands = true)]
     Revise {
@@ -1153,7 +1180,10 @@ fn main() -> Result<(), ForumError> {
             ) => {
                 print!("{}", help::node_type_taxonomy());
             }
-            Some("state" | "close" | "reject" | "accept" | "propose" | "deprecate" | "pend") => {
+            Some(
+                "state" | "close" | "reject" | "accept" | "propose" | "deprecate" | "pend"
+                | "withdraw",
+            ) => {
                 print!("{}", help::state_transition_map());
             }
             Some("evidence") => {
@@ -1812,6 +1842,28 @@ fn main() -> Result<(), ForumError> {
             )?;
         }
 
+        Commands::Withdraw {
+            thread_id,
+            as_actor,
+            comment,
+            fast_track,
+            force,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "withdrawn",
+                &[],
+                as_actor,
+                false,
+                &[],
+                None,
+                comment.as_deref(),
+                fast_track,
+                force,
+                &clock,
+            )?;
+        }
+
         Commands::Ls {
             kind_positional,
             branch,
@@ -1887,13 +1939,53 @@ fn main() -> Result<(), ForumError> {
             reverse,
             last,
             since,
+            event_type,
         } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
+            if let Some(ref type_str) = event_type {
+                const VALID_TYPES: &[&str] = &[
+                    // EventType display names
+                    "create",
+                    "edit",
+                    "retract",
+                    "say",
+                    "link",
+                    "state",
+                    "scope",
+                    "resolve",
+                    "reopen",
+                    "verify",
+                    "merge",
+                    "revise-body",
+                    "retype",
+                    // NodeType display names (shown for Say events)
+                    "claim",
+                    "question",
+                    "objection",
+                    "evidence",
+                    "summary",
+                    "action",
+                    "risk",
+                    "review",
+                    "alternative",
+                    "assumption",
+                ];
+                if !VALID_TYPES.contains(&type_str.as_str()) {
+                    eprintln!(
+                        "error: unknown event type '{type_str}'\naccepted values: {}",
+                        VALID_TYPES.join(", ")
+                    );
+                    std::process::exit(1);
+                }
+            }
             let state = thread::replay_thread(&git, &thread_id)?;
             let mut events: Vec<&event::Event> = state.events.iter().collect();
             if let Some(ref since_str) = since {
                 let since_dt = parse_since_date(since_str, &git)?;
                 events.retain(|e| e.created_at >= since_dt);
+            }
+            if let Some(ref type_str) = event_type {
+                events.retain(|e| show::event_display_type(e) == *type_str);
             }
             let widths = show::timeline_widths_refs(&events);
             println!("{}", show::format_timeline_header(&widths));
@@ -2369,10 +2461,23 @@ fn main() -> Result<(), ForumError> {
             if report.passed() {
                 println!("{thread_id}: ready");
             } else {
+                let state = thread::replay_thread(&git, &thread_id)?;
                 println!("{thread_id}: not ready");
                 for v in &report.violations {
                     println!("  BLOCKED [{}] {}", v.rule, v.reason);
+                    let hint = state_change::remediation_hint(&v.rule, &state, &thread_id);
+                    if !hint.is_empty() {
+                        println!("    fix: {hint}");
+                    }
                 }
+            }
+            for entry in &report.lookahead {
+                println!("  lookahead ({}):", entry.path);
+                for v in &entry.violations {
+                    println!("    [{}] {}", v.rule, v.reason);
+                }
+            }
+            if !report.passed() {
                 std::process::exit(1);
             }
         }
@@ -2612,7 +2717,8 @@ fn run_revise_cmd(
             apply_operation_checks(&violations, force, policy.checks.strict)?;
 
             write_ops::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
-            println!("Body revised for {thread_id}");
+            let revision = state.body_revision_count + 1;
+            println!("Body revised for {thread_id} (revision {revision})");
         }
         ReviseCmd::Node {
             thread_id,
@@ -2682,7 +2788,8 @@ fn run_revise_dispatch(
             apply_operation_checks(&violations, force, policy.checks.strict)?;
 
             write_ops::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
-            println!("Body revised for {thread_id}");
+            let revision = state.body_revision_count + 1;
+            println!("Body revised for {thread_id} (revision {revision})");
             Ok(())
         }
     }
@@ -3081,6 +3188,25 @@ fn run_thread_cmd(
             run_state_shorthand(
                 &thread_id,
                 "deprecated",
+                &[],
+                as_actor,
+                false,
+                &[],
+                None,
+                comment.as_deref(),
+                false,
+                false,
+                clock,
+            )?;
+        }
+        ThreadCmd::Withdraw {
+            thread_id,
+            as_actor,
+            comment,
+        } => {
+            run_state_shorthand(
+                &thread_id,
+                "withdrawn",
                 &[],
                 as_actor,
                 false,

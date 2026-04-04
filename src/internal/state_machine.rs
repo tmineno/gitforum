@@ -69,19 +69,24 @@ pub fn valid_transitions(kind: ThreadKind) -> &'static [(&'static str, &'static 
             ("open", "pending"),
             ("open", "closed"),
             ("open", "rejected"),
+            ("open", "withdrawn"),
             ("pending", "closed"),
             ("pending", "open"),
+            ("pending", "withdrawn"),
             ("closed", "open"),
             ("rejected", "open"),
         ],
         ThreadKind::Rfc => &[
             ("draft", "proposed"),
             ("draft", "rejected"),
+            ("draft", "withdrawn"),
             ("proposed", "under-review"),
             ("proposed", "draft"),
+            ("proposed", "withdrawn"),
             ("under-review", "accepted"),
             ("under-review", "rejected"),
             ("under-review", "draft"),
+            ("under-review", "withdrawn"),
             ("accepted", "deprecated"),
             ("rejected", "deprecated"),
         ],
@@ -89,6 +94,7 @@ pub fn valid_transitions(kind: ThreadKind) -> &'static [(&'static str, &'static 
             ("proposed", "accepted"),
             ("proposed", "rejected"),
             ("proposed", "deprecated"),
+            ("proposed", "withdrawn"),
             ("accepted", "deprecated"),
             ("rejected", "deprecated"),
         ],
@@ -96,15 +102,19 @@ pub fn valid_transitions(kind: ThreadKind) -> &'static [(&'static str, &'static 
             ("open", "designing"),
             ("open", "rejected"),
             ("open", "closed"),
+            ("open", "withdrawn"),
             ("designing", "implementing"),
             ("designing", "rejected"),
             ("designing", "open"),
+            ("designing", "withdrawn"),
             ("implementing", "reviewing"),
             ("implementing", "rejected"),
             ("implementing", "designing"),
+            ("implementing", "withdrawn"),
             ("reviewing", "closed"),
             ("reviewing", "rejected"),
             ("reviewing", "implementing"),
+            ("reviewing", "withdrawn"),
             ("closed", "open"),
             ("rejected", "open"),
         ],
@@ -157,7 +167,7 @@ mod tests {
     fn valid_targets_lists_expected_rfc_transitions() {
         assert_eq!(
             valid_targets(ThreadKind::Rfc, "draft"),
-            vec!["proposed", "rejected"]
+            vec!["proposed", "rejected", "withdrawn"]
         );
     }
 
@@ -269,7 +279,10 @@ mod tests {
     #[test]
     fn dec_valid_targets_from_proposed() {
         let targets = valid_targets(ThreadKind::Dec, "proposed");
-        assert_eq!(targets, vec!["accepted", "rejected", "deprecated"]);
+        assert_eq!(
+            targets,
+            vec!["accepted", "rejected", "deprecated", "withdrawn"]
+        );
     }
 
     // --- TASK transitions ---
@@ -341,7 +354,10 @@ mod tests {
     #[test]
     fn task_valid_targets_from_open() {
         let targets = valid_targets(ThreadKind::Task, "open");
-        assert_eq!(targets, vec!["designing", "rejected", "closed"]);
+        assert_eq!(
+            targets,
+            vec!["designing", "rejected", "closed", "withdrawn"]
+        );
     }
 
     // --- find_path tests ---
