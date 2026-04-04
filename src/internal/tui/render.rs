@@ -527,22 +527,22 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         let (body_title, body_content) = if let Some(node) = selected_node {
             let title = format!(" {} {} ", short_id(&node.node_id), node.node_type);
             let mut content = String::new();
-            content.push_str(&format!("type:     {}\n", node.node_type));
-            content.push_str(&format!("status:   {}\n", node_status(node)));
-            content.push_str(&format!("actor:    {}\n", node.actor));
+            content.push_str(&format!("**type:**     {}\n", node.node_type));
+            content.push_str(&format!("**status:**   {}\n", node_status(node)));
+            content.push_str(&format!("**actor:**    {}\n", node.actor));
             content.push_str(&format!(
-                "created:  {}\n",
+                "**created:**  {}\n",
                 node.created_at.format("%Y-%m-%dT%H:%M:%SZ")
             ));
             if let Some(ref reply_to) = node.reply_to {
-                content.push_str(&format!("reply-to: {}\n", short_id(reply_to)));
+                content.push_str(&format!("**reply-to:** {}\n", short_id(reply_to)));
             }
-            content.push_str("body:\n");
+            content.push_str("\n---\n\n");
             for line in node.body.lines() {
-                content.push_str(&format!("  {line}\n"));
+                content.push_str(&format!("{line}\n"));
             }
             if node.body.is_empty() {
-                content.push_str("  \n");
+                content.push('\n');
             }
             (title, content)
         } else {

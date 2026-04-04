@@ -2240,7 +2240,7 @@ fn main() -> Result<(), ForumError> {
                 &actor,
                 &clock,
             )?;
-            println!("Retyped {resolved} -> {parsed_type}");
+            println!("Retyped {} -> {parsed_type}", show::short_oid(&resolved));
         }
 
         Commands::State {
@@ -2607,7 +2607,7 @@ fn run_revise_cmd(
 
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
             write_ops::revise_node(&git, &thread_id, &resolved, &body_text, &actor, clock)?;
-            println!("Revised {resolved}");
+            println!("Revised {}", show::short_oid(&resolved));
         }
     }
     Ok(())
@@ -2695,7 +2695,7 @@ fn run_shorthand_say(
         clock,
         resolved_reply.as_deref(),
     )?;
-    println!("Added {node_type} {node_id}");
+    println!("Added {node_type} {}", show::short_oid(&node_id));
     if let Ok(state) = thread::replay_thread(&git, thread_id) {
         eprintln!("{}", show::render_next_actions(&state, &policy));
     }
@@ -2883,7 +2883,7 @@ fn run_thread_cmd(
                     let node_id = write_ops::say_node(
                         &git, &thread_id, *node_type, body_text, &actor, clock, None,
                     )?;
-                    println!("Added {node_type} {node_id}");
+                    println!("Added {node_type} {}", show::short_oid(&node_id));
                 }
             }
         }
@@ -3395,9 +3395,9 @@ fn run_node_lifecycle_bulk(
             }
         };
         match write_ops::node_lifecycle(&git, thread_id, &resolved, &actor, clock, event_type) {
-            Ok(()) => println!("{label} {resolved}"),
+            Ok(()) => println!("{label} {}", show::short_oid(&resolved)),
             Err(e) => {
-                eprintln!("error: {resolved}: {e}");
+                eprintln!("error: {}: {e}", show::short_oid(&resolved));
                 failures += 1;
             }
         }

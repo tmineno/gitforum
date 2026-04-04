@@ -242,7 +242,7 @@ fn node_show_includes_parent_thread_links() {
 
     let lookup = thread::find_node(&git, &node_id).unwrap();
     let out = show::render_node_show(&lookup);
-    assert!(out.contains("thread links: 1"));
+    assert!(out.contains("### thread links (1)"));
     assert!(out.contains(&target_id));
     assert!(out.contains("implements"));
 }

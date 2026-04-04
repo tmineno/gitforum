@@ -165,9 +165,10 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
     let compact = options.compact;
     let mut lines: Vec<String> = Vec::new();
 
-    lines.push(format!("{:<12} {}", state.id, state.title));
-    lines.push(format!("kind:     {}", state.kind));
-    lines.push(format!("status:   {}", state.status));
+    lines.push(format!("## {} {}", state.id, state.title));
+    lines.push(String::new());
+    lines.push(format!("**kind:**     {}", state.kind));
+    lines.push(format!("**status:**   {}", state.status));
     if let Some(policy) = &options.policy {
         let targets = state_machine::valid_targets(state.kind, &state.status);
         if !targets.is_empty() {
@@ -181,7 +182,7 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
                     target_parts.push(format!("{target} (blocked: {})", blockers.join(", ")));
                 }
             }
-            lines.push(format!("next:     {}", target_parts.join(", ")));
+            lines.push(format!("**next:**     {}", target_parts.join(", ")));
         }
         if !compact {
             lines.push("transitions:".into());
@@ -191,20 +192,22 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
         }
     }
     lines.push(format!(
-        "created:  {}",
+        "**created:**  {}",
         state.created_at.format("%Y-%m-%dT%H:%M:%SZ")
     ));
-    lines.push(format!("by:       {}", state.created_by));
+    lines.push(format!("**by:**       {}", state.created_by));
     if let Some(branch) = &state.branch {
-        lines.push(format!("branch:   {}", branch));
+        lines.push(format!("**branch:**   {}", branch));
     }
     if let Some(body) = &state.body {
-        lines.push("body:".into());
+        lines.push(String::new());
+        lines.push("---".into());
+        lines.push(String::new());
         if compact {
             let body_lines: Vec<&str> = body.lines().collect();
             let shown = body_lines.len().min(5);
             for line in &body_lines[..shown] {
-                lines.push(format!("  {line}"));
+                lines.push(line.to_string());
             }
             if body_lines.len() > 5 {
                 let size = body.len();
@@ -219,23 +222,23 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
                     String::new()
                 };
                 lines.push(format!(
-                    "  ... ({size_str}{rev_hint} — use 'show {}' for full body)",
+                    "... ({size_str}{rev_hint} — use 'show {}' for full body)",
                     state.id
                 ));
             }
         } else {
             for line in body.lines() {
-                lines.push(format!("  {line}"));
+                lines.push(line.to_string());
             }
             if body.is_empty() {
-                lines.push("  ".into());
+                lines.push(String::new());
             }
         }
     }
     lines.push(String::new());
 
     if !compact && state.body_revision_count > 0 {
-        lines.push(format!("body revisions: {}", state.body_revision_count));
+        lines.push(format!("**body revisions:** {}", state.body_revision_count));
     }
 
     if !compact {
@@ -254,7 +257,7 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
 
     let open_obj = state.open_objections();
     if !open_obj.is_empty() {
-        lines.push(format!("open objections: {}", open_obj.len()));
+        lines.push(format!("**open objections:** {}", open_obj.len()));
         for node in &open_obj {
             let preview = body_or_truncated(&node.body, 60, compact);
             lines.push(format!("  - {} {}", short_oid(&node.node_id), preview));
@@ -274,7 +277,7 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
 
     let open_act = state.open_actions();
     if !open_act.is_empty() {
-        lines.push(format!("open actions: {}", open_act.len()));
+        lines.push(format!("**open actions:** {}", open_act.len()));
         for node in &open_act {
             let preview = body_or_truncated(&node.body, 60, compact);
             lines.push(format!("  - {} {}", short_oid(&node.node_id), preview));
@@ -288,7 +291,7 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
     }
 
     if let Some(summary) = state.latest_summary() {
-        lines.push("latest summary:".into());
+        lines.push("**latest summary:**".into());
         lines.push(format!("  {}", summary.body));
         lines.push(String::new());
     }
@@ -369,14 +372,17 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
     }
 
     if !options.no_timeline {
+        lines.push("---".into());
+        lines.push(String::new());
         if compact {
             lines.push(format!(
-                "timeline: {} events (use 'log {}' for full view)",
+                "**timeline:** {} events (use 'log {}' for full view)",
                 state.events.len(),
                 state.id
             ));
         } else {
-            lines.push("timeline:".into());
+            lines.push("### timeline".into());
+            lines.push(String::new());
             let widths = timeline_widths(&state.events);
             lines.push(format_timeline_header(&widths));
             for event in &state.events {
@@ -572,42 +578,51 @@ pub fn render_node_show(lookup: &NodeLookup) -> String {
     let node = &lookup.node;
 
     lines.push(format!(
-        "{:<18} {}",
+        "## {} {}",
         short_oid(&node.node_id),
         node.node_type
     ));
+    lines.push(String::new());
     lines.push(format!(
-        "thread:   {} {}",
+        "**thread:**   {} {}",
         lookup.thread_id, lookup.thread_title
     ));
-    lines.push(format!("kind:     {}", lookup.thread_kind));
-    lines.push(format!("status:   {}", node_status(node)));
+    lines.push(format!("**kind:**     {}", lookup.thread_kind));
+    lines.push(format!("**status:**   {}", node_status(node)));
     lines.push(format!(
-        "created:  {}",
+        "**created:**  {}",
         node.created_at.format("%Y-%m-%dT%H:%M:%SZ")
     ));
-    lines.push(format!("by:       {}", node.actor));
+    lines.push(format!("**by:**       {}", node.actor));
     if let Some(ref parent_id) = node.reply_to {
-        lines.push(format!("reply-to: {}", short_oid(parent_id)));
+        lines.push(format!("**reply-to:** {}", short_oid(parent_id)));
     }
-    lines.push("body:".into());
+    lines.push(String::new());
+    lines.push("---".into());
+    lines.push(String::new());
     for line in node.body.lines() {
-        lines.push(format!("  {line}"));
+        lines.push(line.to_string());
     }
     if node.body.is_empty() {
-        lines.push("  ".into());
+        lines.push(String::new());
     }
     lines.push(String::new());
 
     if !lookup.links.is_empty() {
-        lines.push(format!("thread links: {}", lookup.links.len()));
+        lines.push("---".into());
+        lines.push(String::new());
+        lines.push(format!("### thread links ({})", lookup.links.len()));
+        lines.push(String::new());
         for link in &lookup.links {
-            lines.push(format!("  - {}  {}", link.target_thread_id, link.rel));
+            lines.push(format!("- {}  {}", link.target_thread_id, link.rel));
         }
         lines.push(String::new());
     }
 
-    lines.push("history:".into());
+    lines.push("---".into());
+    lines.push(String::new());
+    lines.push("### history".into());
+    lines.push(String::new());
     let widths = timeline_widths(&lookup.events);
     lines.push(format_timeline_header(&widths));
     for event in &lookup.events {
@@ -976,7 +991,8 @@ pub fn render_search_results(rows: &[super::index::SearchRow]) -> String {
     lines.join("\n")
 }
 
-fn short_oid(id: &str) -> &str {
+/// Truncate an OID to 16 characters for display.
+pub fn short_oid(id: &str) -> &str {
     &id[..id.len().min(16)]
 }
 
@@ -1199,11 +1215,11 @@ mod tests {
         assert!(out.contains("rfc"));
         assert!(out.contains("draft"));
         assert!(out.contains("human/alice"));
-        assert!(out.contains("branch:   feat/solver"));
-        assert!(out.contains("body:"));
+        assert!(out.contains("**branch:**   feat/solver"));
+        assert!(out.contains("---"));
         assert!(out.contains("Thread body"));
         assert!(out.contains("2026-01-01T00:00:00Z"));
-        assert!(out.contains("timeline:"));
+        assert!(out.contains("### timeline"));
     }
 
     #[test]
@@ -1255,12 +1271,12 @@ mod tests {
         let out = render_node_show(&lookup);
         assert!(out.contains("node-0001"));
         assert!(out.contains("RFC-0001 Test RFC"));
-        assert!(out.contains("status:   open"));
-        assert!(out.contains("body:"));
+        assert!(out.contains("**status:**   open"));
+        assert!(out.contains("---"));
         assert!(out.contains("What is this?"));
-        assert!(out.contains("thread links: 1"));
+        assert!(out.contains("### thread links (1)"));
         assert!(out.contains("ISSUE-0001  implements"));
-        assert!(out.contains("history:"));
+        assert!(out.contains("### history"));
         assert!(out.contains("question"));
         assert!(out.contains("date"));
         assert!(out.contains("node_id"));
@@ -1329,11 +1345,11 @@ mod tests {
                 policy: None,
             },
         );
-        assert!(with_timeline.contains("timeline:"));
-        assert!(!without_timeline.contains("timeline:"));
+        assert!(with_timeline.contains("### timeline"));
+        assert!(!without_timeline.contains("### timeline"));
         // Non-timeline content is preserved
-        assert!(without_timeline.contains("status:"));
-        assert!(without_timeline.contains("body:"));
+        assert!(without_timeline.contains("**status:**"));
+        assert!(without_timeline.contains("---"));
     }
 
     #[test]
@@ -1349,7 +1365,7 @@ mod tests {
             },
         );
         // RFC in draft has transitions: proposed, rejected
-        assert!(out.contains("next:     proposed, rejected"));
+        assert!(out.contains("**next:**     proposed, rejected"));
         assert!(out.contains("transitions:"));
         // State diagram should show [draft] highlighted
         assert!(out.contains("[draft]"));

@@ -328,14 +328,14 @@ fn show_contains_all_required_fields() {
     assert!(out.contains("rfc"), "missing kind");
     assert!(out.contains("draft"), "missing status");
     assert!(out.contains("human/alice"), "missing actor");
-    assert!(out.contains("body:"), "missing body section");
+    assert!(out.contains("---"), "missing body separator");
     assert!(out.contains("Initial thread body."), "missing body content");
     assert!(
         out.contains("Second line."),
         "missing multiline body content"
     );
     assert!(out.contains("2026-01-01T00:00:00Z"), "missing timestamp");
-    assert!(out.contains("timeline:"), "missing timeline section");
+    assert!(out.contains("### timeline"), "missing timeline section");
     assert!(out.contains("date"), "missing timeline header");
     assert!(out.contains("node_id"), "missing node_id timeline header");
     assert!(out.contains("event_id"), "missing event_id timeline header");

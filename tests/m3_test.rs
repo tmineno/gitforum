@@ -629,7 +629,7 @@ fn show_includes_open_objections_section() {
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     let out = show::render_show(&state, false);
 
-    assert!(out.contains("open objections: 1"));
+    assert!(out.contains("**open objections:** 1"));
     assert!(out.contains("Concern about performance."));
 }
 
@@ -729,7 +729,7 @@ fn find_node_returns_current_body_and_history() {
     assert!(out.contains("What is this?"));
     assert!(out.contains(&node_id[..node_id.len().min(16)]));
     assert!(out.contains("edit"));
-    assert!(out.contains("history:"));
+    assert!(out.contains("### history"));
     assert!(out.contains("node_id"));
     assert!(out.contains("event_id"));
 }
