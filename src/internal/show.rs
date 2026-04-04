@@ -204,7 +204,13 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
         lines.push("---".into());
         lines.push(String::new());
         if compact {
-            let body_lines: Vec<&str> = body.lines().collect();
+            let body_lines: Vec<&str> = body
+                .lines()
+                .filter(|l| {
+                    let trimmed = l.trim();
+                    !trimmed.is_empty() && !trimmed.starts_with('#')
+                })
+                .collect();
             let shown = body_lines.len().min(5);
             for line in &body_lines[..shown] {
                 lines.push(line.to_string());

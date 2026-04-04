@@ -27,6 +27,7 @@ const POST_CHECKOUT_HOOK_MARKER: &str = "# git-forum post-checkout hook";
 
 const POST_CHECKOUT_HOOK_SCRIPT: &str = r#"#!/bin/sh
 # git-forum post-checkout hook
+git-forum hook worktree-init
 git-forum hook fix-index
 "#;
 
@@ -582,24 +583,34 @@ mod tests {
 
     // ── fix_index_blobs tests ───────────────────────────────────────
 
+    /// Create a git Command with all GIT_* env vars removed so tests
+    /// work correctly when invoked from pre-commit hooks.
+    fn git_cmd(dir: &Path) -> std::process::Command {
+        let mut cmd = std::process::Command::new("git");
+        cmd.current_dir(dir);
+        for (key, _) in std::env::vars() {
+            if key.starts_with("GIT_") {
+                cmd.env_remove(&key);
+            }
+        }
+        cmd
+    }
+
     fn init_test_repo() -> (TempDir, GitOps) {
         let dir = TempDir::new().expect("create temp dir");
         let root = dir.path().to_path_buf();
-        std::process::Command::new("git")
+        git_cmd(&root)
             .args(["init"])
-            .current_dir(&root)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .output()
             .expect("git init");
-        std::process::Command::new("git")
+        git_cmd(&root)
             .args(["config", "user.name", "Test"])
-            .current_dir(&root)
             .output()
             .expect("config name");
-        std::process::Command::new("git")
+        git_cmd(&root)
             .args(["config", "user.email", "test@test.com"])
-            .current_dir(&root)
             .output()
             .expect("config email");
         let git = GitOps::new(root);
@@ -619,9 +630,8 @@ mod tests {
         let (dir, git) = init_test_repo();
         let file = dir.path().join("hello.txt");
         fs::write(&file, "hello").unwrap();
-        std::process::Command::new("git")
+        git_cmd(dir.path())
             .args(["add", "hello.txt"])
-            .current_dir(dir.path())
             .output()
             .expect("git add");
         let result = fix_index_blobs(&git).unwrap();
@@ -634,16 +644,14 @@ mod tests {
         let (dir, git) = init_test_repo();
         let file = dir.path().join("hello.txt");
         fs::write(&file, "hello").unwrap();
-        std::process::Command::new("git")
+        git_cmd(dir.path())
             .args(["add", "hello.txt"])
-            .current_dir(dir.path())
             .output()
             .expect("git add");
 
         // Get the blob SHA for hello.txt
-        let output = std::process::Command::new("git")
+        let output = git_cmd(dir.path())
             .args(["ls-files", "--stage", "hello.txt"])
-            .current_dir(dir.path())
             .output()
             .expect("ls-files");
         let ls_line = String::from_utf8_lossy(&output.stdout);

@@ -870,6 +870,8 @@ enum HookCmd {
     },
     /// Repair missing blob references in the git index (used by post-checkout hook)
     FixIndex,
+    /// Initialize git-forum in a new worktree (used by post-checkout hook)
+    WorktreeInit,
 }
 
 #[derive(Subcommand)]
@@ -2476,6 +2478,37 @@ fn main() -> Result<(), ForumError> {
                         eprintln!("fix-index: all index blobs present");
                     }
                 }
+                HookCmd::WorktreeInit => {
+                    let git_dir = git.git_dir()?;
+                    let paths = RepoPaths::from_repo_root_and_git_dir(git.root(), &git_dir);
+                    if !paths.git_forum.join("logs").is_dir() {
+                        init::init_forum(&paths)?;
+                        let local_toml_path = paths.git_forum.join("local.toml");
+                        if !local_toml_path.exists() {
+                            let default_actor = actor::actor_from_git_config(&git);
+                            let content = format!(
+                                "# git-forum local config (per-clone, not committed)\n\
+                                 \n\
+                                 # Default actor ID for this clone.\n\
+                                 # Override per-command with --as or GIT_FORUM_ACTOR env var.\n\
+                                 default_actor = \"{default_actor}\"\n\
+                                 \n\
+                                 # Override git commit author/committer on forum commits.\n\
+                                 # Uncomment to use a pseudonym instead of git config user.name/email.\n\
+                                 # [commit_identity]\n\
+                                 # name = \"pseudonym\"\n\
+                                 # email = \"pseudonym@example.com\"\n"
+                            );
+                            fs::write(&local_toml_path, content)?;
+                        }
+                        let _ = init::ensure_forum_refspecs(&git);
+                        hook::install_all_hooks(&git, false)?;
+                        eprintln!(
+                            "git-forum: initialized worktree at {}",
+                            git.root().display()
+                        );
+                    }
+                }
             }
         }
 
@@ -2866,6 +2899,9 @@ fn run_thread_cmd(
                     )?;
                 }
                 println!("Created {thread_id} (supersedes {source_id})");
+                if !(source_kind == ThreadKind::Rfc && kind == ThreadKind::Rfc) {
+                    eprintln!("hint: consider closing {source_id} (now superseded)");
+                }
             } else {
                 println!("Created {thread_id}");
             }
