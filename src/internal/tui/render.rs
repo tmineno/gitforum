@@ -200,7 +200,9 @@ fn render_select_mode(f: &mut Frame, area: Rect, app: &mut App) {
     };
 
     if app.markdown_mode {
-        let md_text = markdown_to_text(text);
+        // No block/borders → inner width equals the chunk width
+        let inner_w = chunks[1].width as usize;
+        let md_text = markdown_to_text(text, Some(inner_w));
         f.render_widget(
             Paragraph::new(md_text)
                 .wrap(Wrap { trim: false })
@@ -551,7 +553,9 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
 
         let body_block = Block::default().borders(Borders::ALL).title(body_title);
         if app.markdown_mode {
-            let md_text = markdown_to_text(&body_content);
+            // Inner width = area - 2 (left/right border)
+            let inner_w = main[0].width.saturating_sub(2) as usize;
+            let md_text = markdown_to_text(&body_content, Some(inner_w));
             f.render_widget(
                 Paragraph::new(md_text)
                     .block(body_block)
@@ -673,7 +677,8 @@ pub(crate) fn render_node_detail(f: &mut Frame, area: Rect, app: &mut App) {
         .borders(Borders::ALL)
         .title(format!(" node {title} "));
     if app.markdown_mode {
-        let md_text = markdown_to_text(app.node_detail_text.as_str());
+        let inner_w = chunks[1].width.saturating_sub(2) as usize;
+        let md_text = markdown_to_text(app.node_detail_text.as_str(), Some(inner_w));
         f.render_widget(
             Paragraph::new(md_text)
                 .block(node_block)

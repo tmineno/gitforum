@@ -48,7 +48,7 @@ fn max_scroll(text: &str, area: Rect, markdown_mode: bool) -> u16 {
     }
 
     let total_lines = if markdown_mode {
-        let md = markdown::markdown_to_text(text);
+        let md = markdown::markdown_to_text(text, Some(inner_width));
         // ratatui Text is a Vec<Line>; each Line wraps at inner_width
         md.lines
             .iter()

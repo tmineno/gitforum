@@ -399,11 +399,7 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
         } else {
             lines.push("### timeline".into());
             lines.push(String::new());
-            let widths = timeline_widths(&state.events);
-            lines.push(format_timeline_header(&widths));
-            for event in &state.events {
-                lines.push(format_timeline_entry(event, &widths, false));
-            }
+            lines.extend(format_timeline_as_markdown_table(&state.events));
         }
         lines.push(String::new());
     }
@@ -649,11 +645,7 @@ pub fn render_node_show(lookup: &NodeLookup) -> String {
     lines.push(String::new());
     lines.push("### history".into());
     lines.push(String::new());
-    let widths = timeline_widths(&lookup.events);
-    lines.push(format_timeline_header(&widths));
-    for event in &lookup.events {
-        lines.push(format_timeline_entry(event, &widths, false));
-    }
+    lines.extend(format_timeline_as_markdown_table(&lookup.events));
     lines.push(String::new());
 
     lines.join("\n")
@@ -831,6 +823,28 @@ pub fn format_timeline_entry(event: &Event, widths: &TimelineWidths, compact: bo
         author = widths.author,
         type = widths.r#type,
     )
+}
+
+/// Format a timeline as a markdown table.
+///
+/// Produces a pipe-separated table that the TUI markdown renderer will
+/// parse into a styled, width-aware table with bold headers and separators.
+fn format_timeline_as_markdown_table(events: &[Event]) -> Vec<String> {
+    let mut lines = Vec::new();
+    lines.push("| date | node_id | event_id | author | type | body |".into());
+    lines.push("|------|---------|----------|--------|------|------|".into());
+    for event in events {
+        lines.push(format!(
+            "| {} | {} | {} | {} | {} | {} |",
+            event.created_at.format("%Y-%m-%dT%H:%M:%SZ"),
+            event_node_id(event).map(short_oid).unwrap_or("-"),
+            short_oid(&event.event_id),
+            event.actor,
+            event_display_type(event),
+            timeline_body(event, false),
+        ));
+    }
+    lines
 }
 
 /// Build conversation groups from nodes with reply chains.
