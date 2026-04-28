@@ -247,6 +247,107 @@ These four combinations are exposed as **kind presets** (compatibility shorthand
 `lifecycle` survives as the sole required facet because the state machine literally cannot work
 without knowing which state set applies. Everything else is a tag. This is the floor.
 
+#### 2.3.5 Tag vocabulary discipline
+
+Free-form tags solve "force-fit into a kind". They re-introduce a different problem: language
+drift. `bug` / `defect` / `issue` / `bug-report` will all coexist if nothing constrains them, and
+search/policy decisions split across clones and across agents.
+
+2.0 chooses **light-touch discipline** rather than a fixed taxonomy:
+
+##### Tag grammar (hard constraint)
+
+Every tag MUST satisfy:
+
+- ASCII lowercase only, `[a-z0-9-]` (no spaces, slashes, colons, `/`, `:`, `@`, `!`).
+- Starts with a letter (`[a-z]`).
+- Length 2–32 characters.
+- Not equal to a reserved literal (`all`, `none`, `any`, `untagged`, `archived` — used as
+  filter shorthands in `ls`/search, §9.3).
+
+Violations are rejected at write time with `InvalidTagSyntax` (§13). The grammar is intentionally
+narrow so tags compose cleanly with shell, search filters (`tag:bug`), and policy keys
+(`creation_rules.execution.tag.bug`).
+
+##### Conventional tags (pre-registered)
+
+`git forum init` writes `.forum/tags.toml` with three pre-registered entries used by the kind
+presets (§9.2):
+
+```toml
+# .forum/tags.toml
+[tags.bug]
+description = "Observation-style execution thread (defect, regression, unexpected behavior)"
+
+[tags.task]
+description = "Work-style execution thread (planned implementation, refactor, chore)"
+
+[tags.cross-cutting]
+description = "Wide-impact thread spanning multiple modules or workflows"
+```
+
+Repos MAY remove or rename these entries. Nothing in the core model depends on these specific
+strings; the kind presets bind to whatever the registry says (`new bug` resolves the `bug` entry
+at command-execution time, fails with `UnknownTag` if the entry was removed and `strict_tags`
+is on).
+
+##### Repo-local tag registry (`.forum/tags.toml`)
+
+The registry is a flat namespace of `[tags.<name>]` entries. Each entry MAY include:
+
+| Field | Type | Purpose |
+|---|---|---|
+| `description` | string | Human-readable; surfaced in `policy show`, TUI tag picker, and `--help-llm` |
+| `aliases` | array&lt;string&gt; | Read-time synonyms; resolve to the canonical key. Useful for migrating from `defect` → `bug` without breaking historical refs. Aliases MUST satisfy the same grammar. |
+| `deprecated` | bool | If true, write attempts emit a deprecation warning suggesting the replacement (via `replaced_by`). Read access is unchanged. |
+| `replaced_by` | string | Canonical key to suggest in deprecation warnings. |
+
+The registry is intentionally minimal. There is no tag hierarchy, no per-tag state machine, no
+per-tag actor binding, no `area/*` / `priority/*` namespacing convention. Those are explicit
+non-goals (§15) — git-forum is not an issue tracker re-implementation.
+
+##### Unknown-tag handling (configurable severity)
+
+Default: **warning**, not error. A first-time contributor who types `--tag perf` on a repo that
+has not yet registered `perf` should not be blocked.
+
+```toml
+# .forum/policy.toml — default
+[tags]
+strict_tags = false   # unknown tag → warning (UnknownTag)
+
+# Strict mode opt-in
+[tags]
+strict_tags = true    # unknown tag → error; user must register first
+```
+
+When `strict_tags = false` (default), an unknown tag on write emits `UnknownTag` (warning)
+with a hint to add the entry to `.forum/tags.toml`. The thread is created with the tag attached
+as-is. Subsequent writes carry the same tag silently — the warning fires only when the tag is
+**newly introduced** to the repo (i.e., no prior thread carries it).
+
+When `strict_tags = true`, the same situation produces a non-zero exit; the user must either
+register the tag or use `--tag-register <name>` (which writes the registry entry as part of the
+same command, with a templated description).
+
+##### Policy-referenced tags MUST be registered
+
+Regardless of `strict_tags`, any tag that appears in `.forum/policy.toml` (guard predicates,
+`creation_rules.<lifecycle>.tag.<name>`, etc.) MUST be present in `.forum/tags.toml`. Mismatch
+is reported by `git forum policy lint` as `UnknownPolicyTag` (error, §13). The rationale: a
+typo in `creation_rules.execution.tag.taks` silently disables the rule for `task` threads,
+which is a class of bug worth structurally preventing.
+
+##### What is intentionally **not** in the registry
+
+- Global standard tag set spanning repos. Each repo defines its own vocabulary.
+- Tag hierarchy (`area/auth`, `priority/p1`). Tags are flat by design.
+- Per-tag default actor / assignee.
+- Required tag combinations (e.g., "every `bug` must also have a severity tag").
+
+These belong in higher-level tooling or in a future facet expansion (which would surface as a
+new required facet, not a tag-system feature) and are explicitly out of scope for 2.0.
+
 ### 2.4 Event
 
 Unchanged from SPEC.md §2.3. New event types added in 2.0:
@@ -395,6 +496,7 @@ Same as SPEC.md §5.2 with added template:
 .forum/
   policy.toml
   actors.toml
+  tags.toml           # tag registry (NEW); pre-populated by `git forum init`
   templates/
     topic.md         # topic charter template (NEW)
     thread.md           # generic thread template (NEW)
@@ -404,6 +506,12 @@ Same as SPEC.md §5.2 with added template:
 ```
 
 Old per-kind templates (`rfc.md`, `issue.md`, etc.) are deprecated but readable for migration.
+
+`tags.toml` is repo-local convention (§2.3.5). `git forum migrate` from 1.x writes this file
+populated with `bug`, `task`, `cross-cutting` plus any other tag values observed in the migrated
+threads (each gets a stub `description = "(auto-imported during migration; please edit)"`),
+so post-migration `policy lint` does not immediately fire `UnknownPolicyTag` on a previously-
+silent tag.
 
 ### 5.3 Local files
 
@@ -597,6 +705,26 @@ Changing a thread's facet values after creation MAY invalidate prior policy deci
 - `tags`: mutable at any state. Tag changes that promote a thread into a stricter policy bucket
   (e.g., adding `task` triggers stricter `creation_rules.execution.tag.task`) re-evaluate
   operation checks and emit warnings if the thread no longer satisfies them.
+
+### 7.4 Tag registry and policy lint
+
+The tag registry (`.forum/tags.toml`, §2.3.5) participates in policy in three ways:
+
+1. **Write-time validation.** Every `--tag <name>` and `facet_set` event carrying a tag is
+   validated against the grammar (`InvalidTagSyntax` on violation) and against the registry.
+   Registry miss → `UnknownTag` (warning by default; error under `[tags] strict_tags = true`).
+2. **Policy load-time lint.** `git forum policy lint` reads `policy.toml` and resolves every
+   tag-bearing key (`creation_rules.<lifecycle>.tag.<name>`, guard predicates `tag=<name>`,
+   facet expressions). Each `<name>` is looked up in the registry; misses report
+   `UnknownPolicyTag` (always **error**, regardless of `strict_tags`). Aliases resolve to the
+   canonical key for this check.
+3. **Deprecation surfacing.** When `[tags.<name>] deprecated = true` is set, write attempts
+   emit a deprecation warning naming `replaced_by` if present. Read paths (`show`, `ls`,
+   search) are unchanged so historical data continues to render with the original tag.
+
+Registry mutation is itself unguarded in 2.0 — anyone with write access to `.forum/tags.toml`
+can register a new tag. F-W2 (Appendix A.3) discusses the forward-compat path for adding
+guards over registry mutation if needed.
 
 ## 8. Concurrency
 
@@ -1042,6 +1170,30 @@ If the reference cannot be resolved at the moment of rejection (e.g., the topic 
 exist locally), the error message MUST say so explicitly and recommend `topic show` rather than
 silently failing with "unknown reference".
 
+### 9.7 Tag registry commands
+
+```text
+git forum tag ls                                  # list registered tags with description / deprecation status
+git forum tag show <NAME>                         # full entry: description, aliases, deprecated, replaced_by, usage count
+git forum tag register <NAME> [--description <TEXT>] [--alias <ALIAS>...]
+git forum tag deprecate <NAME> [--replaced-by <NAME>]
+git forum tag undeprecate <NAME>
+git forum tag rename <OLD> <NEW>                  # writes <NEW> + adds <OLD> to its `aliases`; existing data unchanged
+```
+
+`tag register` writes the entry to `.forum/tags.toml`. Without `--description`, a stub
+`"(registered by <actor> on <date>; please edit)"` is written so the file remains lint-clean.
+
+`tag rename` is non-destructive: existing threads keep the old tag value; reads resolve via the
+alias. To bulk-rewrite tag values on threads, F-W6 (CRDT tags, Appendix A.3) is the forward path
+— 2.0 does not include a rewrite operation because every tag change is an append-only event
+that must remain in the audit trail.
+
+`--tag-register <NAME>` is also accepted on `thread new` / `thread tag add` as a one-shot
+combined flag: register the tag (creating the entry with a stub description) and apply it in
+the same command. Useful in scripted workflows where the user knows the tag is new and does
+not want a two-step ceremony.
+
 ## 10. Migration from 1.x
 
 ### 10.1 Strategy
@@ -1153,6 +1305,10 @@ Unchanged from SPEC.md §13. New error and warning categories:
 | `AttachConflictResolved` | warning | divergent `topic_attach`/`topic_detach` reconciled by LWW (§8.2.2) | Surfaced in `show` until manually re-attached or acknowledged |
 | `ShortIndexInPersistedRef` | **error** | `/N` short reference appears where it would be stored (e.g. commit message scanned by `commit-msg` hook, evidence ref, link target) | Error message MUST include the canonical thread ID resolved at the moment the short reference was rejected (e.g., "did you mean `@d8f4q9aa`?"). Resolving requires reading the topic at write time, but the rejection itself is preflight. |
 | `AmbiguousReferenceWithoutMarker` | error | Bare token (no `!`/`@`) used in a CLI position that accepts both a topic and a thread (e.g. `git forum show <REF>`) | Lists candidate topic / thread matches; suggests prefixing with `!` or `@` to disambiguate. |
+| `InvalidTagSyntax` | error | `--tag <value>` or `facet_set` payload violates the tag grammar (§2.3.5) | Message names the offending character / length / reserved-literal violation; suggests a sanitized form. |
+| `UnknownTag` | warning (default) / error (`strict_tags = true`) | Tag not present in `.forum/tags.toml` (§2.3.5) | First write of a previously-unseen tag in the repo. Hint suggests `git forum tag register <name>` or editing `tags.toml` directly. |
+| `UnknownPolicyTag` | error | `policy lint` finds a tag in `policy.toml` (guard predicate or `creation_rules.<lifecycle>.tag.<name>`) that is absent from the registry | Always error; typo-prevention. Reports file:line of the offending policy entry. |
+| `TagDeprecated` | warning | Write attempt uses a tag where `[tags.<name>] deprecated = true` | Suggests `replaced_by` if present. Read paths unaffected. |
 
 ## 14. Testing strategy
 
@@ -1172,6 +1328,34 @@ Unchanged from SPEC.md §14, plus:
   canonical `thread new --lifecycle ... --tag ...` form.
 - A topic can hold threads of all three lifecycles simultaneously; `topic show` groups
   them correctly.
+
+### Tag vocabulary (§2.3.5, §7.4, §9.7)
+
+- **Grammar enforcement.** `--tag` rejects values violating the grammar (uppercase, leading
+  digit, length &lt;2 or &gt;32, contains `/`, `:`, `@`, `!`, space, reserved literals like
+  `all`/`untagged`/`archived`) with `InvalidTagSyntax`. The error message names the specific
+  violation and proposes a sanitized form.
+- **Default unknown-tag warning.** A `--tag perf` write on a fresh repo (no `perf` in
+  `tags.toml`) creates the thread and emits `UnknownTag` (warning). The next thread with the
+  same tag does **not** re-warn (warning fires only on first introduction of the tag in the
+  repo).
+- **Strict mode.** `[tags] strict_tags = true` in `policy.toml` flips the same `--tag perf`
+  case to a non-zero exit; the thread is not created. `--tag-register perf --tag perf` in
+  the same command succeeds (registers + applies atomically).
+- **Policy lint.** `policy lint` fires `UnknownPolicyTag` (error) when `policy.toml`
+  references a tag (`creation_rules.execution.tag.taks`, `tag=foo` predicate) absent from
+  `tags.toml`. Aliases resolve before the lookup; a policy referencing an alias is accepted.
+- **Alias resolution.** `[tags.bug] aliases = ["defect"]` causes `--tag defect` to resolve as
+  `bug` for all queries (`ls --tag bug` shows threads tagged `defect`).
+- **Deprecation surfacing.** `[tags.issue] deprecated = true, replaced_by = "bug"` causes
+  `--tag issue` to succeed with `TagDeprecated` warning suggesting `bug`. Read paths
+  (`show`, `ls --tag issue`) work unchanged.
+- **Migration registry seeding.** `git forum migrate` writes `tags.toml` populated with
+  `bug`, `task`, `cross-cutting` plus any tag observed in migrated threads. Post-migration
+  `policy lint` fires no `UnknownPolicyTag` for tags that were already in the 1.x policy.
+- **Conventional-tag removal.** A repo that removes `[tags.bug]` from the registry causes
+  `git forum new bug` to fail under `strict_tags = true` (or warn under default), because
+  the preset binds to the registry at execution time.
 
 ### Cross-clone concurrency
 
@@ -1232,6 +1416,11 @@ In addition to SPEC.md §15:
 - Multi-parent topics (DAG of topics).
 - User-defined required facet axes beyond `lifecycle` (use `tags` instead).
 - Mandatory topic membership for threads.
+- A global / cross-repo standardized tag taxonomy. Tag vocabularies are repo-local by design
+  (§2.3.5). Convergence between repos is a higher-level tooling concern, not a core feature.
+- Tag hierarchy (`area/auth`, `priority/p1`), per-tag state machines, per-tag default actor
+  assignment, mandatory tag combinations. The registry is intentionally a flat namespace
+  with grammar + description + alias + deprecation only.
 
 ## Appendix A: Open questions
 
@@ -1242,6 +1431,7 @@ In addition to SPEC.md §15:
 | O-1 | Should `!_legacy` migration bucket be created automatically, or should threads stay orphan until manually attached? | **Orphan**. No synthetic topic on migration; `doctor` reports orphan count. (§10.1) |
 | O-2 | Are 5 intent values enough? | **Dropped entirely**, and `scope` was dropped too. Sole required facet is `lifecycle`; everything else (bug/task/cross-cutting) is a tag. (§2.3) |
 | O-3 | Should standalone threads be allowed to use shorthand commands (`close`, `accept`) directly? | **Yes**. Shorthand commands work uniformly on standalone and attached threads. Topic attachment is never required for state changes. (§9.4) |
+| O-4 | Should free-form tags have any constraint, given the cross-clone language-drift risk (`bug` vs `defect` vs `issue`)? | **Light-touch discipline.** Hard tag grammar (`[a-z][a-z0-9-]{1,31}`); three pre-registered conventional tags (`bug`, `task`, `cross-cutting`); repo-local registry at `.forum/tags.toml`; unknown tag → warning by default, escalatable to error via `[tags] strict_tags = true`; policy-referenced tags must always be in the registry (`UnknownPolicyTag` lint error). No global standard taxonomy, no hierarchy, no per-tag state machine. (§2.3.5, §7.4, §9.7, §13) |
 
 ### A.2 Remaining for 2.0 implementation
 
