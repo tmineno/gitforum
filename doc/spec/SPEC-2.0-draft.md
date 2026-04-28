@@ -430,14 +430,35 @@ Rationale:
 - The symbols appear only at the user-facing layer — refs, file paths, and serialized event
   fields use the bare token. This keeps Git ref-name validation rules (which forbid `!` mid-ref
   and reserve `@{` syntax) out of scope.
-- `!` requires shell quoting (`'!payment-rewrite'`) because of bash history expansion. CLI
-  commands accept the bare slug as input as well; the `!` is **mandatory only in persisted /
-  prose contexts** where type disambiguation matters (commit messages, body text, evidence
-  refs).
+- `!` requires shell quoting (`'!payment-rewrite'`) because of bash history expansion. To keep
+  interactive use friction-free, the bang is **optional at every CLI input position** — see
+  §6.0.1 below. The `!` is **mandatory only in persisted / prose contexts** where type
+  disambiguation matters (commit messages, body text, evidence refs, link targets).
 
 This scheme gives every reference in commit messages, log output, and prose an unambiguous
 visual type — an easy win over alphabetic prefixes (`wf-`, `t-`) that blur into the
 identifier itself.
+
+#### 6.0.1 Type-marker omission at CLI input
+
+To avoid forcing users to quote `!` on every interactive command, the CLI **MUST accept** topic
+and thread references with the leading marker omitted, whenever the surrounding command makes
+the expected type unambiguous.
+
+| Position | Bang/at required? | Notes |
+|---|---|---|
+| Positional or flag value of `topic show / topic ls / topic attach / topic detach / topic rename / topic archive / topic unarchive` | optional | The command grammar already requires a topic at this slot. `topic show payment-rewrite` is equivalent to `topic show '!payment-rewrite'`. |
+| `--topic <ref>` flag on `thread new`, `thread ls`, etc. | optional | Type is fixed by the flag name. |
+| Positional or flag value where a thread is required (`thread show`, `thread state`, `claim`, `evidence add`, etc.) | optional | `@` may be omitted for the same reason. `thread show a3f9b2k1` is equivalent to `thread show @a3f9b2k1`. |
+| Mixed positions where either a topic or a thread is acceptable (e.g. `git forum show <REF>`) | **required** | Without the marker, the parser cannot disambiguate. Missing-marker input here returns `AmbiguousReferenceWithoutMarker` (§13) listing both candidate types. |
+| Anywhere written into stored data (commit messages, evidence refs, link targets, body text) | **required** | The persisted-context rule (§9.6) is unchanged: bare tokens written into stored data are rejected as ambiguous. |
+
+Error messages that surface a quoting failure SHOULD include a tip such as:
+
+> Tip: drop the leading `!` to skip shell quoting — `topic show payment-rewrite` works the same.
+
+This rule applies symmetrically to `@` for threads, even though `@` itself does not require
+quoting. The benefit there is consistency, not friction reduction.
 
 ### 6.1 Topic handles
 
@@ -855,6 +876,29 @@ git forum topic unarchive <TOPIC>
   unless `--force` is passed. Rationale: archived topics are hidden by default in `ls`, so a
   silent attach would put work in a place users won't see.
 
+#### 9.1.1 `topic show` output
+
+`topic show` displays a header block followed by the attached threads grouped by lifecycle. The
+header MUST surface publication state so the user knows whether a handle is shared with the
+remote:
+
+| Header line | When shown |
+|---|---|
+| `Topic: !<handle>` | always |
+| `Title: <title>` | always |
+| `State: active` / `State: archived (since <date>)` | always |
+| `Charter: <first non-empty body line>` / `Charter: (none)` | always |
+| `Summary: <empty / has-open / all-terminal> (<n> threads attached)` | always |
+| `(LOCAL ONLY — not pushed to any remote)` | the topic's `topic_create` event has never been observed on any tracked remote ref. Removed once a successful push lands. |
+| `(LOCAL ONLY — handle not pushed: <reason>)` | the topic event chain is on the remote, but the alias ref failed to push (`HandleConflictOnPush`, §8.2.1). Reason text names the claimant of the conflicting handle. |
+| `Pending divergence: <N> attach conflict(s) — see 'doctor'` | `AttachConflictResolved` warnings (§8.2.2) exist and have not been acknowledged. |
+
+The publication-state lines fire only when the relevant condition is true; in the steady-state
+shared-and-clean case the header is the four standard rows plus the summary.
+
+This makes the Day-4-style "I pushed and got an error, now what?" recovery path discoverable
+from `topic show` alone, without requiring the user to remember the original push log.
+
 ### 9.2 Thread commands (unified + presets)
 
 Canonical form:
@@ -976,6 +1020,27 @@ Free-form body text (`--body`, `--body-file`, `--edit` content) is **not scanned
 Authors who write `!foo/3` in prose are responsible for prose accuracy; the rule covers
 machine-interpreted references only.
 
+#### Error UX requirement: canonical-ID suggestions
+
+When `ShortIndexInPersistedRef` fires, the rejection MUST include the **canonical thread ID**
+that the short reference would have resolved to, so the user can fix the input by copy-paste
+without re-running `topic show`. Example commit-msg hook output:
+
+```
+git-forum: error: commit message references a short index that cannot be persisted
+
+  found:    !node-id-scheme-review/3
+  resolved: @d8f4q9aa  (slot /3 of '!node-id-scheme-review' on this clone)
+
+  Replace the short reference with the canonical thread ID and re-commit.
+  (Short references like '/3' are display-only; cross-clone they may point
+  to different threads.)
+```
+
+If the reference cannot be resolved at the moment of rejection (e.g., the topic itself does not
+exist locally), the error message MUST say so explicitly and recommend `topic show` rather than
+silently failing with "unknown reference".
+
 ## 10. Migration from 1.x
 
 ### 10.1 Strategy
@@ -1085,7 +1150,8 @@ Unchanged from SPEC.md §13. New error and warning categories:
 | `HandleConflictOnPush` | **error** | alias ref CAS failure on push (§8.2.1, §8.2.3) | Atomic push group fails; user must `topic rename` and re-push |
 | `AttachToArchivedTopic` | **error** | attach attempt to a topic whose `archived_at` is set | `--force` overrides; intentional gate to keep work visible |
 | `AttachConflictResolved` | warning | divergent `topic_attach`/`topic_detach` reconciled by LWW (§8.2.2) | Surfaced in `show` until manually re-attached or acknowledged |
-| `ShortIndexInPersistedRef` | **error** | `/N` short reference appears where it would be stored (e.g. commit message scanned by `commit-msg` hook, evidence ref, link target) | The canonical thread ID must be used |
+| `ShortIndexInPersistedRef` | **error** | `/N` short reference appears where it would be stored (e.g. commit message scanned by `commit-msg` hook, evidence ref, link target) | Error message MUST include the canonical thread ID resolved at the moment the short reference was rejected (e.g., "did you mean `@d8f4q9aa`?"). Resolving requires reading the topic at write time, but the rejection itself is preflight. |
+| `AmbiguousReferenceWithoutMarker` | error | Bare token (no `!`/`@`) used in a CLI position that accepts both a topic and a thread (e.g. `git forum show <REF>`) | Lists candidate topic / thread matches; suggests prefixing with `!` or `@` to disambiguate. |
 
 ## 14. Testing strategy
 
@@ -1126,12 +1192,34 @@ Unchanged from SPEC.md §14, plus:
 - Standalone threads accept all state-change shorthands (`close`, `accept`, `pend`, ...) without
   topic attachment.
 
+### Type-marker omission (§6.0.1)
+
+- `git forum topic show payment-rewrite` resolves identically to
+  `git forum topic show '!payment-rewrite'`.
+- `git forum thread show a3f9b2k1` resolves identically to `git forum thread show @a3f9b2k1`.
+- `git forum show <bare-token>` returns `AmbiguousReferenceWithoutMarker` when the token
+  matches both an existing topic slug and a thread token (lists both candidates).
+- Shell-quoting failure messages include the "drop the leading `!`" tip.
+
 ### `/N` short-index validation
 
 - Two clones with diverging attach order produce the same `/N` mapping after sync.
 - `/N` accepted as input to read-only CLI commands (`show`, etc.).
 - `/N` **rejected with `ShortIndexInPersistedRef`** in every persisted-context check point
   enumerated in §9.6.
+- The rejection message includes the canonical thread ID the short reference resolved to
+  (e.g. `@d8f4q9aa`); when the topic itself does not resolve locally, the message says so
+  explicitly instead of returning an opaque "unknown reference" error.
+
+### `topic show` publication-state header
+
+- A topic created locally but never pushed shows `(LOCAL ONLY — not pushed to any remote)` in
+  the header.
+- A topic whose alias ref failed to push (`HandleConflictOnPush`) shows
+  `(LOCAL ONLY — handle not pushed: ...)` naming the claimant.
+- After successful push of both event chain and alias, the LOCAL ONLY line disappears.
+- Unacknowledged `AttachConflictResolved` warnings produce a `Pending divergence: <N>` line
+  in the header.
 
 ## 15. Non-goals
 
