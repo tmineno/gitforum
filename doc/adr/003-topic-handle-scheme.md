@@ -1,14 +1,15 @@
-# ADR-003: Workflow Handle Scheme
+# ADR-003: Topic Handle Scheme
 
 ## Context
 
-git-forum 2.0 introduces `workflow` as the primary user-facing unit of work (spec §2.1). Workflows
+git-forum 2.0 introduces `topic` as the primary user-facing unit of work (spec §2.1). Topics
 group related threads under a name humans can remember, point at, and reference in conversation.
-Threads themselves keep opaque content-addressed IDs (`t-XXXXXXXX`) — they are receipts, not
+Threads themselves keep opaque content-addressed IDs (display form `@XXXXXXXX`) — they are
+receipts, not
 handles.
 
 This shifts the "ID readability" problem from threads (where it failed in 1.x — `RFC-6m4kap23`
-is unmemorable) to workflows. Workflows need handles that are:
+is unmemorable) to topics. Topics need handles that are:
 
 - **Memorable** — pronounceable, ideally derived from the title.
 - **Local-first** — allocatable on any clone without coordination.
@@ -22,23 +23,23 @@ that requires a coordinator at allocation time.
 
 ## Decision
 
-Adopt a **two-layer identity** for workflows, mirroring Git's "SHA + ref" model:
+Adopt a **two-layer identity** for topics, mirroring Git's "SHA + ref" model:
 
-- **Internal opaque ID**: `wf-XXXXXXXX` (8 base36 chars), generated from
+- **Internal opaque ID**: `XXXXXXXX` (8 base36 chars), generated from
   `sha256(actor || timestamp || title || nonce)` — same algorithm as thread IDs (RFC-0030).
-  Stored at `refs/forum/workflows/<WORKFLOW_ID>`. Never collides across clones.
-- **User-facing handle**: `wf-<slug>` where `<slug>` is derived from the title (`[a-z0-9-]+`,
+  Stored at `refs/forum/topics/<WORKFLOW_ID>`. Never collides across clones.
+- **User-facing handle**: `!<slug>` where `<slug>` is derived from the title (`[a-z0-9-]+`,
   3–48 chars). On collision within a clone, append a deterministic petname suffix
-  (e.g., `wf-payment-rewrite-quick-fox`) computed from `sha256(workflow_id)`. Stored at
-  `refs/forum/aliases/<HANDLE>` as a symref or note pointing to the workflow ID.
+  (e.g., `!payment-rewrite-quick-fox`) computed from `sha256(topic_id)`. Stored at
+  `refs/forum/aliases/<HANDLE>` as a symref or note pointing to the topic ID.
 
 Handles are **mutable**. Renames preserve all old handles as permanent aliases via
-`workflow_alias` events. Cross-clone handle conflicts (two clones independently claiming the
+`topic_alias` events. Cross-clone handle conflicts (two clones independently claiming the
 same handle) surface at push time as an **explicit error** (`HandleConflictOnPush`); the user
-must rename their workflow before re-pushing. Within-clone collisions, by contrast, are
+must rename their topic before re-pushing. Within-clone collisions, by contrast, are
 recovered automatically via a deterministic petname suffix.
 
-Within a known workflow, child threads may be referenced by short index (`wf-foo#3`). This is a
+Within a known topic, child threads may be referenced by short index (`!foo#3`). This is a
 **session-local convenience**, not a stable identifier (see spec §8.3).
 
 ## Consequences
@@ -46,12 +47,12 @@ Within a known workflow, child threads may be referenced by short index (`wf-foo
 - Handles are pronounceable and grep-friendly without losing the conflict-free property of
   content-addressed IDs.
 - The handle alias ref tree becomes the lookup index — handle resolution is one ref-read.
-- Workflow rename is cheap (alias write) and never breaks references.
+- Topic rename is cheap (alias write) and never breaks references.
 - **Handle stability is preserved across clones**: a handle a user has written into external
-  notes, RFC bodies, or commit messages keeps meaning the same workflow forever, because no
+  notes, RFC bodies, or commit messages keeps meaning the same topic forever, because no
   silent reassignment occurs. Cross-clone push conflicts require explicit user resolution.
 - This costs CI ergonomics: `git forum push` (or wrapping push) can fail with
-  `HandleConflictOnPush`, requiring a manual `workflow rename` step. Workflow creation is rare
+  `HandleConflictOnPush`, requiring a manual `topic rename` step. Topic creation is rare
   enough that this is acceptable; for high-volume thread creation, no analogous conflict exists
   (thread IDs are content-addressed).
 - The petname dictionary (~2,048 adjectives × ~2,048 nouns) is a build artifact that must ship
@@ -61,31 +62,31 @@ Within a known workflow, child threads may be referenced by short index (`wf-foo
 
 ## Alternatives
 
-### Sequential numeric handles (`wf-1`, `wf-2`, ...)
+### Sequential numeric handles (`!1`, `!2`, ...)
 
 Pros: short, readable, conventional (matches Linear/Jira).
 
 Cons: requires a central allocator, or post-merge renumbering. Either violates local-first or
 breaks references on merge. Same flaw as 1.x sequential thread IDs.
 
-### Pure opaque handles (`wf-x9k2m4p7` — no slug)
+### Pure opaque handles (`!x9k2m4p7` — no slug)
 
 Pros: no collision logic needed, deterministic.
 
 Cons: defeats the entire purpose of handles. Same readability problem as 1.x opaque thread IDs.
 
-### Pure petname (`wf-quick-fox`, no slug derivation)
+### Pure petname (`!quick-fox`, no slug derivation)
 
 Pros: always pronounceable, always unique with high probability.
 
-Cons: no semantic anchor — `wf-quick-fox` doesn't tell you what it's about. Title becomes the
+Cons: no semantic anchor — `!quick-fox` doesn't tell you what it's about. Title becomes the
 only mnemonic, and titles are not addressable directly.
 
 ### User-mandatory handle on creation
 
 Pros: user always controls naming.
 
-Cons: friction in agent / scripted contexts. Most workflow names are obvious from title; forcing
+Cons: friction in agent / scripted contexts. Most topic names are obvious from title; forcing
 the user to type them is busywork. Petname auto-append still needed for collision recovery
 either way.
 
@@ -103,22 +104,22 @@ An earlier draft proposed automatically appending a petname suffix when a push f
 alias-ref CAS conflict — symmetric with the within-clone resolution. This was rejected because
 the loser's handle would change without their explicit consent; any external reference to that
 handle (RFC body, commit message, external document) would silently start resolving to a
-different workflow. The whole point of having a stable human-facing handle is that it can be
+different topic. The whole point of having a stable human-facing handle is that it can be
 written down and pointed at later. Auto-rename undermines that guarantee for whichever clone
 loses the push race. Explicit failure with a manual rename step is safer; the friction is
-acceptable because workflow creation is rare.
+acceptable because topic creation is rare.
 
 ## Exit criteria
 
 - Spec §6.1 defines handle generation, petname collision resolution (within-clone), and rename
   semantics.
 - Spec §8.2.1 defines cross-clone handle conflict as an explicit error requiring user rename.
-- `refs/forum/workflows/` and `refs/forum/aliases/` ref trees implemented; create / rename use
+- `refs/forum/topics/` and `refs/forum/aliases/` ref trees implemented; create / rename use
   atomic push (spec §8.4.1).
-- `git forum workflow rename` records `workflow_alias` events; old handles continue to resolve.
+- `git forum topic rename` records `topic_alias` events; old handles continue to resolve.
 - Petname dictionary bundled with the binary (within-clone collision recovery only).
 - Test: two simulated clones independently allocating the same handle — the second push fails
-  with `HandleConflictOnPush`; after explicit `workflow rename` on the loser, both workflows
+  with `HandleConflictOnPush`; after explicit `topic rename` on the loser, both topics
   exist with distinct handles.
 - Test: `#N` short reference rejected with `ShortIndexInPersistedRef` when used as evidence ref,
   link target, or in `commit-msg` hook input.

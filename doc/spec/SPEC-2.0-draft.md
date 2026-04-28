@@ -9,17 +9,17 @@ explicitly overridden below.
 >    single `thread` entity carried by `lifecycle` + free-form `tags`. The four 1.x kinds remain
 >    as **stable CLI presets** (`new rfc`, `new task`, `new bug`, `new dec`) — the muscle memory
 >    is preserved indefinitely; only the underlying schema changes.
-> 2. **Workflow as named context** — a new `workflow` entity provides a memorable handle for
->    grouping related threads. **Threads remain the primary unit of work**; workflows are
->    optional context wrappers, not a required ceremony layer. Standalone threads (no workflow)
+> 2. **Topic as named context** — a new `topic` entity provides a memorable handle for
+>    grouping related threads. **Threads remain the primary unit of work**; topics are
+>    optional context wrappers, not a required ceremony layer. Standalone threads (no topic)
 >    are first-class throughout the CLI, TUI, and default views.
 >
-> The workflow concept in 2.0 is intentionally **slim**: a named container with an optional
-> charter, and an archive flag. There is no workflow state machine, no workflow-level guards, and
+> The topic concept in 2.0 is intentionally **slim**: a named container with an optional
+> charter, and an archive flag. There is no topic state machine, no topic-level guards, and
 > no nesting in 2.0. These capabilities are explicitly deferred to future minor releases (see
 > Appendix A.3 for the forward-compatibility plan).
 >
-> The motivating analysis is recorded separately in ADR-002 (kind reduction), ADR-003 (workflow
+> The motivating analysis is recorded separately in ADR-002 (kind reduction), ADR-003 (topic
 > handles), and ADR-004 (migration). This document specifies the resulting model.
 
 ## 1. Overview
@@ -28,12 +28,12 @@ explicitly overridden below.
 
 | Concern | 1.x | 2.0 |
 |---|---|---|
-| Primary unit of work | Thread (`RFC-...`, `JOB-...`) | **Thread** (unchanged). Workflow is a named context that can group threads, but threads stay first-class. |
+| Primary unit of work | Thread (`RFC-...`, `JOB-...`) | **Thread** (unchanged). Topic is a named context that can group threads, but threads stay first-class. |
 | Thread classification | `kind` enum: `rfc` / `dec` / `task` / `issue` | **Single required facet** (`lifecycle`) + free-form `tags` |
 | State machines | 4 kind-specific machines | 1 unified machine, allowed states gated by `lifecycle` facet |
 | Top-level CLI | `git forum new rfc ...` etc. | `git forum new rfc/task/bug/dec ...` remain as the **stable everyday surface**; `git forum thread new --lifecycle ...` is the canonical/scriptable form |
-| Workflow concept | None (links only) | Named context with handle and (optional) child threads. Slim by design: **no state machine, no guards, no nesting in 2.0**. |
-| Thread ID readability | Opaque (`RFC-6m4kap23`) — unmemorable | Unchanged. Workflows carry the readable handle. |
+| Topic concept | None (links only) | Named context with handle and (optional) child threads. Slim by design: **no state machine, no guards, no nesting in 2.0**. |
+| Thread ID readability | Opaque (`RFC-6m4kap23`) — unmemorable | Unchanged. Topics carry the readable handle. |
 
 ### 1.2 Design principles (additions to 1.x)
 
@@ -42,16 +42,16 @@ In addition to the six principles in SPEC.md §1.1, 2.0 adds:
 7. **Composable taxonomy.** Thread classification is built from independent facets, not enumerated
    kinds. New use cases extend the facet vocabulary, not the kind set.
 8. **Two-layer identity.** Receipt-quality identity (opaque, conflict-free) is decoupled from
-   handle-quality identity (slug, memorable, possibly mutable). Threads use the former, workflows
+   handle-quality identity (slug, memorable, possibly mutable). Threads use the former, topics
    use the latter.
-9. **Workflow as named context, not as ceremony.** Workflows in 2.0 are optional grouping
+9. **Topic as named context, not as ceremony.** Topics in 2.0 are optional grouping
    devices with memorable names. They do not enforce sequencing, do not run state machines, and
    do not gate transitions. Threads — including standalone threads — remain the primary unit of
-   capture and work; workflows wrap them when grouping helps. Coordination semantics — when
+   capture and work; topics wrap them when grouping helps. Coordination semantics — when
    warranted — are added later as opt-in extensions (see Appendix A.3).
 10. **Quick-capture-first.** A short bug report or note must take seconds, not minutes. Stable
     kind presets (`new bug`, `new task`, `new rfc`, `new dec`) and the standalone-thread default
-    keep the friction low for common cases. Workflow attachment, charters, and structured
+    keep the friction low for common cases. Topic attachment, charters, and structured
     proposals are available when warranted, never required.
 
 ### 1.3 Implementation constraints
@@ -60,9 +60,9 @@ Unchanged from SPEC.md §1.2.
 
 ## 2. Core model
 
-### 2.1 Workflow (NEW)
+### 2.1 Topic (NEW)
 
-A **workflow** is a long-lived container for related threads. It represents a unit of work a human
+A **topic** is a long-lived container for related threads. It represents a unit of work a human
 or team can name, point at, and reason about as a whole (e.g., "the payment rewrite", "Q2
 onboarding").
 
@@ -70,8 +70,8 @@ Required fields:
 
 | Field | Type | Description |
 |---|---|---|
-| `handle` | string | Human-readable handle (e.g. `wf-payment-rewrite`) — unique within the repo |
-| `id` | string | Internal opaque ID (e.g. `wf-x8n2q1d4`) — used for ref storage and aliasing |
+| `handle` | string | Human-readable handle (e.g. `!payment-rewrite`) — unique within the repo |
+| `id` | string | Internal opaque ID (e.g. `x8n2q1d4`, 8 base36 chars) — used for ref storage and aliasing. Topic IDs have no prefix in storage; the `!` symbol appears only in the user-facing handle layer. |
 | `title` | string | Human-readable title |
 | `created_at` | datetime | Creation timestamp |
 | `created_by` | string | Actor ID |
@@ -80,49 +80,50 @@ Optional fields:
 
 | Field | Type | Description |
 |---|---|---|
-| `body` | string | Workflow charter / brief |
-| `aliases[]` | array | Additional handles that resolve to this workflow |
+| `body` | string | Topic charter / brief |
+| `aliases[]` | array | Additional handles that resolve to this topic |
 | `archived_at` | datetime | Archive timestamp (set = archived; unset = active) |
 
-A workflow has **no `status` enum and no state machine** in 2.0. The only lifecycle binary is
+A topic has **no `status` enum and no state machine** in 2.0. The only lifecycle binary is
 `archived_at` (present or absent). This is a deliberate scope choice — see Appendix A.3 / F-W1
 for the path to add a richer state model later.
 
-#### 2.1.1 Workflow handle
+#### 2.1.1 Topic handle
 
-- **Format**: `wf-<slug>` where slug is `[a-z0-9-]+`, length 3–48.
+- **Display format**: `!<slug>` where slug is `[a-z0-9-]+`, length 3–48. The `!` is the topic
+  type marker; the slug is what is stored under `refs/forum/aliases/<slug>`.
 - **Allocation**: derived from title via slug + collision-resolved petname suffix
   (see §6.1).
 - **Mutability**: handles MAY be renamed. Old handles become aliases automatically. Aliases never
   expire (links keep working).
 
-#### 2.1.2 Workflow membership
+#### 2.1.2 Topic membership
 
-A thread belongs to **at most one** workflow. Membership is recorded via a `workflow_attach` event
-on the thread. A workflow may contain zero or more threads.
+A thread belongs to **at most one** topic. Membership is recorded via a `topic_attach` event
+on the thread. A topic may contain zero or more threads.
 
-Standalone threads (no workflow) are permitted (see §2.2.4).
+Standalone threads (no topic) are permitted (see §2.2.4).
 
-#### 2.1.3 Workflow handle in references
+#### 2.1.3 Topic handle in references
 
-Within a workflow context, child threads may be referenced by **short index**:
+Within a topic context, child threads may be referenced by **short index**:
 
 ```
-wf-payment-rewrite          # the workflow itself
-wf-payment-rewrite#3        # the 3rd attached thread (display order)
+!payment-rewrite          # the topic itself
+!payment-rewrite/3        # the 3rd attached thread (display order)
 ```
 
-The `#N` index is a **display-only convenience**, not an identifier:
+The `/N` short index is a **display-only convenience**, not an identifier:
 
-- It is computed from locally-visible `workflow_attach` events ordered by
+- It is computed from locally-visible `topic_attach` events ordered by
   `(timestamp, actor_id, event_oid)` — see §8.3 for cross-clone behaviour.
 - It MAY appear as input to interactive CLI commands (e.g.
-  `git forum show wf-payment-rewrite#3`) and in `show` / `ls` output for human convenience.
+  `git forum show !payment-rewrite/3`) and in `show` / `ls` output for human convenience.
 - It is **rejected** anywhere a value would be persisted: as an evidence ref, link target,
-  workflow attach argument, or in a commit message scanned by the `commit-msg` hook (§13
+  topic attach argument, or in a commit message scanned by the `commit-msg` hook (§13
   `ShortIndexInPersistedRef` is an error in 2.0, not a warning).
 
-Named role labels (e.g. `wf-foo#design`) are **not specified in 2.0**. Forward-compatible: if
+Named role labels (e.g. `!foo/design`) are **not specified in 2.0**. Forward-compatible: if
 roles are introduced later, the syntax is reserved.
 
 ### 2.2 Thread
@@ -134,7 +135,7 @@ Required fields:
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | string | Opaque content-addressed ID: `t-XXXXXXXX` (8 base36 chars; see §6.2) |
+| `id` | string | Opaque content-addressed ID. **Display form**: `@XXXXXXXX` (8 base36 chars). **Storage form**: bare `XXXXXXXX` under `refs/forum/threads/`. See §6.2. |
 | `title` | string | Human-readable title |
 | `status` | enum | Current state (see §3.2) |
 | `facets` | object | See §2.3 |
@@ -146,7 +147,7 @@ Optional fields:
 | Field | Type | Description |
 |---|---|---|
 | `body` | string | Thread body |
-| `workflow` | string | Owning workflow handle (absent for standalone threads) |
+| `topic` | string | Owning topic handle (absent for standalone threads) |
 | `scope.branch` | string | Bound Git branch |
 | `links[]` | array | Thread-to-thread links |
 
@@ -160,13 +161,13 @@ referencing in repos that have been migrated. New thread allocation always uses 
 
 #### 2.2.2 Standalone threads
 
-Threads MAY exist without a workflow. This is the natural form for:
+Threads MAY exist without a topic. This is the natural form for:
 
 - Bug reports captured quickly before triage
 - Questions that don't yet belong to any workstream
 - One-off observations
 
-Standalone threads can be promoted into a workflow at any time via `workflow attach`. A standalone
+Standalone threads can be promoted into a topic at any time via `topic attach`. A standalone
 thread without an `attach` event after some configurable inactivity is reported by `doctor` as
 "orphan" — informational, not blocking.
 
@@ -229,7 +230,7 @@ These four combinations are exposed as **kind presets** (compatibility shorthand
 - `decision` — **zero** usage in 1.x dogfood (DEC kind unused). Recording a decision belongs at
   the node level (`summary` node) inside whatever thread reached that decision.
 - `question` — questions are predominantly node-level inside other threads.
-- `observation` / `work` / `claim` — these describe *body framing*, not *workflow shape*. Tags
+- `observation` / `work` / `claim` — these describe *body framing*, not *progression-shape*. Tags
   cover framing without forcing premature classification.
 
 `scope` (cross-cutting vs local) was rejected because:
@@ -251,16 +252,16 @@ Unchanged from SPEC.md §2.3. New event types added in 2.0:
 
 | Event type | Purpose |
 |---|---|
-| `workflow_create` | Initialize a workflow (recorded on workflow ref) |
-| `workflow_archive` | Mark workflow as archived (sets `archived_at`) |
-| `workflow_unarchive` | Reverse archive (clears `archived_at`) |
-| `workflow_attach` | Bind a thread to a workflow (recorded on the thread ref) |
-| `workflow_detach` | Remove a thread from a workflow |
-| `workflow_alias` | Add or remove a workflow alias (e.g. on rename) |
+| `topic_create` | Initialize a topic (recorded on topic ref) |
+| `topic_archive` | Mark topic as archived (sets `archived_at`) |
+| `topic_unarchive` | Reverse archive (clears `archived_at`) |
+| `topic_attach` | Bind a thread to a topic (recorded on the thread ref) |
+| `topic_detach` | Remove a thread from a topic |
+| `topic_alias` | Add or remove a topic alias (e.g. on rename) |
 | `facet_set` | Change a thread's facet values (audited; see §7.3 for restrictions) |
 
-There is intentionally no `workflow_state` event in 2.0. If a richer workflow lifecycle is added
-later (F-W1), it will be introduced as a new additive event without breaking workflows created
+There is intentionally no `topic_state` event in 2.0. If a richer topic lifecycle is added
+later (F-W1), it will be introduced as a new additive event without breaking topics created
 under 2.0.
 
 ### 2.5 Node
@@ -283,9 +284,9 @@ Unchanged from SPEC.md §2.7.
 
 ## 3. State machines
 
-### 3.1 Workflow lifecycle (no state machine in 2.0)
+### 3.1 Topic lifecycle (no state machine in 2.0)
 
-A workflow has no formal state machine. Its lifecycle is a binary derived from `archived_at`:
+A topic has no formal state machine. Its lifecycle is a binary derived from `archived_at`:
 
 | Derived state | Condition |
 |---|---|
@@ -294,14 +295,14 @@ A workflow has no formal state machine. Its lifecycle is a binary derived from `
 
 Transitions: `archive` and `unarchive` (idempotent).
 
-#### 3.1.1 Derived workflow summary
+#### 3.1.1 Derived topic summary
 
-For UI and listing purposes, each workflow exposes a derived **summary** computed from its child
+For UI and listing purposes, each topic exposes a derived **summary** computed from its child
 threads. The summary is informational and does not appear in events.
 
 | Summary | Condition |
 |---|---|
-| `empty` | Workflow has no child threads |
+| `empty` | Topic has no child threads |
 | `has-open` | One or more child threads in non-terminal state |
 | `all-terminal` | All child threads in `done`, `rejected`, or `deprecated` |
 
@@ -354,7 +355,7 @@ Unchanged from SPEC.md §3.5.
 
 ## 4. Data model
 
-### 4.1 Workflow
+### 4.1 Topic
 
 See §2.1 for fields.
 
@@ -377,13 +378,13 @@ Unchanged from SPEC.md §4.3 / §4.4 / §4.5.
 Authoritative data in 2.0:
 
 ```text
-refs/forum/workflows/<WORKFLOW_ID>     # workflow event chain (NEW)
+refs/forum/topics/<TOPIC_ID>     # topic event chain (NEW)
 refs/forum/threads/<THREAD_ID>         # thread event chain (unchanged structure)
-refs/forum/aliases/<HANDLE>            # symref or note pointing to workflow ID (NEW)
+refs/forum/aliases/<HANDLE>            # symref or note pointing to topic ID (NEW)
 ```
 
-Workflow handle resolution walks `refs/forum/aliases/<handle>` first; if absent, the handle is
-treated as a workflow ID and looked up under `refs/forum/workflows/`.
+Topic handle resolution walks `refs/forum/aliases/<handle>` first; if absent, the handle is
+treated as a topic ID and looked up under `refs/forum/topics/`.
 
 ### 5.2 Repository files
 
@@ -394,7 +395,7 @@ Same as SPEC.md §5.2 with added template:
   policy.toml
   actors.toml
   templates/
-    workflow.md         # workflow charter template (NEW)
+    topic.md         # topic charter template (NEW)
     thread.md           # generic thread template (NEW)
     proposal.md         # preset for lifecycle=proposal (replaces rfc.md)
     execution.md        # preset for lifecycle=execution (replaces task.md / issue.md)
@@ -409,24 +410,53 @@ Unchanged from SPEC.md §5.3.
 
 ## 6. Identity scheme
 
-### 6.1 Workflow handles
+### 6.0 Type-marker symbols
+
+User-facing identifiers carry a single-character **type marker** as the first character:
+
+| Marker | Type | Storage form | Display form |
+|---|---|---|---|
+| `!` | topic handle | `<slug>` (alphanumeric + `-`) under `refs/forum/aliases/<slug>` | `!<slug>` |
+| `@` | thread ID | `<8-char-base36>` under `refs/forum/threads/<token>` | `@<token>` |
+| `/` | (separator) | n/a — display-only | `!<slug>/<index>` short reference |
+
+Rationale:
+
+- **`!` for topic** carries "named focus area / collection", visually distinct from `#` (which
+  is conventionally a tag prefix and would conflict with the first-class `tags[]` concept in
+  this spec).
+- **`@` for thread** is **shell-safe** (no quoting needed), echoes the "at this address /
+  conversation point" meaning, and visually contrasts with `!` so the two never blur in prose.
+- The symbols appear only at the user-facing layer — refs, file paths, and serialized event
+  fields use the bare token. This keeps Git ref-name validation rules (which forbid `!` mid-ref
+  and reserve `@{` syntax) out of scope.
+- `!` requires shell quoting (`'!payment-rewrite'`) because of bash history expansion. CLI
+  commands accept the bare slug as input as well; the `!` is **mandatory only in persisted /
+  prose contexts** where type disambiguation matters (commit messages, body text, evidence
+  refs).
+
+This scheme gives every reference in commit messages, log output, and prose an unambiguous
+visual type — an easy win over alphabetic prefixes (`wf-`, `t-`) that blur into the
+identifier itself.
+
+### 6.1 Topic handles
 
 #### 6.1.1 Generation
 
-When `git forum workflow new "Payment rewrite"` is invoked:
+When `git forum topic new "Payment rewrite"` is invoked:
 
 1. Compute base slug: lowercase, strip non-alphanumerics, collapse hyphens, max 32 chars.
    `"Payment rewrite"` → `payment-rewrite`.
-2. Candidate handle: `wf-payment-rewrite`.
+2. Candidate handle: `!payment-rewrite`.
 3. **Within-clone collision** (the handle already exists locally): append a deterministic
-   two-word petname derived from `sha256(workflow_id)` (e.g. `wf-payment-rewrite-quick-fox`)
+   two-word petname derived from `sha256(topic_id)` (e.g. `!payment-rewrite-quick-fox`)
    and notify the user of the chosen handle in the command output. The petname dictionary is
    bundled (~2,048 adjectives × ~2,048 nouns ≈ 4M combinations; collision negligible).
 4. **Cross-clone collision** (handle is unused locally but already claimed on the remote): not
    detected at this point — surfaces at push time as `HandleConflictOnPush` (§8.2.1) and
    requires explicit user rename. There is no silent auto-rename across clones.
 
-User MAY override with `--handle wf-pay`. The override is validated against the handle format
+User MAY override with `--handle !pay`. The override is validated against the handle format
 and locally checked for collision. Within-clone petname appending also applies to overridden
 handles. Cross-clone conflict still surfaces as `HandleConflictOnPush` regardless of whether
 the handle was title-derived or user-overridden.
@@ -439,41 +469,45 @@ This deliberately splits the two failure modes:
 
 #### 6.1.2 Reserved prefixes
 
-Handles starting with `wf-_` (underscore-prefixed) are reserved for future system use. No
-auto-allocated workflow exists in 2.0; migration explicitly leaves 1.x threads as standalone (see
+Handles starting with `!_` (underscore as the first slug character) are reserved for future
+system use. No
+auto-allocated topic exists in 2.0; migration explicitly leaves 1.x threads as standalone (see
 §10.1).
 
 #### 6.1.3 Handle rename
 
-`git forum workflow rename <old> <new>`:
+`git forum topic rename <old> <new>`:
 
 - Validates new handle availability and format.
-- Records a `workflow_alias` event keeping `<old>` as a permanent alias.
+- Records a `topic_alias` event keeping `<old>` as a permanent alias.
 - Updates the SQLite index.
 - `<old>` continues to resolve forever.
 
 ### 6.2 Thread IDs
 
-Format: `t-XXXXXXXX` where `XXXXXXXX` is 8 base36 chars. Generation algorithm and collision
-analysis identical to SPEC.md §6.1, but with prefix `t-` instead of `<KIND>-`.
+**Display form**: `@XXXXXXXX` where `XXXXXXXX` is 8 base36 chars. The `@` is a type marker;
+storage uses the bare `XXXXXXXX` under `refs/forum/threads/`. Generation algorithm and collision
+analysis identical to SPEC.md §6.1, but the kind-prefix machinery is replaced by the type
+symbol.
 
 Legacy 1.x thread IDs (`RFC-XXXXXXXX`, `ASK-NNNN`, etc.) remain valid for reading. The parser
 accepts:
 
-- `t-XXXXXXXX` (2.0 native)
+- `@XXXXXXXX` (2.0 native, display form)
+- Bare `XXXXXXXX` (2.0 storage form, also accepted at CLI)
 - Legacy `<KIND>-XXXXXXXX` (1.x opaque)
 - Legacy `<KIND>-NNNN` (1.x sequential)
 
-Unambiguous prefixes (≥4 chars after `t-`) accepted as in 1.x.
+Unambiguous prefixes (≥4 chars after `@`) accepted as in 1.x.
 
-### 6.3 Workflow-scoped short references
+### 6.3 Topic-scoped short references
 
-Within a known workflow context, `<handle>#<index>` references the Nth thread attached to the
-workflow (1-indexed by `workflow_attach` event order). Examples:
+Within a known topic context, `<handle>/<index>` references the Nth thread attached to the
+topic (1-indexed by `topic_attach` event order). Examples:
 
 ```
-git forum show wf-payment-rewrite#3
-git forum show wf-payment-rewrite#design   # if a role label is assigned
+git forum show !payment-rewrite/3
+git forum show !payment-rewrite/design   # if a role label is assigned
 ```
 
 Short references resolve to canonical thread IDs at parse time. They MUST NOT be stored as
@@ -529,7 +563,7 @@ body_sections = ["Context", "Decision", "Rationale", "Impact"]
 Resolution: most-specific match wins. `creation_rules.execution.tag.task` overrides
 `creation_rules.execution` for threads tagged `task`.
 
-There are intentionally no workflow-level guards in 2.0. See F-W2 (Appendix A.3) for the
+There are intentionally no topic-level guards in 2.0. See F-W2 (Appendix A.3) for the
 forward-compatibility plan if these become needed.
 
 ### 7.3 Facet mutation rules
@@ -549,7 +583,7 @@ git-forum 2.0 distinguishes two concurrency regimes:
 - **Within-clone concurrency** — multiple processes on the same clone. Handled by Git's atomic
   ref CAS (compare-and-swap), as in 1.x.
 - **Cross-clone concurrency** — independent writes on separate clones, reconciled at fetch/push
-  time. The thread layer inherits 1.x's content-addressed IDs and semantic merge. The workflow
+  time. The thread layer inherits 1.x's content-addressed IDs and semantic merge. The topic
   layer adds new conflict surfaces (handles, attach events, short indices, tags) that this section
   defines.
 
@@ -560,20 +594,20 @@ Inherits SPEC.md §8 verbatim:
 - `write_event` reads the current ref tip, creates a new commit, atomically updates the ref only
   if the tip has not changed.
 - `create_ref` fails if the ref already exists.
-- Concurrent writes to different threads/workflows are fully safe.
+- Concurrent writes to different threads/topics are fully safe.
 - Concurrent writes to the same thread fail with a conflict error; the caller retries.
 
 #### 8.1.1 Semantic merge (extended for 2.0)
 
 Auto-merge cases, in addition to those in SPEC.md §8.1:
 
-- Concurrent `workflow_attach` to **the same workflow** on the same thread (idempotent — second is
+- Concurrent `topic_attach` to **the same topic** on the same thread (idempotent — second is
   a no-op).
 - Concurrent `facet_set` events that change disjoint tag sets (additive merge).
 
 Conflict cases that require the cross-clone resolution rules in §8.2:
 
-- `workflow_attach` to **different workflows** (§8.2.2).
+- `topic_attach` to **different topics** (§8.2.2).
 - `facet_set` events that add and remove the same tag (§8.2.4).
 
 ### 8.2 Cross-clone conflict resolution
@@ -598,33 +632,33 @@ Several rules below order events by **wall-clock timestamp** (`event.timestamp`)
 Adopting Hybrid Logical Clocks (HLC) to remove the wall-clock dependency is tracked as F-W5
 (Appendix A.3).
 
-#### 8.2.1 Workflow handle conflict (push-time)
+#### 8.2.1 Topic handle conflict (push-time)
 
-**Scenario.** Clone A creates workflow `wA` with handle `wf-payment-rewrite`. Clone B
-independently creates workflow `wB` with the same handle. Both push.
+**Scenario.** Clone A creates topic `wA` with handle `!payment-rewrite`. Clone B
+independently creates topic `wB` with the same handle. Both push.
 
-**Why this happens.** Workflow opaque IDs are content-addressed and never collide, but handles
+**Why this happens.** Topic opaque IDs are content-addressed and never collide, but handles
 are user-derived slugs (§6.1). A handle that appears unused on each clone may be claimed
 elsewhere.
 
 **Resolution.**
 
-1. The workflow event chain push (`refs/forum/workflows/<WORKFLOW_ID>`) succeeds on both clones —
+1. The topic event chain push (`refs/forum/topics/<TOPIC_ID>`) succeeds on both clones —
    different opaque IDs, no collision.
-2. The alias ref push (`refs/forum/aliases/wf-payment-rewrite`) succeeds for whichever clone
+2. The alias ref push (`refs/forum/aliases/!payment-rewrite`) succeeds for whichever clone
    pushes first; the second clone's alias push fails (CAS against zero-SHA).
 3. The losing client's atomic-push group (§8.4.1) fails as a whole. The push is reported as
    `HandleConflictOnPush` (an **error**, not a warning) with a message naming the existing
    claimant. **No automatic rename occurs.**
 4. The user resolves the conflict explicitly by either:
-   - `git forum workflow rename <local-workflow-id> <new-handle>` — pick a different handle,
+   - `git forum topic rename <local-topic-id> <new-handle>` — pick a different handle,
      then re-push.
-   - Decide the workflow shouldn't have been created and `git forum workflow archive` it
+   - Decide the topic shouldn't have been created and `git forum topic archive` it
      locally before discarding (refs cleanup left to the user).
 
 This deliberately blocks silent handle drift. A handle that a user has written into external
 notes, RFC bodies, or commit messages must continue to mean what they wrote it to mean — silent
-auto-rename of the loser would let a handle string be reassigned to a different workflow without
+auto-rename of the loser would let a handle string be reassigned to a different topic without
 the original author's knowledge, undermining the entire point of having a stable human-facing
 handle.
 
@@ -634,16 +668,16 @@ of whether the handle was title-derived or user-overridden — both are equally 
 equally require explicit rename to resolve.
 
 **CI / non-interactive contexts.** `HandleConflictOnPush` causes a non-zero exit; pipelines
-treat it like any other push failure. A retry after `workflow rename` is the explicit
+treat it like any other push failure. A retry after `topic rename` is the explicit
 remediation. There is no `--auto-rename` opt-in in 2.0; if dogfood evidence shows demand, it can
 be added later behind an explicit flag (deferred).
 
-#### 8.2.2 Workflow attach conflict (fetch-time)
+#### 8.2.2 Topic attach conflict (fetch-time)
 
-**Scenario.** Clone A attaches thread `t-x9k2` to workflow `wf-foo`. Clone B independently
-attaches the same thread to `wf-bar`. Both push.
+**Scenario.** Clone A attaches thread `@x9k2` to topic `!foo`. Clone B independently
+attaches the same thread to `!bar`. Both push.
 
-**Why this happens.** Both `workflow_attach` events live on the thread ref chain. CAS protects
+**Why this happens.** Both `topic_attach` events live on the thread ref chain. CAS protects
 within a clone but not across clones writing in parallel.
 
 **Resolution.**
@@ -651,50 +685,50 @@ within a clone but not across clones writing in parallel.
 1. First-push winner's attach event lands on the thread ref tip.
 2. Second-push loser's attach event arrives via fetch; semantic merge appends it to the chain
    (event history preserves both intents).
-3. **Effective workflow membership** is determined by replaying **all** `workflow_attach` and
-   `workflow_detach` events on the thread and selecting the most recent by:
+3. **Effective topic membership** is determined by replaying **all** `topic_attach` and
+   `topic_detach` events on the thread and selecting the most recent by:
    - Primary key: `event.timestamp` (actor clock at write time).
    - Tiebreaker: lexicographic order of actor ID.
    - Final tiebreaker: lexicographic order of event OID.
 
-   - If the most recent event is `workflow_attach W`, the thread's effective workflow is `W`.
-   - If the most recent event is `workflow_detach`, the thread is standalone (no workflow).
-4. Both `workflow show` (on the losing workflow) and `thread show` surface
+   - If the most recent event is `topic_attach W`, the thread's effective topic is `W`.
+   - If the most recent event is `topic_detach`, the thread is standalone (no topic).
+4. Both `topic show` (on the losing topic) and `thread show` surface
    `AttachConflictResolved` as an informational warning so the discrepancy is visible.
 
-`workflow_detach` participates in the same LWW ordering as `workflow_attach`: a detach event
+`topic_detach` participates in the same LWW ordering as `topic_attach`: a detach event
 with a later timestamp than a competing attach event wins (resulting in standalone), and vice
 versa. This unifies the rule across attach/detach without separate semantics.
 
-A user who disagrees with the auto-resolution issues `workflow detach` on the losing side and
+A user who disagrees with the auto-resolution issues `topic detach` on the losing side and
 re-attaches as desired; this records new events that supersede the auto-resolution.
 
 #### 8.2.3 Handle alias divergence
 
 Two sub-scenarios.
 
-**Scenario A: rename ⊕ create.** Clone A renames `wf-foo` → `wf-bar` (alias ref `wf-bar` now
-points to A's workflow). Clone C independently creates a new workflow with handle `wf-bar`.
+**Scenario A: rename ⊕ create.** Clone A renames `!foo` → `!bar` (alias ref `!bar` now
+points to A's topic). Clone C independently creates a new topic with handle `!bar`.
 
 **Resolution.** Identical to §8.2.1: the second pusher's alias ref fails CAS and the push is
 reported as `HandleConflictOnPush`. The user (whichever pushes second) must explicitly rename
-their workflow before re-pushing. No silent auto-resolution occurs.
+their topic before re-pushing. No silent auto-resolution occurs.
 
-**Scenario B: divergent rename of the same workflow.** Clone A renames `wf-foo` → `wf-bar`.
-Clone B independently renames the same workflow `wf-foo` → `wf-baz`.
+**Scenario B: divergent rename of the same topic.** Clone A renames `!foo` → `!bar`.
+Clone B independently renames the same topic `!foo` → `!baz`.
 
 **Resolution.**
 
-1. Both `workflow_alias` events are recorded on the workflow ref. The thread-style CAS protocol
-   serializes them within each clone; cross-clone, both events land on the workflow event chain
+1. Both `topic_alias` events are recorded on the topic ref. The thread-style CAS protocol
+   serializes them within each clone; cross-clone, both events land on the topic event chain
    via semantic merge.
-2. Both new alias refs (`wf-bar` and `wf-baz`) are created locally on the issuing clone and
+2. Both new alias refs (`!bar` and `!baz`) are created locally on the issuing clone and
    pushed. Both succeed (different ref names; neither pre-exists). The original alias ref
-   `wf-foo` is preserved by both (per §6.1.3 — old handles never expire).
-3. After sync, **all three handles** (`wf-foo`, `wf-bar`, `wf-baz`) resolve to the same
-   workflow.
-4. The **primary** handle (the one shown by default in `workflow show` and `workflow ls`) is
-   the most recent `workflow_alias` event by LWW order: `(timestamp, actor_id, event_oid)`.
+   `!foo` is preserved by both (per §6.1.3 — old handles never expire).
+3. After sync, **all three handles** (`!foo`, `!bar`, `!baz`) resolve to the same
+   topic.
+4. The **primary** handle (the one shown by default in `topic show` and `topic ls`) is
+   the most recent `topic_alias` event by LWW order: `(timestamp, actor_id, event_oid)`.
    The other handles are surfaced as alternates.
 
 No conflict from the user's perspective — both rename intents succeed. The display preference
@@ -702,7 +736,7 @@ follows LWW.
 
 #### 8.2.4 Tag merge semantics
 
-**Scenario.** Clone A adds tag `urgent` to thread `t-x9k2`. Clone B concurrently removes tag
+**Scenario.** Clone A adds tag `urgent` to thread `@x9k2`. Clone B concurrently removes tag
 `urgent` (or adds a different tag).
 
 **Resolution.**
@@ -722,43 +756,43 @@ intervention for ordinary tag drift.
 > explicit `tag add`/`tag rm` always wins). CRDT-based tag semantics are tracked as F-W6
 > (Appendix A.3).
 
-#### 8.2.5 Archived workflow with concurrent attach
+#### 8.2.5 Archived topic with concurrent attach
 
-**Scenario.** Clone A archives workflow `wf-foo` (writes `workflow_archive` event on the workflow
-ref). Clone B, having not yet seen the archive, writes `workflow_attach` on a thread referencing
-`wf-foo`.
+**Scenario.** Clone A archives topic `!foo` (writes `topic_archive` event on the topic
+ref). Clone B, having not yet seen the archive, writes `topic_attach` on a thread referencing
+`!foo`.
 
 **Resolution.**
 
-- Within a clone, an attach to an archived workflow is **rejected** with
-  `AttachToArchivedWorkflow` (§13). `--force` overrides explicitly. Because archived workflows
+- Within a clone, an attach to an archived topic is **rejected** with
+  `AttachToArchivedTopic` (§13). `--force` overrides explicitly. Because archived topics
   are hidden by default in `ls` (§9.3), this prevents work from silently disappearing into a
-  workflow nobody is looking at.
+  topic nobody is looking at.
 - Across clones, both events succeed at the ref layer (different refs). After fetch, if the
   attach event was written before the archive was visible locally, the resulting state is:
-  - Workflow `wf-foo` is `archived`.
-  - Thread lists `wf-foo` as its workflow (the attach was not blocked locally because archive
+  - Topic `!foo` is `archived`.
+  - Thread lists `!foo` as its topic (the attach was not blocked locally because archive
     was unseen).
   - `doctor` reports the inconsistency and recommends explicit detach or unarchive.
 
-In 2.0 the user resolves cross-clone inconsistencies manually. Future workflow-level guards
+In 2.0 the user resolves cross-clone inconsistencies manually. Future topic-level guards
 (F-W2, Appendix A.3) MAY introduce stricter automated remediation.
 
 ### 8.3 Short-index stability across clones
 
-Workflow short indices (`wf-foo#3`, §2.1.3) are **derived, session-local references**, not
+Topic short indices (`!foo/3`, §2.1.3) are **derived, session-local references**, not
 canonical IDs:
 
-- The mapping is computed at query time from locally-visible `workflow_attach` events sorted by
+- The mapping is computed at query time from locally-visible `topic_attach` events sorted by
   `(attach_event.timestamp, actor_id, event_oid)`.
-- Before two clones have fully synced, they may compute different `#N` values for the same
+- Before two clones have fully synced, they may compute different `/N` values for the same
   thread.
 - After sync, the ordering is deterministic across clones.
-- `#N` MUST NOT appear in stored data: not in evidence refs, not in link targets, not in commit
-  messages used by hooks. Only canonical thread IDs (`t-XXXXXXXX`) and workflow handles are
+- `/N` MUST NOT appear in stored data: not in evidence refs, not in link targets, not in commit
+  messages used by hooks. Only canonical thread IDs (`@XXXXXXXX`) and topic handles are
   stored.
 
-Tooling MAY warn when a `#N` reference is used in a context that would be persisted (e.g., a
+Tooling MAY warn when a `/N` reference is used in a context that would be persisted (e.g., a
 commit message intended for the `commit-msg` hook).
 
 ### 8.4 Push/fetch protocol
@@ -771,13 +805,13 @@ remote in a state that other clients can observe as inconsistent. Clients use Gi
 
 | Logical operation | Refs in the atomic group |
 |---|---|
-| `workflow_create` | `refs/forum/workflows/<WORKFLOW_ID>` + `refs/forum/aliases/<HANDLE>` |
-| `workflow_rename` | `refs/forum/workflows/<WORKFLOW_ID>` (recording the `workflow_alias` event) + `refs/forum/aliases/<NEW_HANDLE>` |
-| `workflow_archive` / `workflow_unarchive` | `refs/forum/workflows/<WORKFLOW_ID>` only |
+| `topic_create` | `refs/forum/topics/<TOPIC_ID>` + `refs/forum/aliases/<HANDLE>` |
+| `topic_rename` | `refs/forum/topics/<TOPIC_ID>` (recording the `topic_alias` event) + `refs/forum/aliases/<NEW_HANDLE>` |
+| `topic_archive` / `topic_unarchive` | `refs/forum/topics/<TOPIC_ID>` only |
 | Thread events (create, say, attach, detach, state, facet_set, etc.) | `refs/forum/threads/<THREAD_ID>` only |
 
-Atomic push is **mandatory** for the workflow-create and workflow-rename groups: a non-atomic
-push that succeeds only on the workflow ref but fails on the alias ref would leave a workflow
+Atomic push is **mandatory** for the topic-create and topic-rename groups: a non-atomic
+push that succeeds only on the topic ref but fails on the alias ref would leave a topic
 without a handle visible to other clients (or, worse, leave a dangling alias if the order
 were reversed). Clients that cannot guarantee atomic push MUST refuse the operation rather than
 proceed.
@@ -787,38 +821,38 @@ proceed.
 When pushing many independent operations, ordering does not affect correctness (each atomic
 group is self-contained), but for fastest conflict surfacing the recommended order is:
 
-1. Workflow create / rename groups (so handle conflicts surface early).
-2. Thread events (so attach references are valid against just-pushed workflows).
-3. Pure workflow events (archive, etc.).
+1. Topic create / rename groups (so handle conflicts surface early).
+2. Thread events (so attach references are valid against just-pushed topics).
+3. Pure topic events (archive, etc.).
 
 #### 8.4.3 Fetch
 
-Fetch always pulls all three ref trees (workflows, threads, aliases). After fetch, the local
+Fetch always pulls all three ref trees (topics, threads, aliases). After fetch, the local
 SQLite index is rebuilt incrementally to reflect any attach / tag / handle changes. Conflicts
 surfaced by §8.2 are reported by `git forum doctor` and on the next interactive `show` of
-affected workflows / threads.
+affected topics / threads.
 
 ## 9. CLI surface
 
-### 9.1 Workflow commands (NEW)
+### 9.1 Topic commands (NEW)
 
 ```text
-git forum workflow new <TITLE> [--handle <HANDLE>]
+git forum topic new <TITLE> [--handle <HANDLE>]
     [--body <TEXT> | --body-file <PATH> | --edit]
-git forum workflow show <WORKFLOW>
-git forum workflow ls [--archived] [--summary <SUMMARY>]
-git forum workflow attach <WORKFLOW> <THREAD>...
-git forum workflow detach <WORKFLOW> <THREAD>...
-git forum workflow rename <OLD_HANDLE> <NEW_HANDLE>
-git forum workflow archive <WORKFLOW>
-git forum workflow unarchive <WORKFLOW>
+git forum topic show <TOPIC>
+git forum topic ls [--archived] [--summary <SUMMARY>]
+git forum topic attach <TOPIC> <THREAD>...
+git forum topic detach <TOPIC> <THREAD>...
+git forum topic rename <OLD_HANDLE> <NEW_HANDLE>
+git forum topic archive <TOPIC>
+git forum topic unarchive <TOPIC>
 ```
 
-- `--archived` includes archived workflows (default: hidden in `ls`).
+- `--archived` includes archived topics (default: hidden in `ls`).
 - `--summary <empty|has-open|all-terminal>` filters by derived summary.
-- There is no `git forum workflow state` command — workflow has no state machine.
-- `workflow attach` to an archived workflow is **rejected** with `AttachToArchivedWorkflow`
-  unless `--force` is passed. Rationale: archived workflows are hidden by default in `ls`, so a
+- There is no `git forum topic state` command — topic has no state machine.
+- `topic attach` to an archived topic is **rejected** with `AttachToArchivedTopic`
+  unless `--force` is passed. Rationale: archived topics are hidden by default in `ls`, so a
   silent attach would put work in a place users won't see.
 
 ### 9.2 Thread commands (unified + presets)
@@ -828,12 +862,12 @@ Canonical form:
 ```text
 git forum thread new <TITLE>
     --lifecycle <LIFECYCLE>
-    [--workflow <WORKFLOW>] [--tag <TAG>...]
+    [--topic <TOPIC>] [--tag <TAG>...]
     [--body <TEXT> | --body-file <PATH> | --edit]
     [--branch <BRANCH>] [--link-to <THREAD> --rel <REL>]
     [--from-commit <REV>] [--from-thread <THREAD>] [--force]
 git forum thread show <THREAD>
-git forum thread ls [--workflow <WORKFLOW>]
+git forum thread ls [--topic <TOPIC>]
     [--lifecycle <LIFECYCLE>]
     [--status <STATUS>] [--tag <TAG>] [--branch <BRANCH>]
 git forum thread state <THREAD> <NEW_STATE> [--approve <ACTOR>]... [--comment <TEXT>]
@@ -860,21 +894,21 @@ all 2.x and 3.x releases — they are not on the removal schedule. Only kind-pre
 ### 9.3 Listing and display
 
 ```text
-git forum ls                            # default: mixed view (active workflows + standalone inbox)
-git forum ls --workflows                # active workflows only
+git forum ls                            # default: mixed view (active topics + standalone inbox)
+git forum ls --topics                # active topics only
 git forum ls --threads                  # all threads, flat
-git forum ls --inbox                    # standalone threads only (no workflow attached)
-git forum show <REF>                    # auto-detects workflow vs thread
+git forum ls --inbox                    # standalone threads only (no topic attached)
+git forum show <REF>                    # auto-detects topic vs thread
 ```
 
 The default `ls` is a **mixed view** with two stacked sections:
 
-1. **Workflows** — non-archived workflows with their derived summary and thread count.
+1. **Topics** — non-archived topics with their derived summary and thread count.
 2. **Inbox** — standalone (unattached) threads, sorted by `updated_at` desc.
 
 This default ensures that newly captured threads (the most common case immediately after
 migration, and the common case for quick bug capture in steady state) are visible without
-needing to remember a flag. Users who prefer a single view can use `--workflows`,
+needing to remember a flag. Users who prefer a single view can use `--topics`,
 `--threads`, or `--inbox`.
 
 ### 9.4 Discussion, lifecycle, evidence, links, hooks
@@ -892,29 +926,29 @@ facet:
 | `reject` | → `rejected` | → `rejected` | → `rejected` |
 | `deprecate` | → `deprecated` | → `deprecated` | → `deprecated` |
 
-Shorthand commands work uniformly on **both workflow-attached and standalone threads**. Workflow
-membership is never required for state changes. (Future workflow-level guards — F-W2 in
+Shorthand commands work uniformly on **both topic-attached and standalone threads**. Topic
+membership is never required for state changes. (Future topic-level guards — F-W2 in
 Appendix A.3 — would only add constraints for attached threads; standalone threads remain
-unconstrained by workflow policy.)
+unconstrained by topic policy.)
 
 ### 9.5 Preflight, doctor
 
-`git forum verify <THREAD>` and `git forum doctor` continue to work; both gain workflow-aware
+`git forum verify <THREAD>` and `git forum doctor` continue to work; both gain topic-aware
 output:
 
-- `verify` for a thread inside a workflow notes the workflow handle and summary.
+- `verify` for a thread inside a topic notes the topic handle and summary.
 - `doctor` reports:
-  - **Untriaged standalone threads** (no workflow attached) as an informational count, not a
+  - **Untriaged standalone threads** (no topic attached) as an informational count, not a
     warning. Standalone is a legitimate steady state — many bugs and notes never need a
-    workflow. The doctor output names this section "Untriaged" rather than "Orphan" to reflect
+    topic. The doctor output names this section "Untriaged" rather than "Orphan" to reflect
     that this is normal state, not a fault.
   - Broken aliases, dangling attach references, and unresolved cross-clone conflicts
     (`AttachConflictResolved` per §8.2.2) — these *are* warnings.
-- (No workflow-level guard preview in 2.0; see F-W2.)
+- (No topic-level guard preview in 2.0; see F-W2.)
 
 ### 9.6 Persisted-context validation
 
-Workflow short references (`#N`, §2.1.3) MUST be rejected as input wherever the value would be
+Topic short references (`/N`, §2.1.3) MUST be rejected as input wherever the value would be
 stored. The check fires `ShortIndexInPersistedRef` (an error per §13). Implementations enforce
 the check at every entry point listed below.
 
@@ -923,23 +957,23 @@ the check at every entry point listed below.
 | `git forum link --to <ref>` | stored as link target on the thread ref | argument parser |
 | `git forum link <from> <to>` | both endpoints stored | argument parser |
 | `git forum evidence add --kind thread --ref <ref>` | stored as evidence reference | argument parser |
-| `git forum workflow attach <workflow> <thread>` | the thread positional must be a canonical thread ID; `#N` here would be circular | argument parser |
-| `git forum workflow detach <workflow> <thread>` | same as attach | argument parser |
+| `git forum topic attach <topic> <thread>` | the thread positional must be a canonical thread ID; `/N` here would be circular | argument parser |
+| `git forum topic detach <topic> <thread>` | same as attach | argument parser |
 | `--link-to <ref>` (any creation command) | stored as link target | argument parser |
 | `--from-thread <ref>` (any creation command) | recorded in the new thread's source link | argument parser |
 | `commit-msg` hook input | scanned and validated against the forum index | hook handler |
-| `--workflow <ref>` for `thread new` | accepts only canonical workflow handles, not `wf-foo#N` (which is a thread reference, not a workflow reference) | argument parser |
+| `--topic <ref>` for `thread new` | accepts only canonical topic handles, not `!foo/N` (which is a thread reference, not a topic reference) | argument parser |
 
-`#N` is **accepted** at:
+`/N` is **accepted** at:
 
 - `git forum show <ref>` — read-only display.
 - `git forum thread state <ref> <new-state>` — interactive state change; the state event is
-  recorded against the canonical thread ID resolved from `#N` at parse time.
+  recorded against the canonical thread ID resolved from `/N` at parse time.
 - All other read-only / interactive query commands where the resolved canonical ID is used
   internally and not echoed into stored data.
 
-Free-form body text (`--body`, `--body-file`, `--edit` content) is **not scanned** for `#N`.
-Authors who write `wf-foo#3` in prose are responsible for prose accuracy; the rule covers
+Free-form body text (`--body`, `--body-file`, `--edit` content) is **not scanned** for `/N`.
+Authors who write `!foo/3` in prose are responsible for prose accuracy; the rule covers
 machine-interpreted references only.
 
 ## 10. Migration from 1.x
@@ -961,13 +995,13 @@ After migration:
   conventional `tags` (`cross-cutting` for `rfc`; `bug` for `issue`; `task` for `task`) per the
   §2.3.3 mapping.
 - States are remapped per §3.2.2.
-- **Migrated threads remain standalone** (no workflow attachment). No `wf-_legacy` workflow is
-  auto-created. Users attach threads to workflows manually as they triage. `doctor` reports the
+- **Migrated threads remain standalone** (no topic attachment). No `!_legacy` topic is
+  auto-created. Users attach threads to topics manually as they triage. `doctor` reports the
   orphan count after migration as an informational signal — it will be high initially and is
   expected to decrease over time as triage proceeds.
 
-Rationale for leaving threads orphan rather than auto-bucketing: a synthetic `wf-_legacy`
-workflow would pollute the `workflow ls` output indefinitely (since users rarely empty it
+Rationale for leaving threads orphan rather than auto-bucketing: a synthetic `!_legacy`
+topic would pollute the `topic ls` output indefinitely (since users rarely empty it
 completely) and creates a misleading impression that legacy threads form a coherent workstream.
 Standalone is the honest representation of "uncurated work".
 
@@ -1011,26 +1045,26 @@ schedule.
 The TUI default home view mirrors the CLI's mixed-listing default (§9.3):
 
 1. **Mixed home** (default) — two stacked panels:
-   - Top: active (non-archived) workflows with handle, summary, and child count.
+   - Top: active (non-archived) topics with handle, summary, and child count.
    - Bottom: standalone (unattached) threads, sorted by `updated_at` desc.
    Both panels are simultaneously navigable; `Tab` switches focus between them.
-2. **Workflow detail** showing the workflow's charter (body) and attached threads grouped by
+2. **Topic detail** showing the topic's charter (body) and attached threads grouped by
    lifecycle.
 3. **Thread detail** (unchanged from 1.x in structure, but shows facets in header).
 4. **Single-mode views** for users who prefer one section at a time — `W` keybinding
-   (workflows only), `T` keybinding (all threads, flat), `I` keybinding (inbox / standalone
+   (topics only), `T` keybinding (all threads, flat), `I` keybinding (inbox / standalone
    only).
 
 The mixed default ensures fresh captures (the common case immediately after migration and the
 common case for quick bug capture in steady state) are visible without keyboard rituals.
 
-Workflow archive/unarchive is a single-key action from the workflow detail view.
+Topic archive/unarchive is a single-key action from the topic detail view.
 
 ## 12. Search
 
 Search index gains:
 
-- `workflow_handle`, `workflow_archived`, `workflow_summary` columns on threads.
+- `topic_handle`, `topic_archived`, `topic_summary` columns on threads.
 - A `lifecycle` column and a `tags` join table replacing the `kind` column.
 
 Old search queries referencing `kind:rfc` are auto-translated to
@@ -1044,14 +1078,14 @@ Unchanged from SPEC.md §13. New error and warning categories:
 
 | Code | Severity | Triggered by | Notes |
 |---|---|---|---|
-| `WorkflowNotFound` | error | handle resolution failure | Lists similar handles |
-| `ThreadNotInWorkflow` | error | `<handle>#N` index out of bounds | |
+| `TopicNotFound` | error | handle resolution failure | Lists similar handles |
+| `ThreadNotInTopic` | error | `<handle>/N` index out of bounds | |
 | `FacetTransitionDisallowed` | error | facet mutation in a state that doesn't allow it | |
 | `LifecycleStateMismatch` | error | state transition not allowed for thread's lifecycle | |
-| `HandleConflictOnPush` | **error** | alias ref CAS failure on push (§8.2.1, §8.2.3) | Atomic push group fails; user must `workflow rename` and re-push |
-| `AttachToArchivedWorkflow` | **error** | attach attempt to a workflow whose `archived_at` is set | `--force` overrides; intentional gate to keep work visible |
-| `AttachConflictResolved` | warning | divergent `workflow_attach`/`workflow_detach` reconciled by LWW (§8.2.2) | Surfaced in `show` until manually re-attached or acknowledged |
-| `ShortIndexInPersistedRef` | **error** | `#N` short reference appears where it would be stored (e.g. commit message scanned by `commit-msg` hook, evidence ref, link target) | The canonical thread ID must be used |
+| `HandleConflictOnPush` | **error** | alias ref CAS failure on push (§8.2.1, §8.2.3) | Atomic push group fails; user must `topic rename` and re-push |
+| `AttachToArchivedTopic` | **error** | attach attempt to a topic whose `archived_at` is set | `--force` overrides; intentional gate to keep work visible |
+| `AttachConflictResolved` | warning | divergent `topic_attach`/`topic_detach` reconciled by LWW (§8.2.2) | Surfaced in `show` until manually re-attached or acknowledged |
+| `ShortIndexInPersistedRef` | **error** | `/N` short reference appears where it would be stored (e.g. commit message scanned by `commit-msg` hook, evidence ref, link target) | The canonical thread ID must be used |
 
 ## 14. Testing strategy
 
@@ -1060,7 +1094,7 @@ Unchanged from SPEC.md §14, plus:
 ### Migration
 
 - Every state in every 1.x kind round-trips to a defined 2.0 state.
-- Migrated threads remain standalone (no synthetic `wf-_legacy` workflow created).
+- Migrated threads remain standalone (no synthetic `!_legacy` topic created).
 - Default `git forum ls` post-migration shows all migrated threads in the inbox section.
 
 ### Facet model
@@ -1069,46 +1103,46 @@ Unchanged from SPEC.md §14, plus:
   `tag=...`, `AND`/`OR`/`NOT`).
 - Kind preset commands (`new rfc/dec/task/bug`) produce identical facet/tag combinations as the
   canonical `thread new --lifecycle ... --tag ...` form.
-- A workflow can hold threads of all three lifecycles simultaneously; `workflow show` groups
+- A topic can hold threads of all three lifecycles simultaneously; `topic show` groups
   them correctly.
 
 ### Cross-clone concurrency
 
 - Each of §8.2.1–§8.2.5 reproduced with two simulated clones.
 - §8.2.1 / §8.2.3 (handle conflict): the second push **fails with `HandleConflictOnPush`**
-  (no auto-rename); after explicit `workflow rename` on the loser, the second push succeeds.
+  (no auto-rename); after explicit `topic rename` on the loser, the second push succeeds.
 - §8.2.2 (attach LWW): combined attach + detach event sequences resolve to the most recent
   event by `(timestamp, actor_id, event_oid)` order; `AttachConflictResolved` warning surfaced.
 - §8.2.4 (tag LWW): per-tag LWW result is independent of event arrival order.
-- §8.2.5 (archived attach): within-clone attach to archived workflow rejected with
-  `AttachToArchivedWorkflow`; `--force` overrides; cross-clone attach written before archive
+- §8.2.5 (archived attach): within-clone attach to archived topic rejected with
+  `AttachToArchivedTopic`; `--force` overrides; cross-clone attach written before archive
   visibility is preserved with doctor warning.
 
 ### CLI / UX defaults
 
-- Default `git forum ls` returns mixed workflows + inbox; `--workflows` / `--threads` /
+- Default `git forum ls` returns mixed topics + inbox; `--topics` / `--threads` /
   `--inbox` produce single-section variants.
 - `doctor` reports standalone-thread count under "Untriaged" (informational), not warning.
 - Standalone threads accept all state-change shorthands (`close`, `accept`, `pend`, ...) without
-  workflow attachment.
+  topic attachment.
 
-### `#N` short-index validation
+### `/N` short-index validation
 
-- Two clones with diverging attach order produce the same `#N` mapping after sync.
-- `#N` accepted as input to read-only CLI commands (`show`, etc.).
-- `#N` **rejected with `ShortIndexInPersistedRef`** in every persisted-context check point
+- Two clones with diverging attach order produce the same `/N` mapping after sync.
+- `/N` accepted as input to read-only CLI commands (`show`, etc.).
+- `/N` **rejected with `ShortIndexInPersistedRef`** in every persisted-context check point
   enumerated in §9.6.
 
 ## 15. Non-goals
 
 In addition to SPEC.md §15:
 
-- General-purpose project management (Gantt charts, dependency graphs across workflows).
-- Workflow state machines, workflow-level guards, workflow nesting in 2.0
+- General-purpose project management (Gantt charts, dependency graphs across topics).
+- Topic state machines, topic-level guards, topic nesting in 2.0
   (intentionally deferred — see Appendix A.3).
-- Multi-parent workflows (DAG of workflows).
+- Multi-parent topics (DAG of topics).
 - User-defined required facet axes beyond `lifecycle` (use `tags` instead).
-- Mandatory workflow membership for threads.
+- Mandatory topic membership for threads.
 
 ## Appendix A: Open questions
 
@@ -1116,9 +1150,9 @@ In addition to SPEC.md §15:
 
 | ID | Question | Resolution |
 |---|---|---|
-| O-1 | Should `wf-_legacy` migration bucket be created automatically, or should threads stay orphan until manually attached? | **Orphan**. No synthetic workflow on migration; `doctor` reports orphan count. (§10.1) |
+| O-1 | Should `!_legacy` migration bucket be created automatically, or should threads stay orphan until manually attached? | **Orphan**. No synthetic topic on migration; `doctor` reports orphan count. (§10.1) |
 | O-2 | Are 5 intent values enough? | **Dropped entirely**, and `scope` was dropped too. Sole required facet is `lifecycle`; everything else (bug/task/cross-cutting) is a tag. (§2.3) |
-| O-3 | Should standalone threads be allowed to use shorthand commands (`close`, `accept`) directly? | **Yes**. Shorthand commands work uniformly on standalone and attached threads. Workflow attachment is never required for state changes. (§9.4) |
+| O-3 | Should standalone threads be allowed to use shorthand commands (`close`, `accept`) directly? | **Yes**. Shorthand commands work uniformly on standalone and attached threads. Topic attachment is never required for state changes. (§9.4) |
 
 ### A.2 Remaining for 2.0 implementation
 
@@ -1132,19 +1166,19 @@ provided the additive contracts below are honored.
 
 | ID | Capability | Current 2.0 substitute | Trigger to add | Forward-compat contract |
 |---|---|---|---|---|
-| F-W1 | Workflow state machine (e.g. `planning` / `active` / `wrapping` / `done` / `abandoned`) | `archived_at` flag + derived summary | Need to express stage of work as a queryable signal beyond "active vs archived" | Introduce `workflow_state` event type (additive). Workflows without any `workflow_state` event default to `active`. `archived` remains derived from `archived_at` and is orthogonal to status. |
-| F-W2 | Workflow-level guards | None (rely on per-thread guards) | Need to enforce conditions on workflow archival or future state transitions (e.g. "all children terminal before archive") | Add `[[workflow_guards]]` policy section. Guards on `unrestricted` operations (archive in 2.0) are absent by default; adding rules later affects only repos that opt in. |
-| F-W3 | Richer derived health (`green` / `yellow` / `red`) replacing the simple summary | `empty` / `has-open` / `all-terminal` | Need to surface "stuck" workflows visually (e.g. unresolved objections, stale activity) | Health is a pure function of child state. Richer logic adds without breaking simpler clients; index columns gain a `workflow_health` field, summary remains for backward queries. |
-| F-W4 | Workflow nesting (single-parent) | Flat workflows only | Need to express epic / sub-workflow hierarchy | Add optional `parent` field to workflows. Absent = root. Cycles rejected at write time. Existing 2.0 workflows are roots by default. |
+| F-W1 | Topic state machine (e.g. `planning` / `active` / `wrapping` / `done` / `abandoned`) | `archived_at` flag + derived summary | Need to express stage of work as a queryable signal beyond "active vs archived" | Introduce `topic_state` event type (additive). Topics without any `topic_state` event default to `active`. `archived` remains derived from `archived_at` and is orthogonal to status. |
+| F-W2 | Topic-level guards | None (rely on per-thread guards) | Need to enforce conditions on topic archival or future state transitions (e.g. "all children terminal before archive") | Add `[[topic_guards]]` policy section. Guards on `unrestricted` operations (archive in 2.0) are absent by default; adding rules later affects only repos that opt in. |
+| F-W3 | Richer derived health (`green` / `yellow` / `red`) replacing the simple summary | `empty` / `has-open` / `all-terminal` | Need to surface "stuck" topics visually (e.g. unresolved objections, stale activity) | Health is a pure function of child state. Richer logic adds without breaking simpler clients; index columns gain a `topic_health` field, summary remains for backward queries. |
+| F-W4 | Topic nesting (single-parent) | Flat topics only | Need to express epic / sub-topic hierarchy | Add optional `parent` field to topics. Absent = root. Cycles rejected at write time. Existing 2.0 topics are roots by default. |
 | F-W5 | Hybrid Logical Clocks (HLC) for cross-clone event ordering | Wall-clock LWW with `(actor_id, event_oid)` tiebreak (§8.2 clock-dependency note) | Observed clock skew producing user-surprising LWW outcomes; multi-region deployments | Add HLC field to event metadata as additive serialization. Clients that don't compute HLC continue to fall back to wall-clock; clients that do prefer HLC. Both populations converge to the same effective state once events propagate. |
 | F-W6 | CRDT-based tag merging (observed-remove set) | Per-tag LWW (§8.2.4) | Observed tag flicker across clones causing confusion in dashboards / agent decisions | Replace the `facet_set`-event replay logic with OR-set semantics. Event format unchanged; merge function swap is internal. Old clients computing LWW agree with new clients computing OR-set in the absence of concurrent add/remove on the same tag. |
 
 #### Why Level XS over Level XXS
 
-Level XXS would have collapsed `workflow` to a tag-like string field on threads, eliminating the
-workflow ref tree entirely. That model is simpler still, but it would have made F-W1 and F-W4
+Level XXS would have collapsed `topic` to a tag-like string field on threads, eliminating the
+topic ref tree entirely. That model is simpler still, but it would have made F-W1 and F-W4
 **re-architecture** changes (introducing a new entity), not additive ones. Level XS preserves
-workflow as a first-class entity so all four future capabilities above remain forward-compatible.
+topic as a first-class entity so all four future capabilities above remain forward-compatible.
 
 #### Trigger discipline
 
@@ -1161,53 +1195,53 @@ Speculative implementation of F-W1–F-W6 without these triggers is explicitly d
 These examples illustrate the 2.0 model end-to-end. Output formatting is illustrative; exact
 column layouts may differ.
 
-### B.1 Quick bug capture (standalone, no workflow)
+### B.1 Quick bug capture (standalone, no topic)
 
 ```text
 $ git forum new bug "TUI crashes on terminal resize"
-created thread t-a3f9b2k1
+created thread @a3f9b2k1
   lifecycle:  execution
   tags:       bug
   status:     open
-  workflow:   (standalone)
+  topic:   (standalone)
 
-$ git forum claim t-a3f9 "Resize handler doesn't account for negative width on shrink"
+$ git forum claim @a3f9 "Resize handler doesn't account for negative width on shrink"
 appended say:claim node n-5h2m9p1k
 
-$ git forum evidence add t-a3f9 --kind file --ref src/tui/render.rs:42
+$ git forum evidence add @a3f9 --kind file --ref src/tui/render.rs:42
 appended evidence n-7c4d8e3a
 
 # After fix lands:
-$ git forum close t-a3f9 --comment "Fixed in commit 7c8d2e1"
+$ git forum close @a3f9 --comment "Fixed in commit 7c8d2e1"
 state: open -> done
 ```
 
-The thread never joined a workflow. Standalone use is fully supported (see §9.4).
+The thread never joined a topic. Standalone use is fully supported (see §9.4).
 
-### B.2 RFC inside a workflow
+### B.2 RFC inside a topic
 
 ```text
-$ git forum workflow new "Payment system rewrite"
-created workflow wf-payment-system-rewrite
+$ git forum topic new "Payment system rewrite"
+created topic !payment-system-rewrite
   active, no charter
 
 $ git forum new rfc "Replace synchronous gateway with async queue" \
-    --workflow wf-payment-system-rewrite --edit
-created thread t-x9k2m4p7
+    --topic !payment-system-rewrite --edit
+created thread @x9k2m4p7
   lifecycle:  proposal
   tags:       cross-cutting
   status:     draft
-  workflow:   wf-payment-system-rewrite (slot #1)
+  topic:   !payment-system-rewrite (slot /1)
 
-$ git forum question t-x9k2 "How do we handle ordering invariants in the queue?"
-$ git forum objection t-x9k2 "Async retries can violate at-most-once delivery"
+$ git forum question @x9k2 "How do we handle ordering invariants in the queue?"
+$ git forum objection @x9k2 "Async retries can violate at-most-once delivery"
 
 # After review:
-$ git forum resolve t-x9k2 n-9b3c4d5e
-$ git forum summary  t-x9k2 "Decision: queue-based dispatch with idempotency keys"
-$ git forum propose  t-x9k2          # draft -> open
-$ git forum state    t-x9k2 review   # open -> review
-$ git forum accept   t-x9k2 --approve human/alice
+$ git forum resolve @x9k2 n-9b3c4d5e
+$ git forum summary  @x9k2 "Decision: queue-based dispatch with idempotency keys"
+$ git forum propose  @x9k2          # draft -> open
+$ git forum state    @x9k2 review   # open -> review
+$ git forum accept   @x9k2 --approve human/alice
 state: review -> done
 ```
 
@@ -1218,19 +1252,19 @@ Note that `--approve human/alice` satisfies the
 
 ```text
 $ git forum new task "Implement async queue dispatcher" \
-    --workflow wf-payment-system-rewrite \
-    --link-to t-x9k2 --rel implements \
+    --topic !payment-system-rewrite \
+    --link-to @x9k2 --rel implements \
     --branch feat/async-dispatcher
-created thread t-y3p7n2q4
+created thread @y3p7n2q4
   lifecycle:  execution
   tags:       task
   status:     open
-  workflow:   wf-payment-system-rewrite (slot #2)
+  topic:   !payment-system-rewrite (slot /2)
   branch:     feat/async-dispatcher
 
-# Commits on feat/async-dispatcher reference t-y3p7 in their messages.
+# Commits on feat/async-dispatcher reference @y3p7 in their messages.
 # When merged:
-$ git forum close t-y3p7
+$ git forum close @y3p7
 state: open -> done
 ```
 
@@ -1238,13 +1272,13 @@ state: open -> done
 
 ```text
 $ git forum new dec "Use UUIDv7 for new entity IDs" --edit
-created thread t-q8w2e1r3
+created thread @q8w2e1r3
   lifecycle:  record
   tags:       (none)
   status:     open
-  workflow:   (standalone)
+  topic:   (standalone)
 
-$ git forum close t-q8w2
+$ git forum close @q8w2
 state: open -> done
 ```
 
@@ -1254,36 +1288,36 @@ state: open -> done
 
 ```text
 $ git forum ls
-WORKFLOWS (active)
+TOPICS (active)
   HANDLE                          SUMMARY        THREADS
-  wf-payment-system-rewrite       has-open       3
-  wf-onboarding-revamp            all-terminal   12
+  !payment-system-rewrite       has-open       3
+  !onboarding-revamp            all-terminal   12
 
 INBOX (standalone, sorted by updated_at desc)
   ID         TITLE                                       LIFECYCLE  TAGS    UPDATED
-  t-a3f9b2   TUI crashes on terminal resize              execution  bug     2026-04-28
-  t-q8w2e1   Use UUIDv7 for new entity IDs               record     -       2026-04-27
-  t-7m4k9p   How does retry policy interact with quotas? execution  bug     2026-04-26
+  @a3f9b2   TUI crashes on terminal resize              execution  bug     2026-04-28
+  @q8w2e1   Use UUIDv7 for new entity IDs               record     -       2026-04-27
+  @7m4k9p   How does retry policy interact with quotas? execution  bug     2026-04-26
 
-$ git forum ls --workflows --archived           # explicit archived view
+$ git forum ls --topics --archived           # explicit archived view
 HANDLE                          SUMMARY        THREADS  ARCHIVED
-wf-q1-perf                      empty          0        2026-02-15
+!q1-perf                      empty          0        2026-02-15
 
 $ git forum thread ls --lifecycle execution --tag bug --status open
-ID         TITLE                                  WORKFLOW                  CREATED
-t-a3f9b2   TUI crashes on terminal resize         (standalone)              2026-04-25
-t-r7n8m1   Auth retry loop on token refresh       wf-payment-system-rewrite 2026-04-26
+ID         TITLE                                  TOPIC                     CREATED
+@a3f9b2   TUI crashes on terminal resize         (standalone)              2026-04-25
+@r7n8m1   Auth retry loop on token refresh       !payment-system-rewrite 2026-04-26
 
-$ git forum show wf-payment-system-rewrite
-Workflow: wf-payment-system-rewrite
+$ git forum show !payment-system-rewrite
+Topic: !payment-system-rewrite
 Title:    Payment system rewrite
 State:    active
 Summary:  has-open  (3 threads attached)
 
 Threads:
-  #1 [proposal/done   ] Replace synchronous gateway with async queue   t-x9k2m4
-  #2 [execution/done  ] Implement async queue dispatcher               t-y3p7n2
-  #3 [execution/open  ] Migrate gateway clients                        t-d8f4q9
+  /1 [proposal/done   ] Replace synchronous gateway with async queue   @x9k2m4
+  /2 [execution/done  ] Implement async queue dispatcher               @y3p7n2
+  /3 [execution/open  ] Migrate gateway clients                        @d8f4q9
 ```
 
 The default `git forum ls` shows both stacked sections, ensuring that newly captured standalone
@@ -1292,37 +1326,38 @@ threads remain visible without needing to remember a flag.
 ### B.6 Promoting a standalone thread
 
 ```text
-$ git forum workflow attach wf-payment-system-rewrite t-a3f9b2
-attached t-a3f9b2 to wf-payment-system-rewrite (slot #4)
+$ git forum topic attach !payment-system-rewrite @a3f9b2
+attached @a3f9b2 to !payment-system-rewrite (slot /4)
 ```
 
-The thread is no longer standalone; it now appears in the workflow's `show` output.
+The thread is no longer standalone; it now appears in the topic's `show` output.
 
 ### B.7 Cross-clone handle conflict (explicit resolution)
 
 ```text
-# Alice and Bob both created a workflow with the same title "Payment rewrite"
+# Alice and Bob both created a topic with the same title "Payment rewrite"
 # locally (different opaque IDs). Alice pushed first.
 
 bob$ git push
-error: HandleConflictOnPush: handle 'wf-payment-rewrite' is already claimed
-       by workflow wf-x9k2m4p7 (created 2026-04-28T09:11:02Z by ai/alice).
+error: HandleConflictOnPush: handle '!payment-rewrite' is already claimed
+       by topic id x9k2m4p7 (created 2026-04-28T09:11:02Z by ai/alice).
 
-       Your workflow wf-aaaa1234 was not pushed. Resolve by renaming:
+       Your topic (internal id aaaa1234, currently published as !payment-rewrite
+       on this clone only) was not pushed. Resolve by renaming:
 
-         git forum workflow rename wf-aaaa1234 <new-handle>
+         git forum topic rename !payment-rewrite <new-handle>
          git push
 
-bob$ git forum workflow rename wf-aaaa1234 wf-payment-rewrite-bob
-renamed wf-aaaa1234: handle is now wf-payment-rewrite-bob
-(old name 'wf-payment-rewrite' was never published from this clone)
+bob$ git forum topic rename !payment-rewrite !payment-rewrite-bob
+renamed: handle is now !payment-rewrite-bob
+(the conflicting local name '!payment-rewrite' was never published from this clone)
 
 bob$ git push
 ok
 ```
 
 No silent reassignment occurs. Bob's choice of new handle is explicit; Alice's
-`wf-payment-rewrite` continues to mean exactly what she expected it to mean.
+`!payment-rewrite` continues to mean exactly what she expected it to mean.
 
 ### B.8 Tag-driven policy customization
 
@@ -1355,10 +1390,10 @@ warning (or error if `strict = true`).
 
 - SPEC.md v1.2 — inherited specification (unchanged sections noted by reference).
 - ADR-001 — Git OID as canonical event/node ID (unchanged).
-- ADR-002 (planned) — Kind reduction rationale.
-- ADR-003 (planned) — Workflow handle scheme.
-- ADR-004 (planned) — Migration strategy.
-- RFC-0027 — Workflow meta-thread (superseded by this draft; this draft promotes the meta-thread to
+- ADR-002 — Kind reduction rationale.
+- ADR-003 — Topic handle scheme.
+- ADR-004 — Migration strategy.
+- RFC-0027 — Topic meta-thread (superseded by this draft; this draft promotes the meta-thread to
   a first-class entity rather than a thread variant, but in slimmed form).
 - RFC-0030 — Thread ID scheme (extended: `t-` prefix replaces per-kind prefixes).
 - RFC-0031 — 3-letter kind prefixes (deprecated by this draft).

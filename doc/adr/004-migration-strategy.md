@@ -5,9 +5,10 @@
 git-forum 2.0 makes structural changes that cannot be expressed as soft additions to 1.x:
 
 - Thread `kind` field is removed; replaced by `facets.lifecycle` and `tags` (ADR-002).
-- Thread ID prefix changes from per-kind (`RFC-`, `ASK-`, etc.) to unified (`t-`).
+- Thread ID prefix changes from per-kind (`RFC-`, `ASK-`, etc.) to unified type-marker (`@` for
+display; bare token for storage).
 - Four state machines collapse to one (lifecycle-filtered).
-- New first-class `workflow` entity with its own ref tree (ADR-003).
+- New first-class `topic` entity with its own ref tree (ADR-003).
 - Policy key vocabulary changes from kind-named to lifecycle/tag-keyed.
 
 Existing repositories using git-forum 1.x must be able to upgrade without losing data or
@@ -21,13 +22,13 @@ Adopt a **hard break with one-shot migration plus short-term compatibility alias
 
 Performs in place:
 
-1. **Rewrite thread refs**: `refs/forum/threads/RFC-0001` → `refs/forum/threads/t-<new-id>`.
+1. **Rewrite thread refs**: `refs/forum/threads/RFC-0001` → `refs/forum/threads/<new-id>`.
    The old name is preserved as a read-only alias entry so external links keep resolving.
 2. **Append `facet_set` event** to every existing thread populating `lifecycle` and conventional
    tags per the kind mapping (ADR-002).
 3. **Remap states** per spec §3.2.2 (lossless mapping table).
-4. **Leave threads orphan** — no synthetic `wf-_legacy` workflow is created. Users attach
-   threads to workflows manually as triage proceeds. `doctor` reports the orphan count.
+4. **Leave threads orphan** — no synthetic `!_legacy` topic is created. Users attach
+   threads to topics manually as triage proceeds. `doctor` reports the orphan count.
 5. **Auto-rewrite policy keys** in `.forum/policy.toml` from kind-named (`creation_rules.rfc`)
    to lifecycle-named (`creation_rules.proposal`), warning on each rewrite.
 
@@ -68,11 +69,11 @@ not on this schedule.
 
 - A repo can upgrade to 2.0 in one command. The migration is idempotent (running it on an
   already-migrated repo is a no-op).
-- Immediately after migration, every existing thread is **standalone** (no workflow attached).
+- Immediately after migration, every existing thread is **standalone** (no topic attached).
   The default `git forum ls` mixed view (spec §9.3) shows them in the inbox section, so they
   remain visible without flag rituals — `doctor` calls them "untriaged standalone", not
   "orphan", to reflect that this is a legitimate steady state and not a fault. Users curate
-  threads into workflows at their own pace; many threads will never need a workflow.
+  threads into topics at their own pace; many threads will never need a topic.
 - 1.x clients cannot read 2.0-migrated repos (the new ref tree shape and event types are not
   understood). This is a true breaking change requiring all collaborators to upgrade in
   coordination.
@@ -106,11 +107,11 @@ Pros: zero migration code.
 
 Cons: unacceptable data loss. Discussion history, evidence, decisions all gone.
 
-### Migrate to a single `wf-_legacy` bucket on import (rejected per O-1)
+### Migrate to a single `!_legacy` bucket on import (rejected per O-1)
 
 Pros: gives every legacy thread a home; no orphan state.
 
-Cons: pollutes `workflow ls` output indefinitely with a synthetic workflow that users rarely
+Cons: pollutes `topic ls` output indefinitely with a synthetic topic that users rarely
 empty. Creates the false impression that legacy threads form a coherent workstream when in
 fact they are heterogeneous and uncurated. Honest "orphan" state is preferable.
 
@@ -129,6 +130,6 @@ reducing breakage.
 - Compat alias layer covers all 1.x command shapes (`<kind> new`, `<kind> ls`, `<kind> close`,
   etc.).
 - Compat ID resolver accepts `RFC-NNNN`, `RFC-XXXXXXXX`, `ASK-NNNN`, `ASK-XXXXXXXX`,
-  `JOB-XXXXXXXX`, `DEC-XXXXXXXX`, and the new `t-XXXXXXXX`.
+  `JOB-XXXXXXXX`, `DEC-XXXXXXXX`, and the new `@XXXXXXXX` / bare `XXXXXXXX`.
 - Removal schedule documented in release notes for 2.0, 2.1, and 3.0.
 - Migration log captures every rewritten ref and warning for audit.
