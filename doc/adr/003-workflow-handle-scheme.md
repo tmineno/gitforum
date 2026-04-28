@@ -34,8 +34,9 @@ Adopt a **two-layer identity** for workflows, mirroring Git's "SHA + ref" model:
 
 Handles are **mutable**. Renames preserve all old handles as permanent aliases via
 `workflow_alias` events. Cross-clone handle conflicts (two clones independently claiming the
-same handle) are resolved at push time by automatic petname rename of the loser's handle (spec
-§8.2.1).
+same handle) surface at push time as an **explicit error** (`HandleConflictOnPush`); the user
+must rename their workflow before re-pushing. Within-clone collisions, by contrast, are
+recovered automatically via a deterministic petname suffix.
 
 Within a known workflow, child threads may be referenced by short index (`wf-foo#3`). This is a
 **session-local convenience**, not a stable identifier (see spec §8.3).
@@ -46,14 +47,17 @@ Within a known workflow, child threads may be referenced by short index (`wf-foo
   content-addressed IDs.
 - The handle alias ref tree becomes the lookup index — handle resolution is one ref-read.
 - Workflow rename is cheap (alias write) and never breaks references.
-- Push-time handle conflicts auto-recover, but the loser's handle changes silently from their
-  perspective until the next CLI invocation tells them. Surprise mitigated by clear notification.
+- **Handle stability is preserved across clones**: a handle a user has written into external
+  notes, RFC bodies, or commit messages keeps meaning the same workflow forever, because no
+  silent reassignment occurs. Cross-clone push conflicts require explicit user resolution.
+- This costs CI ergonomics: `git forum push` (or wrapping push) can fail with
+  `HandleConflictOnPush`, requiring a manual `workflow rename` step. Workflow creation is rare
+  enough that this is acceptable; for high-volume thread creation, no analogous conflict exists
+  (thread IDs are content-addressed).
 - The petname dictionary (~2,048 adjectives × ~2,048 nouns) is a build artifact that must ship
-  with the binary.
-- `#N` short references in commit messages or evidence refs are a footgun — the spec forbids
-  them and tooling warns when they appear in scanned contexts.
-- A user pre-setting `--handle wf-pay` and hitting cross-clone collision still gets a petname
-  appended (`wf-pay-quick-fox`); explicit user intent does not bypass conflict resolution.
+  with the binary, used for within-clone collision recovery only.
+- `#N` short references in any persisted context (commit messages, evidence refs, link targets)
+  are an error in 2.0, not a warning. They are display-only.
 
 ## Alternatives
 
@@ -93,12 +97,28 @@ Cons: rename becomes destructive (changes the canonical ID). Cross-clone conflic
 becomes destructive (changing the ID after collision invalidates references). The two-layer
 model isolates the volatile name from the stable identity.
 
+### Silent auto-rename on cross-clone handle conflict (rejected after review)
+
+An earlier draft proposed automatically appending a petname suffix when a push failed due to
+alias-ref CAS conflict — symmetric with the within-clone resolution. This was rejected because
+the loser's handle would change without their explicit consent; any external reference to that
+handle (RFC body, commit message, external document) would silently start resolving to a
+different workflow. The whole point of having a stable human-facing handle is that it can be
+written down and pointed at later. Auto-rename undermines that guarantee for whichever clone
+loses the push race. Explicit failure with a manual rename step is safer; the friction is
+acceptable because workflow creation is rare.
+
 ## Exit criteria
 
-- Spec §6.1 defines handle generation, petname collision resolution, and rename semantics.
-- Spec §8.2.1 defines cross-clone handle conflict resolution.
-- `refs/forum/workflows/` and `refs/forum/aliases/` ref trees implemented.
+- Spec §6.1 defines handle generation, petname collision resolution (within-clone), and rename
+  semantics.
+- Spec §8.2.1 defines cross-clone handle conflict as an explicit error requiring user rename.
+- `refs/forum/workflows/` and `refs/forum/aliases/` ref trees implemented; create / rename use
+  atomic push (spec §8.4.1).
 - `git forum workflow rename` records `workflow_alias` events; old handles continue to resolve.
-- Petname dictionary bundled with the binary.
-- Test: two simulated clones independently allocating the same handle converge to two distinct
-  workflows accessible by their (post-rename) handles.
+- Petname dictionary bundled with the binary (within-clone collision recovery only).
+- Test: two simulated clones independently allocating the same handle — the second push fails
+  with `HandleConflictOnPush`; after explicit `workflow rename` on the loser, both workflows
+  exist with distinct handles.
+- Test: `#N` short reference rejected with `ShortIndexInPersistedRef` when used as evidence ref,
+  link target, or in `commit-msg` hook input.
