@@ -912,6 +912,36 @@ output:
     (`AttachConflictResolved` per §8.2.2) — these *are* warnings.
 - (No workflow-level guard preview in 2.0; see F-W2.)
 
+### 9.6 Persisted-context validation
+
+Workflow short references (`#N`, §2.1.3) MUST be rejected as input wherever the value would be
+stored. The check fires `ShortIndexInPersistedRef` (an error per §13). Implementations enforce
+the check at every entry point listed below.
+
+| Entry point | Why persisted | Rejection point |
+|---|---|---|
+| `git forum link --to <ref>` | stored as link target on the thread ref | argument parser |
+| `git forum link <from> <to>` | both endpoints stored | argument parser |
+| `git forum evidence add --kind thread --ref <ref>` | stored as evidence reference | argument parser |
+| `git forum workflow attach <workflow> <thread>` | the thread positional must be a canonical thread ID; `#N` here would be circular | argument parser |
+| `git forum workflow detach <workflow> <thread>` | same as attach | argument parser |
+| `--link-to <ref>` (any creation command) | stored as link target | argument parser |
+| `--from-thread <ref>` (any creation command) | recorded in the new thread's source link | argument parser |
+| `commit-msg` hook input | scanned and validated against the forum index | hook handler |
+| `--workflow <ref>` for `thread new` | accepts only canonical workflow handles, not `wf-foo#N` (which is a thread reference, not a workflow reference) | argument parser |
+
+`#N` is **accepted** at:
+
+- `git forum show <ref>` — read-only display.
+- `git forum thread state <ref> <new-state>` — interactive state change; the state event is
+  recorded against the canonical thread ID resolved from `#N` at parse time.
+- All other read-only / interactive query commands where the resolved canonical ID is used
+  internally and not echoed into stored data.
+
+Free-form body text (`--body`, `--body-file`, `--edit` content) is **not scanned** for `#N`.
+Authors who write `wf-foo#3` in prose are responsible for prose accuracy; the rule covers
+machine-interpreted references only.
+
 ## 10. Migration from 1.x
 
 ### 10.1 Strategy
@@ -1027,13 +1057,47 @@ Unchanged from SPEC.md §13. New error and warning categories:
 
 Unchanged from SPEC.md §14, plus:
 
-- Migration test: every state in every 1.x kind round-trips to a defined 2.0 state.
-- Workflow concurrency tests parallel to thread concurrency tests.
-- Facet expression evaluator tests covering all guard scoping forms.
-- Cross-clone scenario tests: each of §8.2.1–§8.2.4 reproduced with two simulated clones,
-  asserting deterministic resolution and correct warning surfacing.
-- `#N` short-index drift test: two clones with diverging attach order produce the same `#N`
-  mapping after sync.
+### Migration
+
+- Every state in every 1.x kind round-trips to a defined 2.0 state.
+- Migrated threads remain standalone (no synthetic `wf-_legacy` workflow created).
+- Default `git forum ls` post-migration shows all migrated threads in the inbox section.
+
+### Facet model
+
+- Facet expression evaluator tests covering all guard scoping forms (`lifecycle=...`,
+  `tag=...`, `AND`/`OR`/`NOT`).
+- Kind preset commands (`new rfc/dec/task/bug`) produce identical facet/tag combinations as the
+  canonical `thread new --lifecycle ... --tag ...` form.
+- A workflow can hold threads of all three lifecycles simultaneously; `workflow show` groups
+  them correctly.
+
+### Cross-clone concurrency
+
+- Each of §8.2.1–§8.2.5 reproduced with two simulated clones.
+- §8.2.1 / §8.2.3 (handle conflict): the second push **fails with `HandleConflictOnPush`**
+  (no auto-rename); after explicit `workflow rename` on the loser, the second push succeeds.
+- §8.2.2 (attach LWW): combined attach + detach event sequences resolve to the most recent
+  event by `(timestamp, actor_id, event_oid)` order; `AttachConflictResolved` warning surfaced.
+- §8.2.4 (tag LWW): per-tag LWW result is independent of event arrival order.
+- §8.2.5 (archived attach): within-clone attach to archived workflow rejected with
+  `AttachToArchivedWorkflow`; `--force` overrides; cross-clone attach written before archive
+  visibility is preserved with doctor warning.
+
+### CLI / UX defaults
+
+- Default `git forum ls` returns mixed workflows + inbox; `--workflows` / `--threads` /
+  `--inbox` produce single-section variants.
+- `doctor` reports standalone-thread count under "Untriaged" (informational), not warning.
+- Standalone threads accept all state-change shorthands (`close`, `accept`, `pend`, ...) without
+  workflow attachment.
+
+### `#N` short-index validation
+
+- Two clones with diverging attach order produce the same `#N` mapping after sync.
+- `#N` accepted as input to read-only CLI commands (`show`, etc.).
+- `#N` **rejected with `ShortIndexInPersistedRef`** in every persisted-context check point
+  enumerated in §9.6.
 
 ## 15. Non-goals
 

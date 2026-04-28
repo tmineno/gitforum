@@ -33,30 +33,46 @@ Performs in place:
 
 `git forum migrate --dry-run` reports the planned rewrite without modifying refs.
 
-### Compatibility aliases
+### What is permanent
 
-For one minor release after 2.0 (i.e., 2.0.x and 2.1.x):
+The kind-named **top-level** commands and shorthands are **not** part of the deprecation story:
 
-- Old kind-prefixed commands (`git forum rfc new`, `git forum issue close`, etc.) work as
-  silent aliases that expand to the canonical form.
+- `git forum new rfc` / `new dec` / `new task` / `new issue` / `new bug`
+- State-change shorthands: `accept`, `close`, `pend`, `propose`, `reject`, `deprecate`
+
+These are the stable everyday surface (ADR-002). Users keep typing them indefinitely; only the
+underlying schema changes.
+
+### Compatibility aliases (deprecated)
+
+For one minor release after 2.0 (i.e., 2.0.x and 2.1.x), the **kind-prefixed subcommand**
+groupings work as silent aliases:
+
+- `git forum rfc new`, `git forum issue close`, etc. → expand to the top-level form.
 - Legacy thread IDs (`RFC-0001`, `ASK-XXXXXXXX`) resolve via the alias table on read.
-- Legacy policy keys auto-rewrite at config-load time.
-- Legacy search queries (`kind:rfc`) auto-translate.
+- Legacy policy keys auto-rewrite at config-load time with a warning.
+- Legacy search queries (`kind:rfc`) auto-translate to facet predicates.
 
 ### Removal schedule
 
-| Version | Status of 1.x compat |
-|---|---|
-| 2.0 | Aliases work silently; `--help` directs to canonical forms |
-| 2.1 | Aliases warn on use (informational, non-blocking) |
-| 3.0 | Aliases removed; legacy IDs still resolve for read-only access |
+Applies to the deprecated items above only. The permanent kind-named top-level commands are
+not on this schedule.
+
+| Version | Kind-prefixed subcommands | Kind-keyed policy | Legacy IDs |
+|---|---|---|---|
+| 2.0 | silent alias, `--help` cross-references the top-level form | auto-rewrite + warning | resolve via alias |
+| 2.1 | warn on use | unchanged | resolve via alias |
+| 3.0 | removed | rejected (must be migrated) | read-only resolve |
 
 ## Consequences
 
 - A repo can upgrade to 2.0 in one command. The migration is idempotent (running it on an
   already-migrated repo is a no-op).
-- The orphan list immediately after migration is large (every existing thread). It shrinks as
-  users curate threads into workflows. This is honest — there were no workflows in 1.x.
+- Immediately after migration, every existing thread is **standalone** (no workflow attached).
+  The default `git forum ls` mixed view (spec §9.3) shows them in the inbox section, so they
+  remain visible without flag rituals — `doctor` calls them "untriaged standalone", not
+  "orphan", to reflect that this is a legitimate steady state and not a fault. Users curate
+  threads into workflows at their own pace; many threads will never need a workflow.
 - 1.x clients cannot read 2.0-migrated repos (the new ref tree shape and event types are not
   understood). This is a true breaking change requiring all collaborators to upgrade in
   coordination.
