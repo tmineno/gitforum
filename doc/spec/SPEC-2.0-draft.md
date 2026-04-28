@@ -20,7 +20,8 @@ explicitly overridden below.
 > Appendix A.3 for the forward-compatibility plan).
 >
 > The motivating analysis is recorded separately in ADR-002 (kind reduction), ADR-003 (topic
-> handles), and ADR-004 (migration). This document specifies the resulting model.
+> handles), ADR-004 (migration), and ADR-005 (cross-clone conflict resolution). This document
+> specifies the resulting model.
 
 ## 1. Overview
 
@@ -1481,6 +1482,8 @@ warning (or error if `strict = true`).
 - ADR-002 — Kind reduction rationale.
 - ADR-003 — Topic handle scheme.
 - ADR-004 — Migration strategy.
+- ADR-005 — Cross-clone conflict resolution rationale (LWW for non-handle events, explicit
+  error for handle conflicts, atomic push, display-only short index).
 - RFC-0027 — Topic meta-thread (superseded by this draft; this draft promotes the meta-thread to
   a first-class entity rather than a thread variant, but in slimmed form).
 - RFC-0030 — Thread ID scheme (extended: `t-` prefix replaces per-kind prefixes).
