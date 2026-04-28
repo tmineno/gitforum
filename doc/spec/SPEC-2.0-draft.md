@@ -480,13 +480,17 @@ Unchanged from SPEC.md §4.3 / §4.4 / §4.5.
 Authoritative data in 2.0:
 
 ```text
-refs/forum/topics/<TOPIC_ID>     # topic event chain (NEW)
-refs/forum/threads/<THREAD_ID>         # thread event chain (unchanged structure)
-refs/forum/aliases/<HANDLE>            # symref or note pointing to topic ID (NEW)
+refs/forum/topics/<topic-id>      # topic event chain (NEW)
+refs/forum/threads/<thread-id>    # thread event chain (unchanged structure)
+refs/forum/aliases/<slug>         # symref or note pointing to topic ID (NEW)
 ```
 
-Topic handle resolution walks `refs/forum/aliases/<handle>` first; if absent, the handle is
-treated as a topic ID and looked up under `refs/forum/topics/`.
+All ref-name segments are the **storage tokens** — bare alphanumeric (with `-` allowed in slug),
+no `!` and no `@`. The user-facing markers (§6.0) are display-only and are stripped before the
+ref name is constructed.
+
+Topic handle resolution walks `refs/forum/aliases/<slug>` first; if absent, the input is treated
+as a topic ID and looked up under `refs/forum/topics/`.
 
 ### 5.2 Repository files
 
@@ -541,8 +545,12 @@ Rationale:
   and reserve `@{` syntax) out of scope.
 - `!` requires shell quoting (`'!payment-rewrite'`) because of bash history expansion. To keep
   interactive use friction-free, the bang is **optional at every CLI input position** — see
-  §6.0.1 below. The `!` is **mandatory only in persisted / prose contexts** where type
-  disambiguation matters (commit messages, body text, evidence refs, link targets).
+  §6.0.1 below. The `!` is **mandatory in machine-interpreted persisted references**
+  (evidence refs, link targets, the `commit-msg` hook's structured ref scan) where type
+  disambiguation matters. Free-form prose — body text, charter, summary nodes — is **not
+  scanned**; users may write `!foo` or `foo` in prose without producing or violating a marker
+  rule. The persisted-context check fires only at structured slots that the system itself
+  parses as references (see §9.6).
 
 This scheme gives every reference in commit messages, log output, and prose an unambiguous
 visual type — an easy win over alphabetic prefixes (`wf-`, `t-`) that blur into the
@@ -560,7 +568,7 @@ the expected type unambiguous.
 | `--topic <ref>` flag on `thread new`, `thread ls`, etc. | optional | Type is fixed by the flag name. |
 | Positional or flag value where a thread is required (`thread show`, `thread state`, `claim`, `evidence add`, etc.) | optional | `@` may be omitted for the same reason. `thread show a3f9b2k1` is equivalent to `thread show @a3f9b2k1`. |
 | Mixed positions where either a topic or a thread is acceptable (e.g. `git forum show <REF>`) | **required** | Without the marker, the parser cannot disambiguate. Missing-marker input here returns `AmbiguousReferenceWithoutMarker` (§13) listing both candidate types. |
-| Anywhere written into stored data (commit messages, evidence refs, link targets, body text) | **required** | The persisted-context rule (§9.6) is unchanged: bare tokens written into stored data are rejected as ambiguous. |
+| Anywhere a reference is **structurally** persisted (evidence refs, link targets, the `commit-msg` hook's structured scan) | **required** | The persisted-context rule (§9.6) is unchanged: bare tokens at these slots are rejected as ambiguous. **Free-form body text, charter, and summary node prose are explicitly out of scope** — prose is not parsed for references. |
 
 Error messages that surface a quoting failure SHOULD include a tip such as:
 
@@ -793,10 +801,11 @@ elsewhere.
 
 **Resolution.**
 
-1. The topic event chain push (`refs/forum/topics/<TOPIC_ID>`) succeeds on both clones —
+1. The topic event chain push (`refs/forum/topics/<topic-id>`) succeeds on both clones —
    different opaque IDs, no collision.
-2. The alias ref push (`refs/forum/aliases/!payment-rewrite`) succeeds for whichever clone
-   pushes first; the second clone's alias push fails (CAS against zero-SHA).
+2. The alias ref push (`refs/forum/aliases/payment-rewrite` — bare slug, no `!`; the `!`
+   is display-only per §6.0) succeeds for whichever clone pushes first; the second clone's
+   alias push fails (CAS against zero-SHA).
 3. The losing client's atomic-push group (§8.4.1) fails as a whole. The push is reported as
    `HandleConflictOnPush` (an **error**, not a warning) with a message naming the existing
    claimant. **No automatic rename occurs.**
@@ -941,9 +950,11 @@ canonical IDs:
 - `/N` MUST NOT appear in stored data: not in evidence refs, not in link targets, not in commit
   messages used by hooks. Only canonical thread IDs (`@XXXXXXXX`) and topic handles are
   stored.
-
-Tooling MAY warn when a `/N` reference is used in a context that would be persisted (e.g., a
-commit message intended for the `commit-msg` hook).
+- Implementations **MUST reject** `/N` references at every persisted entry point with
+  `ShortIndexInPersistedRef` (an error in 2.0 — see §13 and the entry-point table in §9.6).
+  This is a hard error, not a warning, in 2.0; treating it as advisory was rejected because
+  the failure mode it prevents (a stored short-ref silently meaning a different thread on
+  another clone) is a correctness issue, not a stylistic one.
 
 ### 8.4 Push/fetch protocol
 
@@ -955,10 +966,15 @@ remote in a state that other clients can observe as inconsistent. Clients use Gi
 
 | Logical operation | Refs in the atomic group |
 |---|---|
-| `topic_create` | `refs/forum/topics/<TOPIC_ID>` + `refs/forum/aliases/<HANDLE>` |
-| `topic_rename` | `refs/forum/topics/<TOPIC_ID>` (recording the `topic_alias` event) + `refs/forum/aliases/<NEW_HANDLE>` |
-| `topic_archive` / `topic_unarchive` | `refs/forum/topics/<TOPIC_ID>` only |
-| Thread events (create, say, attach, detach, state, facet_set, etc.) | `refs/forum/threads/<THREAD_ID>` only |
+| `topic_create` | `refs/forum/topics/<topic-id>` + `refs/forum/aliases/<slug>` |
+| `topic_rename` | `refs/forum/topics/<topic-id>` (recording the `topic_alias` event) + `refs/forum/aliases/<new-slug>` |
+| `topic_archive` / `topic_unarchive` | `refs/forum/topics/<topic-id>` only |
+| Thread events (create, say, attach, detach, state, facet_set, etc.) | `refs/forum/threads/<thread-id>` only |
+
+In every ref path above, `<topic-id>`, `<slug>`, and `<thread-id>` are the **storage tokens**
+— bare alphanumeric (with `-` allowed in slug), no `!` and no `@`. The user-facing markers
+(§6.0) appear only in display, prose, and CLI input; they are stripped before the ref name is
+constructed.
 
 Atomic push is **mandatory** for the topic-create and topic-rename groups: a non-atomic
 push that succeeds only on the topic ref but fails on the alias ref would leave a topic
@@ -1207,8 +1223,10 @@ git forum migrate --dry-run
 
 After migration:
 
-- Existing thread refs are rewritten: `refs/forum/threads/RFC-0001` → `refs/forum/threads/t-...`
-  with an alias entry mapping the old name (so external links keep resolving).
+- Existing thread refs are rewritten: `refs/forum/threads/RFC-0001` →
+  `refs/forum/threads/<8-char-token>` (storage form per §6.2; display form `@<token>`). The
+  old name is preserved as a read-only alias entry so external links (`RFC-0001`,
+  `ASK-XXXXXXXX`, etc.) keep resolving.
 - Each thread gets a `facet_set` event added to its history populating `lifecycle` and the
   conventional `tags` (`cross-cutting` for `rfc`; `bug` for `issue`; `task` for `task`) per the
   §2.3.3 mapping.
@@ -1505,7 +1523,7 @@ created topic !payment-system-rewrite
   active, no charter
 
 $ git forum new rfc "Replace synchronous gateway with async queue" \
-    --topic !payment-system-rewrite --edit
+    --topic payment-system-rewrite --edit          # `--topic` accepts the bare slug; the `!` is display-only
 created thread @x9k2m4p7
   lifecycle:  proposal
   tags:       cross-cutting
@@ -1531,7 +1549,7 @@ Note that `--approve human/alice` satisfies the
 
 ```text
 $ git forum new task "Implement async queue dispatcher" \
-    --topic !payment-system-rewrite \
+    --topic payment-system-rewrite \
     --link-to @x9k2 --rel implements \
     --branch feat/async-dispatcher
 created thread @y3p7n2q4
@@ -1587,7 +1605,7 @@ ID         TITLE                                  TOPIC                     CREA
 @a3f9b2   TUI crashes on terminal resize         (standalone)              2026-04-25
 @r7n8m1   Auth retry loop on token refresh       !payment-system-rewrite 2026-04-26
 
-$ git forum show !payment-system-rewrite
+$ git forum show '!payment-system-rewrite'      # mixed-position command: marker required + quoted to defeat `!` history expansion
 Topic: !payment-system-rewrite
 Title:    Payment system rewrite
 State:    active
@@ -1605,7 +1623,7 @@ threads remain visible without needing to remember a flag.
 ### B.6 Promoting a standalone thread
 
 ```text
-$ git forum topic attach !payment-system-rewrite @a3f9b2
+$ git forum topic attach payment-system-rewrite @a3f9b2     # topic-typed slot: marker optional
 attached @a3f9b2 to !payment-system-rewrite (slot /4)
 ```
 

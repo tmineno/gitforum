@@ -2,19 +2,22 @@
 
 ## Context
 
-git-forum 2.0 introduces `topic` as the primary user-facing unit of work (spec §2.1). Topics
-group related threads under a name humans can remember, point at, and reference in conversation.
-Threads themselves keep opaque content-addressed IDs (display form `@XXXXXXXX`) — they are
-receipts, not
-handles.
+git-forum 2.0 introduces `topic` as a **named context** that groups related threads under a
+handle humans can remember, point at, and reference in conversation (spec §2.1). Threads
+themselves remain the primary unit of work and keep opaque content-addressed IDs (display form
+`@XXXXXXXX`) — those are receipts, not handles. Topics are an optional grouping layer; standalone
+threads are first-class (spec §2.2.4).
 
 This shifts the "ID readability" problem from threads (where it failed in 1.x — `RFC-6m4kap23`
 is unmemorable) to topics. Topics need handles that are:
 
 - **Memorable** — pronounceable, ideally derived from the title.
 - **Local-first** — allocatable on any clone without coordination.
-- **Conflict-tolerant** — collisions across clones must be resolvable without data loss or
-  manual intervention.
+- **Conflict-resolvable** — collisions across clones must have a deterministic, data-preserving
+  resolution path. Within-clone collisions are recovered automatically via petname suffix.
+  Cross-clone handle conflicts surface at push time as an explicit error and require an explicit
+  rename — silent auto-rename was rejected because it would break handle stability for the
+  losing clone (see "Alternatives" below).
 - **Stable enough** — links and references should not break gratuitously, but renames must be
   possible.
 
@@ -25,13 +28,14 @@ that requires a coordinator at allocation time.
 
 Adopt a **two-layer identity** for topics, mirroring Git's "SHA + ref" model:
 
-- **Internal opaque ID**: `XXXXXXXX` (8 base36 chars), generated from
-  `sha256(actor || timestamp || title || nonce)` — same algorithm as thread IDs (RFC-0030).
-  Stored at `refs/forum/topics/<WORKFLOW_ID>`. Never collides across clones.
-- **User-facing handle**: `!<slug>` where `<slug>` is derived from the title (`[a-z0-9-]+`,
-  3–48 chars). On collision within a clone, append a deterministic petname suffix
-  (e.g., `!payment-rewrite-quick-fox`) computed from `sha256(topic_id)`. Stored at
-  `refs/forum/aliases/<HANDLE>` as a symref or note pointing to the topic ID.
+- **Internal opaque ID**: `<topic-id>` — 8 base36 chars, generated from
+  `sha256(actor || timestamp || title || nonce)` (same algorithm as thread IDs, RFC-0030).
+  Stored at `refs/forum/topics/<topic-id>`. Never collides across clones.
+- **User-facing handle**: display form `!<slug>` where `<slug>` is derived from the title
+  (`[a-z0-9-]+`, 3–48 chars). On collision within a clone, append a deterministic petname
+  suffix (e.g., display `!payment-rewrite-quick-fox`) computed from `sha256(topic_id)`.
+  Stored at `refs/forum/aliases/<slug>` (the bare slug, no `!`; the marker is display-only
+  per spec §6.0) as a symref or note pointing to the topic ID.
 
 Handles are **mutable**. Renames preserve all old handles as permanent aliases via
 `topic_alias` events. Cross-clone handle conflicts (two clones independently claiming the
@@ -39,8 +43,9 @@ same handle) surface at push time as an **explicit error** (`HandleConflictOnPus
 must rename their topic before re-pushing. Within-clone collisions, by contrast, are
 recovered automatically via a deterministic petname suffix.
 
-Within a known topic, child threads may be referenced by short index (`!foo#3`). This is a
-**session-local convenience**, not a stable identifier (see spec §8.3).
+Within a known topic, child threads may be referenced by short index (`!foo/3`). This is a
+**session-local convenience**, not a stable identifier (see spec §8.3). The `/` separator is
+the spec §6.0 short-index marker.
 
 ## Consequences
 
@@ -57,8 +62,9 @@ Within a known topic, child threads may be referenced by short index (`!foo#3`).
   (thread IDs are content-addressed).
 - The petname dictionary (~2,048 adjectives × ~2,048 nouns) is a build artifact that must ship
   with the binary, used for within-clone collision recovery only.
-- `#N` short references in any persisted context (commit messages, evidence refs, link targets)
-  are an error in 2.0, not a warning. They are display-only.
+- `/N` short references in any persisted context (commit messages parsed by the `commit-msg`
+  hook, evidence refs, link targets) are an error in 2.0 (`ShortIndexInPersistedRef`), not a
+  warning. They are display-only.
 
 ## Alternatives
 
@@ -121,5 +127,5 @@ acceptable because topic creation is rare.
 - Test: two simulated clones independently allocating the same handle — the second push fails
   with `HandleConflictOnPush`; after explicit `topic rename` on the loser, both topics
   exist with distinct handles.
-- Test: `#N` short reference rejected with `ShortIndexInPersistedRef` when used as evidence ref,
+- Test: `/N` short reference rejected with `ShortIndexInPersistedRef` when used as evidence ref,
   link target, or in `commit-msg` hook input.

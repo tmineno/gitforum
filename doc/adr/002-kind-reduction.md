@@ -70,16 +70,16 @@ created @a3f9b2k1  (lifecycle: execution, tags: bug, status: open, standalone)
 $ git forum topic new "Payment system rewrite"
 created !payment-system-rewrite
 
-$ git forum new rfc  "Replace gateway with async queue"   --topic !payment-system-rewrite
+$ git forum new rfc  "Replace gateway with async queue"   --topic payment-system-rewrite
 created @x9k2m4p7  (lifecycle: proposal,  tags: cross-cutting,  attached to !payment-system-rewrite)
 
-$ git forum new task "Implement async dispatcher"         --topic !payment-system-rewrite
+$ git forum new task "Implement async dispatcher"         --topic payment-system-rewrite
 created @y3p7n2q4  (lifecycle: execution, tags: task,           attached to !payment-system-rewrite)
 
-$ git forum new bug  "Gateway client retry overflow"      --topic !payment-system-rewrite
+$ git forum new bug  "Gateway client retry overflow"      --topic payment-system-rewrite
 created @r7n8m1z2  (lifecycle: execution, tags: bug,            attached to !payment-system-rewrite)
 
-$ git forum new dec  "Use UUIDv7 for new entity IDs"      --topic !payment-system-rewrite
+$ git forum new dec  "Use UUIDv7 for new entity IDs"      --topic payment-system-rewrite
 created @q8w2e1r3  (lifecycle: record,    tags: -,              attached to !payment-system-rewrite)
 ```
 
@@ -92,7 +92,7 @@ The same flow works using the canonical form for scripts that want explicit cont
 ```text
 $ git forum thread new "Replace gateway with async queue" \
     --lifecycle proposal --tag cross-cutting \
-    --topic !payment-system-rewrite
+    --topic payment-system-rewrite
 ```
 
 ## Consequences
