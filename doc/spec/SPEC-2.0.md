@@ -1,10 +1,9 @@
-# git-forum Product Specification — 2.0 (DRAFT)
+# git-forum Product Specification — 2.0
 
-Version 2.0-draft — 2026-04-28
-Status: **DRAFT for discussion**. Not yet authoritative. Inherits from SPEC.md v1.2 except where
-explicitly overridden below.
+Version 2.0 — 2026-04-29
+Status: **Authoritative**. Inherits from SPEC.md v1.2 except where explicitly overridden below.
 
-> This draft introduces two structural changes to the 1.x model:
+> This specification introduces two structural changes to the 1.x model:
 > 1. **Kind reduction** — the four thread kinds (`rfc`, `dec`, `task`, `issue`) collapse into a
 >    single `thread` entity carried by `lifecycle` + free-form `tags`. The four 1.x kinds remain
 >    as **stable CLI presets** (`new rfc`, `new task`, `new bug`, `new dec`) — the muscle memory
