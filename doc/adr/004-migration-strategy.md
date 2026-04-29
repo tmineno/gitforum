@@ -23,9 +23,9 @@ Adopt a **hard break with one-shot migration plus short-term compatibility alias
 Performs in place:
 
 1. **Rewrite thread refs**: `refs/forum/threads/RFC-0001` →
-   `refs/forum/threads/<8-char-token>` (storage form per spec §6.2; display form `@<token>`).
-   The old name is preserved as a read-only alias entry so external links (`RFC-0001`,
-   `ASK-XXXXXXXX`, etc.) keep resolving.
+   `refs/forum/threads/<thread-id>` (storage form per spec §5.1 / §6.2; display form
+   `@<thread-id>`). The old name is preserved as a read-only alias entry so external links
+   (`RFC-0001`, `ASK-XXXXXXXX`, etc.) keep resolving.
 2. **Append `facet_set` event** to every existing thread populating `lifecycle` and conventional
    tags per the kind mapping (ADR-002).
 3. **Remap states** per spec §3.2.2 (lossless mapping table).

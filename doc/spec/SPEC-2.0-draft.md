@@ -287,9 +287,17 @@ description = "Wide-impact thread spanning multiple modules or workflows"
 ```
 
 Repos MAY remove or rename these entries. Nothing in the core model depends on these specific
-strings; the kind presets bind to whatever the registry says (`new bug` resolves the `bug` entry
-at command-execution time, fails with `UnknownTag` if the entry was removed and `strict_tags`
-is on).
+strings.
+
+**Kind presets do not bind to the registry.** `git forum new bug` (§9.2) is a hardcoded
+shorthand that expands to `--lifecycle execution --tag bug` literally — it does not consult
+`tags.toml` to learn its tag value. This keeps the ADR-002 promise that the kind-named surface
+is stable indefinitely: a repo that removes `[tags.bug]` will still have `git forum new bug`
+emit a thread tagged `bug`. The unregistered-tag warning (`UnknownTag`, below) then fires on
+that write the same way it would for any other write of an unregistered tag — there is no
+preset-specific behavior. Users who want the preset to fail loudly in that scenario can set
+`strict_tags = true`; users who want the preset to keep working silently can re-register the
+entry.
 
 ##### Repo-local tag registry (`.forum/tags.toml`)
 
@@ -322,9 +330,16 @@ strict_tags = true    # unknown tag → error; user must register first
 ```
 
 When `strict_tags = false` (default), an unknown tag on write emits `UnknownTag` (warning)
-with a hint to add the entry to `.forum/tags.toml`. The thread is created with the tag attached
-as-is. Subsequent writes carry the same tag silently — the warning fires only when the tag is
-**newly introduced** to the repo (i.e., no prior thread carries it).
+with a hint to add the entry to `.forum/tags.toml`. The thread is created with the tag
+attached as-is.
+
+The warning fires on **every** write of an unregistered tag — there is no "first-only" promise
+that would require persistent tracking of which tags have been seen. Implementations MAY
+deduplicate warnings within a single CLI invocation (e.g., warn once even if the same tag is
+applied to multiple threads in one batch command); cross-invocation deduplication is **not**
+required and is explicitly out of scope. The intended remediation is registration, not warning
+suppression — repos that find the warning noisy should either register the tag or set
+`strict_tags = true` and let the failure force registration.
 
 When `strict_tags = true`, the same situation produces a non-zero exit; the user must either
 register the tag or use `--tag-register <name>` (which writes the registry entry as part of the
@@ -1051,7 +1066,7 @@ Canonical form:
 ```text
 git forum thread new <TITLE>
     --lifecycle <LIFECYCLE>
-    [--topic <TOPIC>] [--tag <TAG>...]
+    [--topic <TOPIC>] [--tag <TAG>...] [--tag-register <TAG>...]
     [--body <TEXT> | --body-file <PATH> | --edit]
     [--branch <BRANCH>] [--link-to <THREAD> --rel <REL>]
     [--from-commit <REV>] [--from-thread <THREAD>] [--force]
@@ -1060,9 +1075,14 @@ git forum thread ls [--topic <TOPIC>]
     [--lifecycle <LIFECYCLE>]
     [--status <STATUS>] [--tag <TAG>] [--branch <BRANCH>]
 git forum thread state <THREAD> <NEW_STATE> [--approve <ACTOR>]... [--comment <TEXT>]
-git forum thread tag add <THREAD> <TAG>...
+git forum thread tag add <THREAD> <TAG>... [--tag-register <TAG>...]
 git forum thread tag rm  <THREAD> <TAG>...
 ```
+
+`--tag-register <TAG>` is the one-shot combined form: register the tag in `.forum/tags.toml`
+(with a stub description, identical to `git forum tag register` — see §9.7) **and** apply it
+to the thread in the same command. Useful in scripted contexts where the user knows the tag
+is new and does not want a two-step ceremony. Must satisfy the same grammar as `--tag`.
 
 Kind presets — **stable, first-class commands** (not compat aliases). They are the everyday
 surface; the canonical `thread new --lifecycle ...` form above is reserved for power-users and
@@ -1205,10 +1225,9 @@ alias. To bulk-rewrite tag values on threads, F-W6 (CRDT tags, Appendix A.3) is 
 — 2.0 does not include a rewrite operation because every tag change is an append-only event
 that must remain in the audit trail.
 
-`--tag-register <NAME>` is also accepted on `thread new` / `thread tag add` as a one-shot
-combined flag: register the tag (creating the entry with a stub description) and apply it in
-the same command. Useful in scripted workflows where the user knows the tag is new and does
-not want a two-step ceremony.
+The `--tag-register <NAME>` one-shot flag (also accepted on `thread new` and `thread tag add`,
+see §9.2) calls into the same registration path as `tag register` and then applies the tag in
+the same command, avoiding a two-step ceremony.
 
 ## 10. Migration from 1.x
 
@@ -1224,9 +1243,9 @@ git forum migrate --dry-run
 After migration:
 
 - Existing thread refs are rewritten: `refs/forum/threads/RFC-0001` →
-  `refs/forum/threads/<8-char-token>` (storage form per §6.2; display form `@<token>`). The
-  old name is preserved as a read-only alias entry so external links (`RFC-0001`,
-  `ASK-XXXXXXXX`, etc.) keep resolving.
+  `refs/forum/threads/<thread-id>` (storage form per §5.1 / §6.2; display form
+  `@<thread-id>`). The old name is preserved as a read-only alias entry so external links
+  (`RFC-0001`, `ASK-XXXXXXXX`, etc.) keep resolving.
 - Each thread gets a `facet_set` event added to its history populating `lifecycle` and the
   conventional `tags` (`cross-cutting` for `rfc`; `bug` for `issue`; `task` for `task`) per the
   §2.3.3 mapping.
@@ -1324,7 +1343,7 @@ Unchanged from SPEC.md §13. New error and warning categories:
 | `ShortIndexInPersistedRef` | **error** | `/N` short reference appears where it would be stored (e.g. commit message scanned by `commit-msg` hook, evidence ref, link target) | Error message MUST include the canonical thread ID resolved at the moment the short reference was rejected (e.g., "did you mean `@d8f4q9aa`?"). Resolving requires reading the topic at write time, but the rejection itself is preflight. |
 | `AmbiguousReferenceWithoutMarker` | error | Bare token (no `!`/`@`) used in a CLI position that accepts both a topic and a thread (e.g. `git forum show <REF>`) | Lists candidate topic / thread matches; suggests prefixing with `!` or `@` to disambiguate. |
 | `InvalidTagSyntax` | error | `--tag <value>` or `facet_set` payload violates the tag grammar (§2.3.5) | Message names the offending character / length / reserved-literal violation; suggests a sanitized form. |
-| `UnknownTag` | warning (default) / error (`strict_tags = true`) | Tag not present in `.forum/tags.toml` (§2.3.5) | First write of a previously-unseen tag in the repo. Hint suggests `git forum tag register <name>` or editing `tags.toml` directly. |
+| `UnknownTag` | warning (default) / error (`strict_tags = true`) | Tag not present in `.forum/tags.toml` (§2.3.5) | Fires on **every** write of an unregistered tag (no first-only promise). Hint suggests `git forum tag register <name>` or `--tag-register`. Implementations MAY deduplicate within a single CLI invocation. |
 | `UnknownPolicyTag` | error | `policy lint` finds a tag in `policy.toml` (guard predicate or `creation_rules.<lifecycle>.tag.<name>`) that is absent from the registry | Always error; typo-prevention. Reports file:line of the offending policy entry. |
 | `TagDeprecated` | warning | Write attempt uses a tag where `[tags.<name>] deprecated = true` | Suggests `replaced_by` if present. Read paths unaffected. |
 
@@ -1354,9 +1373,10 @@ Unchanged from SPEC.md §14, plus:
   `all`/`untagged`/`archived`) with `InvalidTagSyntax`. The error message names the specific
   violation and proposes a sanitized form.
 - **Default unknown-tag warning.** A `--tag perf` write on a fresh repo (no `perf` in
-  `tags.toml`) creates the thread and emits `UnknownTag` (warning). The next thread with the
-  same tag does **not** re-warn (warning fires only on first introduction of the tag in the
-  repo).
+  `tags.toml`) creates the thread and emits `UnknownTag` (warning). Every subsequent write
+  of `--tag perf` re-emits the warning (the spec deliberately makes no "first-only"
+  promise). A single CLI invocation that touches the same unregistered tag multiple times
+  MAY deduplicate within that invocation.
 - **Strict mode.** `[tags] strict_tags = true` in `policy.toml` flips the same `--tag perf`
   case to a non-zero exit; the thread is not created. `--tag-register perf --tag perf` in
   the same command succeeds (registers + applies atomically).
@@ -1371,9 +1391,11 @@ Unchanged from SPEC.md §14, plus:
 - **Migration registry seeding.** `git forum migrate` writes `tags.toml` populated with
   `bug`, `task`, `cross-cutting` plus any tag observed in migrated threads. Post-migration
   `policy lint` fires no `UnknownPolicyTag` for tags that were already in the 1.x policy.
-- **Conventional-tag removal.** A repo that removes `[tags.bug]` from the registry causes
-  `git forum new bug` to fail under `strict_tags = true` (or warn under default), because
-  the preset binds to the registry at execution time.
+- **Conventional-tag removal.** A repo that removes `[tags.bug]` from the registry still
+  accepts `git forum new bug`: the preset is hardcoded shorthand for `--lifecycle execution
+  --tag bug` and does not consult the registry. The resulting write emits `UnknownTag`
+  (warning under default; error under `strict_tags = true`) like any other unregistered-tag
+  write — there is no preset-specific code path.
 
 ### Cross-clone concurrency
 
