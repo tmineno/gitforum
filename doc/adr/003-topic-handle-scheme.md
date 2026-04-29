@@ -35,7 +35,10 @@ Adopt a **two-layer identity** for topics, mirroring Git's "SHA + ref" model:
   (`[a-z0-9-]+`, 3–48 chars). On collision within a clone, append a deterministic petname
   suffix (e.g., display `!payment-rewrite-quick-fox`) computed from `sha256(topic_id)`.
   Stored at `refs/forum/aliases/<slug>` (the bare slug, no `!`; the marker is display-only
-  per spec §6.0) as a symref or note pointing to the topic ID.
+  per spec §6.0) as an **ordinary Git ref** pointing at a marker commit whose message carries
+  a `topic-alias <topic-id>` trailer (spec §5.1.1). Symref and git-note alternatives were
+  rejected because they break atomic-push semantics on common transports — see Alternatives
+  below.
 
 Handles are **mutable**. Renames preserve all old handles as permanent aliases via
 `topic_alias` events. Cross-clone handle conflicts (two clones independently claiming the
@@ -103,6 +106,25 @@ Pros: one ref tree instead of two.
 Cons: rename becomes destructive (changes the canonical ID). Cross-clone conflict resolution
 becomes destructive (changing the ID after collision invalidates references). The two-layer
 model isolates the volatile name from the stable identity.
+
+### Symref or git-note for alias storage (rejected)
+
+Earlier drafts said the alias ref was "a symref or note pointing to the topic ID". Both have
+correctness problems with the §8.4.1 atomic-push contract:
+
+- **Symref** (`refs/forum/aliases/<slug>` symbolic-points-to `refs/forum/topics/<topic-id>`):
+  conceptually clean, but symref propagation across the wire is loosely specified and many
+  proxies / older protocols don't replicate symrefs correctly. `git push --atomic` semantics
+  for symref creation are not well-defined enough to rely on.
+- **Git note** (`refs/notes/forum-aliases/<slug>`): flexible representation, but lives in a
+  different ref namespace (`refs/notes/*`). Most fetch configs don't pull notes by default,
+  so a clone that doesn't opt in to a notes refspec sees no aliases at all. The §8.4.1
+  atomic group `refs/forum/topics/* + refs/notes/*` requires the user to configure both
+  refspecs symmetrically — operationally fragile.
+
+The chosen representation (ordinary ref pointing at a marker commit, spec §5.1.1) avoids both
+problems: it's a regular ref under the same `refs/forum/*` umbrella as topics and threads, so
+fetch and atomic-push semantics are the standard ones.
 
 ### Silent auto-rename on cross-clone handle conflict (rejected after review)
 

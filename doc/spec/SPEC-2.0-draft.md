@@ -103,7 +103,7 @@ for the path to add a richer state model later.
 A thread belongs to **at most one** topic. Membership is recorded via a `topic_attach` event
 on the thread. A topic may contain zero or more threads.
 
-Standalone threads (no topic) are permitted (see §2.2.4).
+Standalone threads (no topic) are permitted (see §2.2.2).
 
 #### 2.1.3 Topic handle in references
 
@@ -152,13 +152,20 @@ Optional fields:
 | `scope.branch` | string | Bound Git branch |
 | `links[]` | array | Thread-to-thread links |
 
-#### 2.2.1 ID prefix change
+#### 2.2.1 ID surface change
 
-Thread IDs in 2.0 use the unified prefix `t-` (no kind embedded in the ID). Kind information moves
-to `facets.lifecycle` and conventional `tags` (e.g. `bug`, `task`, `cross-cutting`).
+Thread IDs in 2.0 drop the kind-named prefix entirely. Kind information moves to
+`facets.lifecycle` and conventional `tags` (e.g. `bug`, `task`, `cross-cutting`); the ID itself
+no longer encodes a category.
+
+| Surface | 1.x | 2.0 |
+|---|---|---|
+| Display | `RFC-6m4kap23` (kind-prefixed) | `@6m4kap23` (`@` type marker, see §6.0) |
+| Storage | `refs/forum/threads/RFC-6m4kap23` | `refs/forum/threads/6m4kap23` (bare token) |
 
 Legacy 1.x IDs (`RFC-XXXXXXXX`, `ASK-NNNN`, `JOB-...`, `DEC-...`) remain valid for reading and
-referencing in repos that have been migrated. New thread allocation always uses `t-`.
+referencing in migrated repos via the alias table (see §10.1). New thread allocation always
+uses the bare-token / `@`-display form (§6.2).
 
 #### 2.2.2 Standalone threads
 
@@ -168,9 +175,12 @@ Threads MAY exist without a topic. This is the natural form for:
 - Questions that don't yet belong to any workstream
 - One-off observations
 
-Standalone threads can be promoted into a topic at any time via `topic attach`. A standalone
-thread without an `attach` event after some configurable inactivity is reported by `doctor` as
-"orphan" — informational, not blocking.
+Standalone threads can be promoted into a topic at any time via `topic attach`. Standalone is
+a legitimate steady state, not a fault to be cleaned up — many bug reports and decision records
+never need a topic. `doctor` reports the standalone count under the "Untriaged" section
+(§9.5) as informational signal, never as a warning, and there is no inactivity threshold or
+"becomes orphan after N days" rule. Users curate threads into topics when grouping helps and
+otherwise leave them in the inbox.
 
 ### 2.3 Facets
 
@@ -367,15 +377,37 @@ new required facet, not a tag-system feature) and are explicitly out of scope fo
 
 Unchanged from SPEC.md §2.3. New event types added in 2.0:
 
-| Event type | Purpose |
-|---|---|
-| `topic_create` | Initialize a topic (recorded on topic ref) |
-| `topic_archive` | Mark topic as archived (sets `archived_at`) |
-| `topic_unarchive` | Reverse archive (clears `archived_at`) |
-| `topic_attach` | Bind a thread to a topic (recorded on the thread ref) |
-| `topic_detach` | Remove a thread from a topic |
-| `topic_alias` | Add or remove a topic alias (e.g. on rename) |
-| `facet_set` | Change a thread's facet values (audited; see §7.3 for restrictions) |
+| Event type | Purpose | Payload (JSON shape; required fields shown) |
+|---|---|---|
+| `topic_create` | Initialize a topic (recorded on topic ref) | `{ "topic_id": <topic-id>, "title": <string>, "body"?: <string> }` |
+| `topic_archive` | Mark topic as archived (sets `archived_at`) | `{ "at": <iso8601> }` |
+| `topic_unarchive` | Reverse archive (clears `archived_at`) | `{}` |
+| `topic_attach` | Bind a thread to a topic (recorded on the thread ref) | `{ "topic_id": <topic-id> }` |
+| `topic_detach` | Remove a thread from a topic | `{}` |
+| `topic_alias` | Add (default) or remove a topic alias | `{ "slug": <slug>, "op": "add" \| "remove" }` |
+| `facet_set` | Change a thread's facet values (audited; see §7.3) | `{ "lifecycle"?: <string>, "tags_add"?: [<string>...], "tags_remove"?: [<string>...] }` |
+
+#### 2.4.1 `facet_set` payload semantics
+
+`facet_set` is a per-event mutation, not a full-state replacement. Replay rules:
+
+- **`lifecycle`** — present only on the thread's first `facet_set` event (the implicit one
+  written at thread creation), or never. §7.3 makes lifecycle immutable, so any subsequent
+  `facet_set` carrying `lifecycle` MUST be rejected at write time with
+  `FacetTransitionDisallowed`. Replay computes `lifecycle` as the value from the first event
+  that carries it.
+- **`tags_add` / `tags_remove`** — each event mutates the derived tag set. Replay walks the
+  thread's event chain in `(timestamp, actor_id, event_oid)` order; for each event, every tag
+  in `tags_add` is inserted into the set, then every tag in `tags_remove` is removed. Within
+  a single event, `tags_add` is applied before `tags_remove` so an event that simultaneously
+  adds and removes the same tag is a removal (rare; allowed for symmetry, not a useful
+  pattern).
+- **Cross-clone LWW** (§8.2.4) operates **per individual tag**: the most recent event mentioning
+  a given tag (in either `tags_add` or `tags_remove`) is what determines whether that tag is
+  in the derived set after merge. Tags not mentioned in the most-recent event for that tag
+  retain whatever their previous-event status was — the LWW window is per-tag, not per-event.
+- An empty `facet_set` payload (no `lifecycle`, no tag arrays) is valid and a no-op (allowed
+  for backfill / hook purposes).
 
 There is intentionally no `topic_state` event in 2.0. If a richer topic lifecycle is added
 later (F-W1), it will be introduced as a new additive event without breaking topics created
@@ -420,46 +452,65 @@ threads. The summary is informational and does not appear in events.
 | Summary | Condition |
 |---|---|
 | `empty` | Topic has no child threads |
-| `has-open` | One or more child threads in non-terminal state |
-| `all-terminal` | All child threads in `done`, `rejected`, or `deprecated` |
+| `has-open` | One or more child threads in a non-terminal state |
+| `all-terminal` | All child threads in a terminal state (`done`, `rejected`, `deprecated`, `withdrawn` — see §3.2) |
+
+A topic whose only attached thread is `withdrawn` reports `all-terminal`, not `has-open` —
+withdrawal is a deliberate end-state, not parking.
 
 The richer red/yellow/green health model is deferred to F-W3 (Appendix A.3).
 
 ### 3.2 Thread state machine (unified)
 
-A single state set replaces the four 1.x machines:
+A single state set with a deliberately permissive transition graph replaces the four 1.x
+machines. Per-lifecycle restrictions are applied as a filter (§3.2.1) — the global graph below
+contains every edge any lifecycle might need; the filter chooses which edges are reachable for
+a given thread.
 
 ```text
 draft -> open
 draft -> withdrawn
 open  -> working
+open  -> review            # bypass `working` for proposals (RFC: draft -> open -> review -> done)
+open  -> done              # bypass `working`/`review` for records (DEC: open -> done) and trivial bug closes
 open  -> rejected
 open  -> withdrawn
 working -> review
+working -> done            # bypass `review` for execution work that doesn't need formal review (bug fix landed, task complete)
 working -> rejected
 review  -> done
 review  -> working
 review  -> rejected
-done    -> open           # reopen
+done    -> open            # reopen
 rejected -> open
 done    -> deprecated
 rejected -> deprecated
 ```
 
+Terminal states for the purposes of `topic show` summary (§3.1.1) and search filtering:
+`done`, `rejected`, `deprecated`, `withdrawn`. No outgoing edges from `withdrawn` or
+`deprecated` — both are absorbing terminals.
+
 Initial state: depends on `lifecycle` (see §3.2.1).
 
 #### 3.2.1 Lifecycle-filtered allowed states
 
-The unified machine is filtered by the thread's `lifecycle` facet. Only the listed states are
-reachable for each lifecycle:
+The unified machine §3.2 is filtered by the thread's `lifecycle` facet. An edge is reachable
+only if its destination state is in the lifecycle's allowed set:
 
-| `lifecycle` | Allowed states | Initial | Notes |
-|---|---|---|---|
-| `proposal` | `draft`, `open`, `review`, `done`, `rejected`, `withdrawn`, `deprecated` | `draft` | `done` is the equivalent of 1.x `accepted` for RFCs |
-| `execution` | `open`, `working`, `review`, `done`, `rejected` | `open` | `done` is the equivalent of 1.x `closed` |
-| `record` | `open`, `done`, `rejected`, `deprecated` | `open` | Records short-lived; `working`/`review` skipped |
+| `lifecycle` | Allowed states | Initial | Typical path | Notes |
+|---|---|---|---|---|
+| `proposal` | `draft`, `open`, `review`, `done`, `rejected`, `withdrawn`, `deprecated` | `draft` | `draft → open → review → done` | `working` excluded — proposals don't have a "doing the work" state; that belongs to attached execution threads. `done` is the equivalent of 1.x `accepted` for RFCs. |
+| `execution` | `open`, `working`, `review`, `done`, `rejected`, `deprecated` | `open` | bug: `open → done` (or `open → working → done`); task: `open → working → review → done` | All four edges out of `open`/`working` to `done`/`review` are available; the project's policy decides which is required for which tag (§7.2). `done` is the equivalent of 1.x `closed`. |
+| `record` | `open`, `done`, `rejected`, `deprecated` | `open` | `open → done` | Records are short-lived; `working`/`review` excluded entirely. |
 
-A transition not allowed for the thread's lifecycle is rejected with a clear hint.
+A transition whose destination is not in the lifecycle's allowed set is rejected with
+`LifecycleStateMismatch` (§13). The error message names the lifecycle, the rejected state, and
+the lifecycle's allowed-state list so the user can pick a valid alternative.
+
+Terminal states (no outgoing edges in the global graph): `withdrawn`, `deprecated`. Edges to
+`done` / `rejected` / `deprecated` are present in the global graph but their reachability per
+lifecycle is determined by the table above.
 
 #### 3.2.2 Mapping from 1.x states
 
@@ -497,15 +548,50 @@ Authoritative data in 2.0:
 ```text
 refs/forum/topics/<topic-id>      # topic event chain (NEW)
 refs/forum/threads/<thread-id>    # thread event chain (unchanged structure)
-refs/forum/aliases/<slug>         # symref or note pointing to topic ID (NEW)
+refs/forum/aliases/<slug>         # alias-marker ref pointing at the current owner topic (NEW)
 ```
 
 All ref-name segments are the **storage tokens** — bare alphanumeric (with `-` allowed in slug),
 no `!` and no `@`. The user-facing markers (§6.0) are display-only and are stripped before the
 ref name is constructed.
 
-Topic handle resolution walks `refs/forum/aliases/<slug>` first; if absent, the input is treated
-as a topic ID and looked up under `refs/forum/topics/`.
+#### 5.1.1 Alias ref representation
+
+Each `refs/forum/aliases/<slug>` ref is an **ordinary Git ref** (not a symref, not a note)
+pointing at a **marker commit object**. The choice of "ordinary ref" is deliberate: it makes
+alias refs work with `git push --atomic` on every transport that supports atomic push, with no
+notes-fetch refspec gymnastics and no symref propagation quirks.
+
+The marker commit has:
+
+- An **empty tree** (`4b825dc...`, the canonical empty-tree OID).
+- A **structured commit message** in trailer form:
+  ```
+  topic-alias <topic-id>
+
+  slug: <slug>
+  op: add | remove
+  by: <actor-id>
+  at: <iso8601>
+  ```
+- A **parent** equal to the previous tip of the same alias ref, when one exists. For a fresh
+  `add` (slug previously unused), there is no parent. For a `remove` (rare; aliases never
+  expire normally), the marker records `op: remove` and the resolver treats the slug as
+  unbound from that commit forward.
+
+The alias ref's own commit history therefore records the slug's binding history. A reader
+walking `refs/forum/aliases/payment-rewrite` can reconstruct every claim and rename of the
+slug, in addition to learning the current owner from the tip commit's `topic-alias` line.
+
+#### 5.1.2 Handle resolution
+
+Topic handle resolution walks `refs/forum/aliases/<slug>` first:
+
+1. If the ref exists, parse the tip commit's `topic-alias <topic-id>` line. If the most recent
+   `op` is `add`, the resolved owner is `<topic-id>`. If `remove`, the slug is currently
+   unbound (resolver returns `TopicNotFound`).
+2. If the ref does not exist, treat the input as a possible topic ID and look up
+   `refs/forum/topics/<input>`.
 
 ### 5.2 Repository files
 
@@ -655,16 +741,19 @@ Unambiguous prefixes (≥4 chars after `@`) accepted as in 1.x.
 
 ### 6.3 Topic-scoped short references
 
-Within a known topic context, `<handle>/<index>` references the Nth thread attached to the
-topic (1-indexed by `topic_attach` event order). Examples:
+Within a known topic context, `<handle>/<N>` references the Nth thread attached to the topic
+(1-indexed by `topic_attach` event order). Examples:
 
 ```
-git forum show !payment-rewrite/3
-git forum show !payment-rewrite/design   # if a role label is assigned
+git forum show '!payment-rewrite/3'
 ```
 
 Short references resolve to canonical thread IDs at parse time. They MUST NOT be stored as
-canonical references in events or evidence (only canonical thread IDs are stored).
+canonical references in events or evidence (only canonical thread IDs are stored), and they
+are rejected with `ShortIndexInPersistedRef` at every persisted entry point — see §8.3 and §9.6.
+
+Named role labels (e.g. `!foo/design`) are reserved syntactically but **not specified** in 2.0
+(see §2.1.3). The slash separator is used exclusively for numeric short index in 2.0.
 
 ### 6.4 Canonical event/node IDs
 
@@ -715,6 +804,23 @@ body_sections = ["Context", "Decision", "Rationale", "Impact"]
 
 Resolution: most-specific match wins. `creation_rules.execution.tag.task` overrides
 `creation_rules.execution` for threads tagged `task`.
+
+When a thread carries **multiple tags that each match a `tag.<name>` rule**, the tied-specificity
+rules are merged with **field-level union** semantics: each field is the union (or stricter
+choice) of all matching rules. Concretely:
+
+| Field | Combiner |
+|---|---|
+| `required_body` | `OR` (any matching rule requiring a body wins) |
+| `body_sections` | union of section names, deduplicated, preserving first-seen order |
+| `requires` (guard predicates) | union of required predicates |
+| numeric thresholds (e.g. `min_approvals`) | `MAX` |
+| boolean strict-flags | `OR` (any `true` wins) |
+
+This makes multi-tag policy compositional: tagging a thread `task,bug` enforces the union of
+`tag.task` and `tag.bug` requirements rather than picking one arbitrarily. Users who want a
+single rule to win can express the precedence explicitly with a guard predicate
+(`tag=task AND NOT tag=bug`).
 
 There are intentionally no topic-level guards in 2.0. See F-W2 (Appendix A.3) for the
 forward-compatibility plan if these become needed.
@@ -997,6 +1103,13 @@ without a handle visible to other clients (or, worse, leave a dangling alias if 
 were reversed). Clients that cannot guarantee atomic push MUST refuse the operation rather than
 proceed.
 
+Because alias refs are ordinary refs (§5.1.1), the atomic-push group is just
+`git push --atomic refs/forum/topics/<topic-id> refs/forum/aliases/<slug>` — no symref or
+notes-refspec handling required. The Git protocol's atomic-push semantics propagate the
+all-or-nothing CAS exactly as for any other concurrent ref update, so the §8.2.1 handle-
+conflict resolution (CAS failure on the alias ref → `HandleConflictOnPush`) is the standard
+ref-update failure path.
+
 #### 8.4.2 Recommended push order within a session
 
 When pushing many independent operations, ordering does not affect correctness (each atomic
@@ -1133,6 +1246,7 @@ facet:
 | `propose` | (rejected) | → `open` (from `draft`) | (rejected) |
 | `pend` | → `working` | (rejected) | (rejected) |
 | `reject` | → `rejected` | → `rejected` | → `rejected` |
+| `withdraw` | (rejected: use `close` or `reject`) | → `withdrawn` (from `draft` or `open`) | (rejected) |
 | `deprecate` | → `deprecated` | → `deprecated` | → `deprecated` |
 
 Shorthand commands work uniformly on **both topic-attached and standalone threads**. Topic
@@ -1252,10 +1366,10 @@ After migration:
 - States are remapped per §3.2.2.
 - **Migrated threads remain standalone** (no topic attachment). No `!_legacy` topic is
   auto-created. Users attach threads to topics manually as they triage. `doctor` reports the
-  orphan count after migration as an informational signal — it will be high initially and is
-  expected to decrease over time as triage proceeds.
+  standalone count under the "Untriaged" section after migration as an informational signal
+  — it will be high initially and is expected to decrease over time as triage proceeds.
 
-Rationale for leaving threads orphan rather than auto-bucketing: a synthetic `!_legacy`
+Rationale for leaving threads standalone rather than auto-bucketing: a synthetic `!_legacy`
 topic would pollute the `topic ls` output indefinitely (since users rarely empty it
 completely) and creates a misleading impression that legacy threads form a coherent workstream.
 Standalone is the honest representation of "uncurated work".
@@ -1716,5 +1830,6 @@ warning (or error if `strict = true`).
   error for handle conflicts, atomic push, display-only short index).
 - RFC-0027 — Topic meta-thread (superseded by this draft; this draft promotes the meta-thread to
   a first-class entity rather than a thread variant, but in slimmed form).
-- RFC-0030 — Thread ID scheme (extended: `t-` prefix replaces per-kind prefixes).
+- RFC-0030 — Thread ID scheme (extended: kind-named prefixes drop entirely; the `@` type
+  marker becomes the display form per §6.0 and §6.2; storage is the bare 8-char token).
 - RFC-0031 — 3-letter kind prefixes (deprecated by this draft).
