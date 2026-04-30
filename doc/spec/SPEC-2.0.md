@@ -1,14 +1,19 @@
 # git-forum Product Specification — 2.0
 
-Version 2.0 — 2026-04-29
+Version 2.0 — 2026-04-30
 Status: **Authoritative**. Inherits from SPEC.md v1.2 except where explicitly overridden below.
+Bound by `doc/spec/CORE-VALUE.md` — when this document conflicts with the
+core value statement, this document is wrong and must be revised.
 
-> This specification introduces two structural changes to the 1.x model:
+> This specification introduces three structural changes to the 1.x model:
 > 1. **Kind reduction** — the four thread kinds (`rfc`, `dec`, `task`, `issue`) collapse into a
 >    single `thread` entity carried by `lifecycle` + free-form `tags`. The four 1.x kinds remain
 >    as **stable CLI presets** (`new rfc`, `new task`, `new bug`, `new dec`) — the muscle memory
 >    is preserved indefinitely; only the underlying schema changes.
-> 2. **Topic as named context** — a new `topic` entity provides a memorable handle for
+> 2. **Node type reduction** — the ten 1.x node types collapse to four, cut by *protocol
+>    effect* rather than rhetorical move: `comment`, `approval`, `objection`, `action`. The
+>    standalone Approval concept (SPEC.md §2.7) folds into the node namespace.
+> 3. **Topic as named context** — a new `topic` entity provides a memorable handle for
 >    grouping related threads. **Threads remain the primary unit of work**; topics are
 >    optional context wrappers, not a required ceremony layer. Standalone threads (no topic)
 >    are first-class throughout the CLI, TUI, and default views.
@@ -18,8 +23,13 @@ Status: **Authoritative**. Inherits from SPEC.md v1.2 except where explicitly ov
 > no nesting in 2.0. These capabilities are explicitly deferred to future minor releases (see
 > Appendix A.3 for the forward-compatibility plan).
 >
+> **Distribution is not git-forum's job.** Forum data lives in `refs/forum/*` Git refs;
+> users replicate it across clones with standard `git push` / `git fetch` on those refs.
+> git-forum does not introduce its own push/fetch protocol or cross-clone conflict
+> resolution. This is mandated by `CORE-VALUE.md`.
+>
 > The motivating analysis is recorded separately in ADR-002 (kind reduction), ADR-003 (topic
-> handles), ADR-004 (migration), and ADR-005 (cross-clone conflict resolution). This document
+> handles), ADR-004 (migration), and ADR-006 (node type reduction). This document
 > specifies the resulting model.
 
 ## 1. Overview
@@ -116,7 +126,7 @@ Within a topic context, child threads may be referenced by **short index**:
 The `/N` short index is a **display-only convenience**, not an identifier:
 
 - It is computed from locally-visible `topic_attach` events ordered by
-  `(timestamp, actor_id, event_oid)` — see §8.3 for cross-clone behaviour.
+  `(timestamp, actor_id, event_oid)` — see §8.2 for stability rules.
 - It MAY appear as input to interactive CLI commands (e.g.
   `git forum show !payment-rewrite/3`) and in `show` / `ls` output for human convenience.
 - It is **rejected** anywhere a value would be persisted: as an evidence ref, link target,
@@ -238,8 +248,10 @@ These four combinations are exposed as **kind presets** (compatibility shorthand
 `intent` (5 values) was rejected for these reasons:
 
 - `decision` — **zero** usage in 1.x dogfood (DEC kind unused). Recording a decision belongs at
-  the node level (`summary` node) inside whatever thread reached that decision.
-- `question` — questions are predominantly node-level inside other threads.
+  the node level (a `comment` whose body states the decision; see §2.5 / ADR-006) inside
+  whatever thread reached that decision.
+- `question` — questions are predominantly node-level inside other threads (also conveyed
+  in `comment` body prose post-reduction).
 - `observation` / `work` / `claim` — these describe *body framing*, not *progression-shape*. Tags
   cover framing without forcing premature classification.
 
@@ -256,15 +268,7 @@ These four combinations are exposed as **kind presets** (compatibility shorthand
 `lifecycle` survives as the sole required facet because the state machine literally cannot work
 without knowing which state set applies. Everything else is a tag. This is the floor.
 
-#### 2.3.5 Tag vocabulary discipline
-
-Free-form tags solve "force-fit into a kind". They re-introduce a different problem: language
-drift. `bug` / `defect` / `issue` / `bug-report` will all coexist if nothing constrains them, and
-search/policy decisions split across clones and across agents.
-
-2.0 chooses **light-touch discipline** rather than a fixed taxonomy:
-
-##### Tag grammar (hard constraint)
+#### 2.3.5 Tag grammar
 
 Every tag MUST satisfy:
 
@@ -278,99 +282,20 @@ Violations are rejected at write time with `InvalidTagSyntax` (§13). The gramma
 narrow so tags compose cleanly with shell, search filters (`tag:bug`), and policy keys
 (`creation_rules.execution.tag.bug`).
 
-##### Conventional tags (pre-registered)
+The 2.0 release ships **no tag registry, no conventional-tag list, no
+unknown-tag warning, no deprecation surfacing, and no policy lint over
+tag vocabulary**. Earlier drafts of this section specified a `.forum/
+tags.toml` registry plus `UnknownTag` / `UnknownPolicyTag` /
+`TagDeprecated` diagnostics; those mechanisms have been removed because
+the language-drift problem they would solve has not been observed in
+dogfood. Tag-vocabulary discipline is deferred to a future minor
+release, gated on documented evidence of drift (per Appendix A.3 trigger
+discipline).
 
-`git forum init` writes `.forum/tags.toml` with three pre-registered entries used by the kind
-presets (§9.2):
-
-```toml
-# .forum/tags.toml
-[tags.bug]
-description = "Observation-style execution thread (defect, regression, unexpected behavior)"
-
-[tags.task]
-description = "Work-style execution thread (planned implementation, refactor, chore)"
-
-[tags.cross-cutting]
-description = "Wide-impact thread spanning multiple modules or workflows"
-```
-
-Repos MAY remove or rename these entries. Nothing in the core model depends on these specific
-strings.
-
-**Kind presets do not bind to the registry.** `git forum new bug` (§9.2) is a hardcoded
-shorthand that expands to `--lifecycle execution --tag bug` literally — it does not consult
-`tags.toml` to learn its tag value. This keeps the ADR-002 promise that the kind-named surface
-is stable indefinitely: a repo that removes `[tags.bug]` will still have `git forum new bug`
-emit a thread tagged `bug`. The unregistered-tag warning (`UnknownTag`, below) then fires on
-that write the same way it would for any other write of an unregistered tag — there is no
-preset-specific behavior. Users who want the preset to fail loudly in that scenario can set
-`strict_tags = true`; users who want the preset to keep working silently can re-register the
-entry.
-
-##### Repo-local tag registry (`.forum/tags.toml`)
-
-The registry is a flat namespace of `[tags.<name>]` entries. Each entry MAY include:
-
-| Field | Type | Purpose |
-|---|---|---|
-| `description` | string | Human-readable; surfaced in `policy show`, TUI tag picker, and `--help-llm` |
-| `aliases` | array&lt;string&gt; | Read-time synonyms; resolve to the canonical key. Useful for migrating from `defect` → `bug` without breaking historical refs. Aliases MUST satisfy the same grammar. |
-| `deprecated` | bool | If true, write attempts emit a deprecation warning suggesting the replacement (via `replaced_by`). Read access is unchanged. |
-| `replaced_by` | string | Canonical key to suggest in deprecation warnings. |
-
-The registry is intentionally minimal. There is no tag hierarchy, no per-tag state machine, no
-per-tag actor binding, no `area/*` / `priority/*` namespacing convention. Those are explicit
-non-goals (§15) — git-forum is not an issue tracker re-implementation.
-
-##### Unknown-tag handling (configurable severity)
-
-Default: **warning**, not error. A first-time contributor who types `--tag perf` on a repo that
-has not yet registered `perf` should not be blocked.
-
-```toml
-# .forum/policy.toml — default
-[tags]
-strict_tags = false   # unknown tag → warning (UnknownTag)
-
-# Strict mode opt-in
-[tags]
-strict_tags = true    # unknown tag → error; user must register first
-```
-
-When `strict_tags = false` (default), an unknown tag on write emits `UnknownTag` (warning)
-with a hint to add the entry to `.forum/tags.toml`. The thread is created with the tag
-attached as-is.
-
-The warning fires on **every** write of an unregistered tag — there is no "first-only" promise
-that would require persistent tracking of which tags have been seen. Implementations MAY
-deduplicate warnings within a single CLI invocation (e.g., warn once even if the same tag is
-applied to multiple threads in one batch command); cross-invocation deduplication is **not**
-required and is explicitly out of scope. The intended remediation is registration, not warning
-suppression — repos that find the warning noisy should either register the tag or set
-`strict_tags = true` and let the failure force registration.
-
-When `strict_tags = true`, the same situation produces a non-zero exit; the user must either
-register the tag or use `--tag-register <name>` (which writes the registry entry as part of the
-same command, with a templated description).
-
-##### Policy-referenced tags MUST be registered
-
-Regardless of `strict_tags`, any tag that appears in `.forum/policy.toml` (guard predicates,
-`creation_rules.<lifecycle>.tag.<name>`, etc.) MUST be present in `.forum/tags.toml`. Mismatch
-is reported by `git forum policy lint` as `UnknownPolicyTag` (error, §13). The rationale: a
-typo in `creation_rules.execution.tag.taks` silently disables the rule for `task` threads,
-which is a class of bug worth structurally preventing.
-
-##### What is intentionally **not** in the registry
-
-- Global standard tag set spanning repos. Each repo defines its own vocabulary.
-- Tag hierarchy (`area/auth`, `priority/p1`). Tags are flat by design.
-- Per-tag default actor / assignee.
-- Required tag combinations (e.g., "every `bug` must also have a severity tag").
-
-These belong in higher-level tooling or in a future facet expansion (which would surface as a
-new required facet, not a tag-system feature) and are explicitly out of scope for 2.0.
+The three conventional tag values used by the kind presets (`bug`,
+`task`, `cross-cutting`; §9.2) are still produced by the presets, but
+they are not preregistered anywhere — they are simply the strings the
+preset emits.
 
 ### 2.4 Event
 
@@ -401,10 +326,9 @@ Unchanged from SPEC.md §2.3. New event types added in 2.0:
   a single event, `tags_add` is applied before `tags_remove` so an event that simultaneously
   adds and removes the same tag is a removal (rare; allowed for symmetry, not a useful
   pattern).
-- **Cross-clone LWW** (§8.2.4) operates **per individual tag**: the most recent event mentioning
-  a given tag (in either `tags_add` or `tags_remove`) is what determines whether that tag is
-  in the derived set after merge. Tags not mentioned in the most-recent event for that tag
-  retain whatever their previous-event status was — the LWW window is per-tag, not per-event.
+- Replay is purely append-order over the locally-visible event chain. There is no bespoke
+  per-tag LWW reconciliation across clones; cross-clone tag merging follows whatever
+  ordering Git presents after fetch, the same way any other event ordering does (§8.3).
 - An empty `facet_set` payload (no `lifecycle`, no tag arrays) is valid and a no-op (allowed
   for backfill / hook purposes).
 
@@ -414,9 +338,25 @@ under 2.0.
 
 ### 2.5 Node
 
-Unchanged from SPEC.md §4.3. Node types are preserved. Recording a decision is a node-level
-action (typically a `summary` node) inside whatever thread reached the decision; there is no
-thread-level `decision` facet (see §2.3.4).
+**Overrides SPEC.md §4.3.** The 1.x ten-type set is reduced to four types,
+cut by *protocol effect* rather than rhetorical move. See ADR-006 for
+the rationale.
+
+| Node type | Protocol effect |
+|---|---|
+| `comment` | None — body-prose contribution. Replaces 1.x `claim` / `question` / `summary` / `risk` / `review` / `alternative` / `assumption`. |
+| `approval` | Positive — counts toward state-transition guards (e.g. `one_human_approval`). Folds in the standalone Approval concept from SPEC.md §2.7 (see §2.8). |
+| `objection` | Negative — blocks state transitions until `resolve`d. Unchanged from 1.x. |
+| `action` | Obligation — creates a tracked work item that must be `resolve`d before terminal states. Unchanged from 1.x. |
+
+`evidence` remains a first-class non-node concept attached via
+`evidence add` (§2.6); it is intentionally outside the node taxonomy.
+
+Recording a decision is no longer a typed node. A decision is captured
+as a `comment` whose body contains the decision text (and whose author
+typically appends an `approval` once the decision is concluded). There
+is no thread-level `decision` facet (see §2.3.4) and no `summary` node
+type.
 
 ### 2.6 Evidence
 
@@ -428,7 +368,12 @@ Unchanged from SPEC.md §2.6.
 
 ### 2.8 Approval
 
-Unchanged from SPEC.md §2.7.
+The standalone Approval concept from SPEC.md §2.7 is folded into the
+node namespace (§2.5). An approval is an `approval` node event, not a
+separate event kind. The `--approve <actor>` flag on state-change
+commands (§9.4) is preserved as a shortcut: it appends an `approval`
+node and applies the state change in a single CLI invocation. Policy
+guards (e.g. `one_human_approval`) key off `approval` nodes uniformly.
 
 ## 3. State machines
 
@@ -536,7 +481,10 @@ See §2.4. New event types listed; existing event types unchanged.
 
 ### 4.4 Node types, Evidence, Approval
 
-Unchanged from SPEC.md §4.3 / §4.4 / §4.5.
+- **Node types**: see §2.5 (overrides SPEC.md §4.3 — reduced to 4 types).
+- **Evidence**: unchanged from SPEC.md §4.4.
+- **Approval**: see §2.8 (folded into the node namespace; SPEC.md §4.5's standalone
+  Approval event kind no longer exists).
 
 ## 5. Storage layout
 
@@ -557,9 +505,9 @@ ref name is constructed.
 #### 5.1.1 Alias ref representation
 
 Each `refs/forum/aliases/<slug>` ref is an **ordinary Git ref** (not a symref, not a note)
-pointing at a **marker commit object**. The choice of "ordinary ref" is deliberate: it makes
-alias refs work with `git push --atomic` on every transport that supports atomic push, with no
-notes-fetch refspec gymnastics and no symref propagation quirks.
+pointing at a **marker commit object**. The choice of "ordinary ref" is deliberate: it
+makes alias refs work with standard `git push` / `git fetch` on the `refs/forum/*`
+namespace, with no notes-fetch refspec gymnastics and no symref propagation quirks.
 
 The marker commit has:
 
@@ -594,15 +542,14 @@ Topic handle resolution walks `refs/forum/aliases/<slug>` first:
 
 ### 5.2 Repository files
 
-Same as SPEC.md §5.2 with added template:
+Same as SPEC.md §5.2 with added templates:
 
 ```text
 .forum/
   policy.toml
   actors.toml
-  tags.toml           # tag registry (NEW); pre-populated by `git forum init`
   templates/
-    topic.md         # topic charter template (NEW)
+    topic.md            # topic charter template (NEW)
     thread.md           # generic thread template (NEW)
     proposal.md         # preset for lifecycle=proposal (replaces rfc.md)
     execution.md        # preset for lifecycle=execution (replaces task.md / issue.md)
@@ -611,11 +558,8 @@ Same as SPEC.md §5.2 with added template:
 
 Old per-kind templates (`rfc.md`, `issue.md`, etc.) are deprecated but readable for migration.
 
-`tags.toml` is repo-local convention (§2.3.5). `git forum migrate` from 1.x writes this file
-populated with `bug`, `task`, `cross-cutting` plus any other tag values observed in the migrated
-threads (each gets a stub `description = "(auto-imported during migration; please edit)"`),
-so post-migration `policy lint` does not immediately fire `UnknownPolicyTag` on a previously-
-silent tag.
+There is no `.forum/tags.toml` in 2.0 — tag-vocabulary discipline (registry,
+conventional-tag list, deprecation, lint) is deferred per §2.3.5.
 
 ### 5.3 Local files
 
@@ -647,10 +591,10 @@ Rationale:
   interactive use friction-free, the bang is **optional at every CLI input position** — see
   §6.0.1 below. The `!` is **mandatory in machine-interpreted persisted references**
   (evidence refs, link targets, the `commit-msg` hook's structured ref scan) where type
-  disambiguation matters. Free-form prose — body text, charter, summary nodes — is **not
-  scanned**; users may write `!foo` or `foo` in prose without producing or violating a marker
-  rule. The persisted-context check fires only at structured slots that the system itself
-  parses as references (see §9.6).
+  disambiguation matters. Free-form prose — body text, charter, comment-node bodies — is
+  **not scanned**; users may write `!foo` or `foo` in prose without producing or violating a
+  marker rule. The persisted-context check fires only at structured slots that the system
+  itself parses as references (see §9.6).
 
 This scheme gives every reference in commit messages, log output, and prose an unambiguous
 visual type — an easy win over alphabetic prefixes (`wf-`, `t-`) that blur into the
@@ -666,9 +610,9 @@ the expected type unambiguous.
 |---|---|---|
 | Positional or flag value of `topic show / topic ls / topic attach / topic detach / topic rename / topic archive / topic unarchive` | optional | The command grammar already requires a topic at this slot. `topic show payment-rewrite` is equivalent to `topic show '!payment-rewrite'`. |
 | `--topic <ref>` flag on `thread new`, `thread ls`, etc. | optional | Type is fixed by the flag name. |
-| Positional or flag value where a thread is required (`thread show`, `thread state`, `claim`, `evidence add`, etc.) | optional | `@` may be omitted for the same reason. `thread show a3f9b2k1` is equivalent to `thread show @a3f9b2k1`. |
+| Positional or flag value where a thread is required (`thread show`, `thread state`, `comment`, `objection`, `action`, `evidence add`, etc.) | optional | `@` may be omitted for the same reason. `thread show a3f9b2k1` is equivalent to `thread show @a3f9b2k1`. |
 | Mixed positions where either a topic or a thread is acceptable (e.g. `git forum show <REF>`) | **required** | Without the marker, the parser cannot disambiguate. Missing-marker input here returns `AmbiguousReferenceWithoutMarker` (§13) listing both candidate types. |
-| Anywhere a reference is **structurally** persisted (evidence refs, link targets, the `commit-msg` hook's structured scan) | **required** | The persisted-context rule (§9.6) is unchanged: bare tokens at these slots are rejected as ambiguous. **Free-form body text, charter, and summary node prose are explicitly out of scope** — prose is not parsed for references. |
+| Anywhere a reference is **structurally** persisted (evidence refs, link targets, the `commit-msg` hook's structured scan) | **required** | The persisted-context rule (§9.6) is unchanged: bare tokens at these slots are rejected as ambiguous. **Free-form body text, charter, and comment-node body prose are explicitly out of scope** — prose is not parsed for references. |
 
 Error messages that surface a quoting failure SHOULD include a tip such as:
 
@@ -690,20 +634,16 @@ When `git forum topic new "Payment rewrite"` is invoked:
    two-word petname derived from `sha256(topic_id)` (e.g. `!payment-rewrite-quick-fox`)
    and notify the user of the chosen handle in the command output. The petname dictionary is
    bundled (~2,048 adjectives × ~2,048 nouns ≈ 4M combinations; collision negligible).
-4. **Cross-clone collision** (handle is unused locally but already claimed on the remote): not
-   detected at this point — surfaces at push time as `HandleConflictOnPush` (§8.2.1) and
-   requires explicit user rename. There is no silent auto-rename across clones.
 
 User MAY override with `--handle !pay`. The override is validated against the handle format
 and locally checked for collision. Within-clone petname appending also applies to overridden
-handles. Cross-clone conflict still surfaces as `HandleConflictOnPush` regardless of whether
-the handle was title-derived or user-overridden.
+handles.
 
-This deliberately splits the two failure modes:
-- Within-clone collisions are mostly typos / accidental reuse and benefit from automatic
-  petname recovery (low surprise; the user sees the result immediately).
-- Cross-clone collisions involve another actor's claim and cannot be silently overridden
-  without breaking the handle-as-stable-name guarantee.
+Cross-clone handle collisions (two clones independently claim the same slug) are detected by
+standard Git push semantics: the second pusher's `refs/forum/aliases/<slug>` push fails as a
+non-fast-forward, the way any other Git ref push fails. git-forum does not interpret this
+failure or rewrite the handle automatically; the user resolves it by `topic rename` and
+re-pushes, or by accepting whichever value Git fast-forwards to during fetch.
 
 #### 6.1.2 Reserved prefixes
 
@@ -768,12 +708,12 @@ Guard rules in 2.0 are scoped by **facet expression** instead of kind:
 # 2.0: facet-scoped
 [[guards]]
 on = "lifecycle=proposal AND tag=cross-cutting : review->done"
-requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
+requires = ["one_human_approval", "no_open_objections"]
 
 # 1.x equivalent (compat alias, internally rewritten):
 [[guards]]
 on = "rfc:under-review->accepted"
-requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
+requires = ["one_human_approval", "no_open_objections"]
 ```
 
 The facet expression is a boolean over `lifecycle` and `tags` (using `tag=<value>` for membership
@@ -834,36 +774,21 @@ Changing a thread's facet values after creation MAY invalidate prior policy deci
   (e.g., adding `task` triggers stricter `creation_rules.execution.tag.task`) re-evaluate
   operation checks and emit warnings if the thread no longer satisfies them.
 
-### 7.4 Tag registry and policy lint
-
-The tag registry (`.forum/tags.toml`, §2.3.5) participates in policy in three ways:
-
-1. **Write-time validation.** Every `--tag <name>` and `facet_set` event carrying a tag is
-   validated against the grammar (`InvalidTagSyntax` on violation) and against the registry.
-   Registry miss → `UnknownTag` (warning by default; error under `[tags] strict_tags = true`).
-2. **Policy load-time lint.** `git forum policy lint` reads `policy.toml` and resolves every
-   tag-bearing key (`creation_rules.<lifecycle>.tag.<name>`, guard predicates `tag=<name>`,
-   facet expressions). Each `<name>` is looked up in the registry; misses report
-   `UnknownPolicyTag` (always **error**, regardless of `strict_tags`). Aliases resolve to the
-   canonical key for this check.
-3. **Deprecation surfacing.** When `[tags.<name>] deprecated = true` is set, write attempts
-   emit a deprecation warning naming `replaced_by` if present. Read paths (`show`, `ls`,
-   search) are unchanged so historical data continues to render with the original tag.
-
-Registry mutation is itself unguarded in 2.0 — anyone with write access to `.forum/tags.toml`
-can register a new tag. F-W2 (Appendix A.3) discusses the forward-compat path for adding
-guards over registry mutation if needed.
-
 ## 8. Concurrency
 
-git-forum 2.0 distinguishes two concurrency regimes:
+git-forum 2.0 operates only on the **local clone**. Cross-clone state
+convergence is delegated to standard `git push` / `git fetch` on the
+`refs/forum/*` namespace. git-forum does not introduce its own
+distribution protocol, conflict-resolution algorithm, or atomic-push
+group definition. This is mandated by `CORE-VALUE.md`.
 
-- **Within-clone concurrency** — multiple processes on the same clone. Handled by Git's atomic
-  ref CAS (compare-and-swap), as in 1.x.
-- **Cross-clone concurrency** — independent writes on separate clones, reconciled at fetch/push
-  time. The thread layer inherits 1.x's content-addressed IDs and semantic merge. The topic
-  layer adds new conflict surfaces (handles, attach events, short indices, tags) that this section
-  defines.
+When two clones converge via Git, the rules below apply locally on
+each side and the diverging refs are reconciled by Git's standard
+CAS / fast-forward / non-fast-forward semantics. Any non-fast-forward
+push fails the way any other Git push fails; the user resolves it the
+way they resolve any other Git divergence. Earlier drafts of this
+section specified bespoke handle-conflict / attach-conflict / tag-LWW
+protocols; those are removed.
 
 ### 8.1 Within-clone protocol
 
@@ -883,190 +808,24 @@ Auto-merge cases, in addition to those in SPEC.md §8.1:
   a no-op).
 - Concurrent `facet_set` events that change disjoint tag sets (additive merge).
 
-Conflict cases that require the cross-clone resolution rules in §8.2:
+Conflict cases (concurrent writes that touch overlapping state) fail at
+the local CAS layer and are surfaced to the caller as a write failure.
+Resolution is by re-reading and re-writing — the same retry pattern as
+1.x. Cross-clone divergence (e.g. two clones independently attached
+the same thread to different topics, then both pushed) is left to the
+user to reconcile via Git tooling; `doctor` (§9.5) reports observed
+divergence informationally.
 
-- `topic_attach` to **different topics** (§8.2.2).
-- `facet_set` events that add and remove the same tag (§8.2.4).
+### 8.2 Short-index stability
 
-### 8.2 Cross-clone conflict resolution
-
-Within-clone CAS does not protect against scenarios where two clones independently write
-non-overlapping refs locally and only collide at push or fetch time. The following rules define
-deterministic resolution.
-
-#### Clock dependency
-
-Several rules below order events by **wall-clock timestamp** (`event.timestamp`), with
-`(actor_id, event_oid)` as deterministic tiebreakers. This means:
-
-- Determinism across clones is **always guaranteed** — given the same set of events, every clone
-  computes the same effective state.
-- Correspondence between LWW order and **real time** assumes actor clocks are reasonably
-  synchronized (NTP-grade skew of seconds, not minutes). A clone with a fast clock can win an
-  LWW race against a clone whose write happened later in real time.
-- Skew effects are bounded: the loser's intent is always preserved in event history (§8.1.1)
-  and remains reversible by issuing a fresh write (re-attach, re-tag, etc.).
-
-Adopting Hybrid Logical Clocks (HLC) to remove the wall-clock dependency is tracked as F-W5
-(Appendix A.3).
-
-#### 8.2.1 Topic handle conflict (push-time)
-
-**Scenario.** Clone A creates topic `wA` with handle `!payment-rewrite`. Clone B
-independently creates topic `wB` with the same handle. Both push.
-
-**Why this happens.** Topic opaque IDs are content-addressed and never collide, but handles
-are user-derived slugs (§6.1). A handle that appears unused on each clone may be claimed
-elsewhere.
-
-**Resolution.**
-
-1. The topic event chain push (`refs/forum/topics/<topic-id>`) succeeds on both clones —
-   different opaque IDs, no collision.
-2. The alias ref push (`refs/forum/aliases/payment-rewrite` — bare slug, no `!`; the `!`
-   is display-only per §6.0) succeeds for whichever clone pushes first; the second clone's
-   alias push fails (CAS against zero-SHA).
-3. The losing client's atomic-push group (§8.4.1) fails as a whole. The push is reported as
-   `HandleConflictOnPush` (an **error**, not a warning) with a message naming the existing
-   claimant. **No automatic rename occurs.**
-4. The user resolves the conflict explicitly by either:
-   - `git forum topic rename <local-topic-id> <new-handle>` — pick a different handle,
-     then re-push.
-   - Decide the topic shouldn't have been created and `git forum topic archive` it
-     locally before discarding (refs cleanup left to the user).
-
-This deliberately blocks silent handle drift. A handle that a user has written into external
-notes, RFC bodies, or commit messages must continue to mean what they wrote it to mean — silent
-auto-rename of the loser would let a handle string be reassigned to a different topic without
-the original author's knowledge, undermining the entire point of having a stable human-facing
-handle.
-
-**Interaction with `--handle <H>` user override.** A user-specified handle is treated as the
-declared name. On cross-clone collision, the push fails with `HandleConflictOnPush` regardless
-of whether the handle was title-derived or user-overridden — both are equally affected and
-equally require explicit rename to resolve.
-
-**CI / non-interactive contexts.** `HandleConflictOnPush` causes a non-zero exit; pipelines
-treat it like any other push failure. A retry after `topic rename` is the explicit
-remediation. There is no `--auto-rename` opt-in in 2.0; if dogfood evidence shows demand, it can
-be added later behind an explicit flag (deferred).
-
-#### 8.2.2 Topic attach conflict (fetch-time)
-
-**Scenario.** Clone A attaches thread `@x9k2` to topic `!foo`. Clone B independently
-attaches the same thread to `!bar`. Both push.
-
-**Why this happens.** Both `topic_attach` events live on the thread ref chain. CAS protects
-within a clone but not across clones writing in parallel.
-
-**Resolution.**
-
-1. First-push winner's attach event lands on the thread ref tip.
-2. Second-push loser's attach event arrives via fetch; semantic merge appends it to the chain
-   (event history preserves both intents).
-3. **Effective topic membership** is determined by replaying **all** `topic_attach` and
-   `topic_detach` events on the thread and selecting the most recent by:
-   - Primary key: `event.timestamp` (actor clock at write time).
-   - Tiebreaker: lexicographic order of actor ID.
-   - Final tiebreaker: lexicographic order of event OID.
-
-   - If the most recent event is `topic_attach W`, the thread's effective topic is `W`.
-   - If the most recent event is `topic_detach`, the thread is standalone (no topic).
-4. Both `topic show` (on the losing topic) and `thread show` surface
-   `AttachConflictResolved` as an informational warning so the discrepancy is visible.
-
-`topic_detach` participates in the same LWW ordering as `topic_attach`: a detach event
-with a later timestamp than a competing attach event wins (resulting in standalone), and vice
-versa. This unifies the rule across attach/detach without separate semantics.
-
-A user who disagrees with the auto-resolution issues `topic detach` on the losing side and
-re-attaches as desired; this records new events that supersede the auto-resolution.
-
-#### 8.2.3 Handle alias divergence
-
-Two sub-scenarios.
-
-**Scenario A: rename ⊕ create.** Clone A renames `!foo` → `!bar` (alias ref `!bar` now
-points to A's topic). Clone C independently creates a new topic with handle `!bar`.
-
-**Resolution.** Identical to §8.2.1: the second pusher's alias ref fails CAS and the push is
-reported as `HandleConflictOnPush`. The user (whichever pushes second) must explicitly rename
-their topic before re-pushing. No silent auto-resolution occurs.
-
-**Scenario B: divergent rename of the same topic.** Clone A renames `!foo` → `!bar`.
-Clone B independently renames the same topic `!foo` → `!baz`.
-
-**Resolution.**
-
-1. Both `topic_alias` events are recorded on the topic ref. The thread-style CAS protocol
-   serializes them within each clone; cross-clone, both events land on the topic event chain
-   via semantic merge.
-2. Both new alias refs (`!bar` and `!baz`) are created locally on the issuing clone and
-   pushed. Both succeed (different ref names; neither pre-exists). The original alias ref
-   `!foo` is preserved by both (per §6.1.3 — old handles never expire).
-3. After sync, **all three handles** (`!foo`, `!bar`, `!baz`) resolve to the same
-   topic.
-4. The **primary** handle (the one shown by default in `topic show` and `topic ls`) is
-   the most recent `topic_alias` event by LWW order: `(timestamp, actor_id, event_oid)`.
-   The other handles are surfaced as alternates.
-
-No conflict from the user's perspective — both rename intents succeed. The display preference
-follows LWW.
-
-#### 8.2.4 Tag merge semantics
-
-**Scenario.** Clone A adds tag `urgent` to thread `@x9k2`. Clone B concurrently removes tag
-`urgent` (or adds a different tag).
-
-**Resolution.**
-
-1. All `facet_set` events are preserved in the thread's event chain.
-2. The derived `tags` set is computed by replaying `facet_set` events in
-   `(timestamp, actor_id, event_oid)` order, applying add/remove per event.
-3. Last-write-wins per individual tag — the most recent event mentioning a given tag determines
-   whether it is present.
-
-This matches the LWW semantics used for attach conflicts (§8.2.2) and avoids requiring user
-intervention for ordinary tag drift.
-
-> **Note on tag CRDTs.** A pure observed-remove CRDT would eliminate the wall-clock dependency
-> entirely for tag merging. LWW is chosen for implementation simplicity and consistency with the
-> attach rule; tag drift in the LWW model is theoretically possible but bounded (the next
-> explicit `tag add`/`tag rm` always wins). CRDT-based tag semantics are tracked as F-W6
-> (Appendix A.3).
-
-#### 8.2.5 Archived topic with concurrent attach
-
-**Scenario.** Clone A archives topic `!foo` (writes `topic_archive` event on the topic
-ref). Clone B, having not yet seen the archive, writes `topic_attach` on a thread referencing
-`!foo`.
-
-**Resolution.**
-
-- Within a clone, an attach to an archived topic is **rejected** with
-  `AttachToArchivedTopic` (§13). `--force` overrides explicitly. Because archived topics
-  are hidden by default in `ls` (§9.3), this prevents work from silently disappearing into a
-  topic nobody is looking at.
-- Across clones, both events succeed at the ref layer (different refs). After fetch, if the
-  attach event was written before the archive was visible locally, the resulting state is:
-  - Topic `!foo` is `archived`.
-  - Thread lists `!foo` as its topic (the attach was not blocked locally because archive
-    was unseen).
-  - `doctor` reports the inconsistency and recommends explicit detach or unarchive.
-
-In 2.0 the user resolves cross-clone inconsistencies manually. Future topic-level guards
-(F-W2, Appendix A.3) MAY introduce stricter automated remediation.
-
-### 8.3 Short-index stability across clones
-
-Topic short indices (`!foo/3`, §2.1.3) are **derived, session-local references**, not
-canonical IDs:
+Topic short indices (`!foo/3`, §2.1.3) are **derived, session-local references**,
+not canonical IDs:
 
 - The mapping is computed at query time from locally-visible `topic_attach` events sorted by
   `(attach_event.timestamp, actor_id, event_oid)`.
-- Before two clones have fully synced, they may compute different `/N` values for the same
-  thread.
-- After sync, the ordering is deterministic across clones.
+- The mapping is local to the clone. After a fetch from a remote that introduces or
+  reorders attach events, `/N` values may shift; users who care about a specific thread
+  should reference it by canonical ID (`@<token>`).
 - `/N` MUST NOT appear in stored data: not in evidence refs, not in link targets, not in commit
   messages used by hooks. Only canonical thread IDs (`@XXXXXXXX`) and topic handles are
   stored.
@@ -1076,54 +835,22 @@ canonical IDs:
   the failure mode it prevents (a stored short-ref silently meaning a different thread on
   another clone) is a correctness issue, not a stylistic one.
 
-### 8.4 Push/fetch protocol
+### 8.3 Distribution
 
-#### 8.4.1 Atomic ref groups
+Forum data is replicated between clones with standard `git push` and
+`git fetch` on the `refs/forum/*` namespace. git-forum does not wrap
+these commands and does not introduce its own push/fetch protocol.
+The atomic-push and recommended-ordering guidance from earlier drafts
+of this section has been removed; users follow whatever Git fetch/push
+workflow they already use for code refs.
 
-Some logical operations span multiple refs and MUST be pushed atomically to avoid leaving the
-remote in a state that other clients can observe as inconsistent. Clients use Git's
-`push --atomic` option (or equivalent transport semantics) to enforce this.
-
-| Logical operation | Refs in the atomic group |
-|---|---|
-| `topic_create` | `refs/forum/topics/<topic-id>` + `refs/forum/aliases/<slug>` |
-| `topic_rename` | `refs/forum/topics/<topic-id>` (recording the `topic_alias` event) + `refs/forum/aliases/<new-slug>` |
-| `topic_archive` / `topic_unarchive` | `refs/forum/topics/<topic-id>` only |
-| Thread events (create, say, attach, detach, state, facet_set, etc.) | `refs/forum/threads/<thread-id>` only |
-
-In every ref path above, `<topic-id>`, `<slug>`, and `<thread-id>` are the **storage tokens**
-— bare alphanumeric (with `-` allowed in slug), no `!` and no `@`. The user-facing markers
-(§6.0) appear only in display, prose, and CLI input; they are stripped before the ref name is
-constructed.
-
-Atomic push is **mandatory** for the topic-create and topic-rename groups: a non-atomic
-push that succeeds only on the topic ref but fails on the alias ref would leave a topic
-without a handle visible to other clients (or, worse, leave a dangling alias if the order
-were reversed). Clients that cannot guarantee atomic push MUST refuse the operation rather than
-proceed.
-
-Because alias refs are ordinary refs (§5.1.1), the atomic-push group is just
-`git push --atomic refs/forum/topics/<topic-id> refs/forum/aliases/<slug>` — no symref or
-notes-refspec handling required. The Git protocol's atomic-push semantics propagate the
-all-or-nothing CAS exactly as for any other concurrent ref update, so the §8.2.1 handle-
-conflict resolution (CAS failure on the alias ref → `HandleConflictOnPush`) is the standard
-ref-update failure path.
-
-#### 8.4.2 Recommended push order within a session
-
-When pushing many independent operations, ordering does not affect correctness (each atomic
-group is self-contained), but for fastest conflict surfacing the recommended order is:
-
-1. Topic create / rename groups (so handle conflicts surface early).
-2. Thread events (so attach references are valid against just-pushed topics).
-3. Pure topic events (archive, etc.).
-
-#### 8.4.3 Fetch
-
-Fetch always pulls all three ref trees (topics, threads, aliases). After fetch, the local
-SQLite index is rebuilt incrementally to reflect any attach / tag / handle changes. Conflicts
-surfaced by §8.2 are reported by `git forum doctor` and on the next interactive `show` of
-affected topics / threads.
+When a non-fast-forward push fails, the user resolves it with the
+standard Git workflow (fetch, rebase or merge their forum refs,
+re-push). git-forum does not assume responsibility for the merge
+strategy. `git forum doctor` (§9.5) reports any divergence visible in
+the local refs (e.g., a thread attached to two different topics in
+two different ancestor commits) so the user knows what needs manual
+attention.
 
 ## 9. CLI surface
 
@@ -1161,15 +888,11 @@ remote:
 | `State: active` / `State: archived (since <date>)` | always |
 | `Charter: <first non-empty body line>` / `Charter: (none)` | always |
 | `Summary: <empty / has-open / all-terminal> (<n> threads attached)` | always |
-| `(LOCAL ONLY — not pushed to any remote)` | the topic's `topic_create` event has never been observed on any tracked remote ref. Removed once a successful push lands. |
-| `(LOCAL ONLY — handle not pushed: <reason>)` | the topic event chain is on the remote, but the alias ref failed to push (`HandleConflictOnPush`, §8.2.1). Reason text names the claimant of the conflicting handle. |
-| `Pending divergence: <N> attach conflict(s) — see 'doctor'` | `AttachConflictResolved` warnings (§8.2.2) exist and have not been acknowledged. |
 
-The publication-state lines fire only when the relevant condition is true; in the steady-state
-shared-and-clean case the header is the four standard rows plus the summary.
-
-This makes the Day-4-style "I pushed and got an error, now what?" recovery path discoverable
-from `topic show` alone, without requiring the user to remember the original push log.
+Because git-forum delegates push/fetch to standard Git (§8.3), publication-state lines (e.g.
+"local only", "handle not pushed") are not part of the header. Whether a topic has been
+pushed to a remote is a question for `git for-each-ref` / `git ls-remote`, the same way it
+would be answered for any other ref namespace.
 
 ### 9.2 Thread commands (unified + presets)
 
@@ -1178,7 +901,7 @@ Canonical form:
 ```text
 git forum thread new <TITLE>
     --lifecycle <LIFECYCLE>
-    [--topic <TOPIC>] [--tag <TAG>...] [--tag-register <TAG>...]
+    [--topic <TOPIC>] [--tag <TAG>...]
     [--body <TEXT> | --body-file <PATH> | --edit]
     [--branch <BRANCH>] [--link-to <THREAD> --rel <REL>]
     [--from-commit <REV>] [--from-thread <THREAD>] [--force]
@@ -1187,14 +910,9 @@ git forum thread ls [--topic <TOPIC>]
     [--lifecycle <LIFECYCLE>]
     [--status <STATUS>] [--tag <TAG>] [--branch <BRANCH>]
 git forum thread state <THREAD> <NEW_STATE> [--approve <ACTOR>]... [--comment <TEXT>]
-git forum thread tag add <THREAD> <TAG>... [--tag-register <TAG>...]
+git forum thread tag add <THREAD> <TAG>...
 git forum thread tag rm  <THREAD> <TAG>...
 ```
-
-`--tag-register <TAG>` is the one-shot combined form: register the tag in `.forum/tags.toml`
-(with a stub description, identical to `git forum tag register` — see §9.7) **and** apply it
-to the thread in the same command. Useful in scripted contexts where the user knows the tag
-is new and does not want a two-step ceremony. Must satisfy the same grammar as `--tag`.
 
 Kind presets — **stable, first-class commands** (not compat aliases). They are the everyday
 surface; the canonical `thread new --lifecycle ...` form above is reserved for power-users and
@@ -1234,9 +952,23 @@ needing to remember a flag. Users who prefer a single view can use `--topics`,
 
 ### 9.4 Discussion, lifecycle, evidence, links, hooks
 
-Unchanged from SPEC.md §9.4 / §9.5 / §9.7 / §9.10. State-change shorthand commands (`close`,
-`accept`, etc.) continue to work and map to the unified state machine via the thread's lifecycle
-facet:
+Inherits SPEC.md §9.4 / §9.5 / §9.7 / §9.10 with the **node-shorthand reduction** from
+ADR-006 / §2.5:
+
+| Canonical command | Shorthand | Status in 2.0 |
+|---|---|---|
+| `node add --type comment` | `comment` | new (replaces `claim` / `question` / `summary` / `risk` / `review`) |
+| `node add --type objection` | `objection` | unchanged |
+| `node add --type action` | `action` | unchanged |
+| (state change with `--approve`) | `approve` | unchanged in form; emits an `approval` node (§2.8) instead of a separate Approval event |
+
+`claim` / `question` / `summary` / `risk` / `review` shorthands are aliased to `comment` for
+one minor release with a deprecation warning, then removed in 3.0. Authors who relied on
+the rhetorical distinction express it in the body (e.g. start the comment with `Q:`,
+`Decision:`, `Risk:`).
+
+State-change shorthand commands (`close`, `accept`, etc.) continue to work and map to the
+unified state machine via the thread's lifecycle facet:
 
 | Shorthand | `lifecycle=execution` | `lifecycle=proposal` | `lifecycle=record` |
 |---|---|---|---|
@@ -1264,8 +996,10 @@ output:
     warning. Standalone is a legitimate steady state — many bugs and notes never need a
     topic. The doctor output names this section "Untriaged" rather than "Orphan" to reflect
     that this is normal state, not a fault.
-  - Broken aliases, dangling attach references, and unresolved cross-clone conflicts
-    (`AttachConflictResolved` per §8.2.2) — these *are* warnings.
+  - Broken aliases, dangling attach references, and any divergence visible in local refs
+    after a fetch (e.g. a thread carrying two `topic_attach` events to different topics in
+    different ancestor commits) — these *are* warnings, surfaced for the user to reconcile
+    via plain Git tooling per §8.3.
 - (No topic-level guard preview in 2.0; see F-W2.)
 
 ### 9.6 Persisted-context validation
@@ -1319,29 +1053,6 @@ If the reference cannot be resolved at the moment of rejection (e.g., the topic 
 exist locally), the error message MUST say so explicitly and recommend `topic show` rather than
 silently failing with "unknown reference".
 
-### 9.7 Tag registry commands
-
-```text
-git forum tag ls                                  # list registered tags with description / deprecation status
-git forum tag show <NAME>                         # full entry: description, aliases, deprecated, replaced_by, usage count
-git forum tag register <NAME> [--description <TEXT>] [--alias <ALIAS>...]
-git forum tag deprecate <NAME> [--replaced-by <NAME>]
-git forum tag undeprecate <NAME>
-git forum tag rename <OLD> <NEW>                  # writes <NEW> + adds <OLD> to its `aliases`; existing data unchanged
-```
-
-`tag register` writes the entry to `.forum/tags.toml`. Without `--description`, a stub
-`"(registered by <actor> on <date>; please edit)"` is written so the file remains lint-clean.
-
-`tag rename` is non-destructive: existing threads keep the old tag value; reads resolve via the
-alias. To bulk-rewrite tag values on threads, F-W6 (CRDT tags, Appendix A.3) is the forward path
-— 2.0 does not include a rewrite operation because every tag change is an append-only event
-that must remain in the audit trail.
-
-The `--tag-register <NAME>` one-shot flag (also accepted on `thread new` and `thread tag add`,
-see §9.2) calls into the same registration path as `tag register` and then applies the tag in
-the same command, avoiding a two-step ceremony.
-
 ## 10. Migration from 1.x
 
 ### 10.1 Strategy
@@ -1363,6 +1074,10 @@ After migration:
   conventional `tags` (`cross-cutting` for `rfc`; `bug` for `issue`; `task` for `task`) per the
   §2.3.3 mapping.
 - States are remapped per §3.2.2.
+- **Node events are rewritten** per ADR-006 / §2.5: 1.x types `claim` / `question` /
+  `summary` / `risk` / `review` / `alternative` / `assumption` become `comment` (with
+  `legacy_subtype` preserved); standalone Approval events become `approval` nodes.
+  `objection`, `action`, and `evidence` are unchanged.
 - **Migrated threads remain standalone** (no topic attachment). No `!_legacy` topic is
   auto-created. Users attach threads to topics manually as they triage. `doctor` reports the
   standalone count under the "Untriaged" section after migration as an informational signal
@@ -1450,15 +1165,16 @@ Unchanged from SPEC.md §13. New error and warning categories:
 | `ThreadNotInTopic` | error | `<handle>/N` index out of bounds | |
 | `FacetTransitionDisallowed` | error | facet mutation in a state that doesn't allow it | |
 | `LifecycleStateMismatch` | error | state transition not allowed for thread's lifecycle | |
-| `HandleConflictOnPush` | **error** | alias ref CAS failure on push (§8.2.1, §8.2.3) | Atomic push group fails; user must `topic rename` and re-push |
 | `AttachToArchivedTopic` | **error** | attach attempt to a topic whose `archived_at` is set | `--force` overrides; intentional gate to keep work visible |
-| `AttachConflictResolved` | warning | divergent `topic_attach`/`topic_detach` reconciled by LWW (§8.2.2) | Surfaced in `show` until manually re-attached or acknowledged |
-| `ShortIndexInPersistedRef` | **error** | `/N` short reference appears where it would be stored (e.g. commit message scanned by `commit-msg` hook, evidence ref, link target) | Error message MUST include the canonical thread ID resolved at the moment the short reference was rejected (e.g., "did you mean `@d8f4q9aa`?"). Resolving requires reading the topic at write time, but the rejection itself is preflight. |
+| `ShortIndexInPersistedRef` | **error** | `/N` short reference appears where it would be stored (e.g. commit message scanned by `commit-msg` hook, evidence ref, link target) | Error message MUST include the canonical thread ID resolved at the moment the short reference was rejected (e.g., "did you mean `@d8f4q9aa`?"). |
 | `AmbiguousReferenceWithoutMarker` | error | Bare token (no `!`/`@`) used in a CLI position that accepts both a topic and a thread (e.g. `git forum show <REF>`) | Lists candidate topic / thread matches; suggests prefixing with `!` or `@` to disambiguate. |
 | `InvalidTagSyntax` | error | `--tag <value>` or `facet_set` payload violates the tag grammar (§2.3.5) | Message names the offending character / length / reserved-literal violation; suggests a sanitized form. |
-| `UnknownTag` | warning (default) / error (`strict_tags = true`) | Tag not present in `.forum/tags.toml` (§2.3.5) | Fires on **every** write of an unregistered tag (no first-only promise). Hint suggests `git forum tag register <name>` or `--tag-register`. Implementations MAY deduplicate within a single CLI invocation. |
-| `UnknownPolicyTag` | error | `policy lint` finds a tag in `policy.toml` (guard predicate or `creation_rules.<lifecycle>.tag.<name>`) that is absent from the registry | Always error; typo-prevention. Reports file:line of the offending policy entry. |
-| `TagDeprecated` | warning | Write attempt uses a tag where `[tags.<name>] deprecated = true` | Suggests `replaced_by` if present. Read paths unaffected. |
+
+Cross-clone divergence (handle conflicts, attach conflicts, tag drift) is **not** surfaced
+through dedicated error codes in 2.0 — it appears as ordinary Git push/fetch failures, the
+same way any other ref divergence would. Tag-vocabulary diagnostics (`UnknownTag`,
+`UnknownPolicyTag`, `TagDeprecated`) and the standalone-Approval error space are removed
+along with the features they reported on (§2.3.5, §2.8, §8.3).
 
 ## 14. Testing strategy
 
@@ -1479,48 +1195,21 @@ Unchanged from SPEC.md §14, plus:
 - A topic can hold threads of all three lifecycles simultaneously; `topic show` groups
   them correctly.
 
-### Tag vocabulary (§2.3.5, §7.4, §9.7)
+### Tag grammar (§2.3.5)
 
-- **Grammar enforcement.** `--tag` rejects values violating the grammar (uppercase, leading
-  digit, length &lt;2 or &gt;32, contains `/`, `:`, `@`, `!`, space, reserved literals like
+- `--tag` rejects values violating the grammar (uppercase, leading digit, length &lt;2 or
+  &gt;32, contains `/`, `:`, `@`, `!`, space, reserved literals like
   `all`/`untagged`/`archived`) with `InvalidTagSyntax`. The error message names the specific
   violation and proposes a sanitized form.
-- **Default unknown-tag warning.** A `--tag perf` write on a fresh repo (no `perf` in
-  `tags.toml`) creates the thread and emits `UnknownTag` (warning). Every subsequent write
-  of `--tag perf` re-emits the warning (the spec deliberately makes no "first-only"
-  promise). A single CLI invocation that touches the same unregistered tag multiple times
-  MAY deduplicate within that invocation.
-- **Strict mode.** `[tags] strict_tags = true` in `policy.toml` flips the same `--tag perf`
-  case to a non-zero exit; the thread is not created. `--tag-register perf --tag perf` in
-  the same command succeeds (registers + applies atomically).
-- **Policy lint.** `policy lint` fires `UnknownPolicyTag` (error) when `policy.toml`
-  references a tag (`creation_rules.execution.tag.taks`, `tag=foo` predicate) absent from
-  `tags.toml`. Aliases resolve before the lookup; a policy referencing an alias is accepted.
-- **Alias resolution.** `[tags.bug] aliases = ["defect"]` causes `--tag defect` to resolve as
-  `bug` for all queries (`ls --tag bug` shows threads tagged `defect`).
-- **Deprecation surfacing.** `[tags.issue] deprecated = true, replaced_by = "bug"` causes
-  `--tag issue` to succeed with `TagDeprecated` warning suggesting `bug`. Read paths
-  (`show`, `ls --tag issue`) work unchanged.
-- **Migration registry seeding.** `git forum migrate` writes `tags.toml` populated with
-  `bug`, `task`, `cross-cutting` plus any tag observed in migrated threads. Post-migration
-  `policy lint` fires no `UnknownPolicyTag` for tags that were already in the 1.x policy.
-- **Conventional-tag removal.** A repo that removes `[tags.bug]` from the registry still
-  accepts `git forum new bug`: the preset is hardcoded shorthand for `--lifecycle execution
-  --tag bug` and does not consult the registry. The resulting write emits `UnknownTag`
-  (warning under default; error under `strict_tags = true`) like any other unregistered-tag
-  write — there is no preset-specific code path.
 
-### Cross-clone concurrency
+### Node type reduction (ADR-006, §2.5)
 
-- Each of §8.2.1–§8.2.5 reproduced with two simulated clones.
-- §8.2.1 / §8.2.3 (handle conflict): the second push **fails with `HandleConflictOnPush`**
-  (no auto-rename); after explicit `topic rename` on the loser, the second push succeeds.
-- §8.2.2 (attach LWW): combined attach + detach event sequences resolve to the most recent
-  event by `(timestamp, actor_id, event_oid)` order; `AttachConflictResolved` warning surfaced.
-- §8.2.4 (tag LWW): per-tag LWW result is independent of event arrival order.
-- §8.2.5 (archived attach): within-clone attach to archived topic rejected with
-  `AttachToArchivedTopic`; `--force` overrides; cross-clone attach written before archive
-  visibility is preserved with doctor warning.
+- 1.x node events of types `claim` / `question` / `summary` / `risk` / `review` /
+  `alternative` / `assumption` migrate to `comment` with the legacy type label preserved
+  in `legacy_subtype`.
+- 1.x standalone Approval events migrate to `approval` node events.
+- Policy guards predicated on the old types resolve via the same legacy-subtype
+  preservation; `at_least_one_summary` is no longer shipped as a guard predicate (§7.1).
 
 ### CLI / UX defaults
 
@@ -1541,7 +1230,6 @@ Unchanged from SPEC.md §14, plus:
 
 ### `/N` short-index validation
 
-- Two clones with diverging attach order produce the same `/N` mapping after sync.
 - `/N` accepted as input to read-only CLI commands (`show`, etc.).
 - `/N` **rejected with `ShortIndexInPersistedRef`** in every persisted-context check point
   enumerated in §9.6.
@@ -1549,19 +1237,9 @@ Unchanged from SPEC.md §14, plus:
   (e.g. `@d8f4q9aa`); when the topic itself does not resolve locally, the message says so
   explicitly instead of returning an opaque "unknown reference" error.
 
-### `topic show` publication-state header
-
-- A topic created locally but never pushed shows `(LOCAL ONLY — not pushed to any remote)` in
-  the header.
-- A topic whose alias ref failed to push (`HandleConflictOnPush`) shows
-  `(LOCAL ONLY — handle not pushed: ...)` naming the claimant.
-- After successful push of both event chain and alias, the LOCAL ONLY line disappears.
-- Unacknowledged `AttachConflictResolved` warnings produce a `Pending divergence: <N>` line
-  in the header.
-
 ## 15. Non-goals
 
-In addition to SPEC.md §15:
+In addition to SPEC.md §15 and the five non-goals in `doc/spec/CORE-VALUE.md`:
 
 - General-purpose project management (Gantt charts, dependency graphs across topics).
 - Topic state machines, topic-level guards, topic nesting in 2.0
@@ -1569,11 +1247,12 @@ In addition to SPEC.md §15:
 - Multi-parent topics (DAG of topics).
 - User-defined required facet axes beyond `lifecycle` (use `tags` instead).
 - Mandatory topic membership for threads.
-- A global / cross-repo standardized tag taxonomy. Tag vocabularies are repo-local by design
-  (§2.3.5). Convergence between repos is a higher-level tooling concern, not a core feature.
-- Tag hierarchy (`area/auth`, `priority/p1`), per-tag state machines, per-tag default actor
-  assignment, mandatory tag combinations. The registry is intentionally a flat namespace
-  with grammar + description + alias + deprecation only.
+- A `git forum push` / `git forum fetch` command, atomic-ref-group semantics, or any
+  cross-clone conflict-resolution protocol. Distribution is plain Git on `refs/forum/*`
+  (§8.3, CORE-VALUE.md non-goal §3).
+- A tag registry, conventional-tag list, unknown-tag warnings, deprecation surfacing, or
+  tag-vocabulary policy lint. Earlier drafts of 2.0 specified `.forum/tags.toml` and
+  related diagnostics; these are removed in 2.0 and deferred per §2.3.5.
 
 ## Appendix A: Open questions
 
@@ -1584,7 +1263,9 @@ In addition to SPEC.md §15:
 | O-1 | Should `!_legacy` migration bucket be created automatically, or should threads stay orphan until manually attached? | **Orphan**. No synthetic topic on migration; `doctor` reports orphan count. (§10.1) |
 | O-2 | Are 5 intent values enough? | **Dropped entirely**, and `scope` was dropped too. Sole required facet is `lifecycle`; everything else (bug/task/cross-cutting) is a tag. (§2.3) |
 | O-3 | Should standalone threads be allowed to use shorthand commands (`close`, `accept`) directly? | **Yes**. Shorthand commands work uniformly on standalone and attached threads. Topic attachment is never required for state changes. (§9.4) |
-| O-4 | Should free-form tags have any constraint, given the cross-clone language-drift risk (`bug` vs `defect` vs `issue`)? | **Light-touch discipline.** Hard tag grammar (`[a-z][a-z0-9-]{1,31}`); three pre-registered conventional tags (`bug`, `task`, `cross-cutting`); repo-local registry at `.forum/tags.toml`; unknown tag → warning by default, escalatable to error via `[tags] strict_tags = true`; policy-referenced tags must always be in the registry (`UnknownPolicyTag` lint error). No global standard taxonomy, no hierarchy, no per-tag state machine. (§2.3.5, §7.4, §9.7, §13) |
+| O-4 | Should free-form tags have any constraint, given the language-drift risk (`bug` vs `defect` vs `issue`)? | **Grammar only.** Hard tag grammar (`[a-z][a-z0-9-]{1,31}`); no registry, no conventional-tag list, no unknown-tag diagnostic, no policy lint over tag vocabulary. Drift remediation is deferred per F-T1 (Appendix A.3) until dogfood evidence shows the grammar is insufficient. (§2.3.5) |
+| O-5 | Should the ten 1.x node types be preserved, or reduced? | **Reduced to four** by protocol effect: `comment`, `approval`, `objection`, `action`. The standalone Approval concept folds into the `approval` node. See ADR-006 / §2.5. |
+| O-6 | Should 2.0 ship a `git forum push` / `git forum fetch` and cross-clone conflict-resolution protocol? | **No.** Distribution is delegated to plain Git on `refs/forum/*`. CORE-VALUE.md non-goal §3 forbids reinventing the protocol. (§8.3) |
 
 ### A.2 Remaining for 2.0 implementation
 
@@ -1598,12 +1279,11 @@ provided the additive contracts below are honored.
 
 | ID | Capability | Current 2.0 substitute | Trigger to add | Forward-compat contract |
 |---|---|---|---|---|
-| F-W1 | Topic state machine (e.g. `planning` / `active` / `wrapping` / `done` / `abandoned`) | `archived_at` flag + derived summary | Need to express stage of work as a queryable signal beyond "active vs archived" | Introduce `topic_state` event type (additive). Topics without any `topic_state` event default to `active`. `archived` remains derived from `archived_at` and is orthogonal to status. |
-| F-W2 | Topic-level guards | None (rely on per-thread guards) | Need to enforce conditions on topic archival or future state transitions (e.g. "all children terminal before archive") | Add `[[topic_guards]]` policy section. Guards on `unrestricted` operations (archive in 2.0) are absent by default; adding rules later affects only repos that opt in. |
+| F-W1 | Topic state machine (e.g. `planning` / `active` / `wrapping` / `done` / `abandoned`) | `archived_at` flag + derived summary | Need to express stage of work as a queryable signal beyond "active vs archived" | Introduce `topic_state` event type (additive). Topics without any `topic_state` event default to `active`. `archived` remains derived from `archived_at` and is orthogonal to status. **Note: per CORE-VALUE non-goal §1, this MUST NOT introduce cross-thread workflow enforcement.** |
+| F-W2 | Topic-level guards | None (rely on per-thread guards) | Need to enforce conditions on topic archival or future state transitions (e.g. "all children terminal before archive") | Add `[[topic_guards]]` policy section. Guards on `unrestricted` operations (archive in 2.0) are absent by default; adding rules later affects only repos that opt in. **Note: same constraint as F-W1 — cross-thread coupling crosses the CORE-VALUE line.** |
 | F-W3 | Richer derived health (`green` / `yellow` / `red`) replacing the simple summary | `empty` / `has-open` / `all-terminal` | Need to surface "stuck" topics visually (e.g. unresolved objections, stale activity) | Health is a pure function of child state. Richer logic adds without breaking simpler clients; index columns gain a `topic_health` field, summary remains for backward queries. |
 | F-W4 | Topic nesting (single-parent) | Flat topics only | Need to express epic / sub-topic hierarchy | Add optional `parent` field to topics. Absent = root. Cycles rejected at write time. Existing 2.0 topics are roots by default. |
-| F-W5 | Hybrid Logical Clocks (HLC) for cross-clone event ordering | Wall-clock LWW with `(actor_id, event_oid)` tiebreak (§8.2 clock-dependency note) | Observed clock skew producing user-surprising LWW outcomes; multi-region deployments | Add HLC field to event metadata as additive serialization. Clients that don't compute HLC continue to fall back to wall-clock; clients that do prefer HLC. Both populations converge to the same effective state once events propagate. |
-| F-W6 | CRDT-based tag merging (observed-remove set) | Per-tag LWW (§8.2.4) | Observed tag flicker across clones causing confusion in dashboards / agent decisions | Replace the `facet_set`-event replay logic with OR-set semantics. Event format unchanged; merge function swap is internal. Old clients computing LWW agree with new clients computing OR-set in the absence of concurrent add/remove on the same tag. |
+| F-T1 | Tag-vocabulary discipline (registry, conventional list, deprecation, lint) | None — bare grammar only (§2.3.5) | Documented language drift across clones (`bug` vs `defect`) producing search/policy split | Re-introduce `.forum/tags.toml` with the schema described in earlier 2.0 drafts (`description`, `aliases`, `deprecated`, `replaced_by`). All write paths emit warnings only by default; strict mode is opt-in. |
 
 #### Why Level XS over Level XXS
 
@@ -1614,13 +1294,13 @@ topic as a first-class entity so all four future capabilities above remain forwa
 
 #### Trigger discipline
 
-A future minor release SHOULD add an F-Wn capability only when:
+A future minor release SHOULD add a deferred capability only when:
 
 1. Documented dogfood evidence shows the substitute is insufficient.
 2. The additive contract above is honored (no breaking change for clients on prior minor).
 3. The corresponding ADR is written and accepted.
 
-Speculative implementation of F-W1–F-W6 without these triggers is explicitly discouraged.
+Speculative implementation of F-W1–F-W4 / F-T1 without these triggers is explicitly discouraged.
 
 ## Appendix B: Examples
 
@@ -1637,8 +1317,8 @@ created thread @a3f9b2k1
   status:     open
   topic:   (standalone)
 
-$ git forum claim @a3f9 "Resize handler doesn't account for negative width on shrink"
-appended say:claim node n-5h2m9p1k
+$ git forum comment @a3f9 "Resize handler doesn't account for negative width on shrink"
+appended comment node n-5h2m9p1k
 
 $ git forum evidence add @a3f9 --kind file --ref src/tui/render.rs:42
 appended evidence n-7c4d8e3a
@@ -1665,20 +1345,23 @@ created thread @x9k2m4p7
   status:     draft
   topic:   !payment-system-rewrite (slot /1)
 
-$ git forum question @x9k2 "How do we handle ordering invariants in the queue?"
+$ git forum comment   @x9k2 "Q: How do we handle ordering invariants in the queue?"
 $ git forum objection @x9k2 "Async retries can violate at-most-once delivery"
 
 # After review:
 $ git forum resolve @x9k2 n-9b3c4d5e
-$ git forum summary  @x9k2 "Decision: queue-based dispatch with idempotency keys"
-$ git forum propose  @x9k2          # draft -> open
-$ git forum state    @x9k2 review   # open -> review
-$ git forum accept   @x9k2 --approve human/alice
+$ git forum comment @x9k2 "Decision: queue-based dispatch with idempotency keys"
+$ git forum propose @x9k2          # draft -> open
+$ git forum state   @x9k2 review   # open -> review
+$ git forum accept  @x9k2 --approve human/alice
 state: review -> done
 ```
 
-Note that `--approve human/alice` satisfies the
-`lifecycle=proposal AND tag=cross-cutting : review->done` guard from §7.1.
+`--approve human/alice` appends an `approval` node and applies the state change in a single
+event (§2.8); it satisfies the `one_human_approval` predicate of the
+`lifecycle=proposal AND tag=cross-cutting : review->done` guard from §7.1. Rhetorical
+distinctions ("Q:", "Decision:") are conveyed in the comment body, not via separate node
+types (ADR-006).
 
 ### B.3 Implementation task linked to the RFC
 
@@ -1764,34 +1447,7 @@ attached @a3f9b2 to !payment-system-rewrite (slot /4)
 
 The thread is no longer standalone; it now appears in the topic's `show` output.
 
-### B.7 Cross-clone handle conflict (explicit resolution)
-
-```text
-# Alice and Bob both created a topic with the same title "Payment rewrite"
-# locally (different opaque IDs). Alice pushed first.
-
-bob$ git push
-error: HandleConflictOnPush: handle '!payment-rewrite' is already claimed
-       by topic id x9k2m4p7 (created 2026-04-28T09:11:02Z by ai/alice).
-
-       Your topic (internal id aaaa1234, currently published as !payment-rewrite
-       on this clone only) was not pushed. Resolve by renaming:
-
-         git forum topic rename !payment-rewrite <new-handle>
-         git push
-
-bob$ git forum topic rename !payment-rewrite !payment-rewrite-bob
-renamed: handle is now !payment-rewrite-bob
-(the conflicting local name '!payment-rewrite' was never published from this clone)
-
-bob$ git push
-ok
-```
-
-No silent reassignment occurs. Bob's choice of new handle is explicit; Alice's
-`!payment-rewrite` continues to mean exactly what she expected it to mean.
-
-### B.8 Tag-driven policy customization
+### B.7 Tag-driven policy customization
 
 ```toml
 # .forum/policy.toml
@@ -1808,27 +1464,28 @@ body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
 
 [[guards]]
 on = "lifecycle=proposal AND tag=cross-cutting : review->done"
-requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
-
-[[guards]]
-on = "lifecycle=proposal : review->done"
-requires = ["at_least_one_summary"]    # all proposals need a summary; cross-cutting also need approval
+requires = ["one_human_approval", "no_open_objections"]
 ```
 
 When a thread tagged `task` is created without acceptance criteria, the operation check fires a
-warning (or error if `strict = true`).
+warning (or error if `strict = true`). The 1.x `at_least_one_summary` predicate is no longer
+shipped (ADR-006 removed `summary` as a node type); maintainers who want forced summaries
+can require a body section via `body_sections`.
 
 ## Appendix C: References
 
+- `doc/spec/CORE-VALUE.md` — upstream constraint document; bounds this specification.
 - SPEC.md v1.2 — inherited specification (unchanged sections noted by reference).
 - ADR-001 — Git OID as canonical event/node ID (unchanged).
 - ADR-002 — Kind reduction rationale.
 - ADR-003 — Topic handle scheme.
 - ADR-004 — Migration strategy.
-- ADR-005 — Cross-clone conflict resolution rationale (LWW for non-handle events, explicit
-  error for handle conflicts, atomic push, display-only short index).
+- ADR-006 — Node type reduction (collapses 10 types to 4 by protocol effect).
+- (ADR-005 — cross-clone conflict resolution — was removed when distribution was
+  delegated to plain Git; see §8.3 and CORE-VALUE.md non-goal §3.)
 - RFC-0027 — Topic meta-thread (superseded by this draft; this draft promotes the meta-thread to
-  a first-class entity rather than a thread variant, but in slimmed form).
+  a first-class entity rather than a thread variant, but in slimmed form, and explicitly
+  rejects the cross-thread workflow enforcement that motivated RFC-0027).
 - RFC-0030 — Thread ID scheme (extended: kind-named prefixes drop entirely; the `@` type
   marker becomes the display form per §6.0 and §6.2; storage is the bare 8-char token).
 - RFC-0031 — 3-letter kind prefixes (deprecated by this draft).
