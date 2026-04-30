@@ -3,10 +3,183 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use super::error::{ForumError, ForumResult};
-use super::event::{NodeType, ThreadKind};
+use super::event::{Lifecycle, NodeType, ThreadKind};
 use super::evidence::EvidenceKind;
 use super::state_machine;
 use super::thread::ThreadState;
+
+/// SPEC-2.0 §7.1 — boolean predicate over `lifecycle=...` and `tag=...`
+/// terms. Drives guard scoping (`on = "lifecycle=proposal AND tag=cross-cutting : review->done"`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum FacetPredicate {
+    /// Always matches (unscoped guard).
+    #[default]
+    Always,
+    Lifecycle(Lifecycle),
+    Tag(String),
+    And(Box<FacetPredicate>, Box<FacetPredicate>),
+    Or(Box<FacetPredicate>, Box<FacetPredicate>),
+    Not(Box<FacetPredicate>),
+}
+
+impl FacetPredicate {
+    /// Whether this predicate matches the given thread state.
+    pub fn matches(&self, state: &ThreadState) -> bool {
+        match self {
+            Self::Always => true,
+            Self::Lifecycle(l) => state.lifecycle() == *l,
+            Self::Tag(t) => state.tags.iter().any(|s| s == t),
+            Self::And(a, b) => a.matches(state) && b.matches(state),
+            Self::Or(a, b) => a.matches(state) || b.matches(state),
+            Self::Not(inner) => !inner.matches(state),
+        }
+    }
+}
+
+/// Recursive-descent parser for the facet expression grammar:
+///
+/// ```text
+/// expr     := term (OR term)*
+/// term     := factor (AND factor)*
+/// factor   := NOT factor | '(' expr ')' | predicate
+/// predicate := ('lifecycle' '=' value | 'tag' '=' value)
+/// value    := [a-z][a-z0-9-]*
+/// ```
+///
+/// Whitespace is insignificant. `AND` / `OR` / `NOT` are case-insensitive.
+fn parse_facet_predicate(input: &str) -> Result<FacetPredicate, String> {
+    let tokens = tokenize_facet(input)?;
+    let mut cursor = 0usize;
+    let pred = parse_or(&tokens, &mut cursor)?;
+    if cursor != tokens.len() {
+        return Err(format!(
+            "trailing tokens in facet predicate: {:?}",
+            &tokens[cursor..]
+        ));
+    }
+    Ok(pred)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum FacetTok {
+    Ident(String),
+    Eq,
+    LParen,
+    RParen,
+    And,
+    Or,
+    Not,
+}
+
+fn tokenize_facet(input: &str) -> Result<Vec<FacetTok>, String> {
+    let mut out = Vec::new();
+    let mut chars = input.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        match c {
+            ' ' | '\t' | '\n' => {
+                chars.next();
+            }
+            '(' => {
+                chars.next();
+                out.push(FacetTok::LParen);
+            }
+            ')' => {
+                chars.next();
+                out.push(FacetTok::RParen);
+            }
+            '=' => {
+                chars.next();
+                out.push(FacetTok::Eq);
+            }
+            c if c.is_ascii_alphanumeric() || c == '-' || c == '_' => {
+                let mut buf = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                        buf.push(c);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                let upper = buf.to_ascii_uppercase();
+                out.push(match upper.as_str() {
+                    "AND" => FacetTok::And,
+                    "OR" => FacetTok::Or,
+                    "NOT" => FacetTok::Not,
+                    _ => FacetTok::Ident(buf),
+                });
+            }
+            other => return Err(format!("unexpected character {other:?} in facet predicate")),
+        }
+    }
+    Ok(out)
+}
+
+fn parse_or(toks: &[FacetTok], i: &mut usize) -> Result<FacetPredicate, String> {
+    let mut left = parse_and(toks, i)?;
+    while matches!(toks.get(*i), Some(FacetTok::Or)) {
+        *i += 1;
+        let right = parse_and(toks, i)?;
+        left = FacetPredicate::Or(Box::new(left), Box::new(right));
+    }
+    Ok(left)
+}
+
+fn parse_and(toks: &[FacetTok], i: &mut usize) -> Result<FacetPredicate, String> {
+    let mut left = parse_factor(toks, i)?;
+    while matches!(toks.get(*i), Some(FacetTok::And)) {
+        *i += 1;
+        let right = parse_factor(toks, i)?;
+        left = FacetPredicate::And(Box::new(left), Box::new(right));
+    }
+    Ok(left)
+}
+
+fn parse_factor(toks: &[FacetTok], i: &mut usize) -> Result<FacetPredicate, String> {
+    match toks.get(*i) {
+        Some(FacetTok::Not) => {
+            *i += 1;
+            let inner = parse_factor(toks, i)?;
+            Ok(FacetPredicate::Not(Box::new(inner)))
+        }
+        Some(FacetTok::LParen) => {
+            *i += 1;
+            let expr = parse_or(toks, i)?;
+            match toks.get(*i) {
+                Some(FacetTok::RParen) => {
+                    *i += 1;
+                    Ok(expr)
+                }
+                _ => Err("missing ')' in facet predicate".into()),
+            }
+        }
+        Some(FacetTok::Ident(name)) => {
+            let key = name.clone();
+            *i += 1;
+            match toks.get(*i) {
+                Some(FacetTok::Eq) => {
+                    *i += 1;
+                }
+                _ => return Err(format!("expected '=' after {key:?} in facet predicate")),
+            }
+            let value = match toks.get(*i) {
+                Some(FacetTok::Ident(v)) => v.clone(),
+                other => return Err(format!("expected identifier after {key:?}=, got {other:?}")),
+            };
+            *i += 1;
+            match key.as_str() {
+                "lifecycle" => Lifecycle::parse(&value)
+                    .ok_or_else(|| format!("unknown lifecycle {value:?}"))
+                    .map(FacetPredicate::Lifecycle),
+                "tag" => Ok(FacetPredicate::Tag(value)),
+                other => Err(format!(
+                    "unknown facet key {other:?} (expected `lifecycle` or `tag`)"
+                )),
+            }
+        }
+        other => Err(format!("unexpected token {other:?} in facet predicate")),
+    }
+}
 
 /// A named guard rule.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -33,17 +206,22 @@ impl std::fmt::Display for GuardRule {
 
 /// A guard entry: a set of rules that must pass for a given transition.
 ///
-/// The `on` field supports an optional kind prefix: `"dec:proposed->accepted"` restricts
-/// the guard to DEC threads. Without a prefix (`"proposed->accepted"`), the guard applies
-/// to all kinds that have the transition.
+/// SPEC-2.0 §7.1: the `on` field accepts a facet expression scope plus a
+/// transition, separated by `:`. Examples:
+/// - `"review->done"` (unscoped — applies to any thread)
+/// - `"lifecycle=proposal AND tag=cross-cutting : review->done"` (scoped)
+///
+/// Legacy 1.x kind-prefixed form (`"rfc:under-review->accepted"`) is
+/// accepted at load time and auto-translated to a `Lifecycle(...)`
+/// predicate with a one-shot warning per rewrite.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct GuardEntry {
     pub on: String,
     pub requires: Vec<GuardRule>,
-    /// Parsed kind scope (None = applies to all kinds).
+    /// SPEC-2.0 §7.1 facet predicate (Always = unscoped).
     #[serde(skip)]
-    pub kind_scope: Option<ThreadKind>,
-    /// Parsed transition string ("from->to"), without the kind prefix.
+    pub predicate: FacetPredicate,
+    /// Parsed transition string ("from->to"), without the predicate.
     #[serde(skip)]
     pub transition: String,
 }
@@ -103,38 +281,60 @@ pub struct Policy {
 }
 
 impl Policy {
-    /// Load and parse policy from the given path.
+    /// Load and parse policy from the given path. Legacy `kind:`-scoped
+    /// guards auto-rewrite to `lifecycle=` predicates; the rewrites are
+    /// printed to stderr so users see the deprecation (SPEC-2.0 §10.4).
     pub fn load(path: &std::path::Path) -> ForumResult<Self> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| ForumError::Config(format!("cannot read policy.toml: {e}")))?;
         let mut policy: Self = toml::from_str(&text)
             .map_err(|e| ForumError::Config(format!("invalid policy.toml: {e}")))?;
-        policy.resolve_guard_scopes();
+        for warning in policy.resolve_guard_scopes() {
+            eprintln!("warning: {warning}");
+        }
         Ok(policy)
     }
 
-    /// Parse optional `kind:` prefix from each guard's `on` field and populate
-    /// `kind_scope` and `transition`. Normalizes 1.x state names in the
-    /// transition so guards loaded from legacy `policy.toml` line up with
-    /// the 2.0 state names produced by the unified state machine (§3.1).
-    pub fn resolve_guard_scopes(&mut self) {
+    /// Parse the predicate scope and transition from each guard's `on`
+    /// field. Normalizes 1.x state names so guards loaded from legacy
+    /// `policy.toml` line up with the 2.0 state names produced by the
+    /// unified state machine (§3.1). Legacy `kind:from->to` forms
+    /// auto-rewrite to `lifecycle=<...>` predicates with a warning.
+    pub fn resolve_guard_scopes(&mut self) -> Vec<String> {
+        let mut warnings = Vec::new();
         for guard in &mut self.guards {
-            let (kind_scope, transition) = parse_guard_on(&guard.on);
-            guard.kind_scope = kind_scope;
-            guard.transition = normalize_transition_str(&transition);
+            match parse_guard_on(&guard.on) {
+                Ok((predicate, transition, warning)) => {
+                    guard.predicate = predicate;
+                    guard.transition = normalize_transition_str(&transition);
+                    if let Some(w) = warning {
+                        warnings.push(w);
+                    }
+                }
+                Err(_) => {
+                    // Lint surfaces parse errors with file context; the
+                    // predicate falls back to Always so the transition
+                    // string still matches and `lint_policy` can report.
+                    guard.predicate = FacetPredicate::Always;
+                    guard.transition = guard
+                        .on
+                        .split_once(':')
+                        .map(|(_, t)| normalize_transition_str(t))
+                        .unwrap_or_else(|| normalize_transition_str(&guard.on));
+                }
+            }
         }
+        warnings
     }
 
-    /// Return guards that apply to the given transition string for the given thread kind.
-    ///
-    /// Both kind-scoped guards matching `kind` and unscoped (wildcard) guards
-    /// are returned. The query is normalized so callers can pass either 1.x
-    /// or 2.0 state names.
-    pub fn guards_for(&self, transition: &str, kind: ThreadKind) -> Vec<&GuardEntry> {
+    /// Return guards whose transition matches `transition` and whose
+    /// facet predicate matches `state`. The query is normalized so
+    /// callers can pass either 1.x or 2.0 state names.
+    pub fn guards_for(&self, transition: &str, state: &ThreadState) -> Vec<&GuardEntry> {
         let normalized = normalize_transition_str(transition);
         self.guards
             .iter()
-            .filter(|g| g.transition == normalized && g.kind_scope.is_none_or(|k| k == kind))
+            .filter(|g| g.transition == normalized && g.predicate.matches(state))
             .collect()
     }
 }
@@ -162,7 +362,7 @@ pub fn check_guards(
 ) -> Vec<GuardViolation> {
     let transition = format!("{from}->{to}");
     let mut violations = Vec::new();
-    for guard in policy.guards_for(&transition, state.kind) {
+    for guard in policy.guards_for(&transition, state) {
         for rule in &guard.requires {
             if let Some(v) = evaluate_rule(rule, state) {
                 violations.push(v);
@@ -299,20 +499,26 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
         .collect();
 
     for guard in &policy.guards {
-        // Parse optional kind prefix.
-        let (kind_scope, transition_part) = parse_guard_on(&guard.on);
-
-        // Check for unknown kind prefix.
-        if guard.on.contains(':') && kind_scope.is_none() {
-            let prefix = guard.on.split_once(':').map(|(p, _)| p).unwrap_or("");
-            diags.push(LintDiag {
-                level: LintLevel::Warn,
-                message: format!(
-                    "guard {:?}: unknown kind prefix {:?}; valid kinds are: issue, rfc, dec, task",
-                    guard.on, prefix,
-                ),
-            });
-        }
+        // Parse the facet predicate (and surface unknown 1.x kind prefixes
+        // / facet-syntax errors as warnings).
+        let parsed = parse_guard_on(&guard.on);
+        let (predicate, transition_part) = match parsed {
+            Ok((pred, transition, _warning)) => (pred, transition),
+            Err(msg) => {
+                diags.push(LintDiag {
+                    level: LintLevel::Warn,
+                    message: format!("guard {:?}: {msg}", guard.on),
+                });
+                // Try to keep going so we still validate the transition
+                // string when the scope failed.
+                let transition = guard
+                    .on
+                    .split_once(':')
+                    .map(|(_, t)| t)
+                    .unwrap_or(&guard.on);
+                (FacetPredicate::Always, transition.to_string())
+            }
+        };
 
         if !transition_part.contains("->") {
             diags.push(LintDiag {
@@ -325,8 +531,8 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
             continue;
         }
 
-        let parts: Vec<&str> = transition_part.splitn(2, "->").collect();
-        let (from, to) = (parts[0], parts[1]);
+        let parts: Vec<&str> = transition_part.trim().splitn(2, "->").collect();
+        let (from, to) = (parts[0].trim(), parts[1].trim());
 
         // Check for undefined states.
         if !all_states.contains(from) {
@@ -352,25 +558,30 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
             });
         }
 
-        // For kind-scoped guards, validate the transition against the specified kind.
-        if let Some(scoped_kind) = kind_scope {
+        // Lifecycle-pinned predicates: validate transition reachability.
+        if let FacetPredicate::Lifecycle(lifecycle) = &predicate {
             if all_states.contains(from)
                 && all_states.contains(to)
-                && !state_machine::is_valid_transition(scoped_kind.lifecycle(), from, to)
+                && !state_machine::is_valid_transition(*lifecycle, from, to)
             {
                 diags.push(LintDiag {
                     level: LintLevel::Warn,
                     message: format!(
-                        "guard {:?}: not a valid transition for {}",
+                        "guard {:?}: not a valid transition for {lifecycle}",
                         guard.on,
-                        kind_name(&scoped_kind),
                     ),
                 });
             }
-            continue; // scoped guards don't need multi-kind check
+            continue;
+        }
+        // Compound or tag-only predicates: skip the multi-kind check —
+        // the predicate itself disambiguates.
+        if !matches!(predicate, FacetPredicate::Always) {
+            continue;
         }
 
-        // Check which kinds this transition applies to and note if multiple.
+        // Unscoped guard: emit a Note when the transition applies to
+        // multiple kinds (heuristic over kind→lifecycle).
         let matching_kinds: Vec<&str> = all_kinds
             .iter()
             .filter(|k| state_machine::is_valid_transition(k.lifecycle(), from, to))
@@ -560,32 +771,62 @@ fn lint_allow_list_coverage(
     }
 }
 
-/// Parse the `on` field of a guard entry into an optional kind scope and the transition string.
+/// Parse the `on` field of a guard into a (predicate, transition, optional
+/// warning). Formats accepted (SPEC-2.0 §7.1 + 1.x compat):
 ///
-/// Formats:
-/// - `"from->to"` → `(None, "from->to")`
-/// - `"dec:from->to"` → `(Some(ThreadKind::Dec), "from->to")`
-/// - Invalid kind prefix → `(None, original)` (lint will catch it)
-fn parse_guard_on(on: &str) -> (Option<ThreadKind>, String) {
-    if let Some((prefix, rest)) = on.split_once(':') {
-        if let Some(kind) = parse_kind(prefix) {
-            return (Some(kind), rest.to_string());
+/// - `"from->to"` → unscoped (predicate = Always).
+/// - `"<facet-expr> : from->to"` → scoped by facet predicate.
+/// - `"<kind>:from->to"` (1.x) → auto-translated to
+///   `lifecycle=<kind.lifecycle()>`, with a deprecation warning.
+///
+/// Returns `Err` only when a `<facet-expr>` portion is present but
+/// fails to parse.
+fn parse_guard_on(on: &str) -> Result<(FacetPredicate, String, Option<String>), String> {
+    let Some((scope, transition)) = on.split_once(':') else {
+        return Ok((FacetPredicate::Always, on.to_string(), None));
+    };
+    let scope_trimmed = scope.trim();
+    // 1.x compat: a bare kind name as the prefix translates to a
+    // `lifecycle=<...>` predicate. Detected by being a single alphanum
+    // word with no `=` and matching one of the four legacy kinds.
+    if !scope_trimmed.contains('=') && !scope_trimmed.contains(' ') && !scope_trimmed.contains('(')
+    {
+        if let Some(kind) = parse_kind(scope_trimmed) {
+            let lifecycle = kind.lifecycle();
+            let warning = format!(
+                "guard {:?}: legacy kind-prefixed scope `{scope_trimmed}:` rewritten to \
+                 `lifecycle={lifecycle}` (SPEC-2.0 §7.1 / §10.4)",
+                on,
+            );
+            return Ok((
+                FacetPredicate::Lifecycle(lifecycle),
+                transition.to_string(),
+                Some(warning),
+            ));
         }
+        // Unrecognized bare prefix: surface as parse error so lint
+        // reports it (matches pre-2.0 behavior).
+        return Err(format!("unknown kind prefix {scope_trimmed:?}"));
     }
-    (None, on.to_string())
+    let predicate = parse_facet_predicate(scope_trimmed)?;
+    Ok((predicate, transition.to_string(), None))
 }
 
 /// Normalize the `from->to` portion of a guard transition string to 2.0
-/// state names (per `state_machine::normalize_state_name`).
+/// state names (per `state_machine::normalize_state_name`). Trims
+/// surrounding whitespace so guards written with spaces around the `:`
+/// separator (`lifecycle=X : from->to`) match query strings produced by
+/// the state machine.
 fn normalize_transition_str(transition: &str) -> String {
-    if let Some((from, to)) = transition.split_once("->") {
+    let trimmed = transition.trim();
+    if let Some((from, to)) = trimmed.split_once("->") {
         format!(
             "{}->{}",
-            state_machine::normalize_state_name(from),
-            state_machine::normalize_state_name(to)
+            state_machine::normalize_state_name(from.trim()),
+            state_machine::normalize_state_name(to.trim()),
         )
     } else {
-        transition.to_string()
+        trimmed.to_string()
     }
 }
 
@@ -711,8 +952,15 @@ mod tests {
             guards,
             ..Default::default()
         };
-        p.resolve_guard_scopes();
+        let _ = p.resolve_guard_scopes();
         p
+    }
+
+    fn state_for(kind: ThreadKind) -> ThreadState {
+        ThreadState {
+            kind,
+            ..Default::default()
+        }
     }
 
     fn minimal_policy() -> Policy {
@@ -733,12 +981,12 @@ mod tests {
         let policy = minimal_policy();
         assert_eq!(
             policy
-                .guards_for("under-review->accepted", ThreadKind::Rfc)
+                .guards_for("under-review->accepted", &state_for(ThreadKind::Rfc))
                 .len(),
             1
         );
         assert!(policy
-            .guards_for("draft->under-review", ThreadKind::Rfc)
+            .guards_for("draft->under-review", &state_for(ThreadKind::Rfc))
             .is_empty());
     }
 
@@ -1024,25 +1272,35 @@ mod tests {
         );
     }
 
-    // ---- kind-scoped guard keys (ISSUE-0097) ----
+    // ---- legacy kind-scoped guard keys auto-translate to lifecycle ----
 
     #[test]
-    fn guards_for_scoped_matches_only_specified_kind() {
+    fn legacy_kind_scoped_guard_matches_lifecycle_peers() {
+        // SPEC-2.0 §7.1 / §10.4: `issue:` rewrites to `lifecycle=execution`,
+        // which matches both Issue and Task threads (both are execution).
+        // The `tag=bug` predicate is the canonical way to scope to bug-style
+        // execution threads only.
         let policy = make_policy(vec![GuardEntry {
             on: "issue:open->closed".into(),
             requires: vec![GuardRule::NoOpenActions],
             ..Default::default()
         }]);
         assert_eq!(
-            policy.guards_for("open->closed", ThreadKind::Issue).len(),
+            policy
+                .guards_for("open->closed", &state_for(ThreadKind::Issue))
+                .len(),
             1
         );
-        assert!(
+        assert_eq!(
             policy
-                .guards_for("open->closed", ThreadKind::Task)
-                .is_empty(),
-            "scoped guard should not match other kinds"
+                .guards_for("open->closed", &state_for(ThreadKind::Task))
+                .len(),
+            1
         );
+        // Different lifecycle (proposal): not matched.
+        assert!(policy
+            .guards_for("open->closed", &state_for(ThreadKind::Rfc))
+            .is_empty());
     }
 
     #[test]
@@ -1053,10 +1311,17 @@ mod tests {
             ..Default::default()
         }]);
         assert_eq!(
-            policy.guards_for("open->closed", ThreadKind::Issue).len(),
+            policy
+                .guards_for("open->closed", &state_for(ThreadKind::Issue))
+                .len(),
             1
         );
-        assert_eq!(policy.guards_for("open->closed", ThreadKind::Task).len(), 1);
+        assert_eq!(
+            policy
+                .guards_for("open->closed", &state_for(ThreadKind::Task))
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -1068,18 +1333,26 @@ mod tests {
                 ..Default::default()
             },
             GuardEntry {
-                on: "issue:open->closed".into(),
+                on: "lifecycle=execution AND tag=bug : open->closed".into(),
                 requires: vec![GuardRule::HasCommitEvidence],
                 ..Default::default()
             },
         ]);
-        // Issue gets both guards (union)
+        // Issue with `bug` tag: both guards apply.
+        let mut bug_state = state_for(ThreadKind::Issue);
+        bug_state.tags = vec!["bug".into()];
         assert_eq!(
-            policy.guards_for("open->closed", ThreadKind::Issue).len(),
-            2
+            policy.guards_for("open->closed", &bug_state).len(),
+            2,
+            "tagged execution thread gets both guards"
         );
-        // Task gets only the unscoped guard
-        assert_eq!(policy.guards_for("open->closed", ThreadKind::Task).len(), 1);
+        // Issue without tag: only the unscoped guard applies.
+        assert_eq!(
+            policy
+                .guards_for("open->closed", &state_for(ThreadKind::Issue))
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -1114,10 +1387,12 @@ mod tests {
     }
 
     #[test]
-    fn lint_scoped_guard_invalid_transition_for_kind() {
+    fn lint_scoped_guard_invalid_transition_for_lifecycle() {
         // DEC's lifecycle (record) does not allow `review`, so review->done
         // (or its 1.x equivalent under-review->accepted) is not reachable
-        // for DEC.
+        // for the record lifecycle. The post-rewrite warning names the
+        // lifecycle (the predicate the guard now binds to), not the
+        // legacy kind.
         let policy = make_policy(vec![GuardEntry {
             on: "dec:under-review->accepted".into(),
             requires: vec![],
@@ -1126,8 +1401,8 @@ mod tests {
         let diags = lint_policy(&policy);
         assert!(
             diags.iter().any(|d| d.level == LintLevel::Warn
-                && d.message.contains("not a valid transition for dec")),
-            "should warn about invalid transition for kind: {diags:?}"
+                && d.message.contains("not a valid transition for record")),
+            "should warn about invalid transition for record lifecycle: {diags:?}"
         );
     }
 
@@ -1150,22 +1425,117 @@ mod tests {
 
     #[test]
     fn parse_guard_on_unscoped() {
-        let (kind, transition) = parse_guard_on("open->closed");
-        assert!(kind.is_none());
+        let (predicate, transition, warning) = parse_guard_on("open->closed").unwrap();
+        assert_eq!(predicate, FacetPredicate::Always);
         assert_eq!(transition, "open->closed");
+        assert!(warning.is_none());
     }
 
     #[test]
-    fn parse_guard_on_scoped() {
-        let (kind, transition) = parse_guard_on("dec:proposed->accepted");
-        assert_eq!(kind, Some(ThreadKind::Dec));
+    fn parse_guard_on_legacy_kind_rewrites_with_warning() {
+        let (predicate, transition, warning) = parse_guard_on("dec:proposed->accepted").unwrap();
+        assert_eq!(predicate, FacetPredicate::Lifecycle(Lifecycle::Record));
         assert_eq!(transition, "proposed->accepted");
+        let w = warning.expect("legacy kind prefix should warn");
+        assert!(w.contains("rewritten"));
+        assert!(w.contains("lifecycle=record"));
     }
 
     #[test]
-    fn parse_guard_on_unknown_kind_prefix() {
-        let (kind, transition) = parse_guard_on("bogus:open->closed");
-        assert!(kind.is_none());
-        assert_eq!(transition, "bogus:open->closed");
+    fn parse_guard_on_unknown_kind_prefix_errors() {
+        // Bare unknown prefix is rejected so lint can surface it.
+        assert!(parse_guard_on("bogus:open->closed").is_err());
+    }
+
+    // ---- SPEC-2.0 §7.1 facet expression ----
+
+    #[test]
+    fn parse_facet_lifecycle_predicate() {
+        let pred = parse_facet_predicate("lifecycle=proposal").unwrap();
+        assert_eq!(pred, FacetPredicate::Lifecycle(Lifecycle::Proposal));
+    }
+
+    #[test]
+    fn parse_facet_tag_predicate() {
+        let pred = parse_facet_predicate("tag=cross-cutting").unwrap();
+        assert_eq!(pred, FacetPredicate::Tag("cross-cutting".into()));
+    }
+
+    #[test]
+    fn parse_facet_and_predicate() {
+        let pred = parse_facet_predicate("lifecycle=proposal AND tag=cross-cutting").unwrap();
+        let expected = FacetPredicate::And(
+            Box::new(FacetPredicate::Lifecycle(Lifecycle::Proposal)),
+            Box::new(FacetPredicate::Tag("cross-cutting".into())),
+        );
+        assert_eq!(pred, expected);
+    }
+
+    #[test]
+    fn parse_facet_or_and_not_with_parens() {
+        let pred =
+            parse_facet_predicate("NOT tag=bug OR (lifecycle=record AND tag=archive)").unwrap();
+        let expected = FacetPredicate::Or(
+            Box::new(FacetPredicate::Not(Box::new(FacetPredicate::Tag(
+                "bug".into(),
+            )))),
+            Box::new(FacetPredicate::And(
+                Box::new(FacetPredicate::Lifecycle(Lifecycle::Record)),
+                Box::new(FacetPredicate::Tag("archive".into())),
+            )),
+        );
+        assert_eq!(pred, expected);
+    }
+
+    #[test]
+    fn parse_facet_invalid_lifecycle_value() {
+        assert!(parse_facet_predicate("lifecycle=bogus").is_err());
+    }
+
+    #[test]
+    fn parse_facet_unknown_key() {
+        assert!(parse_facet_predicate("kind=rfc").is_err());
+    }
+
+    #[test]
+    fn facet_predicate_matches_threadstate() {
+        let mut state = state_for(ThreadKind::Rfc);
+        state.tags = vec!["cross-cutting".into()];
+        let pred = parse_facet_predicate("lifecycle=proposal AND tag=cross-cutting").unwrap();
+        assert!(pred.matches(&state));
+
+        let mut other = state_for(ThreadKind::Issue);
+        other.tags = vec!["cross-cutting".into()];
+        assert!(
+            !pred.matches(&other),
+            "execution lifecycle should not match"
+        );
+
+        let mut tagless = state_for(ThreadKind::Rfc);
+        tagless.tags = vec![];
+        assert!(!pred.matches(&tagless), "missing tag should not match");
+    }
+
+    #[test]
+    fn guards_for_facet_scoped_filters_by_predicate() {
+        let policy = make_policy(vec![GuardEntry {
+            on: "lifecycle=proposal AND tag=cross-cutting : review->done".into(),
+            requires: vec![GuardRule::OneHumanApproval],
+            ..Default::default()
+        }]);
+
+        let mut rfc_x = state_for(ThreadKind::Rfc);
+        rfc_x.tags = vec!["cross-cutting".into()];
+        assert_eq!(policy.guards_for("review->done", &rfc_x).len(), 1);
+
+        let rfc_no_tag = state_for(ThreadKind::Rfc);
+        assert!(policy.guards_for("review->done", &rfc_no_tag).is_empty());
+
+        let mut task = state_for(ThreadKind::Task);
+        task.tags = vec!["cross-cutting".into()];
+        assert!(
+            policy.guards_for("review->done", &task).is_empty(),
+            "execution lifecycle should not match"
+        );
     }
 }

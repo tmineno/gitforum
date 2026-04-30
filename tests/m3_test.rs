@@ -1052,10 +1052,11 @@ fn policy_loads_from_toml_file() {
     let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap();
     // Default policy has one guard entry for under-review->accepted
     assert!(!policy.guards.is_empty());
-    let guard = policy.guards_for(
-        "under-review->accepted",
-        git_forum::internal::event::ThreadKind::Rfc,
-    );
+    let rfc_state = thread::ThreadState {
+        kind: git_forum::internal::event::ThreadKind::Rfc,
+        ..Default::default()
+    };
+    let guard = policy.guards_for("under-review->accepted", &rfc_state);
     assert!(!guard.is_empty());
 }
 
@@ -1100,12 +1101,25 @@ fn scoped_guard_only_fires_for_specified_kind() {
     )
     .unwrap();
 
-    // Policy: issue:open->closed requires has_commit_evidence, but NOT for task
+    // Policy: only `bug`-tagged execution threads need commit evidence.
+    // SPEC-2.0 §7.1: facet predicate scopes guards by tag, not by kind.
     let policy = make_policy(vec![GuardEntry {
-        on: "issue:open->closed".into(),
+        on: "lifecycle=execution AND tag=bug : open->closed".into(),
         requires: vec![GuardRule::HasCommitEvidence],
         ..Default::default()
     }]);
+
+    // Tag the issue thread as a bug so the predicate matches.
+    let bug_facet = git_forum::internal::write_ops::write_facet_set(
+        &git,
+        &issue_id,
+        None,
+        &["bug".to_string()],
+        &[],
+        "human/alice",
+        &fixed_clock(),
+    );
+    bug_facet.unwrap();
 
     // Issue close should be blocked (no commit evidence)
     let result = state_change::change_state(
@@ -1120,7 +1134,7 @@ fn scoped_guard_only_fires_for_specified_kind() {
     );
     assert!(
         result.is_err(),
-        "issue close should be blocked by scoped guard"
+        "tagged-bug issue close should be blocked by tag-scoped guard"
     );
     assert!(
         result
@@ -1130,7 +1144,7 @@ fn scoped_guard_only_fires_for_specified_kind() {
         "error should mention the guard rule"
     );
 
-    // Task close should succeed (scoped guard doesn't apply)
+    // Task close (no `bug` tag) should succeed.
     let result = state_change::change_state(
         &git,
         &task_id,
@@ -1143,7 +1157,7 @@ fn scoped_guard_only_fires_for_specified_kind() {
     );
     assert!(
         result.is_ok(),
-        "task close should not be blocked by issue-scoped guard"
+        "untagged task close should not be blocked by bug-scoped guard"
     );
 }
 

@@ -80,6 +80,34 @@ fn say_node_core(
     super::event::write_event(git, &ev)
 }
 
+/// Write a `facet_set` event mutating a thread's lifecycle / tag facets.
+///
+/// SPEC-2.0 §2.4.1 / §7.3: every parameter is optional. `lifecycle` is
+/// only honored on the thread's first `facet_set` event (subsequent
+/// changes are write-rejected in B8). Empty payloads are valid no-ops.
+#[allow(clippy::too_many_arguments)]
+pub fn write_facet_set(
+    git: &GitOps,
+    thread_id: &str,
+    lifecycle: Option<&str>,
+    tags_add: &[String],
+    tags_remove: &[String],
+    actor: &str,
+    clock: &dyn Clock,
+) -> ForumResult<String> {
+    let mut ev = Event::base(thread_id, EventType::FacetSet, actor, clock);
+    if let Some(lc) = lifecycle {
+        ev = ev.with_lifecycle(lc);
+    }
+    if !tags_add.is_empty() {
+        ev = ev.with_tags_add(tags_add.to_vec());
+    }
+    if !tags_remove.is_empty() {
+        ev = ev.with_tags_remove(tags_remove.to_vec());
+    }
+    super::event::write_event(git, &ev)
+}
+
 /// Revise the body of a thread, optionally incorporating referenced nodes.
 ///
 /// Preconditions: thread_id exists; all incorporated node IDs must exist in the thread.
