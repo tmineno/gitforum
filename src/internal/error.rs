@@ -15,6 +15,19 @@ pub enum ForumError {
     #[error("state machine error: {0}")]
     StateMachine(String),
 
+    /// SPEC-2.0 §13: state transition not allowed for thread's lifecycle.
+    #[error("lifecycle state mismatch: {0}")]
+    LifecycleStateMismatch(String),
+
+    /// SPEC-2.0 §13: facet mutation in a state that doesn't allow it
+    /// (e.g. setting `lifecycle` after the first `facet_set`).
+    #[error("facet transition disallowed: {0}")]
+    FacetTransitionDisallowed(String),
+
+    /// SPEC-2.0 §13 / §2.3.5: tag string violates the grammar.
+    #[error("invalid tag syntax: {0}")]
+    InvalidTagSyntax(String),
+
     #[error("git error: {0}")]
     Git(String),
 

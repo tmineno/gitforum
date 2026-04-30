@@ -36,6 +36,7 @@ pub fn prepare_state_change(
     let from = state.status.clone();
 
     let lifecycle = state.lifecycle();
+    let normalized_target = state_machine::normalize_state_name(new_state);
     if !state_machine::is_valid_transition(lifecycle, &from, new_state) {
         let valid = state_machine::valid_targets(lifecycle, &from);
         let valid_msg = if valid.is_empty() {
@@ -43,6 +44,17 @@ pub fn prepare_state_change(
         } else {
             valid.join(", ")
         };
+        // SPEC-2.0 §13: distinguish "destination state not in lifecycle's
+        // allowed set" (LifecycleStateMismatch) from a plain unknown
+        // transition. Both fail closed; the more specific error helps
+        // users understand the lifecycle constraint.
+        if !lifecycle.allows_state(normalized_target) {
+            return Err(ForumError::LifecycleStateMismatch(format!(
+                "{lifecycle} threads cannot transition to '{new_state}'; \
+                 allowed states are {:?}",
+                lifecycle.allowed_states(),
+            )));
+        }
         return Err(ForumError::StateMachine(format!(
             "transition {from}->{new_state} is not valid for {lifecycle}; valid transitions from '{from}': [{valid_msg}]",
         )));

@@ -255,7 +255,16 @@ fn dec_proposed_to_pending_is_invalid() {
         &empty_policy(),
         state_change::StateChangeOptions::default(),
     );
-    assert!(result.is_err());
+    let err = result.unwrap_err();
+    // SPEC-2.0 §13: destination state not in record lifecycle's allowed
+    // set is reported as LifecycleStateMismatch.
+    assert!(
+        matches!(
+            err,
+            git_forum::internal::error::ForumError::LifecycleStateMismatch(_),
+        ),
+        "expected LifecycleStateMismatch, got {err:?}",
+    );
 }
 
 #[test]

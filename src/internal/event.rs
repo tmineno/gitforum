@@ -111,6 +111,47 @@ pub enum Lifecycle {
     Record,
 }
 
+/// SPEC-2.0 §2.3.5 tag grammar:
+/// - ASCII lowercase only, `[a-z0-9-]`
+/// - Starts with a letter `[a-z]`
+/// - Length 2..=32
+/// - Not a reserved literal (`all`, `none`, `any`, `untagged`)
+pub fn validate_tag(tag: &str) -> Result<(), String> {
+    const RESERVED: &[&str] = &["all", "none", "any", "untagged"];
+    if tag.len() < 2 {
+        return Err(format!(
+            "{tag:?}: tag length must be 2–32 characters (got {})",
+            tag.len()
+        ));
+    }
+    if tag.len() > 32 {
+        return Err(format!(
+            "{tag:?}: tag length must be 2–32 characters (got {})",
+            tag.len()
+        ));
+    }
+    let first = tag.chars().next().expect("non-empty after length check");
+    if !first.is_ascii_lowercase() {
+        return Err(format!(
+            "{tag:?}: tag must start with a lowercase letter `[a-z]`"
+        ));
+    }
+    for c in tag.chars() {
+        if !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+            return Err(format!(
+                "{tag:?}: invalid character {c:?} (allowed: `[a-z0-9-]`)"
+            ));
+        }
+    }
+    if RESERVED.contains(&tag) {
+        return Err(format!(
+            "{tag:?} is a reserved filter literal (one of {:?})",
+            RESERVED
+        ));
+    }
+    Ok(())
+}
+
 impl Lifecycle {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -768,6 +809,31 @@ mod tests {
         assert!(parsed.lifecycle.is_none());
         assert!(parsed.tags_add.is_empty());
         assert!(parsed.tags_remove.is_empty());
+    }
+
+    #[test]
+    fn validate_tag_grammar() {
+        // §2.3.5: ASCII lowercase, [a-z][a-z0-9-]{1,31}, not reserved.
+        assert!(validate_tag("bug").is_ok());
+        assert!(validate_tag("cross-cutting").is_ok());
+        assert!(validate_tag("a1").is_ok());
+        // Too short.
+        assert!(validate_tag("a").is_err());
+        // Too long.
+        assert!(validate_tag(&"a".repeat(33)).is_err());
+        // Bad first char.
+        assert!(validate_tag("1bug").is_err());
+        // Uppercase.
+        assert!(validate_tag("Bug").is_err());
+        // Disallowed characters.
+        assert!(validate_tag("bug fix").is_err());
+        assert!(validate_tag("bug/fix").is_err());
+        assert!(validate_tag("bug@fix").is_err());
+        // Reserved literals.
+        assert!(validate_tag("all").is_err());
+        assert!(validate_tag("none").is_err());
+        assert!(validate_tag("any").is_err());
+        assert!(validate_tag("untagged").is_err());
     }
 
     #[test]

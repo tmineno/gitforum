@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 
 use super::clock::Clock;
-use super::error::ForumResult;
-use super::event::{Event, EventType, NodeType};
+use super::error::{ForumError, ForumResult};
+use super::event::{self, Event, EventType, NodeType};
 use super::git_ops::GitOps;
 use super::thread;
 
@@ -82,9 +82,13 @@ fn say_node_core(
 
 /// Write a `facet_set` event mutating a thread's lifecycle / tag facets.
 ///
-/// SPEC-2.0 §2.4.1 / §7.3: every parameter is optional. `lifecycle` is
-/// only honored on the thread's first `facet_set` event (subsequent
-/// changes are write-rejected in B8). Empty payloads are valid no-ops.
+/// SPEC-2.0 §2.4.1 / §7.3:
+/// - `lifecycle` is only honored on the thread's first `facet_set`
+///   event. A subsequent `facet_set` carrying `lifecycle` is rejected
+///   with `FacetTransitionDisallowed`.
+/// - Tag values must satisfy §2.3.5 grammar; violations raise
+///   `InvalidTagSyntax`.
+/// - Empty payloads are valid no-ops.
 #[allow(clippy::too_many_arguments)]
 pub fn write_facet_set(
     git: &GitOps,
@@ -95,6 +99,26 @@ pub fn write_facet_set(
     actor: &str,
     clock: &dyn Clock,
 ) -> ForumResult<String> {
+    // §2.3.5: tag grammar enforced at write time.
+    for tag in tags_add.iter().chain(tags_remove.iter()) {
+        event::validate_tag(tag).map_err(ForumError::InvalidTagSyntax)?;
+    }
+    // §7.3 lifecycle is immutable once set: replay the existing chain
+    // and reject any new `facet_set` that carries `lifecycle` if one
+    // was already established.
+    if let Some(new_lifecycle) = lifecycle {
+        let state = thread::replay_thread(git, thread_id)?;
+        if let Some(existing) = &state.lifecycle {
+            if existing != new_lifecycle {
+                return Err(ForumError::FacetTransitionDisallowed(format!(
+                    "lifecycle is immutable after creation: thread is `{existing}`, \
+                     refusing to set to `{new_lifecycle}` (SPEC-2.0 §7.3)"
+                )));
+            }
+            // Same value resubmission — silently ignore, matches replay
+            // first-wins semantics (§2.4.1).
+        }
+    }
     let mut ev = Event::base(thread_id, EventType::FacetSet, actor, clock);
     if let Some(lc) = lifecycle {
         ev = ev.with_lifecycle(lc);
@@ -105,7 +129,7 @@ pub fn write_facet_set(
     if !tags_remove.is_empty() {
         ev = ev.with_tags_remove(tags_remove.to_vec());
     }
-    super::event::write_event(git, &ev)
+    event::write_event(git, &ev)
 }
 
 /// Revise the body of a thread, optionally incorporating referenced nodes.
@@ -238,4 +262,143 @@ pub fn reopen_node(
     clock: &dyn Clock,
 ) -> ForumResult<()> {
     node_lifecycle(git, thread_id, node_id, actor, clock, EventType::Reopen)
+}
+
+#[cfg(test)]
+mod facet_set_tests {
+    use super::*;
+    use chrono::TimeZone;
+    use chrono::Utc;
+
+    fn fixed_clock() -> super::super::clock::FixedClock {
+        super::super::clock::FixedClock {
+            instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        }
+    }
+
+    fn setup() -> (
+        crate::internal::config::RepoPaths,
+        super::super::git_ops::GitOps,
+        tempfile::TempDir,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(dir.path())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap();
+        let paths = crate::internal::config::RepoPaths::from_repo_root(dir.path());
+        crate::internal::init::init_forum(&paths).unwrap();
+        let git = super::super::git_ops::GitOps::new(dir.path().to_path_buf());
+        (paths, git, dir)
+    }
+
+    fn make_rfc(git: &super::super::git_ops::GitOps) -> String {
+        crate::internal::create::create_thread(
+            git,
+            super::super::event::ThreadKind::Rfc,
+            "Test",
+            None,
+            "human/alice",
+            &fixed_clock(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn write_facet_set_rejects_invalid_tag_syntax() {
+        let (_paths, git, _dir) = setup();
+        let id = make_rfc(&git);
+        // Uppercase character — §2.3.5 violation.
+        let err = write_facet_set(
+            &git,
+            &id,
+            None,
+            &["BadTag".into()],
+            &[],
+            "human/alice",
+            &fixed_clock(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ForumError::InvalidTagSyntax(_)),
+            "expected InvalidTagSyntax, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn write_facet_set_rejects_reserved_tag() {
+        let (_paths, git, _dir) = setup();
+        let id = make_rfc(&git);
+        let err = write_facet_set(
+            &git,
+            &id,
+            None,
+            &["untagged".into()],
+            &[],
+            "human/alice",
+            &fixed_clock(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ForumError::InvalidTagSyntax(_)));
+    }
+
+    #[test]
+    fn write_facet_set_rejects_lifecycle_mutation() {
+        let (_paths, git, _dir) = setup();
+        let id = make_rfc(&git);
+        write_facet_set(
+            &git,
+            &id,
+            Some("proposal"),
+            &[],
+            &[],
+            "human/alice",
+            &fixed_clock(),
+        )
+        .unwrap();
+        let err = write_facet_set(
+            &git,
+            &id,
+            Some("execution"),
+            &[],
+            &[],
+            "human/alice",
+            &fixed_clock(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ForumError::FacetTransitionDisallowed(_)),
+            "expected FacetTransitionDisallowed, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn write_facet_set_allows_repeated_same_lifecycle() {
+        let (_paths, git, _dir) = setup();
+        let id = make_rfc(&git);
+        write_facet_set(
+            &git,
+            &id,
+            Some("proposal"),
+            &[],
+            &[],
+            "human/alice",
+            &fixed_clock(),
+        )
+        .unwrap();
+        // Re-submitting the same lifecycle is a no-op (§2.4.1 first-wins).
+        write_facet_set(
+            &git,
+            &id,
+            Some("proposal"),
+            &[],
+            &[],
+            "human/alice",
+            &fixed_clock(),
+        )
+        .unwrap();
+    }
 }
