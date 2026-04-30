@@ -50,6 +50,8 @@ fn question_command_creates_question_node() {
     let git = GitOps::new(repo.path().to_path_buf());
     let state = thread::replay_thread(&git, &rfc_id).unwrap();
     assert_eq!(state.nodes.len(), 1);
-    assert_eq!(state.nodes[0].node_type, NodeType::Question);
+    // SPEC-2.0 §2.5: `question` is a deprecated alias for `comment`.
+    assert_eq!(state.nodes[0].node_type, NodeType::Comment);
+    assert_eq!(state.nodes[0].legacy_subtype.as_deref(), Some("question"));
     assert_eq!(state.nodes[0].body, "What compatibility risks remain?");
 }

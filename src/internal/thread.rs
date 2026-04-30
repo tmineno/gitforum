@@ -77,10 +77,16 @@ impl ThreadState {
     }
 
     /// Most recent non-retracted summary node, if any.
+    ///
+    /// 2.0: matches both raw 1.x `Summary` nodes (legacy reads) and canonical
+    /// `Comment` nodes whose `legacy_subtype = "summary"` (native 2.0 writes
+    /// from `git forum summary` and migrated 1.x events).
     pub fn latest_summary(&self) -> Option<&Node> {
-        self.nodes
-            .iter()
-            .rfind(|n| n.node_type == NodeType::Summary && !n.retracted)
+        self.nodes.iter().rfind(|n| {
+            !n.retracted
+                && (n.node_type == NodeType::Summary
+                    || n.legacy_subtype.as_deref() == Some("summary"))
+        })
     }
 }
 
@@ -152,6 +158,7 @@ fn apply_event(state: &mut ThreadState, event: &Event) -> ForumResult<()> {
                     retracted: false,
                     incorporated: false,
                     reply_to: event.reply_to.clone(),
+                    legacy_subtype: event.legacy_subtype.clone(),
                 });
             }
         }

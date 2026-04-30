@@ -64,10 +64,16 @@ fn say_node_core(
     reply_to: Option<&str>,
     created_at: Option<DateTime<Utc>>,
 ) -> ForumResult<String> {
+    // SPEC-2.0 §2.5 / §9.3 / ADR-006: write the canonical node_type and
+    // preserve the user-stated rhetorical label in legacy_subtype.
+    let legacy_subtype = node_type.legacy_subtype_label();
     let mut ev = Event::base(thread_id, EventType::Say, actor, clock)
         .with_body(body)
-        .with_node_type(node_type)
+        .with_node_type(node_type.canonical())
         .with_reply_to(reply_to);
+    if let Some(label) = legacy_subtype {
+        ev = ev.with_legacy_subtype(label);
+    }
     if let Some(ts) = created_at {
         ev = ev.with_created_at(ts);
     }
@@ -140,10 +146,16 @@ pub fn retype_node(
     actor: &str,
     clock: &dyn Clock,
 ) -> ForumResult<()> {
-    let ev = Event::base(thread_id, EventType::Retype, actor, clock)
+    // SPEC-2.0 §2.5: persist the canonical type; preserve the user's stated
+    // rhetorical label as legacy_subtype.
+    let legacy_subtype = new_type.legacy_subtype_label();
+    let mut ev = Event::base(thread_id, EventType::Retype, actor, clock)
         .with_target_node_id(node_id)
-        .with_node_type(new_type)
+        .with_node_type(new_type.canonical())
         .with_old_node_type(old_type);
+    if let Some(label) = legacy_subtype {
+        ev = ev.with_legacy_subtype(label);
+    }
     super::event::write_event(git, &ev)?;
     Ok(())
 }

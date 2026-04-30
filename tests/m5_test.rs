@@ -168,7 +168,8 @@ fn search_finds_by_current_node_body_and_reports_hit() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].thread.id, thread_id);
     assert_eq!(results[0].node_hits.len(), 1);
-    assert_eq!(results[0].node_hits[0].node_type, "question");
+    // SPEC-2.0 §2.5: `question` is canonicalized to `comment` on write.
+    assert_eq!(results[0].node_hits[0].node_type, "comment");
     assert!(results[0].node_hits[0].body.contains("migration plan"));
 }
 

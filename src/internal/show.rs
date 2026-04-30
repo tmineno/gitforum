@@ -1263,10 +1263,7 @@ mod tests {
                 body: "What is this?".into(),
                 actor: "human/alice".into(),
                 created_at: t,
-                resolved: false,
-                retracted: false,
-                incorporated: false,
-                reply_to: None,
+                ..Node::default()
             },
             links: vec![crate::internal::thread::ThreadLink {
                 target_thread_id: "ISSUE-0001".into(),

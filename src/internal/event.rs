@@ -120,13 +120,14 @@ impl std::fmt::Display for EventType {
 /// (`Evidence`) remain on this enum for backward-compatible reads of legacy
 /// repos; new write paths SHOULD use the canonical four. The `canonical()`
 /// method maps any variant to its 2.0 equivalent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeType {
     // -- 2.0 canonical variants (protocol-effect cut) --
     /// 2.0 canonical: body-prose contribution. No protocol effect.
     /// Replaces 1.x `Claim` / `Question` / `Summary` / `Risk` / `Review` /
     /// `Alternative` / `Assumption`.
+    #[default]
     Comment,
     /// 2.0 canonical: positive sign-off. Counts toward state-transition
     /// guards (e.g. `one_human_approval`). Folds in the 1.x standalone
@@ -173,6 +174,25 @@ impl NodeType {
             self,
             Self::Comment | Self::Approval | Self::Objection | Self::Action
         )
+    }
+
+    /// Legacy 1.x label for non-canonical variants, or `None` if already canonical.
+    ///
+    /// Used by 2.0 write paths to record the user's stated rhetorical type in
+    /// `Event.legacy_subtype` while persisting the canonical `node_type` on
+    /// the event (SPEC-2.0 §2.5 / §9.3 / §10.1).
+    pub fn legacy_subtype_label(self) -> Option<&'static str> {
+        match self {
+            Self::Comment | Self::Approval | Self::Objection | Self::Action => None,
+            Self::Claim => Some("claim"),
+            Self::Question => Some("question"),
+            Self::Evidence => Some("evidence"),
+            Self::Summary => Some("summary"),
+            Self::Risk => Some("risk"),
+            Self::Review => Some("review"),
+            Self::Alternative => Some("alternative"),
+            Self::Assumption => Some("assumption"),
+        }
     }
 }
 
@@ -271,10 +291,12 @@ pub struct Event {
     /// Previous node type before a Retype event.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub old_node_type: Option<NodeType>,
-    /// 2.0: original 1.x node-type label preserved during migration when the
-    /// canonical `node_type` was rewritten (e.g. 1.x `claim` → 2.0 `comment`
-    /// with `legacy_subtype = "claim"`). Populated only by the migration
-    /// tool (Track C); native 2.0 events never set this.
+    /// 2.0: rhetorical-subtype label preserved alongside the canonical
+    /// `node_type`. Set when:
+    /// - the migration tool rewrites a 1.x non-canonical node (Track C), or
+    /// - a native 2.0 write path canonicalized a user-supplied legacy type
+    ///   (e.g. `git forum claim` records `node_type = comment`,
+    ///   `legacy_subtype = "claim"`; SPEC-2.0 §2.5 / §9.3).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub legacy_subtype: Option<String>,
     /// 2.0: lifecycle facet value set on this `facet_set` event. Present only on
@@ -336,6 +358,12 @@ impl Event {
 
     pub fn with_node_type(mut self, node_type: NodeType) -> Self {
         self.node_type = Some(node_type);
+        self
+    }
+
+    /// Builder: record a rhetorical-subtype label (see [`NodeType::legacy_subtype_label`]).
+    pub fn with_legacy_subtype(mut self, label: &str) -> Self {
+        self.legacy_subtype = Some(label.to_string());
         self
     }
 
@@ -592,6 +620,34 @@ mod tests {
             assert_eq!(nt.canonical(), NodeType::Comment);
             assert!(!nt.is_canonical());
         }
+    }
+
+    #[test]
+    fn node_type_legacy_subtype_label() {
+        // Canonical types have no legacy label.
+        for nt in [
+            NodeType::Comment,
+            NodeType::Approval,
+            NodeType::Objection,
+            NodeType::Action,
+        ] {
+            assert_eq!(nt.legacy_subtype_label(), None);
+        }
+        // Legacy types map back to their string form.
+        assert_eq!(NodeType::Claim.legacy_subtype_label(), Some("claim"));
+        assert_eq!(NodeType::Question.legacy_subtype_label(), Some("question"));
+        assert_eq!(NodeType::Evidence.legacy_subtype_label(), Some("evidence"));
+        assert_eq!(NodeType::Summary.legacy_subtype_label(), Some("summary"));
+        assert_eq!(NodeType::Risk.legacy_subtype_label(), Some("risk"));
+        assert_eq!(NodeType::Review.legacy_subtype_label(), Some("review"));
+        assert_eq!(
+            NodeType::Alternative.legacy_subtype_label(),
+            Some("alternative")
+        );
+        assert_eq!(
+            NodeType::Assumption.legacy_subtype_label(),
+            Some("assumption")
+        );
     }
 
     #[test]

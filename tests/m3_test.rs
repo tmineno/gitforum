@@ -98,6 +98,77 @@ fn empty_policy() -> Policy {
 // ---- say / node creation ----
 
 #[test]
+fn say_node_canonicalizes_legacy_type_and_records_label() {
+    // SPEC-2.0 §2.5: every legacy NodeType written via say_node should be
+    // stored on the wire as `Comment` with the rhetorical label preserved
+    // in the event's legacy_subtype field.
+    let cases = [
+        (NodeType::Claim, "claim"),
+        (NodeType::Question, "question"),
+        (NodeType::Evidence, "evidence"),
+        (NodeType::Summary, "summary"),
+        (NodeType::Risk, "risk"),
+        (NodeType::Review, "review"),
+        (NodeType::Alternative, "alternative"),
+        (NodeType::Assumption, "assumption"),
+    ];
+    for (input, label) in cases {
+        let (_repo, git, _paths) = setup();
+        let thread_id = make_rfc(&git);
+        write_ops::say_node(
+            &git,
+            &thread_id,
+            input,
+            "body",
+            "human/alice",
+            &fixed_clock(),
+            None,
+        )
+        .unwrap();
+        let state = thread::replay_thread(&git, &thread_id).unwrap();
+        assert_eq!(
+            state.nodes[0].node_type,
+            NodeType::Comment,
+            "input={input:?}"
+        );
+        assert_eq!(
+            state.nodes[0].legacy_subtype.as_deref(),
+            Some(label),
+            "input={input:?}"
+        );
+    }
+}
+
+#[test]
+fn say_node_canonical_types_pass_through_unchanged() {
+    // Canonical NodeTypes (Comment, Approval, Objection, Action) round-trip
+    // without setting legacy_subtype.
+    let canonicals = [
+        NodeType::Comment,
+        NodeType::Objection,
+        NodeType::Action,
+        NodeType::Approval,
+    ];
+    for nt in canonicals {
+        let (_repo, git, _paths) = setup();
+        let thread_id = make_rfc(&git);
+        write_ops::say_node(
+            &git,
+            &thread_id,
+            nt,
+            "body",
+            "human/alice",
+            &fixed_clock(),
+            None,
+        )
+        .unwrap();
+        let state = thread::replay_thread(&git, &thread_id).unwrap();
+        assert_eq!(state.nodes[0].node_type, nt);
+        assert_eq!(state.nodes[0].legacy_subtype, None);
+    }
+}
+
+#[test]
 fn say_creates_node_in_replay() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
@@ -122,7 +193,9 @@ fn say_creates_node_in_replay() {
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(state.nodes.len(), 1);
     assert_eq!(state.nodes[0].node_id, node_id);
-    assert_eq!(state.nodes[0].node_type, NodeType::Claim);
+    // SPEC-2.0 §2.5: the legacy `Claim` input is canonicalized to `Comment` on
+    // write; the rhetorical label is preserved on the event (legacy_subtype).
+    assert_eq!(state.nodes[0].node_type, NodeType::Comment);
     assert_eq!(state.nodes[0].body, "This is needed for compatibility.");
     assert!(state.nodes[0].is_open());
 }
@@ -689,7 +762,10 @@ fn show_timeline_includes_say_events() {
     let out = show::render_show(&state, false);
 
     assert!(out.contains(&node_id[..node_id.len().min(16)]));
-    assert!(out.contains("claim"));
+    // SPEC-2.0 §2.5 / §9.3: legacy `claim` writes are canonicalized to
+    // `comment`. Authors who want to preserve a rhetorical distinction
+    // should encode it in the body (e.g. "Claim:" prefix).
+    assert!(out.contains("comment"));
     assert!(out.contains("This is important."));
 }
 

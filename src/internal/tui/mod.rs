@@ -1499,10 +1499,7 @@ mod tests {
             body: "What is this?".into(),
             actor: "human/alice".into(),
             created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-            resolved: false,
-            retracted: false,
-            incorporated: false,
-            reply_to: None,
+            ..Node::default()
         }];
         app.tree_entries = build_tree_entries(&app.thread_nodes);
         app.recompute_visible_tree();
@@ -2186,10 +2183,7 @@ mod tests {
                 body: "A".into(),
                 actor: "human/alice".into(),
                 created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-                resolved: false,
-                retracted: false,
-                incorporated: false,
-                reply_to: None,
+                ..Node::default()
             },
             Node {
                 node_id: "b".into(),
@@ -2197,10 +2191,7 @@ mod tests {
                 body: "B".into(),
                 actor: "human/alice".into(),
                 created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
-                resolved: false,
-                retracted: false,
-                incorporated: false,
-                reply_to: None,
+                ..Node::default()
             },
         ];
         app.tree_entries = build_tree_entries(&app.thread_nodes);

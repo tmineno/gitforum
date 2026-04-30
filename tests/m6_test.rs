@@ -560,7 +560,13 @@ fn node_add_alternative() {
     let state = thread::replay_thread(&git, &id).unwrap();
     assert_eq!(state.nodes.len(), 1);
     assert_eq!(state.nodes[0].node_id, node_id);
-    assert_eq!(state.nodes[0].node_type, NodeType::Alternative);
+    // SPEC-2.0 §2.5: `Alternative` is a legacy rhetorical type that
+    // canonicalizes to `Comment` on write; the label is preserved.
+    assert_eq!(state.nodes[0].node_type, NodeType::Comment);
+    assert_eq!(
+        state.nodes[0].legacy_subtype.as_deref(),
+        Some("alternative")
+    );
     assert_eq!(state.nodes[0].body, "Use Memcached instead");
 }
 
@@ -581,7 +587,9 @@ fn node_add_assumption() {
     let state = thread::replay_thread(&git, &id).unwrap();
     assert_eq!(state.nodes.len(), 1);
     assert_eq!(state.nodes[0].node_id, node_id);
-    assert_eq!(state.nodes[0].node_type, NodeType::Assumption);
+    // SPEC-2.0 §2.5: `Assumption` canonicalizes to `Comment` on write.
+    assert_eq!(state.nodes[0].node_type, NodeType::Comment);
+    assert_eq!(state.nodes[0].legacy_subtype.as_deref(), Some("assumption"));
     assert_eq!(state.nodes[0].body, "Redis cluster is available in prod");
 }
 

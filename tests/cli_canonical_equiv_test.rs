@@ -89,8 +89,12 @@ fn claim_shorthand_equals_node_add_claim() {
     let state_b = replay(repo_b.path(), &id_b);
 
     assert_eq!(state_a.nodes.len(), state_b.nodes.len());
-    assert_eq!(state_a.nodes[0].node_type, NodeType::Claim);
-    assert_eq!(state_b.nodes[0].node_type, NodeType::Claim);
+    // SPEC-2.0 §2.5: legacy `claim` is canonicalized to `comment` on write,
+    // with the rhetorical label preserved as legacy_subtype.
+    assert_eq!(state_a.nodes[0].node_type, NodeType::Comment);
+    assert_eq!(state_b.nodes[0].node_type, NodeType::Comment);
+    assert_eq!(state_a.nodes[0].legacy_subtype.as_deref(), Some("claim"));
+    assert_eq!(state_b.nodes[0].legacy_subtype.as_deref(), Some("claim"));
     assert_eq!(state_a.nodes[0].body, state_b.nodes[0].body);
 }
 
@@ -116,8 +120,10 @@ fn question_shorthand_equals_node_add_question() {
     let state_b = replay(repo_b.path(), &id_b);
 
     assert_eq!(state_a.nodes.len(), state_b.nodes.len());
-    assert_eq!(state_a.nodes[0].node_type, NodeType::Question);
-    assert_eq!(state_b.nodes[0].node_type, NodeType::Question);
+    assert_eq!(state_a.nodes[0].node_type, NodeType::Comment);
+    assert_eq!(state_b.nodes[0].node_type, NodeType::Comment);
+    assert_eq!(state_a.nodes[0].legacy_subtype.as_deref(), Some("question"));
+    assert_eq!(state_b.nodes[0].legacy_subtype.as_deref(), Some("question"));
     assert_eq!(state_a.nodes[0].body, state_b.nodes[0].body);
 }
 

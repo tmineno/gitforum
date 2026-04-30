@@ -73,10 +73,7 @@ fn rich_state() -> ThreadState {
             body: "Benchmarks are missing.".into(),
             actor: "ai/reviewer".into(),
             created_at: t2,
-            resolved: false,
-            retracted: false,
-            incorporated: false,
-            reply_to: None,
+            ..Node::default()
         },
         Node {
             node_id: "node-0002".into(),
@@ -84,10 +81,7 @@ fn rich_state() -> ThreadState {
             body: "Direction is sound; migration evidence needed.".into(),
             actor: "human/alice".into(),
             created_at: t3,
-            resolved: false,
-            retracted: false,
-            incorporated: false,
-            reply_to: None,
+            ..Node::default()
         },
     ];
     state.events.push(Event {
@@ -153,10 +147,7 @@ fn node_show_question() {
             body: "What is the migration plan?".into(),
             actor: "ai/reviewer".into(),
             created_at: t,
-            resolved: false,
-            retracted: false,
-            incorporated: false,
-            reply_to: None,
+            ..Node::default()
         },
         links: vec![ThreadLink {
             target_thread_id: "ASK-e5f6a7b8".into(),

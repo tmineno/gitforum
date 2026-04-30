@@ -463,7 +463,27 @@ enum Commands {
         #[command(subcommand)]
         cmd: Option<ReviseCmd>,
     },
-    /// Add a claim node to a thread
+    /// Add a comment node to a thread (2.0 canonical)
+    Comment {
+        thread_id: String,
+        /// Node body (positional; use --body or --body-file for named alternatives)
+        body_positional: Option<String>,
+        #[arg(long = "body", value_name = "TEXT")]
+        body_flag: Option<String>,
+        #[arg(long = "body-file", value_name = "PATH")]
+        body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body_positional", "body_flag", "body_file"])]
+        edit: bool,
+        #[arg(long = "reply-to", value_name = "NODE_ID")]
+        reply_to: Option<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
+    },
+    /// Add a claim node to a thread (deprecated alias for `comment`)
     Claim {
         thread_id: String,
         /// Node body (positional; use --body or --body-file for named alternatives)
@@ -483,7 +503,7 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// Add a question node to a thread
+    /// Add a question node to a thread (deprecated alias for `comment`)
     Question {
         thread_id: String,
         body_positional: Option<String>,
@@ -521,7 +541,7 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// Add a summary node to a thread
+    /// Add a summary node to a thread (deprecated alias for `comment`)
     Summary {
         thread_id: String,
         body_positional: Option<String>,
@@ -559,7 +579,7 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// Add a risk node to a thread
+    /// Add a risk node to a thread (deprecated alias for `comment`)
     Risk {
         thread_id: String,
         body_positional: Option<String>,
@@ -578,7 +598,7 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// Add a review node to a thread
+    /// Add a review node to a thread (deprecated alias for `comment`)
     Review {
         thread_id: String,
         body_positional: Option<String>,
@@ -2091,6 +2111,27 @@ fn main() -> Result<(), ForumError> {
             force,
             &clock,
         )?,
+        Commands::Comment {
+            thread_id,
+            body_positional,
+            body_flag,
+            body_file,
+            edit,
+            reply_to,
+            as_actor,
+            force,
+        } => run_shorthand_say(
+            &thread_id,
+            body_positional,
+            body_flag,
+            body_file,
+            edit,
+            reply_to,
+            as_actor,
+            NodeType::Comment,
+            force,
+            &clock,
+        )?,
         Commands::Claim {
             thread_id,
             body_positional,
@@ -2100,18 +2141,21 @@ fn main() -> Result<(), ForumError> {
             reply_to,
             as_actor,
             force,
-        } => run_shorthand_say(
-            &thread_id,
-            body_positional,
-            body_flag,
-            body_file,
-            edit,
-            reply_to,
-            as_actor,
-            NodeType::Claim,
-            force,
-            &clock,
-        )?,
+        } => {
+            warn_legacy_node_shorthand("claim");
+            run_shorthand_say(
+                &thread_id,
+                body_positional,
+                body_flag,
+                body_file,
+                edit,
+                reply_to,
+                as_actor,
+                NodeType::Claim,
+                force,
+                &clock,
+            )?
+        }
         Commands::Question {
             thread_id,
             body_positional,
@@ -2121,18 +2165,21 @@ fn main() -> Result<(), ForumError> {
             reply_to,
             as_actor,
             force,
-        } => run_shorthand_say(
-            &thread_id,
-            body_positional,
-            body_flag,
-            body_file,
-            edit,
-            reply_to,
-            as_actor,
-            NodeType::Question,
-            force,
-            &clock,
-        )?,
+        } => {
+            warn_legacy_node_shorthand("question");
+            run_shorthand_say(
+                &thread_id,
+                body_positional,
+                body_flag,
+                body_file,
+                edit,
+                reply_to,
+                as_actor,
+                NodeType::Question,
+                force,
+                &clock,
+            )?
+        }
         Commands::Objection {
             thread_id,
             body_positional,
@@ -2163,18 +2210,21 @@ fn main() -> Result<(), ForumError> {
             reply_to,
             as_actor,
             force,
-        } => run_shorthand_say(
-            &thread_id,
-            body_positional,
-            body_flag,
-            body_file,
-            edit,
-            reply_to,
-            as_actor,
-            NodeType::Summary,
-            force,
-            &clock,
-        )?,
+        } => {
+            warn_legacy_node_shorthand("summary");
+            run_shorthand_say(
+                &thread_id,
+                body_positional,
+                body_flag,
+                body_file,
+                edit,
+                reply_to,
+                as_actor,
+                NodeType::Summary,
+                force,
+                &clock,
+            )?
+        }
         Commands::Action {
             thread_id,
             body_positional,
@@ -2205,18 +2255,21 @@ fn main() -> Result<(), ForumError> {
             reply_to,
             as_actor,
             force,
-        } => run_shorthand_say(
-            &thread_id,
-            body_positional,
-            body_flag,
-            body_file,
-            edit,
-            reply_to,
-            as_actor,
-            NodeType::Risk,
-            force,
-            &clock,
-        )?,
+        } => {
+            warn_legacy_node_shorthand("risk");
+            run_shorthand_say(
+                &thread_id,
+                body_positional,
+                body_flag,
+                body_file,
+                edit,
+                reply_to,
+                as_actor,
+                NodeType::Risk,
+                force,
+                &clock,
+            )?
+        }
         Commands::Review {
             thread_id,
             body_positional,
@@ -2226,18 +2279,21 @@ fn main() -> Result<(), ForumError> {
             reply_to,
             as_actor,
             force,
-        } => run_shorthand_say(
-            &thread_id,
-            body_positional,
-            body_flag,
-            body_file,
-            edit,
-            reply_to,
-            as_actor,
-            NodeType::Review,
-            force,
-            &clock,
-        )?,
+        } => {
+            warn_legacy_node_shorthand("review");
+            run_shorthand_say(
+                &thread_id,
+                body_positional,
+                body_flag,
+                body_file,
+                edit,
+                reply_to,
+                as_actor,
+                NodeType::Review,
+                force,
+                &clock,
+            )?
+        }
 
         Commands::Retract {
             thread_id,
@@ -2793,6 +2849,20 @@ fn run_revise_dispatch(
             Ok(())
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+/// Print a deprecation warning for legacy node-type shorthand commands.
+///
+/// Per SPEC-2.0 §9.3 / ADR-006, the rhetorical-only shorthands
+/// `claim` / `question` / `summary` / `risk` / `review` are aliased to
+/// `comment` for one minor release and removed in 3.0. The user's chosen
+/// label is preserved on the event as `legacy_subtype`.
+fn warn_legacy_node_shorthand(name: &str) {
+    eprintln!(
+        "warning: `git forum {name}` is deprecated; the canonical 2.0 form is `git forum comment` \
+         (the rhetorical label is preserved). This shorthand will be removed in 3.0."
+    );
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -8,7 +8,11 @@ use super::event::NodeType;
 /// Postconditions: immutable after construction; state tracked via resolved/retracted flags.
 /// Failure modes: none (plain data struct).
 /// Side effects: none.
-#[derive(Debug, Clone)]
+///
+/// `Default` is derived so test sites can elide unset optional fields with
+/// struct-update syntax (e.g. `Node { node_id: …, node_type: …, body: …, ..Default::default() }`),
+/// matching the pattern used on `Event`.
+#[derive(Debug, Clone, Default)]
 pub struct Node {
     pub node_id: String,
     pub node_type: NodeType,
@@ -19,6 +23,12 @@ pub struct Node {
     pub retracted: bool,
     pub incorporated: bool,
     pub reply_to: Option<String>,
+    /// SPEC-2.0 §2.5: rhetorical-subtype label preserved when the canonical
+    /// `node_type` is `Comment` but the user (or migration tool) recorded a
+    /// 1.x label like `claim` / `summary` / `risk` / `review` / `question` /
+    /// `evidence` / `alternative` / `assumption`. `None` for canonical types
+    /// or for native 2.0 `comment` writes.
+    pub legacy_subtype: Option<String>,
 }
 
 impl Node {

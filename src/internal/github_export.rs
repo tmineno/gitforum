@@ -240,10 +240,7 @@ mod tests {
             body: body.to_string(),
             actor: "human/alice".to_string(),
             created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-            resolved: false,
-            retracted: false,
-            incorporated: false,
-            reply_to: None,
+            ..Node::default()
         }
     }
 
