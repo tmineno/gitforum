@@ -218,17 +218,17 @@ Threads carry a free-form `tags[]` (string array). Tags are first-class:
 - The discriminator for sub-categories within a lifecycle (e.g. `bug` vs `task` within
   `lifecycle=execution`).
 
-Three conventional tags are pre-installed by `git forum init` and used by the kind presets
-(§9.2):
+Three tag strings are emitted by the kind presets (§9.2):
 
-| Tag | Conventional meaning |
-|---|---|
-| `bug` | Observation-style execution thread (legacy `ISSUE` / `ASK`) |
-| `task` | Work-style execution thread (legacy `TASK` / `JOB`) |
-| `cross-cutting` | Wide-impact thread (legacy `RFC` carries this by convention) |
+| Tag | Conventional meaning | Emitted by |
+|---|---|---|
+| `bug` | Observation-style execution thread (legacy `ISSUE` / `ASK`) | `git forum new bug` / `new issue` |
+| `task` | Work-style execution thread (legacy `TASK` / `JOB`) | `git forum new task` |
+| `cross-cutting` | Wide-impact thread (legacy `RFC` carries this by convention) | `git forum new rfc` |
 
-Repos may add or remove conventional tags freely. Nothing in the core model depends on these
-specific values.
+These are convention only — they are not pre-registered anywhere (the registry was removed
+in 2.0; see §2.3.5). Nothing in the core model depends on these specific values; repos that
+prefer a different vocabulary use `git forum thread new --tag <other>` directly.
 
 #### 2.3.3 Mapping from 1.x kinds
 
@@ -647,10 +647,11 @@ re-pushes, or by accepting whichever value Git fast-forwards to during fetch.
 
 #### 6.1.2 Reserved prefixes
 
-Handles starting with `!_` (underscore as the first slug character) are reserved for future
-system use. No
-auto-allocated topic exists in 2.0; migration explicitly leaves 1.x threads as standalone (see
-§10.1).
+The slug grammar (§2.1.1) allows only `[a-z0-9-]+`, so a leading underscore is already
+syntactically invalid. The `_` character remains reserved at the slug level — if a future
+release widens the grammar, a leading underscore SHOULD continue to be reserved for
+system-allocated handles. No auto-allocated topic exists in 2.0; migration explicitly
+leaves 1.x threads as standalone (see §10.1).
 
 #### 6.1.3 Handle rename
 
@@ -744,22 +745,15 @@ body_sections = ["Context", "Decision", "Rationale", "Impact"]
 Resolution: most-specific match wins. `creation_rules.execution.tag.task` overrides
 `creation_rules.execution` for threads tagged `task`.
 
-When a thread carries **multiple tags that each match a `tag.<name>` rule**, the tied-specificity
-rules are merged with **field-level union** semantics: each field is the union (or stricter
-choice) of all matching rules. Concretely:
-
-| Field | Combiner |
-|---|---|
-| `required_body` | `OR` (any matching rule requiring a body wins) |
-| `body_sections` | union of section names, deduplicated, preserving first-seen order |
-| `requires` (guard predicates) | union of required predicates |
-| numeric thresholds (e.g. `min_approvals`) | `MAX` |
-| boolean strict-flags | `OR` (any `true` wins) |
-
-This makes multi-tag policy compositional: tagging a thread `task,bug` enforces the union of
-`tag.task` and `tag.bug` requirements rather than picking one arbitrarily. Users who want a
-single rule to win can express the precedence explicitly with a guard predicate
-(`tag=task AND NOT tag=bug`).
+When a thread carries **multiple tags that each match a `tag.<name>` rule**, 2.0 keeps
+the resolution intentionally minimal: rules MUST be expressed against a single tag
+(`creation_rules.<lifecycle>.tag.<name>`) or against a guard predicate that itself
+disambiguates (`tag=task AND NOT tag=bug`). Implementations MAY pick any matching
+rule deterministically (e.g., first by alphabetical tag name) when a thread carries
+multiple tags whose rules tie, but the spec does not mandate a per-field union /
+intersection combiner. Multi-tag combiners (field-level union with explicit
+`OR`/`MAX` semantics) are deferred until dogfood evidence shows the simple resolution
+is insufficient.
 
 There are intentionally no topic-level guards in 2.0. See F-W2 (Appendix A.3) for the
 forward-compatibility plan if these become needed.

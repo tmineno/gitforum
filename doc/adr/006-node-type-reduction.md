@@ -96,8 +96,17 @@ rewritten as `approval` node events.
 - The policy predicate `at_least_one_summary` is **removed**. No
   replacement is shipped: in practice, a project that needs a forced
   summary before close can require a non-empty body section via
-  `creation_rules.<lifecycle>.body_sections`. ADR-005's
-  `at_least_one_action`-style predicates remain unchanged.
+  `creation_rules.<lifecycle>.body_sections`. The `at_least_one_action`
+  / `no_open_actions` / `no_open_objections` / `one_human_approval` /
+  `has_commit_evidence` predicates remain unchanged.
+
+  **Migration MUST emit a warning** for any `policy.toml` that mentions
+  `at_least_one_summary` (in `[[guards]] requires`), naming the file
+  and line of the obsolete predicate. The warning suggests either
+  removing the predicate (the typical remediation) or replacing it
+  with a `body_sections` requirement on `creation_rules`. The migrator
+  does not auto-rewrite the predicate; the human or agent running the
+  migration decides which threads needed forced summaries.
 - TUI node-detail rendering simplifies (4 colors / icons instead of
   10).
 - Search loses the ability to filter by `type=summary`, `type=risk`,
