@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use super::approval::Approval;
 use super::error::{ForumError, ForumResult};
 use super::event::{NodeType, ThreadKind};
 use super::evidence::EvidenceKind;
@@ -144,7 +143,9 @@ pub struct GuardViolation {
 
 /// Evaluate all guards for a transition and return any violations.
 ///
-/// Preconditions: state is fully replayed; approvals from the proposed event.
+/// Preconditions: `state` is the *post-write effective* state — i.e. it
+/// already includes any pending Approval-typed nodes the caller plans to
+/// emit alongside the transition (see SPEC-2.0 §2.8).
 /// Postconditions: empty vec means all guards pass.
 /// Failure modes: none (returns violations, not errors).
 /// Side effects: none.
@@ -153,13 +154,12 @@ pub fn check_guards(
     state: &ThreadState,
     from: &str,
     to: &str,
-    approvals: &[Approval],
 ) -> Vec<GuardViolation> {
     let transition = format!("{from}->{to}");
     let mut violations = Vec::new();
     for guard in policy.guards_for(&transition, state.kind) {
         for rule in &guard.requires {
-            if let Some(v) = evaluate_rule(rule, state, approvals) {
+            if let Some(v) = evaluate_rule(rule, state) {
                 violations.push(v);
             }
         }
@@ -168,11 +168,7 @@ pub fn check_guards(
 }
 
 /// Evaluate a single guard rule. Returns `Some(violation)` if the rule is not satisfied.
-pub fn evaluate_rule(
-    rule: &GuardRule,
-    state: &ThreadState,
-    approvals: &[Approval],
-) -> Option<GuardViolation> {
+pub fn evaluate_rule(rule: &GuardRule, state: &ThreadState) -> Option<GuardViolation> {
     match rule {
         GuardRule::NoOpenObjections => {
             let open = state.open_objections();
@@ -207,7 +203,11 @@ pub fn evaluate_rule(
             }
         }
         GuardRule::OneHumanApproval => {
-            let has_human = approvals.iter().any(|a| a.actor_id.starts_with("human/"));
+            // SPEC-2.0 §2.8: approvals are `approval`-typed nodes. Count any
+            // non-retracted approval node whose actor is a human.
+            let has_human = state.nodes.iter().any(|n| {
+                n.node_type == NodeType::Approval && !n.retracted && n.actor.starts_with("human/")
+            });
             if !has_human {
                 Some(GuardViolation {
                     rule: rule.to_string(),

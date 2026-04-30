@@ -142,6 +142,19 @@ fn apply_event(state: &mut ThreadState, event: &Event) -> ForumResult<()> {
             if let Some(ref new_state) = event.new_state {
                 state.status.clone_from(new_state);
             }
+            // SPEC-2.0 §2.8: 1.x State events carried approvals as a direct
+            // field; 2.0 emits them as Approval-typed Say nodes. Synthesize
+            // equivalent nodes here so policy guards see one source of truth.
+            for approval in &event.approvals {
+                state.nodes.push(Node {
+                    node_id: format!("{}#{}", event.event_id, approval.actor_id),
+                    node_type: NodeType::Approval,
+                    body: String::new(),
+                    actor: approval.actor_id.clone(),
+                    created_at: approval.approved_at,
+                    ..Node::default()
+                });
+            }
         }
         EventType::Scope => {
             state.branch.clone_from(&event.branch);

@@ -1,5 +1,4 @@
 pub mod actor;
-pub mod approval;
 pub mod branch_ops;
 pub mod clock;
 pub mod config;

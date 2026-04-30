@@ -1,8 +1,8 @@
-use super::approval::{Approval, ApprovalMechanism};
 use super::clock::Clock;
 use super::error::{ForumError, ForumResult};
-use super::event::{Event, EventType};
+use super::event::{Event, EventType, NodeType};
 use super::git_ops::GitOps;
+use super::node::Node;
 use super::policy::Policy;
 use super::state_machine;
 use super::thread;
@@ -17,7 +17,9 @@ pub struct StateChangeOptions {
 #[derive(Debug, Clone)]
 pub struct StateChangePlan {
     pub from_state: String,
-    pub approvals: Vec<Approval>,
+    /// Distinct actor IDs whose `approval`-typed Say nodes will be emitted
+    /// before the State event (SPEC-2.0 §2.8).
+    pub approve_actors: Vec<String>,
     pub resolve_action_ids: Vec<String>,
 }
 
@@ -49,16 +51,10 @@ pub fn prepare_state_change(
     let now = clock.now();
     // Deduplicate approval actors to prevent forged duplicate approvals.
     let mut seen = std::collections::HashSet::new();
-    let approvals: Vec<Approval> = approve_actors
+    let approve_actors: Vec<String> = approve_actors
         .iter()
         .filter(|a| seen.insert(a.as_str()))
-        .map(|a| Approval {
-            actor_id: a.clone(),
-            approved_at: now,
-            mechanism: ApprovalMechanism::Recorded,
-            key_id: None,
-            proof_ref: None,
-        })
+        .cloned()
         .collect();
 
     let resolve_action_ids = if options.resolve_open_actions
@@ -77,20 +73,31 @@ pub fn prepare_state_change(
         Vec::new()
     };
 
-    let effective_state = if resolve_action_ids.is_empty() {
-        state
-    } else {
+    // Build the post-write effective state for guard evaluation:
+    //   1. Mark scheduled action resolutions as resolved.
+    //   2. Splice in synthetic Approval-typed nodes for each approve actor —
+    //      these are the nodes that will be written if guards pass
+    //      (SPEC-2.0 §2.8).
+    let effective_state = {
         let mut effective = state.clone();
         for node in &mut effective.nodes {
             if resolve_action_ids.iter().any(|id| id == &node.node_id) {
                 node.resolved = true;
             }
         }
+        for actor_id in &approve_actors {
+            effective.nodes.push(Node {
+                node_id: format!("pending-approval/{actor_id}"),
+                node_type: NodeType::Approval,
+                actor: actor_id.clone(),
+                created_at: now,
+                ..Node::default()
+            });
+        }
         effective
     };
 
-    let violations =
-        super::policy::check_guards(policy, &effective_state, &from, new_state, &approvals);
+    let violations = super::policy::check_guards(policy, &effective_state, &from, new_state);
     if !violations.is_empty() {
         let msgs: Vec<String> = violations
             .iter()
@@ -108,7 +115,7 @@ pub fn prepare_state_change(
 
     Ok(StateChangePlan {
         from_state: from,
-        approvals,
+        approve_actors,
         resolve_action_ids,
     })
 }
@@ -145,9 +152,23 @@ pub fn change_state(
         write_ops::resolve_node(git, thread_id, node_id, actor, clock)?;
     }
 
-    let mut ev = Event::base(thread_id, EventType::State, actor, clock)
-        .with_new_state(new_state)
-        .with_approvals(plan.approvals);
+    // SPEC-2.0 §2.8: emit `approval`-typed Say nodes (one per approver) before
+    // the State event. The 1.x-style `Event.approvals` field is no longer
+    // populated by 2.0 writes — replay still synthesizes nodes from it for
+    // legacy reads.
+    for approver in &plan.approve_actors {
+        write_ops::say_node(
+            git,
+            thread_id,
+            NodeType::Approval,
+            "",
+            approver,
+            clock,
+            None,
+        )?;
+    }
+
+    let mut ev = Event::base(thread_id, EventType::State, actor, clock).with_new_state(new_state);
     if let Some(ref text) = comment {
         ev = ev.with_body(text);
     }

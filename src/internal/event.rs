@@ -1,11 +1,39 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::approval::Approval;
 use super::error::{ForumError, ForumResult};
 use super::evidence::Evidence;
 use super::git_ops::GitOps;
 use super::refs;
+
+/// Approval mechanism (legacy SPEC.md §7.7).
+///
+/// 2.0 folds the standalone Approval concept into the node namespace
+/// (SPEC-2.0 §2.8): an approval is just an `approval`-typed node. This type
+/// remains so the legacy `Event.approvals` field can still be deserialized
+/// from 1.x repos; native 2.0 writes never populate it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApprovalMechanism {
+    Recorded,
+}
+
+/// An approval record formerly attached to State events (SPEC.md §2.7 / §7.7).
+///
+/// Retained for 1.x read compatibility only; 2.0 writes emit `Say(Approval)`
+/// nodes instead (SPEC-2.0 §2.8). Replay synthesizes equivalent Approval
+/// Nodes from this field when reading legacy State events so policy guards
+/// see a single source of truth.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Approval {
+    pub actor_id: String,
+    pub approved_at: DateTime<Utc>,
+    pub mechanism: ApprovalMechanism,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof_ref: Option<String>,
+}
 
 /// Thread kinds supported by git-forum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

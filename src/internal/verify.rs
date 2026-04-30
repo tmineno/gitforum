@@ -48,7 +48,7 @@ impl VerifyReport {
 pub fn verify_thread(git: &GitOps, thread_id: &str, p: &Policy) -> ForumResult<VerifyReport> {
     let state = thread::replay_thread(git, thread_id)?;
     let violations = match forward_target(state.kind, &state.status) {
-        Some(to) => policy::check_guards(p, &state, &state.status, to, &[]),
+        Some(to) => policy::check_guards(p, &state, &state.status, to),
         None => vec![],
     };
 
@@ -108,7 +108,7 @@ pub fn build_lookahead(
 
     // The guard check is on the final transition: penultimate -> target
     let from_state = path[path.len() - 2];
-    let violations = policy::check_guards(policy, state, from_state, target, &[]);
+    let violations = policy::check_guards(policy, state, from_state, target);
 
     if violations.is_empty() {
         return vec![];

@@ -184,7 +184,7 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
         if !targets.is_empty() {
             let mut target_parts: Vec<String> = Vec::new();
             for target in &targets {
-                let violations = policy::check_guards(policy, state, &state.status, target, &[]);
+                let violations = policy::check_guards(policy, state, &state.status, target);
                 if violations.is_empty() {
                     target_parts.push(target.to_string());
                 } else {
@@ -433,7 +433,7 @@ pub fn render_next_actions(state: &ThreadState, policy: &Policy) -> String {
     } else {
         let mut target_parts: Vec<String> = Vec::new();
         for target in &targets {
-            let violations = policy::check_guards(policy, state, &state.status, target, &[]);
+            let violations = policy::check_guards(policy, state, &state.status, target);
             if violations.is_empty() {
                 target_parts.push(target.to_string());
             } else {
@@ -499,7 +499,7 @@ pub fn render_what_next(state: &ThreadState, policy: &Policy) -> String {
 
     // Guard check for each valid transition
     for target in &targets {
-        let violations = policy::check_guards(policy, state, &state.status, target, &[]);
+        let violations = policy::check_guards(policy, state, &state.status, target);
         if violations.is_empty() {
             lines.push(format!("guard check ({} -> {target}): PASS", state.status));
         } else {

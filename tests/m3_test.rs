@@ -1529,17 +1529,164 @@ fn fast_track_sign_and_comment_only_on_final_step() {
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(state.status, "accepted");
-    // Only the final event (accepted) should have approvals
+    // SPEC-2.0 §2.8: 2.0 emits approvals as `approval`-typed Say nodes
+    // before the final State event, not as fields on the State event.
+    // Only the final fast-track step should have produced an approval node.
+    let approval_nodes: Vec<_> = state
+        .nodes
+        .iter()
+        .filter(|n| n.node_type == NodeType::Approval)
+        .collect();
+    assert_eq!(approval_nodes.len(), 1);
+    assert_eq!(approval_nodes[0].actor, "human/alice");
     let state_events: Vec<_> = state
         .events
         .iter()
         .filter(|e| e.event_type == EventType::State)
         .collect();
-    assert_eq!(state_events.len(), 3); // proposed, under-review, accepted
-    assert!(state_events[0].approvals.is_empty()); // proposed: no approvals
-    assert!(state_events[1].approvals.is_empty()); // under-review: no approvals
-    assert_eq!(state_events[2].approvals.len(), 1); // accepted: signed
-    assert_eq!(state_events[2].approvals[0].actor_id, "human/alice");
+    assert_eq!(state_events.len(), 3);
+    // Native 2.0 State events never carry the legacy `approvals` field.
+    for ev in &state_events {
+        assert!(ev.approvals.is_empty());
+    }
+}
+
+#[test]
+fn change_state_emits_approval_node_per_actor() {
+    // SPEC-2.0 §2.8: state transitions emit one Approval-typed Say node per
+    // approver. The State event carries no approvals field.
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+    state_change::change_state(
+        &git,
+        &thread_id,
+        "proposed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    state_change::change_state(
+        &git,
+        &thread_id,
+        "under-review",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    state_change::change_state(
+        &git,
+        &thread_id,
+        "accepted",
+        &["human/alice".to_string(), "ai/reviewer".to_string()],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    let approvals: Vec<_> = state
+        .nodes
+        .iter()
+        .filter(|n| n.node_type == NodeType::Approval)
+        .collect();
+    assert_eq!(approvals.len(), 2);
+    let actors: Vec<&str> = approvals.iter().map(|n| n.actor.as_str()).collect();
+    assert!(actors.contains(&"human/alice"));
+    assert!(actors.contains(&"ai/reviewer"));
+}
+
+#[test]
+fn change_state_dedupes_repeated_approvers() {
+    // Repeated --approve actor IDs should produce only one approval node.
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+    state_change::change_state(
+        &git,
+        &thread_id,
+        "proposed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    state_change::change_state(
+        &git,
+        &thread_id,
+        "under-review",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    state_change::change_state(
+        &git,
+        &thread_id,
+        "accepted",
+        &[
+            "human/alice".to_string(),
+            "human/alice".to_string(), // duplicate
+        ],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    let approvals: Vec<_> = state
+        .nodes
+        .iter()
+        .filter(|n| n.node_type == NodeType::Approval)
+        .collect();
+    assert_eq!(approvals.len(), 1);
+}
+
+#[test]
+fn legacy_state_approvals_replay_into_nodes() {
+    // 1.x State events stored approvals on the event itself. Replay must
+    // synthesize equivalent Approval nodes so policy guards see them
+    // (SPEC-2.0 §2.8 / §10.1).
+    use git_forum::internal::event::{Approval, ApprovalMechanism};
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+    let now = fixed_clock().now();
+    let legacy_state_event = Event {
+        thread_id: thread_id.clone(),
+        event_type: EventType::State,
+        actor: "human/alice".into(),
+        created_at: now,
+        new_state: Some("proposed".into()),
+        approvals: vec![Approval {
+            actor_id: "human/alice".into(),
+            approved_at: now,
+            mechanism: ApprovalMechanism::Recorded,
+            key_id: None,
+            proof_ref: None,
+        }],
+        ..Event::default()
+    };
+    event::write_event(&git, &legacy_state_event).unwrap();
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    let approvals: Vec<_> = state
+        .nodes
+        .iter()
+        .filter(|n| n.node_type == NodeType::Approval)
+        .collect();
+    assert_eq!(approvals.len(), 1);
+    assert_eq!(approvals[0].actor, "human/alice");
 }
 
 #[test]

@@ -2707,11 +2707,7 @@ fn main() -> Result<(), ForumError> {
                         std::process::exit(1);
                     }
                     let violations = git_forum::internal::policy::check_guards(
-                        &policy,
-                        &state,
-                        parts[0],
-                        parts[1],
-                        &[],
+                        &policy, &state, parts[0], parts[1],
                     );
                     if violations.is_empty() {
                         println!("transition {transition}: ok");
