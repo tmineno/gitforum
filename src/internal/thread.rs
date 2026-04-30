@@ -334,10 +334,12 @@ pub fn list_thread_ids(git: &GitOps) -> ForumResult<Vec<String>> {
 
 /// Resolve a user-supplied thread reference to a canonical full thread ID.
 ///
-/// Accepts:
-/// - Full ID (e.g. `RFC-0001`, `ASK-a7f3b2x1`) — returned as-is if the ref exists
+/// Accepts (per SPEC-2.0 §6.1.1 / §6.2):
+/// - 2.0 display form (e.g. `@a7f3b2x1`) — leading `@` is stripped before matching
+/// - 2.0 bare token (e.g. `a7f3b2x1`)
+/// - Legacy full ID (e.g. `RFC-0001`, `ASK-a7f3b2x1`) — returned as-is if the ref exists
 /// - KIND-prefix (e.g. `RFC-a7f3`) — expanded if unambiguous
-/// - Token-only (e.g. `a7f3b2x1`) — matched against all thread IDs if unambiguous
+/// - Token-only prefix (e.g. `a7f3`) — matched against all thread IDs if unambiguous
 /// - Case-insensitive variants of the above (e.g. `rfc-0001` resolves to `RFC-0001`)
 ///
 /// Returns an error if the reference is ambiguous (with candidates listed)
@@ -350,6 +352,10 @@ pub fn resolve_thread_id(git: &GitOps, user_input: &str) -> ForumResult<String> 
 /// Pure resolution logic for testability — matches user input against a list of
 /// known thread IDs using exact, prefix, token, and case-insensitive strategies.
 fn resolve_from_list(all_ids: &[String], user_input: &str) -> ForumResult<String> {
+    // 0. Strip the SPEC-2.0 §6.1 `@` thread marker if the user typed the
+    //    display form. Refs and serialized fields are always bare.
+    let user_input = super::id::strip_thread_marker(user_input);
+
     // 1. Exact match
     if all_ids.iter().any(|id| id == user_input) {
         return Ok(user_input.to_string());
@@ -374,13 +380,14 @@ fn resolve_from_list(all_ids: &[String], user_input: &str) -> ForumResult<String
         }
     }
 
-    // 3. Token-only match (e.g. "a7f3b2x1" matches "RFC-a7f3b2x1")
+    // 3. Token-only match (e.g. "a7f3b2x1" matches "RFC-a7f3b2x1" or 2.0 bare "a7f3b2x1")
     if !user_input.contains('-') {
         let matches: Vec<&String> = all_ids
             .iter()
-            .filter(|id| {
-                id.split_once('-')
-                    .is_some_and(|(_, token)| token.starts_with(user_input))
+            .filter(|id| match id.split_once('-') {
+                Some((_, token)) => token.starts_with(user_input),
+                // 2.0 bare-token storage: the whole id is the token.
+                None => id.starts_with(user_input),
             })
             .collect();
         match matches.len() {
@@ -433,13 +440,13 @@ fn resolve_from_list(all_ids: &[String], user_input: &str) -> ForumResult<String
         }
     }
 
-    // 6. Case-insensitive token match (e.g. "A7F3B2X1" matches "RFC-a7f3b2x1")
+    // 6. Case-insensitive token match (e.g. "A7F3B2X1" matches "RFC-a7f3b2x1" or bare "a7f3b2x1")
     if !user_input.contains('-') {
         let ci_token_matches: Vec<&String> = all_ids
             .iter()
-            .filter(|id| {
-                id.split_once('-')
-                    .is_some_and(|(_, token)| token.to_ascii_uppercase().starts_with(&input_upper))
+            .filter(|id| match id.split_once('-') {
+                Some((_, token)) => token.to_ascii_uppercase().starts_with(&input_upper),
+                None => id.to_ascii_uppercase().starts_with(&input_upper),
             })
             .collect();
         match ci_token_matches.len() {
@@ -693,6 +700,39 @@ mod tests {
         assert!(msg.contains("ambiguous"), "got: {msg}");
         assert!(msg.contains("RFC-a7f30001"), "got: {msg}");
         assert!(msg.contains("RFC-a7f30002"), "got: {msg}");
+    }
+
+    #[test]
+    fn resolve_strips_at_marker_before_matching() {
+        // SPEC-2.0 §6.1.1: `@` is accepted but optional at CLI input.
+        let all = ids(&["RFC-a7f3b2x1", "a8b9c0d1"]);
+        assert_eq!(
+            resolve_from_list(&all, "@a7f3b2x1").unwrap(),
+            "RFC-a7f3b2x1"
+        );
+        assert_eq!(resolve_from_list(&all, "@a8b9c0d1").unwrap(), "a8b9c0d1");
+        assert_eq!(
+            resolve_from_list(&all, "@RFC-a7f3").unwrap(),
+            "RFC-a7f3b2x1"
+        );
+    }
+
+    #[test]
+    fn resolve_bare_token_exact_match() {
+        // SPEC-2.0 §6.2: a 2.0 thread ref is its bare token.
+        let all = ids(&["a7f3b2x1", "RFC-0001"]);
+        assert_eq!(resolve_from_list(&all, "a7f3b2x1").unwrap(), "a7f3b2x1");
+        assert_eq!(resolve_from_list(&all, "@a7f3b2x1").unwrap(), "a7f3b2x1");
+    }
+
+    #[test]
+    fn resolve_bare_token_prefix_match() {
+        // SPEC-2.0 §6.2: unambiguous prefixes (≥4 chars) accepted on bare-token storage too.
+        let all = ids(&["a7f3b2x1", "ASK-0001"]);
+        assert_eq!(resolve_from_list(&all, "a7f3").unwrap(), "a7f3b2x1");
+        assert_eq!(resolve_from_list(&all, "@a7f3").unwrap(), "a7f3b2x1");
+        // Case-insensitive bare-token prefix.
+        assert_eq!(resolve_from_list(&all, "A7F3").unwrap(), "a7f3b2x1");
     }
 
     #[test]

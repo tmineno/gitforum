@@ -1,3 +1,38 @@
+/// SPEC-2.0 §6.1 type-marker symbol for thread display IDs.
+pub const THREAD_MARKER: char = '@';
+
+/// Strip the leading `@` thread marker if present.
+///
+/// SPEC-2.0 §6.1.1: the CLI must accept thread references with the `@` omitted
+/// in every position. This helper is the input-side normalizer — refs, file
+/// paths, and serialized event fields use the bare token, never the marker.
+///
+/// Preconditions: none.
+/// Postconditions: returns `input` with one leading `@` removed (if any).
+/// Failure modes: none.
+/// Side effects: none.
+pub fn strip_thread_marker(input: &str) -> &str {
+    input.strip_prefix(THREAD_MARKER).unwrap_or(input)
+}
+
+/// Format a thread ID for human-facing display.
+///
+/// SPEC-2.0 §6.1: 2.0 bare tokens are rendered as `@<token>`. Legacy 1.x
+/// kind-prefixed IDs (`RFC-…`, `ASK-…`) are returned unchanged so existing
+/// repos read coherently during the migration window.
+///
+/// Preconditions: none.
+/// Postconditions: returns a display string suitable for CLI output.
+/// Failure modes: none.
+/// Side effects: none.
+pub fn display_thread_id(thread_id: &str) -> String {
+    if thread_id.contains('-') {
+        thread_id.to_string()
+    } else {
+        format!("{THREAD_MARKER}{thread_id}")
+    }
+}
+
 /// Swappable ID generator for deterministic testing.
 ///
 /// Production code uses [`UlidGenerator`]. Tests inject [`SequentialIdGenerator`]
@@ -83,5 +118,32 @@ mod tests {
         let a = gen.next_id();
         let b = gen.next_id();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn strip_thread_marker_strips_leading_at() {
+        assert_eq!(strip_thread_marker("@a7f3b2x1"), "a7f3b2x1");
+        assert_eq!(strip_thread_marker("a7f3b2x1"), "a7f3b2x1");
+        assert_eq!(strip_thread_marker("@RFC-0001"), "RFC-0001");
+        assert_eq!(strip_thread_marker("RFC-0001"), "RFC-0001");
+    }
+
+    #[test]
+    fn strip_thread_marker_only_strips_one() {
+        // Only the leading marker is stripped; embedded `@` (e.g. inside a
+        // body) is left alone. This matters because §6.1 keeps the symbol
+        // unreserved in free-form prose.
+        assert_eq!(strip_thread_marker("@@odd"), "@odd");
+    }
+
+    #[test]
+    fn display_thread_id_prepends_marker_for_bare_token() {
+        assert_eq!(display_thread_id("a7f3b2x1"), "@a7f3b2x1");
+    }
+
+    #[test]
+    fn display_thread_id_preserves_legacy_form() {
+        assert_eq!(display_thread_id("RFC-0001"), "RFC-0001");
+        assert_eq!(display_thread_id("ASK-a7f3b2x1"), "ASK-a7f3b2x1");
     }
 }

@@ -3,9 +3,13 @@ use sha2::{Digest, Sha256};
 use super::event::ThreadKind;
 use super::id::rand_bytes;
 
-/// Generate an opaque content-addressed thread ID.
+/// Generate a 1.x opaque kind-prefixed thread ID.
 ///
 /// Format: `KIND-XXXXXXXX` where X is base36 `[a-z0-9]`.
+///
+/// 2.0 ships the bare-token form (see [`alloc_bare_thread_id`]); this entry
+/// point is retained for the migration window so legacy callers keep
+/// compiling. New code should prefer the bare form.
 ///
 /// Preconditions: none (pure function).
 /// Postconditions: returns a valid thread ID string.
@@ -26,6 +30,30 @@ pub fn alloc_thread_id_with_nonce(
     let prefix = kind.id_prefix();
     let token = compute_token(actor, title, timestamp, nonce);
     format!("{prefix}-{token}")
+}
+
+/// Generate a 2.0 bare-token thread ID (no kind prefix).
+///
+/// Format: 8 base36 chars `[a-z0-9]`. Storage path is
+/// `refs/forum/threads/<token>`; display form is `@<token>` (see
+/// [`crate::internal::id::display_thread_id`]).
+///
+/// Preconditions: none.
+/// Postconditions: returns an 8-char base36 token.
+/// Failure modes: none.
+/// Side effects: reads system entropy for nonce.
+pub fn alloc_bare_thread_id(actor: &str, title: &str, timestamp: &str) -> String {
+    alloc_bare_thread_id_with_nonce(actor, title, timestamp, &rand_bytes::<8>())
+}
+
+/// Generate a bare-token thread ID with a specific nonce (for deterministic testing).
+pub fn alloc_bare_thread_id_with_nonce(
+    actor: &str,
+    title: &str,
+    timestamp: &str,
+    nonce: &[u8],
+) -> String {
+    compute_token(actor, title, timestamp, nonce)
 }
 
 /// Compute the 8-char base36 token from inputs.
@@ -72,9 +100,23 @@ pub fn is_sequential_id(id: &str) -> bool {
         && num.chars().all(|c| c.is_ascii_digit())
 }
 
-/// Check whether a string is a valid thread ID (either format).
+/// Check whether a string is the 2.0 bare-token form: 8 base36 chars, not all-digit, no `-`.
+pub fn is_bare_token(id: &str) -> bool {
+    id.len() == 8
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && !id.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Check whether a string is a valid thread ID (any of the three formats).
+///
+/// Accepts:
+/// - 2.0 bare token (8 base36, e.g. `a7f3b2x1`)
+/// - 1.x opaque (e.g. `RFC-a7f3b2x1`)
+/// - 1.x sequential (e.g. `RFC-0001`)
 pub fn is_valid_thread_id(id: &str) -> bool {
-    is_opaque_id(id) || is_sequential_id(id)
+    is_bare_token(id) || is_opaque_id(id) || is_sequential_id(id)
 }
 
 #[cfg(test)]
@@ -184,6 +226,57 @@ mod tests {
         // Legacy format test preserved for reference
         let formatted = format!("{}-{:04}", "RFC", 1u32);
         assert_eq!(formatted, "RFC-0001");
+    }
+
+    #[test]
+    fn alloc_bare_thread_id_format() {
+        let id = alloc_bare_thread_id_with_nonce(
+            "human/alice",
+            "Test thread",
+            "2026-01-01T00:00:00Z",
+            &[1, 2, 3, 4, 5, 6, 7, 8],
+        );
+        assert_eq!(id.len(), 8);
+        assert!(!id.contains('-'), "bare token must not contain '-': {id}");
+        assert!(
+            id.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()),
+            "bare token must be base36: {id}"
+        );
+    }
+
+    #[test]
+    fn alloc_bare_thread_id_matches_kind_prefixed_token() {
+        let nonce = [1, 2, 3, 4, 5, 6, 7, 8];
+        let bare =
+            alloc_bare_thread_id_with_nonce("human/alice", "Title", "2026-01-01T00:00:00Z", &nonce);
+        let prefixed = alloc_thread_id_with_nonce(
+            ThreadKind::Rfc,
+            "human/alice",
+            "Title",
+            "2026-01-01T00:00:00Z",
+            &nonce,
+        );
+        assert_eq!(prefixed, format!("RFC-{bare}"));
+    }
+
+    #[test]
+    fn is_bare_token_valid() {
+        assert!(is_bare_token("a7f3b2x1"));
+        assert!(is_bare_token("0a1b2c3d"));
+    }
+
+    #[test]
+    fn is_bare_token_rejects() {
+        assert!(!is_bare_token("RFC-a7f3b2x1"));
+        assert!(!is_bare_token("a7f3"));
+        assert!(!is_bare_token("A7F3B2X1"));
+        assert!(!is_bare_token("12345678")); // all-digit reserved (sequential collision risk)
+    }
+
+    #[test]
+    fn is_valid_thread_id_accepts_bare_token() {
+        assert!(is_valid_thread_id("a7f3b2x1"));
     }
 
     #[test]
