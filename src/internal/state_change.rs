@@ -35,7 +35,7 @@ pub fn prepare_state_change(
     let state = thread::replay_thread(git, thread_id)?;
     let from = state.status.clone();
 
-    let lifecycle = state.kind.lifecycle();
+    let lifecycle = state.lifecycle();
     if !state_machine::is_valid_transition(lifecycle, &from, new_state) {
         let valid = state_machine::valid_targets(lifecycle, &from);
         let valid_msg = if valid.is_empty() {
@@ -200,7 +200,7 @@ pub fn fast_track_state(
     options: StateChangeOptions,
 ) -> ForumResult<Vec<String>> {
     let state = thread::replay_thread(git, thread_id)?;
-    let lifecycle = state.kind.lifecycle();
+    let lifecycle = state.lifecycle();
     // Normalize the target so legacy 1.x state names line up with the
     // 2.0-name path returned by find_path (otherwise the final-step check
     // below misses).

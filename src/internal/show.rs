@@ -180,7 +180,7 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
     lines.push(format!("**kind:**     {}", state.kind));
     lines.push(format!("**status:**   {}", state.status));
     if let Some(policy) = &options.policy {
-        let targets = state_machine::valid_targets(state.kind.lifecycle(), &state.status);
+        let targets = state_machine::valid_targets(state.lifecycle(), &state.status);
         if !targets.is_empty() {
             let mut target_parts: Vec<String> = Vec::new();
             for target in &targets {
@@ -427,7 +427,7 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
 pub fn render_next_actions(state: &ThreadState, policy: &Policy) -> String {
     let mut lines: Vec<String> = Vec::new();
 
-    let targets = state_machine::valid_targets(state.kind.lifecycle(), &state.status);
+    let targets = state_machine::valid_targets(state.lifecycle(), &state.status);
     if targets.is_empty() {
         lines.push("  next: (no transitions available)".to_string());
     } else {
@@ -489,7 +489,7 @@ pub fn render_what_next(state: &ThreadState, policy: &Policy) -> String {
     lines.push(format!("{} ({})", state.id, state.status));
     lines.push(String::new());
 
-    let targets = state_machine::valid_targets(state.kind.lifecycle(), &state.status);
+    let targets = state_machine::valid_targets(state.lifecycle(), &state.status);
     if targets.is_empty() {
         lines.push("valid transitions: (none)".to_string());
     } else {

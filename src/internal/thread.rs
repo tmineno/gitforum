@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 
 use super::error::{ForumError, ForumResult};
-use super::event::{self, Event, EventType, NodeType, ThreadKind};
+use super::event::{self, Event, EventType, Lifecycle, NodeType, ThreadKind};
 use super::evidence::Evidence;
 use super::git_ops::GitOps;
 use super::node::Node;
@@ -87,6 +87,18 @@ impl ThreadState {
             .iter()
             .filter(|n| n.reply_to.as_deref() == Some(node_id))
             .collect()
+    }
+
+    /// SPEC-2.0 §3.1.1: the effective lifecycle for this thread. Returns
+    /// the value set by the first `facet_set` event carrying `lifecycle`
+    /// (per §2.4.1 / §7.3 — first-wins, immutable after creation), or
+    /// derives from `ThreadKind` for legacy 1.x threads with no
+    /// `facet_set` event in their chain (per §2.3.3 mapping).
+    pub fn lifecycle(&self) -> Lifecycle {
+        self.lifecycle
+            .as_deref()
+            .and_then(Lifecycle::parse)
+            .unwrap_or_else(|| self.kind.lifecycle())
     }
 
     /// Most recent non-retracted summary node, if any.
@@ -884,6 +896,32 @@ mod tests {
         ];
         let state = replay(&events).unwrap();
         assert_eq!(state.tags, vec!["bug".to_string()]);
+    }
+
+    #[test]
+    fn lifecycle_accessor_falls_back_to_kind() {
+        // No facet_set event in chain — derive from ThreadKind per §2.3.3.
+        let state = replay(&[make_create("RFC-0001", ThreadKind::Rfc, "T")]).unwrap();
+        assert_eq!(state.lifecycle(), Lifecycle::Proposal);
+
+        let state = replay(&[make_create("ASK-0001", ThreadKind::Issue, "T")]).unwrap();
+        assert_eq!(state.lifecycle(), Lifecycle::Execution);
+
+        let state = replay(&[make_create("DEC-0001", ThreadKind::Dec, "T")]).unwrap();
+        assert_eq!(state.lifecycle(), Lifecycle::Record);
+    }
+
+    #[test]
+    fn lifecycle_accessor_prefers_explicit_facet_set() {
+        // SPEC-2.0 §2.3.3 / §7.3: an explicit facet_set lifecycle drives
+        // the state machine even on a thread whose ThreadKind would map
+        // elsewhere. (Migration overlay scenario.)
+        let events = vec![
+            make_create("ASK-0001", ThreadKind::Issue, "T"),
+            make_facet_set("ASK-0001", 1, Some("record"), &[], &[]),
+        ];
+        let state = replay(&events).unwrap();
+        assert_eq!(state.lifecycle(), Lifecycle::Record);
     }
 
     #[test]
