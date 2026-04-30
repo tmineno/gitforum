@@ -3003,13 +3003,15 @@ fn run_thread_cmd(
                 ThreadKind::Task => vec!["task".into()],
                 ThreadKind::Dec => vec![],
             };
-            let violations = operation_check::check_create(
+            let violations = operation_check::check_op(
                 &policy,
-                kind.lifecycle(),
-                &derived_tags,
-                &effective_title,
-                effective_body.as_deref(),
+                operation_check::Op::Create {
+                    lifecycle: kind.lifecycle(),
+                    tags: &derived_tags,
+                    body: effective_body.as_deref(),
+                },
             );
+            let _ = &effective_title; // Title is not consulted by §7.2 rules.
             apply_operation_checks(&violations, force, policy.checks.strict)?;
 
             let thread_id = create::create_thread_with_branch(

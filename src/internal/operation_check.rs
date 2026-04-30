@@ -1,6 +1,49 @@
 use super::event::{Lifecycle, NodeType};
 use super::policy::Policy;
 
+/// SPEC-2.0 §7.2 / RFC-nm3d31yk Track D — table-driven dispatch over the
+/// four operation check kinds. Each variant carries the context the
+/// corresponding rule-table lookup needs.
+#[derive(Debug)]
+pub enum Op<'a> {
+    /// New thread under creation. Resolution is most-specific-match
+    /// over `creation_rules.<lifecycle>` ± `.tag.<name>` (SPEC-2.0 §7.2).
+    Create {
+        lifecycle: Lifecycle,
+        tags: &'a [String],
+        body: Option<&'a str>,
+    },
+    /// Adding a node (`say`) to an existing thread.
+    Say {
+        status: &'a str,
+        node_type: NodeType,
+    },
+    /// Revising the body or a node body of an existing thread.
+    Revise { status: &'a str, is_body: bool },
+    /// Attaching evidence to an existing thread.
+    Evidence { status: &'a str },
+}
+
+/// SPEC-2.0 §7.2 unified entry point: one operation check function
+/// dispatches to the rule-table lookup for the requested op kind.
+///
+/// Preconditions: `policy` is loaded; `op` carries the operation
+/// context (lifecycle / tags / status / etc. depending on the variant).
+/// Postconditions: returns the list of violations the per-op rule
+/// table produced; an empty vec means all checks pass.
+pub fn check_op(policy: &Policy, op: Op<'_>) -> Vec<OperationViolation> {
+    match op {
+        Op::Create {
+            lifecycle,
+            tags,
+            body,
+        } => check_create_inner(policy, lifecycle, tags, body),
+        Op::Say { status, node_type } => check_say_inner(policy, status, node_type),
+        Op::Revise { status, is_body } => check_revise_inner(policy, status, is_body),
+        Op::Evidence { status } => check_evidence_inner(policy, status),
+    }
+}
+
 /// Severity of an operation check violation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -23,21 +66,23 @@ pub struct OperationViolation {
     pub fix_command: Option<String>,
 }
 
-/// Check creation rules for a new thread.
-///
-/// Preconditions: `lifecycle` and `tags` describe the thread under
-/// creation; `body` is the optional body text.
-/// Postconditions: returns violations found; empty vec means all checks
-/// pass. Resolution is most-specific-match per SPEC-2.0 §7.2 — a tag
-/// rule overrides the base lifecycle rule when the thread carries that
-/// tag (alphabetically first matching tag wins under multi-tag).
-/// Failure modes: none (returns violations, not errors).
-/// Side effects: none.
+/// Backward-compatibility shim. Prefer `check_op(Op::Create { .. })`
+/// for new call sites; this thin wrapper exists so legacy callers keep
+/// compiling during the §7.2 dispatch transition.
 pub fn check_create(
     policy: &Policy,
     lifecycle: Lifecycle,
     tags: &[String],
     _title: &str,
+    body: Option<&str>,
+) -> Vec<OperationViolation> {
+    check_create_inner(policy, lifecycle, tags, body)
+}
+
+fn check_create_inner(
+    policy: &Policy,
+    lifecycle: Lifecycle,
+    tags: &[String],
     body: Option<&str>,
 ) -> Vec<OperationViolation> {
     let mut violations = Vec::new();
@@ -96,13 +141,12 @@ pub fn check_create(
     violations
 }
 
-/// Check whether a say (node) operation is allowed.
-///
-/// Preconditions: `status` is the current thread state; `node_type` is the type being added.
-/// Postconditions: returns violations if the node type is not allowed in this state.
-/// Failure modes: none.
-/// Side effects: none.
+/// Backward-compatibility shim — see `check_op`.
 pub fn check_say(policy: &Policy, status: &str, node_type: NodeType) -> Vec<OperationViolation> {
+    check_say_inner(policy, status, node_type)
+}
+
+fn check_say_inner(policy: &Policy, status: &str, node_type: NodeType) -> Vec<OperationViolation> {
     let mut violations = Vec::new();
 
     if policy.node_rules.is_empty() {
@@ -130,13 +174,12 @@ pub fn check_say(policy: &Policy, status: &str, node_type: NodeType) -> Vec<Oper
     violations
 }
 
-/// Check whether a revise operation is allowed.
-///
-/// Preconditions: `status` is the current thread state; `is_body` indicates body vs node revision.
-/// Postconditions: returns violations if revision is not allowed in this state.
-/// Failure modes: none.
-/// Side effects: none.
+/// Backward-compatibility shim — see `check_op`.
 pub fn check_revise(policy: &Policy, status: &str, is_body: bool) -> Vec<OperationViolation> {
+    check_revise_inner(policy, status, is_body)
+}
+
+fn check_revise_inner(policy: &Policy, status: &str, is_body: bool) -> Vec<OperationViolation> {
     let mut violations = Vec::new();
 
     let Some(rules) = &policy.revise_rules else {
@@ -171,13 +214,12 @@ pub fn check_revise(policy: &Policy, status: &str, is_body: bool) -> Vec<Operati
     violations
 }
 
-/// Check whether adding evidence is allowed.
-///
-/// Preconditions: `status` is the current thread state.
-/// Postconditions: returns violations if evidence is not allowed in this state.
-/// Failure modes: none.
-/// Side effects: none.
+/// Backward-compatibility shim — see `check_op`.
 pub fn check_evidence(policy: &Policy, status: &str) -> Vec<OperationViolation> {
+    check_evidence_inner(policy, status)
+}
+
+fn check_evidence_inner(policy: &Policy, status: &str) -> Vec<OperationViolation> {
     let mut violations = Vec::new();
 
     let Some(rules) = &policy.evidence_rules else {
@@ -675,5 +717,74 @@ mod tests {
         assert_eq!(headings.len(), 2);
         assert!(headings[0].1); // Goal is empty
         assert!(!headings[1].1); // Design has content
+    }
+
+    // ---- check_op dispatch ----
+
+    #[test]
+    fn check_op_create_dispatches_to_creation_rules() {
+        let policy = policy_with_creation_rules();
+        let v = check_op(
+            &policy,
+            Op::Create {
+                lifecycle: Lifecycle::Proposal,
+                tags: &["cross-cutting".into()],
+                body: None,
+            },
+        );
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].rule, "required_body");
+    }
+
+    #[test]
+    fn check_op_say_dispatches_to_node_rules() {
+        let mut node_rules = HashMap::new();
+        node_rules.insert("done".into(), vec![]);
+        let policy = Policy {
+            node_rules,
+            ..Default::default()
+        };
+        let v = check_op(
+            &policy,
+            Op::Say {
+                status: "done",
+                node_type: NodeType::Comment,
+            },
+        );
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].rule, "node_type_restricted");
+    }
+
+    #[test]
+    fn check_op_revise_dispatches_to_revise_rules() {
+        let policy = Policy {
+            revise_rules: Some(super::super::policy::ReviseRules {
+                allow_body_revise: vec!["draft".into()],
+                allow_node_revise: vec![],
+            }),
+            ..Default::default()
+        };
+        let v = check_op(
+            &policy,
+            Op::Revise {
+                status: "done",
+                is_body: true,
+            },
+        );
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].rule, "revise_restricted");
+    }
+
+    #[test]
+    fn check_op_evidence_dispatches_to_evidence_rules() {
+        let policy = Policy {
+            evidence_rules: Some(super::super::policy::EvidenceRules {
+                allow_evidence: vec!["draft".into()],
+            }),
+            ..Default::default()
+        };
+        let v = check_op(&policy, Op::Evidence { status: "done" });
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].rule, "evidence_restricted");
     }
 }
