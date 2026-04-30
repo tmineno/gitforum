@@ -2994,10 +2994,19 @@ fn run_thread_cmd(
             };
             // source_thread is now Option<(String, ThreadKind)>
 
-            // Operation check: validate creation rules
+            // Operation check: validate creation rules. Tags come from the
+            // kind preset (per ADR-002 §2.3.3): rfc → cross-cutting, issue →
+            // bug, task → task, dec → none. (Track D will surface --tag.)
+            let derived_tags: Vec<String> = match kind {
+                ThreadKind::Rfc => vec!["cross-cutting".into()],
+                ThreadKind::Issue => vec!["bug".into()],
+                ThreadKind::Task => vec!["task".into()],
+                ThreadKind::Dec => vec![],
+            };
             let violations = operation_check::check_create(
                 &policy,
-                kind,
+                kind.lifecycle(),
+                &derived_tags,
                 &effective_title,
                 effective_body.as_deref(),
             );

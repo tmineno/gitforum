@@ -7,11 +7,13 @@ use chrono::{TimeZone, Utc};
 use git_forum::internal::clock::FixedClock;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
-use git_forum::internal::event::{NodeType, ThreadKind};
+use git_forum::internal::event::{Lifecycle, NodeType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::operation_check::{self, Severity};
-use git_forum::internal::policy::{CreationRules, EvidenceRules, Policy, ReviseRules};
+use git_forum::internal::policy::{
+    CreationRules, EvidenceRules, LifecycleCreationRules, Policy, ReviseRules,
+};
 use git_forum::internal::state_change;
 use git_forum::internal::thread;
 
@@ -39,17 +41,23 @@ fn empty_policy() -> Policy {
 fn rfc_creation_policy() -> Policy {
     let mut creation_rules = HashMap::new();
     creation_rules.insert(
-        "rfc".into(),
-        CreationRules {
-            required_body: true,
-            body_sections: vec!["Goal".into(), "Non-goals".into(), "Design".into()],
+        "proposal".into(),
+        LifecycleCreationRules {
+            base: CreationRules {
+                required_body: true,
+                body_sections: vec!["Goal".into(), "Non-goals".into(), "Design".into()],
+            },
+            tag: HashMap::new(),
         },
     );
     creation_rules.insert(
-        "issue".into(),
-        CreationRules {
-            required_body: false,
-            body_sections: vec![],
+        "execution".into(),
+        LifecycleCreationRules {
+            base: CreationRules {
+                required_body: false,
+                body_sections: vec![],
+            },
+            tag: HashMap::new(),
         },
     );
     Policy {
@@ -61,10 +69,13 @@ fn rfc_creation_policy() -> Policy {
 fn restrictive_policy() -> Policy {
     let mut creation_rules = HashMap::new();
     creation_rules.insert(
-        "rfc".into(),
-        CreationRules {
-            required_body: true,
-            body_sections: vec!["Goal".into()],
+        "proposal".into(),
+        LifecycleCreationRules {
+            base: CreationRules {
+                required_body: true,
+                body_sections: vec!["Goal".into()],
+            },
+            tag: HashMap::new(),
         },
     );
 
@@ -104,7 +115,13 @@ fn restrictive_policy() -> Policy {
 #[test]
 fn create_rfc_no_body_blocked_by_policy() {
     let policy = rfc_creation_policy();
-    let violations = operation_check::check_create(&policy, ThreadKind::Rfc, "Test", None);
+    let violations = operation_check::check_create(
+        &policy,
+        Lifecycle::Proposal,
+        &["cross-cutting".into()],
+        "Test",
+        None,
+    );
     assert_eq!(violations.len(), 1);
     assert_eq!(violations[0].severity, Severity::Error);
     assert_eq!(violations[0].rule, "required_body");
@@ -115,7 +132,8 @@ fn create_rfc_partial_body_warns() {
     let policy = rfc_creation_policy();
     let violations = operation_check::check_create(
         &policy,
-        ThreadKind::Rfc,
+        Lifecycle::Proposal,
+        &["cross-cutting".into()],
         "Test",
         Some("## Goal\nSome goal text"),
     );
@@ -128,21 +146,35 @@ fn create_rfc_partial_body_warns() {
 fn create_rfc_full_body_passes() {
     let policy = rfc_creation_policy();
     let body = "## Goal\ntext\n## Non-goals\ntext\n## Design\ntext";
-    let violations = operation_check::check_create(&policy, ThreadKind::Rfc, "Test", Some(body));
+    let violations = operation_check::check_create(
+        &policy,
+        Lifecycle::Proposal,
+        &["cross-cutting".into()],
+        "Test",
+        Some(body),
+    );
     assert!(violations.is_empty());
 }
 
 #[test]
 fn create_issue_no_body_allowed() {
     let policy = rfc_creation_policy();
-    let violations = operation_check::check_create(&policy, ThreadKind::Issue, "Bug", None);
+    let violations =
+        operation_check::check_create(&policy, Lifecycle::Execution, &["bug".into()], "Bug", None);
     assert!(violations.is_empty());
 }
 
 #[test]
 fn no_policy_allows_everything() {
     let policy = Policy::default();
-    assert!(operation_check::check_create(&policy, ThreadKind::Rfc, "Test", None).is_empty());
+    assert!(operation_check::check_create(
+        &policy,
+        Lifecycle::Proposal,
+        &["cross-cutting".into()],
+        "Test",
+        None
+    )
+    .is_empty());
     assert!(operation_check::check_say(&policy, "accepted", NodeType::Claim).is_empty());
     assert!(operation_check::check_revise(&policy, "accepted", true).is_empty());
     assert!(operation_check::check_evidence(&policy, "accepted").is_empty());
@@ -356,10 +388,15 @@ strict = true
 
     let policy = Policy::load(&policy_path).unwrap();
     assert_eq!(policy.guards.len(), 1);
-    assert!(policy.creation_rules.contains_key("rfc"));
-    assert!(policy.creation_rules.contains_key("issue"));
-    assert!(policy.creation_rules["rfc"].required_body);
-    assert!(!policy.creation_rules["issue"].required_body);
+    // Legacy `creation_rules.rfc` / `creation_rules.issue` auto-translate
+    // to the lifecycle-keyed shape with conventional-tag overlays
+    // (SPEC-2.0 §2.3.3 / §7.2).
+    assert!(policy.creation_rules.contains_key("proposal"));
+    assert!(policy.creation_rules.contains_key("execution"));
+    let proposal_rules = &policy.creation_rules["proposal"];
+    assert!(proposal_rules.tag["cross-cutting"].required_body);
+    let execution_rules = &policy.creation_rules["execution"];
+    assert!(!execution_rules.tag["bug"].required_body);
     assert_eq!(policy.node_rules["draft"].len(), 2);
     assert!(policy.node_rules["accepted"].is_empty());
     assert_eq!(
@@ -379,7 +416,13 @@ strict = true
 fn body_section_matches_any_heading_level() {
     let policy = rfc_creation_policy();
     let body = "# Goal\ntext\n### Non-goals\ntext\n###### Design\ntext";
-    let violations = operation_check::check_create(&policy, ThreadKind::Rfc, "Test", Some(body));
+    let violations = operation_check::check_create(
+        &policy,
+        Lifecycle::Proposal,
+        &["cross-cutting".into()],
+        "Test",
+        Some(body),
+    );
     assert!(violations.is_empty());
 }
 
@@ -387,6 +430,12 @@ fn body_section_matches_any_heading_level() {
 fn body_section_case_insensitive() {
     let policy = rfc_creation_policy();
     let body = "## GOAL\ntext\n## non-goals\ntext\n## dEsIgN\ntext";
-    let violations = operation_check::check_create(&policy, ThreadKind::Rfc, "Test", Some(body));
+    let violations = operation_check::check_create(
+        &policy,
+        Lifecycle::Proposal,
+        &["cross-cutting".into()],
+        "Test",
+        Some(body),
+    );
     assert!(violations.is_empty());
 }

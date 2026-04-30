@@ -1,4 +1,4 @@
-use super::event::{NodeType, ThreadKind};
+use super::event::{Lifecycle, NodeType};
 use super::policy::Policy;
 
 /// Severity of an operation check violation.
@@ -25,20 +25,24 @@ pub struct OperationViolation {
 
 /// Check creation rules for a new thread.
 ///
-/// Preconditions: `kind` is a valid ThreadKind; `body` is the thread body (may be None).
-/// Postconditions: returns violations found; empty vec means all checks pass.
+/// Preconditions: `lifecycle` and `tags` describe the thread under
+/// creation; `body` is the optional body text.
+/// Postconditions: returns violations found; empty vec means all checks
+/// pass. Resolution is most-specific-match per SPEC-2.0 §7.2 — a tag
+/// rule overrides the base lifecycle rule when the thread carries that
+/// tag (alphabetically first matching tag wins under multi-tag).
 /// Failure modes: none (returns violations, not errors).
 /// Side effects: none.
 pub fn check_create(
     policy: &Policy,
-    kind: ThreadKind,
+    lifecycle: Lifecycle,
+    tags: &[String],
     _title: &str,
     body: Option<&str>,
 ) -> Vec<OperationViolation> {
     let mut violations = Vec::new();
-    let kind_key = kind.to_string();
 
-    let Some(rules) = policy.creation_rules.get(&kind_key) else {
+    let Some(rules) = policy.resolve_creation_rules(lifecycle, tags) else {
         return violations;
     };
 
@@ -46,7 +50,7 @@ pub fn check_create(
         violations.push(OperationViolation {
             severity: Severity::Error,
             rule: "required_body".into(),
-            reason: format!("{kind} threads require a body"),
+            reason: format!("{lifecycle} threads require a body"),
             hint: Some("provide --body or --body-file".into()),
             fix_command: None,
         });
@@ -308,19 +312,27 @@ mod tests {
     use std::collections::HashMap;
 
     fn policy_with_creation_rules() -> Policy {
+        use super::super::policy::{CreationRules, LifecycleCreationRules};
         let mut creation_rules = HashMap::new();
+        // SPEC-2.0 §7.2: rules keyed by lifecycle, with optional tag overlays.
         creation_rules.insert(
-            "rfc".into(),
-            super::super::policy::CreationRules {
-                required_body: true,
-                body_sections: vec!["Goal".into(), "Non-goals".into(), "Design".into()],
+            "proposal".into(),
+            LifecycleCreationRules {
+                base: CreationRules {
+                    required_body: true,
+                    body_sections: vec!["Goal".into(), "Non-goals".into(), "Design".into()],
+                },
+                tag: HashMap::new(),
             },
         );
         creation_rules.insert(
-            "issue".into(),
-            super::super::policy::CreationRules {
-                required_body: false,
-                body_sections: vec![],
+            "execution".into(),
+            LifecycleCreationRules {
+                base: CreationRules {
+                    required_body: false,
+                    body_sections: vec![],
+                },
+                tag: HashMap::new(),
             },
         );
         Policy {
@@ -332,7 +344,13 @@ mod tests {
     #[test]
     fn check_create_rfc_no_body_returns_error() {
         let policy = policy_with_creation_rules();
-        let violations = check_create(&policy, ThreadKind::Rfc, "Test", None);
+        let violations = check_create(
+            &policy,
+            Lifecycle::Proposal,
+            &["cross-cutting".into()],
+            "Test",
+            None,
+        );
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].severity, Severity::Error);
         assert_eq!(violations[0].rule, "required_body");
@@ -341,7 +359,13 @@ mod tests {
     #[test]
     fn check_create_rfc_empty_body_returns_error() {
         let policy = policy_with_creation_rules();
-        let violations = check_create(&policy, ThreadKind::Rfc, "Test", Some("  "));
+        let violations = check_create(
+            &policy,
+            Lifecycle::Proposal,
+            &["cross-cutting".into()],
+            "Test",
+            Some("  "),
+        );
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].severity, Severity::Error);
         assert_eq!(violations[0].rule, "required_body");
@@ -352,7 +376,8 @@ mod tests {
         let policy = policy_with_creation_rules();
         let violations = check_create(
             &policy,
-            ThreadKind::Rfc,
+            Lifecycle::Proposal,
+            &["cross-cutting".into()],
             "Test",
             Some("## Goal\nSome goal text"),
         );
@@ -367,7 +392,13 @@ mod tests {
     fn check_create_rfc_all_sections_present() {
         let policy = policy_with_creation_rules();
         let body = "## Goal\ntext\n## Non-goals\ntext\n## Design\ntext";
-        let violations = check_create(&policy, ThreadKind::Rfc, "Test", Some(body));
+        let violations = check_create(
+            &policy,
+            Lifecycle::Proposal,
+            &["cross-cutting".into()],
+            "Test",
+            Some(body),
+        );
         assert!(violations.is_empty());
     }
 
@@ -375,7 +406,13 @@ mod tests {
     fn check_create_rfc_empty_section_returns_warning() {
         let policy = policy_with_creation_rules();
         let body = "## Goal\n\n## Non-goals\ntext\n## Design\ntext";
-        let violations = check_create(&policy, ThreadKind::Rfc, "Test", Some(body));
+        let violations = check_create(
+            &policy,
+            Lifecycle::Proposal,
+            &["cross-cutting".into()],
+            "Test",
+            Some(body),
+        );
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].severity, Severity::Warning);
         assert_eq!(violations[0].rule, "body_section_empty");
@@ -386,7 +423,13 @@ mod tests {
         let policy = policy_with_creation_rules();
         let body =
             "## Goal\ntext\n## Non-goals\ntext\n## Design\n\n### Option A\nDetails\n\n### Option B\nMore";
-        let violations = check_create(&policy, ThreadKind::Rfc, "Test", Some(body));
+        let violations = check_create(
+            &policy,
+            Lifecycle::Proposal,
+            &["cross-cutting".into()],
+            "Test",
+            Some(body),
+        );
         assert!(
             violations.is_empty(),
             "sub-headings should count as content: {violations:?}"
@@ -396,14 +439,20 @@ mod tests {
     #[test]
     fn check_create_issue_no_body_allowed() {
         let policy = policy_with_creation_rules();
-        let violations = check_create(&policy, ThreadKind::Issue, "Bug", None);
+        let violations = check_create(&policy, Lifecycle::Execution, &["bug".into()], "Bug", None);
         assert!(violations.is_empty());
     }
 
     #[test]
     fn check_create_no_policy_allows_everything() {
         let policy = Policy::default();
-        let violations = check_create(&policy, ThreadKind::Rfc, "Test", None);
+        let violations = check_create(
+            &policy,
+            Lifecycle::Proposal,
+            &["cross-cutting".into()],
+            "Test",
+            None,
+        );
         assert!(violations.is_empty());
     }
 
@@ -411,7 +460,13 @@ mod tests {
     fn check_create_case_insensitive_heading_match() {
         let policy = policy_with_creation_rules();
         let body = "# goal\ntext\n### NON-GOALS\ntext\n## design\ntext";
-        let violations = check_create(&policy, ThreadKind::Rfc, "Test", Some(body));
+        let violations = check_create(
+            &policy,
+            Lifecycle::Proposal,
+            &["cross-cutting".into()],
+            "Test",
+            Some(body),
+        );
         assert!(violations.is_empty());
     }
 

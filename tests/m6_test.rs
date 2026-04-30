@@ -6,11 +6,13 @@ use chrono::{TimeZone, Utc};
 use git_forum::internal::clock::FixedClock;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
-use git_forum::internal::event::{NodeType, ThreadKind};
+use git_forum::internal::event::{Lifecycle, NodeType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::operation_check::{self, Severity};
-use git_forum::internal::policy::{CreationRules, GuardEntry, GuardRule, Policy, ReviseRules};
+use git_forum::internal::policy::{
+    CreationRules, GuardEntry, GuardRule, LifecycleCreationRules, Policy, ReviseRules,
+};
 use git_forum::internal::show;
 use git_forum::internal::state_change;
 use git_forum::internal::thread;
@@ -695,17 +697,21 @@ fn dec_create_requires_body() {
         creation_rules: {
             let mut m = HashMap::new();
             m.insert(
-                "dec".into(),
-                CreationRules {
-                    required_body: true,
-                    body_sections: vec!["Context".into(), "Decision".into()],
+                "record".into(),
+                LifecycleCreationRules {
+                    base: CreationRules {
+                        required_body: true,
+                        body_sections: vec!["Context".into(), "Decision".into()],
+                    },
+                    tag: HashMap::new(),
                 },
             );
             m
         },
         ..Default::default()
     };
-    let violations = operation_check::check_create(&dec_policy, ThreadKind::Dec, "Test", None);
+    let violations =
+        operation_check::check_create(&dec_policy, Lifecycle::Record, &[], "Test", None);
     assert!(violations.iter().any(|v| v.severity == Severity::Error));
 }
 
@@ -715,15 +721,18 @@ fn dec_create_missing_sections_warns() {
         creation_rules: {
             let mut m = HashMap::new();
             m.insert(
-                "dec".into(),
-                CreationRules {
-                    required_body: true,
-                    body_sections: vec![
-                        "Context".into(),
-                        "Decision".into(),
-                        "Rationale".into(),
-                        "Impact".into(),
-                    ],
+                "record".into(),
+                LifecycleCreationRules {
+                    base: CreationRules {
+                        required_body: true,
+                        body_sections: vec![
+                            "Context".into(),
+                            "Decision".into(),
+                            "Rationale".into(),
+                            "Impact".into(),
+                        ],
+                    },
+                    tag: HashMap::new(),
                 },
             );
             m
@@ -733,7 +742,8 @@ fn dec_create_missing_sections_warns() {
     // Body provided but missing sections
     let violations = operation_check::check_create(
         &dec_policy,
-        ThreadKind::Dec,
+        Lifecycle::Record,
+        &[],
         "Test",
         Some("## Context\nSome context\n## Decision\nUse Redis"),
     );
@@ -756,17 +766,36 @@ fn task_create_no_body_succeeds() {
         creation_rules: {
             let mut m = HashMap::new();
             m.insert(
-                "task".into(),
-                CreationRules {
-                    required_body: false,
-                    body_sections: vec!["Background".into(), "Acceptance criteria".into()],
+                "execution".into(),
+                LifecycleCreationRules {
+                    base: CreationRules::default(),
+                    tag: {
+                        let mut t = HashMap::new();
+                        t.insert(
+                            "task".into(),
+                            CreationRules {
+                                required_body: false,
+                                body_sections: vec![
+                                    "Background".into(),
+                                    "Acceptance criteria".into(),
+                                ],
+                            },
+                        );
+                        t
+                    },
                 },
             );
             m
         },
         ..Default::default()
     };
-    let violations = operation_check::check_create(&task_policy, ThreadKind::Task, "Test", None);
+    let violations = operation_check::check_create(
+        &task_policy,
+        Lifecycle::Execution,
+        &["task".into()],
+        "Test",
+        None,
+    );
     assert!(violations.is_empty());
 }
 
@@ -776,14 +805,24 @@ fn task_create_with_body_missing_sections_warns() {
         creation_rules: {
             let mut m = HashMap::new();
             m.insert(
-                "task".into(),
-                CreationRules {
-                    required_body: false,
-                    body_sections: vec![
-                        "Background".into(),
-                        "Acceptance criteria".into(),
-                        "Exceptions".into(),
-                    ],
+                "execution".into(),
+                LifecycleCreationRules {
+                    base: CreationRules::default(),
+                    tag: {
+                        let mut t = HashMap::new();
+                        t.insert(
+                            "task".into(),
+                            CreationRules {
+                                required_body: false,
+                                body_sections: vec![
+                                    "Background".into(),
+                                    "Acceptance criteria".into(),
+                                    "Exceptions".into(),
+                                ],
+                            },
+                        );
+                        t
+                    },
                 },
             );
             m
@@ -792,7 +831,8 @@ fn task_create_with_body_missing_sections_warns() {
     };
     let violations = operation_check::check_create(
         &task_policy,
-        ThreadKind::Task,
+        Lifecycle::Execution,
+        &["task".into()],
         "Test",
         Some("## Background\nSome background"),
     );

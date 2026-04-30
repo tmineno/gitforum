@@ -265,14 +265,15 @@ mod tests {
         // Checks config
         assert!(!policy.checks.strict);
 
-        // Creation rules — RFC
+        // Creation rules — RFC (legacy `rfc` key, base section before
+        // load-time auto-translation).
         let rfc_rules = policy
             .creation_rules
             .get("rfc")
             .expect("creation_rules.rfc must exist");
-        assert!(rfc_rules.required_body);
+        assert!(rfc_rules.base.required_body);
         assert_eq!(
-            rfc_rules.body_sections,
+            rfc_rules.base.body_sections,
             vec!["Goal", "Non-goals", "Context", "Proposal"]
         );
 
@@ -281,17 +282,17 @@ mod tests {
             .creation_rules
             .get("issue")
             .expect("creation_rules.issue must exist");
-        assert!(!issue_rules.required_body);
-        assert!(issue_rules.body_sections.is_empty());
+        assert!(!issue_rules.base.required_body);
+        assert!(issue_rules.base.body_sections.is_empty());
 
         // Creation rules — dec
         let dec_rules = policy
             .creation_rules
             .get("dec")
             .expect("creation_rules.dec must exist");
-        assert!(dec_rules.required_body);
+        assert!(dec_rules.base.required_body);
         assert_eq!(
-            dec_rules.body_sections,
+            dec_rules.base.body_sections,
             vec!["Context", "Decision", "Rationale", "Impact"]
         );
 
@@ -300,9 +301,9 @@ mod tests {
             .creation_rules
             .get("task")
             .expect("creation_rules.task must exist");
-        assert!(!task_rules.required_body);
+        assert!(!task_rules.base.required_body);
         assert_eq!(
-            task_rules.body_sections,
+            task_rules.base.body_sections,
             vec!["Background", "Acceptance criteria", "Exceptions"]
         );
 

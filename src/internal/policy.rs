@@ -226,13 +226,27 @@ pub struct GuardEntry {
     pub transition: String,
 }
 
-/// Creation rules for a specific thread kind (e.g. rfc, issue).
+/// Creation rules — required body / required body sections (SPEC-2.0 §7.2).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct CreationRules {
     #[serde(default)]
     pub required_body: bool,
     #[serde(default)]
     pub body_sections: Vec<String>,
+}
+
+/// Per-lifecycle creation rules with optional per-tag specialization.
+///
+/// SPEC-2.0 §7.2: `creation_rules.<lifecycle>` carries the base rules;
+/// `creation_rules.<lifecycle>.tag.<name>` overrides them for threads
+/// carrying that tag. Resolution: most-specific match wins. Multi-tag
+/// combiners are deferred per §7.2.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LifecycleCreationRules {
+    #[serde(flatten)]
+    pub base: CreationRules,
+    #[serde(default)]
+    pub tag: HashMap<String, CreationRules>,
 }
 
 /// Rules controlling which states allow body/node revisions.
@@ -268,8 +282,11 @@ pub struct ChecksConfig {
 pub struct Policy {
     #[serde(default, rename = "guards")]
     pub guards: Vec<GuardEntry>,
+    /// Keyed by lifecycle name (`proposal` / `execution` / `record`).
+    /// Legacy 1.x kind keys (`rfc` / `issue` / `dec` / `task`) are
+    /// auto-translated at load time per SPEC-2.0 §2.3.3.
     #[serde(default)]
-    pub creation_rules: HashMap<String, CreationRules>,
+    pub creation_rules: HashMap<String, LifecycleCreationRules>,
     #[serde(default)]
     pub node_rules: HashMap<String, Vec<NodeType>>,
     #[serde(default)]
@@ -292,7 +309,87 @@ impl Policy {
         for warning in policy.resolve_guard_scopes() {
             eprintln!("warning: {warning}");
         }
+        for warning in policy.translate_legacy_creation_rules() {
+            eprintln!("warning: {warning}");
+        }
         Ok(policy)
+    }
+
+    /// SPEC-2.0 §2.3.3 / §7.2 / §10.4: rewrite any legacy kind-keyed
+    /// `creation_rules.<kind>` entry into the equivalent
+    /// `creation_rules.<lifecycle>.tag.<conventional-tag>` overlay so
+    /// existing 1.x policy.toml files keep their semantics post-migration.
+    /// Returns the warnings emitted.
+    pub fn translate_legacy_creation_rules(&mut self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let legacy_keys: Vec<String> = self
+            .creation_rules
+            .keys()
+            .filter(|k| matches!(k.as_str(), "rfc" | "issue" | "dec" | "task"))
+            .cloned()
+            .collect();
+        for key in legacy_keys {
+            let Some(rules) = self.creation_rules.remove(&key) else {
+                continue;
+            };
+            let (lifecycle, conventional_tag): (&str, Option<&str>) = match key.as_str() {
+                "rfc" => ("proposal", Some("cross-cutting")),
+                "issue" => ("execution", Some("bug")),
+                "task" => ("execution", Some("task")),
+                "dec" => ("record", None),
+                _ => unreachable!(),
+            };
+            let entry = self
+                .creation_rules
+                .entry(lifecycle.to_string())
+                .or_default();
+            match conventional_tag {
+                Some(tag) => {
+                    let target = format!("creation_rules.{lifecycle}.tag.{tag} (SPEC-2.0 §2.3.3)");
+                    warnings.push(format!("creation_rules.{key}: rewritten to {target}"));
+                    entry.tag.insert(tag.to_string(), rules.base);
+                    // Preserve any nested tag overlays the legacy
+                    // entry happened to carry.
+                    for (t, r) in rules.tag {
+                        entry.tag.insert(t, r);
+                    }
+                }
+                None => {
+                    warnings.push(format!(
+                        "creation_rules.{key}: rewritten to creation_rules.{lifecycle}"
+                    ));
+                    if entry.base.body_sections.is_empty() {
+                        entry.base = rules.base;
+                    } else {
+                        // Don't overwrite an explicit lifecycle entry; tag overlays only.
+                    }
+                    for (t, r) in rules.tag {
+                        entry.tag.insert(t, r);
+                    }
+                }
+            }
+        }
+        warnings
+    }
+
+    /// Resolve creation rules for a given lifecycle + tag set, applying
+    /// most-specific-match (SPEC-2.0 §7.2): a tag rule overrides the base
+    /// lifecycle rule when the thread carries that tag. Multi-tag ties are
+    /// broken alphabetically per the spec's "MAY pick deterministically"
+    /// allowance.
+    pub fn resolve_creation_rules(
+        &self,
+        lifecycle: Lifecycle,
+        tags: &[String],
+    ) -> Option<&CreationRules> {
+        let entry = self.creation_rules.get(lifecycle.as_str())?;
+        let mut matching_tags: Vec<&String> =
+            tags.iter().filter(|t| entry.tag.contains_key(*t)).collect();
+        matching_tags.sort();
+        if let Some(t) = matching_tags.first() {
+            return entry.tag.get(*t);
+        }
+        Some(&entry.base)
     }
 
     /// Parse the predicate scope and transition from each guard's `on`
@@ -717,6 +814,21 @@ fn sorted_states(states: &std::collections::HashSet<&str>) -> String {
     v.join(", ")
 }
 
+fn format_creation_rules(rules: &CreationRules) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if rules.required_body {
+        parts.push("required_body=true".into());
+    }
+    if !rules.body_sections.is_empty() {
+        parts.push(format!("sections=[{}]", rules.body_sections.join(", ")));
+    }
+    if parts.is_empty() {
+        "(no restrictions)".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
 /// Terminal states are resolution/conclusion states where a thread's primary work is done.
 /// Includes both 2.0 names and the 1.x names still produced by legacy fixtures.
 pub const TERMINAL_STATES: &[&str] = &[
@@ -870,24 +982,19 @@ pub fn render_policy_show(policy: &Policy) -> String {
     lines.push(format!("  strict = {}", policy.checks.strict));
     lines.push(String::new());
 
-    // Creation rules
+    // Creation rules (lifecycle-keyed, plus tag overlays).
     if !policy.creation_rules.is_empty() {
         lines.push("creation_rules:".into());
         let mut keys: Vec<&String> = policy.creation_rules.keys().collect();
         keys.sort();
         for key in keys {
-            let rules = &policy.creation_rules[key];
-            let mut parts: Vec<String> = Vec::new();
-            if rules.required_body {
-                parts.push("required_body=true".into());
-            }
-            if !rules.body_sections.is_empty() {
-                parts.push(format!("sections=[{}]", rules.body_sections.join(", ")));
-            }
-            if parts.is_empty() {
-                lines.push(format!("  {key}: (no restrictions)"));
-            } else {
-                lines.push(format!("  {key}: {}", parts.join(", ")));
+            let entry = &policy.creation_rules[key];
+            lines.push(format!("  {key}: {}", format_creation_rules(&entry.base)));
+            let mut tags: Vec<&String> = entry.tag.keys().collect();
+            tags.sort();
+            for tag in tags {
+                let rules = &entry.tag[tag];
+                lines.push(format!("    tag.{tag}: {}", format_creation_rules(rules)));
             }
         }
         lines.push(String::new());
