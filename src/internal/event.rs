@@ -112,30 +112,81 @@ impl std::fmt::Display for EventType {
 }
 
 /// Node types for structured discussion.
+///
+/// 2.0 reduces the canonical taxonomy to four (`Comment`, `Approval`,
+/// `Objection`, `Action`) cut by *protocol effect* per ADR-006. The seven
+/// 1.x prose-only variants (`Claim`, `Question`, `Summary`, `Risk`,
+/// `Review`, `Alternative`, `Assumption`) and the data-pointer variant
+/// (`Evidence`) remain on this enum for backward-compatible reads of legacy
+/// repos; new write paths SHOULD use the canonical four. The `canonical()`
+/// method maps any variant to its 2.0 equivalent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeType {
+    // -- 2.0 canonical variants (protocol-effect cut) --
+    /// 2.0 canonical: body-prose contribution. No protocol effect.
+    /// Replaces 1.x `Claim` / `Question` / `Summary` / `Risk` / `Review` /
+    /// `Alternative` / `Assumption`.
+    Comment,
+    /// 2.0 canonical: positive sign-off. Counts toward state-transition
+    /// guards (e.g. `one_human_approval`). Folds in the 1.x standalone
+    /// Approval concept (SPEC.md §2.7).
+    Approval,
+    // -- Variants retained from 1.x (canonical and legacy alike) --
+    Objection,
+    Action,
+    // -- Legacy 1.x variants (kept for read compat; map to Comment) --
     Claim,
     Question,
-    Objection,
     Evidence,
     Summary,
-    Action,
     Risk,
     Review,
     Alternative,
     Assumption,
 }
 
+impl NodeType {
+    /// Map any variant to its 2.0 canonical form.
+    ///
+    /// - The seven 1.x prose-only variants collapse to `Comment`.
+    /// - `Evidence` collapses to `Comment` (the evidence-pointer surface
+    ///   moves out of the node namespace entirely; see `evidence add`).
+    /// - `Comment`, `Approval`, `Objection`, `Action` are unchanged.
+    pub fn canonical(self) -> Self {
+        match self {
+            Self::Comment | Self::Approval | Self::Objection | Self::Action => self,
+            Self::Claim
+            | Self::Question
+            | Self::Evidence
+            | Self::Summary
+            | Self::Risk
+            | Self::Review
+            | Self::Alternative
+            | Self::Assumption => Self::Comment,
+        }
+    }
+
+    /// Returns true if this is a 2.0 canonical variant.
+    pub fn is_canonical(self) -> bool {
+        matches!(
+            self,
+            Self::Comment | Self::Approval | Self::Objection | Self::Action
+        )
+    }
+}
+
 impl std::fmt::Display for NodeType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
+            Self::Comment => "comment",
+            Self::Approval => "approval",
+            Self::Objection => "objection",
+            Self::Action => "action",
             Self::Claim => "claim",
             Self::Question => "question",
-            Self::Objection => "objection",
             Self::Evidence => "evidence",
             Self::Summary => "summary",
-            Self::Action => "action",
             Self::Risk => "risk",
             Self::Review => "review",
             Self::Alternative => "alternative",
@@ -149,17 +200,19 @@ impl std::str::FromStr for NodeType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
+            "comment" => Ok(Self::Comment),
+            "approval" => Ok(Self::Approval),
+            "objection" => Ok(Self::Objection),
+            "action" => Ok(Self::Action),
             "claim" => Ok(Self::Claim),
             "question" => Ok(Self::Question),
-            "objection" => Ok(Self::Objection),
             "evidence" => Ok(Self::Evidence),
             "summary" => Ok(Self::Summary),
-            "action" => Ok(Self::Action),
             "risk" => Ok(Self::Risk),
             "review" => Ok(Self::Review),
             "alternative" => Ok(Self::Alternative),
             "assumption" => Ok(Self::Assumption),
-            _ => Err(format!("unknown node type '{s}'; valid types: claim, question, objection, evidence, summary, action, risk, review, alternative, assumption")),
+            _ => Err(format!("unknown node type '{s}'; canonical types (2.0): comment, approval, objection, action; legacy types accepted for reads: claim, question, evidence, summary, risk, review, alternative, assumption")),
         }
     }
 }
@@ -505,6 +558,64 @@ mod tests {
             vec!["cross-cutting".to_string(), "task".to_string()]
         );
         assert_eq!(parsed.tags_remove, vec!["bug".to_string()]);
+    }
+
+    #[test]
+    fn node_type_canonical_collapses_legacy_to_comment() {
+        // 2.0 canonical four pass through unchanged.
+        for nt in [
+            NodeType::Comment,
+            NodeType::Approval,
+            NodeType::Objection,
+            NodeType::Action,
+        ] {
+            assert_eq!(nt.canonical(), nt);
+            assert!(nt.is_canonical());
+        }
+        // Seven prose-only legacy variants + Evidence collapse to Comment.
+        for nt in [
+            NodeType::Claim,
+            NodeType::Question,
+            NodeType::Evidence,
+            NodeType::Summary,
+            NodeType::Risk,
+            NodeType::Review,
+            NodeType::Alternative,
+            NodeType::Assumption,
+        ] {
+            assert_eq!(nt.canonical(), NodeType::Comment);
+            assert!(!nt.is_canonical());
+        }
+    }
+
+    #[test]
+    fn node_type_parses_canonical_and_legacy() {
+        use std::str::FromStr;
+        assert_eq!(NodeType::from_str("comment").unwrap(), NodeType::Comment);
+        assert_eq!(NodeType::from_str("approval").unwrap(), NodeType::Approval);
+        assert_eq!(
+            NodeType::from_str("objection").unwrap(),
+            NodeType::Objection
+        );
+        assert_eq!(NodeType::from_str("action").unwrap(), NodeType::Action);
+        // Legacy types still parse so 1.x events can be read.
+        assert_eq!(NodeType::from_str("claim").unwrap(), NodeType::Claim);
+        assert_eq!(NodeType::from_str("summary").unwrap(), NodeType::Summary);
+        assert!(NodeType::from_str("nonsense").is_err());
+    }
+
+    #[test]
+    fn node_type_serialize_roundtrip_canonical() {
+        // 2.0 canonical types serialize as lowercase strings and round-trip.
+        let json = serde_json::to_string(&NodeType::Comment).unwrap();
+        assert_eq!(json, "\"comment\"");
+        let parsed: NodeType = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, NodeType::Comment);
+
+        let json = serde_json::to_string(&NodeType::Approval).unwrap();
+        assert_eq!(json, "\"approval\"");
+        let parsed: NodeType = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, NodeType::Approval);
     }
 
     #[test]

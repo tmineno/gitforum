@@ -86,6 +86,8 @@ impl ClaudeCodeAdapter {
 
     fn describe_node_goal(node_type: NodeType) -> &'static str {
         match node_type {
+            NodeType::Comment => "add a comment",
+            NodeType::Approval => "record an approval",
             NodeType::Claim => "add a concrete claim",
             NodeType::Question => "ask a clarifying question",
             NodeType::Objection => "raise an objection",
