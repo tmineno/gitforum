@@ -271,6 +271,12 @@ pub struct Event {
     /// Previous node type before a Retype event.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub old_node_type: Option<NodeType>,
+    /// 2.0: original 1.x node-type label preserved during migration when the
+    /// canonical `node_type` was rewritten (e.g. 1.x `claim` → 2.0 `comment`
+    /// with `legacy_subtype = "claim"`). Populated only by the migration
+    /// tool (Track C); native 2.0 events never set this.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub legacy_subtype: Option<String>,
     /// 2.0: lifecycle facet value set on this `facet_set` event. Present only on
     /// the thread's first `facet_set` (immutable after creation per SPEC-2.0 §7.3).
     #[serde(skip_serializing_if = "Option::is_none")]
