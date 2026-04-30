@@ -227,7 +227,16 @@ pub fn calculator_scenario() -> ScenarioDef {
                         actor: "human/alice".to_string(),
                         approve_actors: vec!["human/alice".to_string()],
                     },
-                    // RFC-0002: draft -> rejected
+                    // RFC-0002: draft → open → rejected. The unified §3.1
+                    // graph has no draft→rejected edge; reach rejected via
+                    // the open intermediate (or via withdrawn for a
+                    // self-retraction).
+                    StateTransitionDef {
+                        thread_ref: "RFC-0002".to_string(),
+                        new_state: "proposed".to_string(),
+                        actor: "human/alice".to_string(),
+                        approve_actors: vec![],
+                    },
                     StateTransitionDef {
                         thread_ref: "RFC-0002".to_string(),
                         new_state: "rejected".to_string(),
@@ -335,17 +344,13 @@ pub fn calculator_scenario() -> ScenarioDef {
                 ],
                 nodes: vec![],
                 transitions: vec![
-                    // RFC-0003: draft -> proposed -> draft (revert to draft)
+                    // RFC-0003: draft → proposed (advance for review). The
+                    // unified §3.1 graph has no proposed→draft edge, so the
+                    // legacy "revert to draft" step has been dropped.
                     StateTransitionDef {
                         thread_ref: "RFC-0003".to_string(),
                         new_state: "proposed".to_string(),
                         actor: "ai/copilot".to_string(),
-                        approve_actors: vec![],
-                    },
-                    StateTransitionDef {
-                        thread_ref: "RFC-0003".to_string(),
-                        new_state: "draft".to_string(),
-                        actor: "human/alice".to_string(),
                         approve_actors: vec![],
                     },
                     // RFC-0004: draft -> proposed -> under-review -> rejected -> deprecated

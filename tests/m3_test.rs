@@ -407,7 +407,7 @@ fn change_state_valid_transition_no_guards() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    assert_eq!(state.status, "under-review");
+    assert_eq!(state.status, "review");
 }
 
 #[test]
@@ -427,7 +427,7 @@ fn change_state_invalid_transition_fails() {
     );
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("valid transitions from 'draft': [proposed, rejected, withdrawn]"));
+    assert!(err.contains("valid transitions from 'draft': [open, withdrawn]"));
 }
 
 #[test]
@@ -505,7 +505,7 @@ fn change_state_passes_all_guards() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    assert_eq!(state.status, "accepted");
+    assert_eq!(state.status, "done");
 }
 
 #[test]
@@ -599,7 +599,7 @@ fn change_state_issue_close_can_resolve_open_actions() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    assert_eq!(state.status, "closed");
+    assert_eq!(state.status, "done");
     assert_eq!(state.open_actions().len(), 0);
 }
 
@@ -1041,7 +1041,7 @@ fn change_state_issue_close_passes_with_commit_evidence() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    assert_eq!(state.status, "closed");
+    assert_eq!(state.status, "done");
 }
 
 // ---- policy loading from file ----
@@ -1235,7 +1235,20 @@ fn rfc_rejected_then_deprecated() {
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    // draft -> rejected -> deprecated
+    // draft → proposed (= open) → rejected → deprecated. The unified §3.1
+    // graph has no draft→rejected edge, so the rejection has to flow
+    // through `open` first.
+    state_change::change_state(
+        &git,
+        &thread_id,
+        "proposed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
     state_change::change_state(
         &git,
         &thread_id,
@@ -1387,10 +1400,12 @@ fn fast_track_rfc_draft_to_accepted() {
     )
     .unwrap();
 
-    assert_eq!(walked, vec!["proposed", "under-review", "accepted"]);
+    // Unified §3.1: draft→open→done is the shortest path (no review hop
+    // unless the policy makes review→done the only guarded edge).
+    assert_eq!(walked, vec!["open", "done"]);
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    assert_eq!(state.status, "accepted");
+    assert_eq!(state.status, "done");
 }
 
 #[test]
@@ -1411,8 +1426,8 @@ fn fast_track_emits_separate_events_per_step() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    // Create + 3 state events = 4 events total
-    assert_eq!(state.events.len(), 4);
+    // Create + 2 state events (open, done) = 3 events total under §3.1.
+    assert_eq!(state.events.len(), 3);
 }
 
 #[test]
@@ -1420,12 +1435,15 @@ fn fast_track_stops_on_guard_failure() {
     let (_repo, git, paths) = setup();
     let thread_id = make_rfc(&git);
 
-    // Add an open objection — will fail no_open_objections guard at under-review->accepted
+    // Add an open action — fails the no_open_actions guard on the
+    // `open->closed` (normalized to open→done) edge in the default policy.
+    // Under unified §3.1, fast_track to `accepted` walks draft→open→done,
+    // so this guard fires on the second step.
     write_ops::say_node(
         &git,
         &thread_id,
-        NodeType::Objection,
-        "Not ready.",
+        NodeType::Action,
+        "Pending follow-up.",
         "human/bob",
         &fixed_clock(),
         None,
@@ -1446,9 +1464,10 @@ fn fast_track_stops_on_guard_failure() {
 
     assert!(result.is_err());
 
-    // Thread should be at under-review (stopped before accepted)
+    // Walk made it to `open` (first step) before the guard on the
+    // open→done edge stopped the second step.
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    assert_eq!(state.status, "under-review");
+    assert_eq!(state.status, "open");
 }
 
 #[test]
@@ -1528,7 +1547,7 @@ fn fast_track_sign_and_comment_only_on_final_step() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    assert_eq!(state.status, "accepted");
+    assert_eq!(state.status, "done");
     // SPEC-2.0 §2.8: 2.0 emits approvals as `approval`-typed Say nodes
     // before the final State event, not as fields on the State event.
     // Only the final fast-track step should have produced an approval node.
@@ -1544,7 +1563,8 @@ fn fast_track_sign_and_comment_only_on_final_step() {
         .iter()
         .filter(|e| e.event_type == EventType::State)
         .collect();
-    assert_eq!(state_events.len(), 3);
+    // Unified §3.1: draft→done is two state events (open, done), not three.
+    assert_eq!(state_events.len(), 2);
     // Native 2.0 State events never carry the legacy `approvals` field.
     for ev in &state_events {
         assert!(ev.approvals.is_empty());
@@ -1718,7 +1738,7 @@ fn state_change_with_comment_attaches_body_no_summary_node() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    assert_eq!(state.status, "closed");
+    assert_eq!(state.status, "done");
 
     // Should produce exactly 2 events: Create + State (no Summary node)
     assert_eq!(state.events.len(), 2);
@@ -1733,6 +1753,7 @@ fn state_change_with_comment_attaches_body_no_summary_node() {
     assert!(state.nodes.is_empty());
 
     // Timeline should show the comment in the state event detail
+    // (state name normalizes to 2.0 `done`).
     let out = show::render_show(&state, false);
-    assert!(out.contains("closed — closing because resolved"));
+    assert!(out.contains("done — closing because resolved"));
 }

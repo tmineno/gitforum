@@ -182,8 +182,8 @@ fn close_shorthand_equals_state_closed() {
     assert!(out.status.success());
     let state_b = replay(repo_b.path(), &id_b);
 
-    assert_eq!(state_a.status, "closed");
-    assert_eq!(state_b.status, "closed");
+    assert_eq!(state_a.status, "done");
+    assert_eq!(state_b.status, "done");
 }
 
 #[test]
@@ -204,8 +204,8 @@ fn pend_shorthand_equals_state_pending() {
     assert!(out.status.success());
     let state_b = replay(repo_b.path(), &id_b);
 
-    assert_eq!(state_a.status, "pending");
-    assert_eq!(state_b.status, "pending");
+    assert_eq!(state_a.status, "working");
+    assert_eq!(state_b.status, "working");
 }
 
 #[test]
@@ -248,8 +248,8 @@ fn propose_shorthand_equals_state_proposed() {
     assert!(out.status.success());
     let state_b = replay(repo_b.path(), &id_b);
 
-    assert_eq!(state_a.status, "proposed");
-    assert_eq!(state_b.status, "proposed");
+    assert_eq!(state_a.status, "open");
+    assert_eq!(state_b.status, "open");
 }
 
 #[test]
@@ -290,6 +290,6 @@ fn accept_shorthand_equals_state_accepted() {
     assert!(out.status.success());
     let state_b = replay(repo_b.path(), &id_b);
 
-    assert_eq!(state_a.status, "accepted");
-    assert_eq!(state_b.status, "accepted");
+    assert_eq!(state_a.status, "done");
+    assert_eq!(state_b.status, "done");
 }

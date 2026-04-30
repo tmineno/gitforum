@@ -114,22 +114,27 @@ impl Policy {
     }
 
     /// Parse optional `kind:` prefix from each guard's `on` field and populate
-    /// `kind_scope` and `transition`.
+    /// `kind_scope` and `transition`. Normalizes 1.x state names in the
+    /// transition so guards loaded from legacy `policy.toml` line up with
+    /// the 2.0 state names produced by the unified state machine (§3.1).
     pub fn resolve_guard_scopes(&mut self) {
         for guard in &mut self.guards {
             let (kind_scope, transition) = parse_guard_on(&guard.on);
             guard.kind_scope = kind_scope;
-            guard.transition = transition;
+            guard.transition = normalize_transition_str(&transition);
         }
     }
 
     /// Return guards that apply to the given transition string for the given thread kind.
     ///
-    /// Both kind-scoped guards matching `kind` and unscoped (wildcard) guards are returned.
+    /// Both kind-scoped guards matching `kind` and unscoped (wildcard) guards
+    /// are returned. The query is normalized so callers can pass either 1.x
+    /// or 2.0 state names.
     pub fn guards_for(&self, transition: &str, kind: ThreadKind) -> Vec<&GuardEntry> {
+        let normalized = normalize_transition_str(transition);
         self.guards
             .iter()
-            .filter(|g| g.transition == transition && g.kind_scope.is_none_or(|k| k == kind))
+            .filter(|g| g.transition == normalized && g.kind_scope.is_none_or(|k| k == kind))
             .collect()
     }
 }
@@ -275,14 +280,22 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
         ThreadKind::Task,
     ];
 
-    // Collect all valid states across all kinds for global validation.
-    let all_states: std::collections::HashSet<&str> = all_kinds
+    // SPEC-2.0 §3.1: known states are the union of the unified 2.0 graph
+    // plus the 1.x state names that the boundary normalizer recognizes
+    // (so existing kind-keyed policy.toml fixtures still pass lint).
+    let all_states: std::collections::HashSet<&str> = state_machine::UNIFIED_TRANSITIONS
         .iter()
-        .flat_map(|k| {
-            state_machine::valid_transitions(*k)
-                .iter()
-                .flat_map(|(from, to)| [*from, *to])
-        })
+        .flat_map(|(from, to)| [*from, *to])
+        .chain([
+            "proposed",
+            "under-review",
+            "reviewing",
+            "accepted",
+            "closed",
+            "pending",
+            "designing",
+            "implementing",
+        ])
         .collect();
 
     for guard in &policy.guards {
@@ -343,7 +356,7 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
         if let Some(scoped_kind) = kind_scope {
             if all_states.contains(from)
                 && all_states.contains(to)
-                && !state_machine::is_valid_transition(scoped_kind, from, to)
+                && !state_machine::is_valid_transition(scoped_kind.lifecycle(), from, to)
             {
                 diags.push(LintDiag {
                     level: LintLevel::Warn,
@@ -360,7 +373,7 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
         // Check which kinds this transition applies to and note if multiple.
         let matching_kinds: Vec<&str> = all_kinds
             .iter()
-            .filter(|k| state_machine::is_valid_transition(**k, from, to))
+            .filter(|k| state_machine::is_valid_transition(k.lifecycle(), from, to))
             .map(|k| kind_name(k))
             .collect();
         if matching_kinds.len() > 1 {
@@ -494,28 +507,29 @@ fn sorted_states(states: &std::collections::HashSet<&str>) -> String {
 }
 
 /// Terminal states are resolution/conclusion states where a thread's primary work is done.
-pub const TERMINAL_STATES: &[&str] = &["closed", "rejected", "accepted", "deprecated", "withdrawn"];
+/// Includes both 2.0 names and the 1.x names still produced by legacy fixtures.
+pub const TERMINAL_STATES: &[&str] = &[
+    "done",
+    "rejected",
+    "deprecated",
+    "withdrawn",
+    "closed",
+    "accepted",
+];
 
 /// Return non-terminal states for a thread kind (states where active work happens).
+///
+/// Derived from the unified §3.1 graph filtered by the kind's lifecycle, so
+/// each kind reports the 2.0 states reachable for its lifecycle.
 fn non_terminal_states(kind: ThreadKind) -> Vec<&'static str> {
-    let transitions = state_machine::valid_transitions(kind);
-    let mut states: std::collections::BTreeSet<&str> = transitions
+    let lifecycle = kind.lifecycle();
+    let mut states: std::collections::BTreeSet<&str> = state_machine::UNIFIED_TRANSITIONS
         .iter()
         .flat_map(|(from, to)| [*from, *to])
-        .filter(|s| !TERMINAL_STATES.contains(s))
+        .filter(|s| lifecycle.allows_state(s) && !TERMINAL_STATES.contains(s))
         .collect();
-    // Include the initial state even if it only appears as a target
-    let initial = initial_state(kind);
-    states.insert(initial);
+    states.insert(lifecycle.initial_state());
     states.into_iter().collect()
-}
-
-fn initial_state(kind: ThreadKind) -> &'static str {
-    match kind {
-        ThreadKind::Issue | ThreadKind::Task => "open",
-        ThreadKind::Rfc => "draft",
-        ThreadKind::Dec => "proposed",
-    }
 }
 
 /// Warn when an allow-list has no non-terminal states for an entire thread kind.
@@ -559,6 +573,20 @@ fn parse_guard_on(on: &str) -> (Option<ThreadKind>, String) {
         }
     }
     (None, on.to_string())
+}
+
+/// Normalize the `from->to` portion of a guard transition string to 2.0
+/// state names (per `state_machine::normalize_state_name`).
+fn normalize_transition_str(transition: &str) -> String {
+    if let Some((from, to)) = transition.split_once("->") {
+        format!(
+            "{}->{}",
+            state_machine::normalize_state_name(from),
+            state_machine::normalize_state_name(to)
+        )
+    } else {
+        transition.to_string()
+    }
 }
 
 fn parse_kind(s: &str) -> Option<ThreadKind> {
@@ -715,9 +743,17 @@ mod tests {
     }
 
     #[test]
-    fn lint_valid_policy_returns_empty() {
+    fn lint_valid_policy_returns_empty_of_warnings() {
+        // Post-2.0: legacy 1.x state names normalize to 2.0 names, so a
+        // 1.x guard like `under-review->accepted` may now fire informational
+        // multi-lifecycle Notes. Notes are advisory; the test checks no
+        // *warnings* fire.
         let policy = minimal_policy();
-        assert!(lint_policy(&policy).is_empty());
+        let warnings: Vec<_> = lint_policy(&policy)
+            .into_iter()
+            .filter(|d| d.level == LintLevel::Warn)
+            .collect();
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
     }
 
     #[test]
@@ -798,15 +834,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn lint_no_note_for_kind_unique_transition() {
-        // "under-review->accepted" is RFC-only
-        let policy = minimal_policy();
-        let diags = lint_policy(&policy);
-        assert!(!diags
-            .iter()
-            .any(|d| d.message.contains("multiple thread kinds")));
-    }
+    // Removed: `lint_no_note_for_kind_unique_transition`. Pre-2.0 the lint
+    // could conclude that a transition like `under-review->accepted` was
+    // RFC-only because it lived in only one of the four kind tables. With
+    // the unified §3.1 graph and 1.x-name normalization, the transition
+    // collapses to `review->done`, which is reachable in multiple
+    // lifecycles, so the kind-uniqueness premise no longer holds. The
+    // facet-scoped guidance from B4 replaces the multi-kind heuristic.
 
     #[test]
     fn lint_invalid_transition_for_any_kind() {
@@ -967,15 +1001,11 @@ mod tests {
 
     #[test]
     fn lint_gap_warning_includes_remediation_hint() {
-        // Only task states — RFC kind is missing
+        // Use `working` (Execution-only state, not in Proposal's allowed
+        // set) so RFC's lifecycle has no covered non-terminal states.
         let policy = Policy {
             evidence_rules: Some(EvidenceRules {
-                allow_evidence: vec![
-                    "open".into(),
-                    "designing".into(),
-                    "implementing".into(),
-                    "reviewing".into(),
-                ],
+                allow_evidence: vec!["working".into()],
             }),
             ..Default::default()
         };
@@ -1085,9 +1115,11 @@ mod tests {
 
     #[test]
     fn lint_scoped_guard_invalid_transition_for_kind() {
-        // "open->closed" is not a valid DEC transition
+        // DEC's lifecycle (record) does not allow `review`, so review->done
+        // (or its 1.x equivalent under-review->accepted) is not reachable
+        // for DEC.
         let policy = make_policy(vec![GuardEntry {
-            on: "dec:open->closed".into(),
+            on: "dec:under-review->accepted".into(),
             requires: vec![],
             ..Default::default()
         }]);

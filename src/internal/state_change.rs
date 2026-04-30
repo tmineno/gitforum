@@ -35,16 +35,16 @@ pub fn prepare_state_change(
     let state = thread::replay_thread(git, thread_id)?;
     let from = state.status.clone();
 
-    if !state_machine::is_valid_transition(state.kind, &from, new_state) {
-        let valid = state_machine::valid_targets(state.kind, &from);
+    let lifecycle = state.kind.lifecycle();
+    if !state_machine::is_valid_transition(lifecycle, &from, new_state) {
+        let valid = state_machine::valid_targets(lifecycle, &from);
         let valid_msg = if valid.is_empty() {
             "none".to_string()
         } else {
             valid.join(", ")
         };
         return Err(ForumError::StateMachine(format!(
-            "transition {from}->{new_state} is not valid for {:?}; valid transitions from '{from}': [{valid_msg}]",
-            state.kind
+            "transition {from}->{new_state} is not valid for {lifecycle}; valid transitions from '{from}': [{valid_msg}]",
         )));
     }
 
@@ -62,7 +62,7 @@ pub fn prepare_state_change(
             state.kind,
             super::event::ThreadKind::Issue | super::event::ThreadKind::Task
         )
-        && new_state == "closed"
+        && state_machine::normalize_state_name(new_state) == "done"
     {
         state
             .open_actions()
@@ -168,7 +168,12 @@ pub fn change_state(
         )?;
     }
 
-    let mut ev = Event::base(thread_id, EventType::State, actor, clock).with_new_state(new_state);
+    // SPEC-2.0 §3.1: persist transitions in 2.0 state names so replay /
+    // policy / search see a single canonical vocabulary regardless of the
+    // 1.x verb the caller passed in.
+    let canonical_state = state_machine::normalize_state_name(new_state);
+    let mut ev =
+        Event::base(thread_id, EventType::State, actor, clock).with_new_state(canonical_state);
     if let Some(ref text) = comment {
         ev = ev.with_body(text);
     }
@@ -195,12 +200,18 @@ pub fn fast_track_state(
     options: StateChangeOptions,
 ) -> ForumResult<Vec<String>> {
     let state = thread::replay_thread(git, thread_id)?;
-    let path = state_machine::find_path(state.kind, &state.status, target).ok_or_else(|| {
-        ForumError::StateMachine(format!(
-            "no path from '{}' to '{}' for {:?}",
-            state.status, target, state.kind
-        ))
-    })?;
+    let lifecycle = state.kind.lifecycle();
+    // Normalize the target so legacy 1.x state names line up with the
+    // 2.0-name path returned by find_path (otherwise the final-step check
+    // below misses).
+    let normalized_target = state_machine::normalize_state_name(target);
+    let path =
+        state_machine::find_path(lifecycle, &state.status, normalized_target).ok_or_else(|| {
+            ForumError::StateMachine(format!(
+                "no path from '{}' to '{}' for {lifecycle}",
+                state.status, target,
+            ))
+        })?;
 
     if path.is_empty() {
         return Ok(vec![]);
@@ -209,7 +220,7 @@ pub fn fast_track_state(
     let mut walked = Vec::new();
     for step in &path {
         // Only pass approve_actors, comment, and resolve_open_actions on the final step
-        let is_final = *step == target;
+        let is_final = *step == normalized_target;
         let step_sign = if is_final { approve_actors } else { &[] };
         let step_options = if is_final {
             options.clone()

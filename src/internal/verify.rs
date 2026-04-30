@@ -2,7 +2,7 @@ use super::error::ForumResult;
 use super::event::ThreadKind;
 use super::git_ops::GitOps;
 use super::policy::{self, GuardViolation, Policy};
-use super::state_machine;
+use super::state_machine::{self, normalize_state_name};
 use super::thread;
 
 /// Result of a preflight check (`git forum verify`).
@@ -62,25 +62,28 @@ pub fn verify_thread(git: &GitOps, thread_id: &str, p: &Policy) -> ForumResult<V
     })
 }
 
-/// The forward target state for preflight purposes (the acceptance-track terminal).
+/// The forward target state for preflight purposes (the milestone terminal,
+/// always `done` post-2.0). Returned only when the current state has a
+/// direct guarded edge to the milestone for this kind.
 fn forward_target(kind: ThreadKind, status: &str) -> Option<&'static str> {
-    match (kind, status) {
-        (ThreadKind::Issue, "open") => Some("closed"),
-        (ThreadKind::Rfc, "under-review") => Some("accepted"),
-        (ThreadKind::Dec, "proposed") => Some("accepted"),
-        (ThreadKind::Task, "reviewing") => Some("closed"),
+    let normalized = normalize_state_name(status);
+    match (kind, normalized) {
+        // Execution: open → done is the typical guarded close for bugs.
+        (ThreadKind::Issue, "open") => Some("done"),
+        // Proposal: review → done is the acceptance step.
+        (ThreadKind::Rfc, "review") => Some("done"),
+        // Record: open → done.
+        (ThreadKind::Dec, "open") => Some("done"),
+        // Execution (task): review → done is the acceptance step.
+        (ThreadKind::Task, "review") => Some("done"),
         _ => None,
     }
 }
 
 /// The milestone target for each thread kind (the "happy path" endpoint).
-fn milestone_target(kind: ThreadKind) -> &'static str {
-    match kind {
-        ThreadKind::Issue => "closed",
-        ThreadKind::Rfc => "accepted",
-        ThreadKind::Dec => "accepted",
-        ThreadKind::Task => "closed",
-    }
+/// Post-2.0 every kind's milestone is `done`.
+fn milestone_target(_kind: ThreadKind) -> &'static str {
+    "done"
 }
 
 /// Build lookahead entries for guards on milestone states reachable via
@@ -101,7 +104,7 @@ pub fn build_lookahead(
     let target = milestone_target(kind);
 
     // Find the path from current state to the milestone target
-    let path = match state_machine::find_path(kind, current_status, target) {
+    let path = match state_machine::find_path(kind.lifecycle(), current_status, target) {
         Some(p) if p.len() >= 2 => p, // Need at least 2 steps (otherwise it's direct)
         _ => return vec![],
     };

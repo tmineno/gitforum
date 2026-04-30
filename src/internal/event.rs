@@ -47,14 +47,11 @@ pub enum ThreadKind {
 }
 
 impl ThreadKind {
-    /// Initial state for a new thread of this kind.
+    /// Initial state for a new thread of this kind, in 2.0 vocabulary.
+    /// Delegates to the lifecycle's initial state per SPEC-2.0 §3.1.1
+    /// (proposal=draft, execution=open, record=open).
     pub fn initial_status(self) -> &'static str {
-        match self {
-            Self::Issue => "open",
-            Self::Rfc => "draft",
-            Self::Dec => "proposed",
-            Self::Task => "open",
-        }
+        self.lifecycle().initial_state()
     }
 
     /// Display ID prefix (e.g. "ASK", "RFC").
@@ -775,9 +772,12 @@ mod tests {
 
     #[test]
     fn thread_kind_initial_status() {
+        // SPEC-2.0 §3.1.1: per-lifecycle initial state (proposal=draft,
+        // execution=open, record=open). DEC's 1.x `proposed` initial state
+        // canonicalizes to `open` under the record lifecycle.
         assert_eq!(ThreadKind::Issue.initial_status(), "open");
         assert_eq!(ThreadKind::Rfc.initial_status(), "draft");
-        assert_eq!(ThreadKind::Dec.initial_status(), "proposed");
+        assert_eq!(ThreadKind::Dec.initial_status(), "open");
         assert_eq!(ThreadKind::Task.initial_status(), "open");
     }
 

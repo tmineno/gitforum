@@ -86,7 +86,7 @@ fn state_bulk_partial_apply_reports_failures() {
     let git = GitOps::new(repo.path().to_path_buf());
     let issue_a = thread::replay_thread(&git, &id_a).unwrap();
     let issue_b = thread::replay_thread(&git, &id_b).unwrap();
-    assert_eq!(issue_a.status, "closed");
+    assert_eq!(issue_a.status, "done");
     assert_eq!(issue_b.status, "open");
 }
 
@@ -132,6 +132,6 @@ fn state_bulk_can_resolve_open_actions_before_close() {
 
     let git = GitOps::new(repo.path().to_path_buf());
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    assert_eq!(state.status, "closed");
+    assert_eq!(state.status, "done");
     assert_eq!(state.open_actions().len(), 0);
 }

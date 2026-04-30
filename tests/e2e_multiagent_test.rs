@@ -177,7 +177,7 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
     }
 
     let state = thread::replay_thread(&alice.git, &rfc_0001).unwrap();
-    assert_eq!(state.status, "accepted");
+    assert_eq!(state.status, "done");
     assert!(state.open_objections().is_empty());
     assert!(state.open_actions().is_empty());
     assert!(state.latest_summary().is_some());
@@ -485,7 +485,7 @@ fn phase_implementation(
     // Verify closed issues
     for id in [&issue_0001, &issue_0002, &issue_0003] {
         let state = thread::replay_thread(&alice.git, id).unwrap();
-        assert_eq!(state.status, "closed", "{id} should be closed");
+        assert_eq!(state.status, "done", "{id} should be closed");
     }
     let state = thread::replay_thread(&alice.git, &issue_0004).unwrap();
     assert_eq!(state.status, "open");
@@ -703,8 +703,8 @@ fn phase_expanded_lifecycle(
     let rfc_0003_id = &local_map["RFC-0003"];
     let state = thread::replay_thread(&alice.git, rfc_0003_id).unwrap();
     assert_eq!(
-        state.status, "draft",
-        "{} should be reverted to draft",
+        state.status, "open",
+        "{} should be advanced to proposed (proposed→draft revert removed in 2.0)",
         rfc_0003_id
     );
 
@@ -716,11 +716,7 @@ fn phase_expanded_lifecycle(
 
     let ask_0001_id = &local_map["ASK-0001"];
     let state = thread::replay_thread(&alice.git, ask_0001_id).unwrap();
-    assert_eq!(
-        state.status, "closed",
-        "{} should be re-closed",
-        ask_0001_id
-    );
+    assert_eq!(state.status, "done", "{} should be re-closed", ask_0001_id);
 
     (rfc_0004, issue_0005)
 }

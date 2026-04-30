@@ -82,7 +82,7 @@ fn restrictive_policy() -> Policy {
             NodeType::Review,
         ],
     );
-    node_rules.insert("accepted".into(), vec![]);
+    node_rules.insert("done".into(), vec![]);
     node_rules.insert("rejected".into(), vec![]);
 
     Policy {
@@ -179,7 +179,7 @@ fn say_on_accepted_rfc_blocked() {
     }
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    assert_eq!(state.status, "accepted");
+    assert_eq!(state.status, "done");
 
     let policy = restrictive_policy();
     let violations = operation_check::check_say(&policy, &state.status, NodeType::Claim);

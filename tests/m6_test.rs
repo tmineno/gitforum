@@ -97,7 +97,7 @@ fn dec_create_sets_proposed_state() {
     let (_repo, git, _paths) = setup();
     let id = make_dec(&git);
     let state = thread::replay_thread(&git, &id).unwrap();
-    assert_eq!(state.status, "proposed");
+    assert_eq!(state.status, "open");
     assert_eq!(state.kind, ThreadKind::Dec);
     // SPEC-2.0 §6.2: kind is on the Create event, not the ID.
     assert!(git_forum::internal::id_alloc::is_bare_token(&id));
@@ -119,7 +119,7 @@ fn dec_proposed_to_accepted() {
     )
     .unwrap();
     let state = thread::replay_thread(&git, &id).unwrap();
-    assert_eq!(state.status, "accepted");
+    assert_eq!(state.status, "done");
 }
 
 #[test]
@@ -145,6 +145,20 @@ fn dec_proposed_to_rejected() {
 fn dec_proposed_to_deprecated() {
     let (_repo, git, _paths) = setup();
     let id = make_dec(&git);
+    // Unified §3.1: open (was proposed) cannot directly deprecate; the only
+    // edges into `deprecated` are from `done` and `rejected`. Walk via
+    // accepted (= done).
+    state_change::change_state(
+        &git,
+        &id,
+        "accepted",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
     state_change::change_state(
         &git,
         &id,
@@ -221,24 +235,18 @@ fn dec_rejected_to_deprecated() {
 }
 
 #[test]
-fn dec_accepted_to_proposed_is_invalid() {
+fn dec_proposed_to_pending_is_invalid() {
+    // SPEC-2.0 §3.1.1: record lifecycle excludes `working` (and 1.x
+    // `pending` normalizes to working). DEC threads cannot enter the
+    // working state. (The 1.x test `dec_accepted_to_proposed_is_invalid`
+    // is no longer applicable: unified §3.1 includes `done→open` for
+    // reopening records.)
     let (_repo, git, _paths) = setup();
     let id = make_dec(&git);
-    state_change::change_state(
-        &git,
-        &id,
-        "accepted",
-        &[],
-        "human/alice",
-        &fixed_clock(),
-        &empty_policy(),
-        state_change::StateChangeOptions::default(),
-    )
-    .unwrap();
     let result = state_change::change_state(
         &git,
         &id,
-        "proposed",
+        "pending",
         &[],
         "human/alice",
         &fixed_clock(),
@@ -293,7 +301,10 @@ fn task_create_sets_open_state() {
 fn task_full_lifecycle() {
     let (_repo, git, _paths) = setup();
     let id = make_task(&git);
-    for target in &["designing", "implementing", "reviewing", "closed"] {
+    // Unified §3.1: task lifecycle (execution) folds 1.x designing /
+    // implementing into a single `working` state, so the full path is
+    // open → working → review → done. (1.x `closed` normalizes to `done`.)
+    for target in &["working", "review", "closed"] {
         state_change::change_state(
             &git,
             &id,
@@ -307,7 +318,7 @@ fn task_full_lifecycle() {
         .unwrap();
     }
     let state = thread::replay_thread(&git, &id).unwrap();
-    assert_eq!(state.status, "closed");
+    assert_eq!(state.status, "done");
 }
 
 #[test]
@@ -326,14 +337,21 @@ fn task_fast_track_open_to_closed() {
     )
     .unwrap();
     let state = thread::replay_thread(&git, &id).unwrap();
-    assert_eq!(state.status, "closed");
+    assert_eq!(state.status, "done");
 }
 
+// 1.x had separate `designing` / `implementing` states inside Task; both
+// fold to `working` in the unified §3.1 graph, so the back-transition
+// from implementing to designing is no longer expressible. The remaining
+// back-transition coverage runs review → working below.
+
 #[test]
-fn task_back_transition_implementing_to_designing() {
+fn task_back_transition_review_to_working() {
     let (_repo, git, _paths) = setup();
     let id = make_task(&git);
-    for target in &["designing", "implementing"] {
+    // Walk open → working → review, then back-transition review → working
+    // (the unified §3.1 review→working edge).
+    for target in &["working", "review"] {
         state_change::change_state(
             &git,
             &id,
@@ -349,7 +367,7 @@ fn task_back_transition_implementing_to_designing() {
     state_change::change_state(
         &git,
         &id,
-        "designing",
+        "working",
         &[],
         "human/alice",
         &fixed_clock(),
@@ -358,49 +376,21 @@ fn task_back_transition_implementing_to_designing() {
     )
     .unwrap();
     let state = thread::replay_thread(&git, &id).unwrap();
-    assert_eq!(state.status, "designing");
+    assert_eq!(state.status, "working");
 }
 
 #[test]
-fn task_back_transition_reviewing_to_implementing() {
-    let (_repo, git, _paths) = setup();
-    let id = make_task(&git);
-    for target in &["designing", "implementing", "reviewing"] {
-        state_change::change_state(
-            &git,
-            &id,
-            target,
-            &[],
-            "human/alice",
-            &fixed_clock(),
-            &empty_policy(),
-            state_change::StateChangeOptions::default(),
-        )
-        .unwrap();
-    }
-    state_change::change_state(
-        &git,
-        &id,
-        "implementing",
-        &[],
-        "human/alice",
-        &fixed_clock(),
-        &empty_policy(),
-        state_change::StateChangeOptions::default(),
-    )
-    .unwrap();
-    let state = thread::replay_thread(&git, &id).unwrap();
-    assert_eq!(state.status, "implementing");
-}
-
-#[test]
-fn task_invalid_open_to_reviewing() {
+fn task_invalid_open_to_deprecated() {
+    // Unified §3.1 has no open→deprecated edge (deprecated is reachable
+    // only from done / rejected). open→reviewing was the 1.x invalid edge
+    // for tasks; under unified that normalizes to open→review which is
+    // valid, so the equivalent invalid case becomes open→deprecated.
     let (_repo, git, _paths) = setup();
     let id = make_task(&git);
     let result = state_change::change_state(
         &git,
         &id,
-        "reviewing",
+        "deprecated",
         &[],
         "human/alice",
         &fixed_clock(),
@@ -411,10 +401,13 @@ fn task_invalid_open_to_reviewing() {
 }
 
 #[test]
-fn task_invalid_reviewing_to_designing() {
+fn task_invalid_review_to_draft() {
+    // Execution lifecycle excludes `draft`; 1.x reviewing→designing was
+    // the negative case (now valid under unified review→working). The
+    // equivalent invalid edge for execution is review→draft.
     let (_repo, git, _paths) = setup();
     let id = make_task(&git);
-    for target in &["designing", "implementing", "reviewing"] {
+    for target in &["working", "review"] {
         state_change::change_state(
             &git,
             &id,
@@ -430,7 +423,7 @@ fn task_invalid_reviewing_to_designing() {
     let result = state_change::change_state(
         &git,
         &id,
-        "designing",
+        "draft",
         &[],
         "human/alice",
         &fixed_clock(),
@@ -504,7 +497,7 @@ fn task_reopen_from_rejected() {
 fn task_reviewing_to_closed_blocked_by_actions() {
     let (_repo, git, _paths) = setup();
     let id = make_task(&git);
-    for target in &["designing", "implementing", "reviewing"] {
+    for target in &["working", "review"] {
         state_change::change_state(
             &git,
             &id,
@@ -622,7 +615,7 @@ fn verify_dec_proposed_checks_accepted() {
 fn verify_task_reviewing_checks_closed() {
     let (_repo, git, _paths) = setup();
     let id = make_task(&git);
-    for target in &["designing", "implementing", "reviewing"] {
+    for target in &["working", "review"] {
         state_change::change_state(
             &git,
             &id,
@@ -866,7 +859,7 @@ fn show_dec_includes_kind() {
     let state = thread::replay_thread(&git, &id).unwrap();
     let output = show::render_show(&state, false);
     assert!(output.contains("**kind:**     dec"));
-    assert!(output.contains("**status:**   proposed"));
+    assert!(output.contains("**status:**   open"));
 }
 
 #[test]
