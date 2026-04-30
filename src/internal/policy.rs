@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use super::error::{ForumError, ForumResult};
-use super::event::{Lifecycle, NodeType, ThreadKind};
+use super::event::{Lifecycle, NodeType};
 use super::evidence::EvidenceKind;
 use super::state_machine;
 use super::thread::ThreadState;
@@ -589,12 +589,7 @@ impl std::fmt::Display for LintDiag {
 /// Side effects: none.
 pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
     let mut diags = Vec::new();
-    let all_kinds = [
-        ThreadKind::Issue,
-        ThreadKind::Rfc,
-        ThreadKind::Dec,
-        ThreadKind::Task,
-    ];
+    let all_lifecycles = [Lifecycle::Proposal, Lifecycle::Execution, Lifecycle::Record];
 
     // SPEC-2.0 §3.1: known states are the union of the unified 2.0 graph
     // plus the 1.x state names that the boundary normalizer recognizes
@@ -697,29 +692,32 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
         }
 
         // Unscoped guard: emit a Note when the transition applies to
-        // multiple kinds (heuristic over kind→lifecycle).
-        let matching_kinds: Vec<&str> = all_kinds
+        // multiple lifecycles (the user may want a `lifecycle=` predicate
+        // to disambiguate per §7.1) or warn when it applies to none.
+        let matching_lifecycles: Vec<&str> = all_lifecycles
             .iter()
-            .filter(|k| state_machine::is_valid_transition(k.lifecycle(), from, to))
-            .map(|k| kind_name(k))
+            .filter(|l| state_machine::is_valid_transition(**l, from, to))
+            .map(|l| l.as_str())
             .collect();
-        if matching_kinds.len() > 1 {
+        if matching_lifecycles.len() > 1 {
             diags.push(LintDiag {
                 level: LintLevel::Note,
                 message: format!(
-                    "guard {:?}: transition applies to multiple thread kinds ({}); \
-                     consider using kind-scoped keys (e.g. \"issue:{}\") if you need different rules per kind",
+                    "guard {:?}: transition applies to multiple lifecycles ({}); \
+                     scope with a `lifecycle=` predicate (SPEC-2.0 §7.1) if you need \
+                     different rules per lifecycle",
                     guard.on,
-                    matching_kinds.join(", "),
-                    guard.on,
+                    matching_lifecycles.join(", "),
                 ),
             });
-        } else if matching_kinds.is_empty() && all_states.contains(from) && all_states.contains(to)
+        } else if matching_lifecycles.is_empty()
+            && all_states.contains(from)
+            && all_states.contains(to)
         {
             diags.push(LintDiag {
                 level: LintLevel::Warn,
                 message: format!(
-                    "guard {:?}: not a valid transition for any thread kind",
+                    "guard {:?}: not a valid transition for any lifecycle",
                     guard.on,
                 ),
             });
@@ -758,7 +756,8 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
             .unwrap_or(&[]),
     );
 
-    // Semantic check: warn when an allow-list misses all non-terminal states for a kind.
+    // Semantic check: warn when an allow-list misses all non-terminal
+    // states for a lifecycle.
     lint_allow_list_coverage(
         &mut diags,
         "revise_rules.allow_body_revise",
@@ -767,7 +766,7 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
             .as_ref()
             .map(|r| r.allow_body_revise.as_slice())
             .unwrap_or(&[]),
-        &all_kinds,
+        &all_lifecycles,
     );
     lint_allow_list_coverage(
         &mut diags,
@@ -777,7 +776,7 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
             .as_ref()
             .map(|r| r.allow_node_revise.as_slice())
             .unwrap_or(&[]),
-        &all_kinds,
+        &all_lifecycles,
     );
     lint_allow_list_coverage(
         &mut diags,
@@ -787,7 +786,7 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
             .as_ref()
             .map(|r| r.allow_evidence.as_slice())
             .unwrap_or(&[]),
-        &all_kinds,
+        &all_lifecycles,
     );
 
     // Validate state names in node_rules keys.
@@ -859,12 +858,10 @@ pub const TERMINAL_STATES: &[&str] = &[
     "accepted",
 ];
 
-/// Return non-terminal states for a thread kind (states where active work happens).
-///
-/// Derived from the unified §3.1 graph filtered by the kind's lifecycle, so
-/// each kind reports the 2.0 states reachable for its lifecycle.
-fn non_terminal_states(kind: ThreadKind) -> Vec<&'static str> {
-    let lifecycle = kind.lifecycle();
+/// SPEC-2.0 §3.1.1: non-terminal states for a lifecycle (states where
+/// active work happens). Derived from the unified graph filtered by
+/// the lifecycle's allowed-state set.
+fn non_terminal_states(lifecycle: Lifecycle) -> Vec<&'static str> {
     let mut states: std::collections::BTreeSet<&str> = state_machine::UNIFIED_TRANSITIONS
         .iter()
         .flat_map(|(from, to)| [*from, *to])
@@ -874,27 +871,26 @@ fn non_terminal_states(kind: ThreadKind) -> Vec<&'static str> {
     states.into_iter().collect()
 }
 
-/// Warn when an allow-list has no non-terminal states for an entire thread kind.
+/// Warn when an allow-list has no non-terminal states for a lifecycle.
 fn lint_allow_list_coverage(
     diags: &mut Vec<LintDiag>,
     field: &str,
     states: &[String],
-    all_kinds: &[ThreadKind],
+    all_lifecycles: &[Lifecycle],
 ) {
     if states.is_empty() {
         return;
     }
     let state_set: std::collections::HashSet<&str> = states.iter().map(|s| s.as_str()).collect();
 
-    for kind in all_kinds {
-        let non_terminal = non_terminal_states(*kind);
+    for lifecycle in all_lifecycles {
+        let non_terminal = non_terminal_states(*lifecycle);
         let has_any = non_terminal.iter().any(|s| state_set.contains(*s));
         if !has_any {
             diags.push(LintDiag {
                 level: LintLevel::Warn,
                 message: format!(
-                    "{field}: no states for {} workflows; consider adding: {}",
-                    kind_name(kind),
+                    "{field}: no states for {lifecycle} workflows; consider adding: {}",
                     non_terminal.join(", "),
                 ),
             });
@@ -922,8 +918,13 @@ fn parse_guard_on(on: &str) -> Result<(FacetPredicate, String, Option<String>), 
     // word with no `=` and matching one of the four legacy kinds.
     if !scope_trimmed.contains('=') && !scope_trimmed.contains(' ') && !scope_trimmed.contains('(')
     {
-        if let Some(kind) = parse_kind(scope_trimmed) {
-            let lifecycle = kind.lifecycle();
+        let legacy_lifecycle = match scope_trimmed {
+            "issue" | "task" => Some(Lifecycle::Execution),
+            "rfc" => Some(Lifecycle::Proposal),
+            "dec" => Some(Lifecycle::Record),
+            _ => None,
+        };
+        if let Some(lifecycle) = legacy_lifecycle {
             let warning = format!(
                 "guard {:?}: legacy kind-prefixed scope `{scope_trimmed}:` rewritten to \
                  `lifecycle={lifecycle}` (SPEC-2.0 §7.1 / §10.4)",
@@ -977,25 +978,6 @@ fn normalize_transition_str(transition: &str) -> String {
         )
     } else {
         trimmed.to_string()
-    }
-}
-
-fn parse_kind(s: &str) -> Option<ThreadKind> {
-    match s {
-        "issue" => Some(ThreadKind::Issue),
-        "rfc" => Some(ThreadKind::Rfc),
-        "dec" => Some(ThreadKind::Dec),
-        "task" => Some(ThreadKind::Task),
-        _ => None,
-    }
-}
-
-fn kind_name(kind: &ThreadKind) -> &'static str {
-    match kind {
-        ThreadKind::Issue => "issue",
-        ThreadKind::Rfc => "rfc",
-        ThreadKind::Dec => "dec",
-        ThreadKind::Task => "task",
     }
 }
 
@@ -1090,6 +1072,7 @@ pub fn render_policy_show(policy: &Policy) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::event::ThreadKind;
     use super::*;
 
     fn make_policy(guards: Vec<GuardEntry>) -> Policy {
@@ -1250,8 +1233,9 @@ mod tests {
     }
 
     #[test]
-    fn lint_notes_multi_kind_transition() {
-        // "open->closed" applies to both issue and task
+    fn lint_notes_multi_lifecycle_transition() {
+        // Post-2.0: "open->closed" normalizes to "open->done", which is
+        // reachable in proposal, execution, and record lifecycles.
         let policy = make_policy(vec![GuardEntry {
             on: "open->closed".into(),
             requires: vec![GuardRule::NoOpenActions],
@@ -1260,13 +1244,13 @@ mod tests {
         let diags = lint_policy(&policy);
         let multi = diags
             .iter()
-            .find(|d| d.message.contains("multiple thread kinds"));
+            .find(|d| d.message.contains("multiple lifecycles"));
         assert!(multi.is_some());
         assert_eq!(multi.unwrap().level, LintLevel::Note);
-        assert!(multi.unwrap().message.contains("issue"));
+        assert!(multi.unwrap().message.contains("execution"));
         assert!(
-            multi.unwrap().message.contains("kind-scoped keys"),
-            "should suggest kind-scoped keys"
+            multi.unwrap().message.contains("`lifecycle=` predicate"),
+            "should suggest a lifecycle= predicate"
         );
     }
 
@@ -1289,7 +1273,7 @@ mod tests {
         let diags = lint_policy(&policy);
         assert!(diags.iter().any(|d| d.level == LintLevel::Warn
             && d.message
-                .contains("not a valid transition for any thread kind")));
+                .contains("not a valid transition for any lifecycle")));
     }
 
     #[test]
@@ -1383,10 +1367,10 @@ mod tests {
         let diags = lint_policy(&policy);
         assert!(diags.iter().any(|d| d.level == LintLevel::Warn
             && d.message.contains("allow_body_revise")
-            && d.message.contains("no states for issue")));
+            && d.message.contains("no states for execution")));
         assert!(diags.iter().any(|d| d.level == LintLevel::Warn
             && d.message.contains("allow_body_revise")
-            && d.message.contains("no states for task")));
+            && d.message.contains("no states for execution")));
     }
 
     #[test]
@@ -1448,7 +1432,7 @@ mod tests {
         let diags = lint_policy(&policy);
         let rfc_gap = diags
             .iter()
-            .find(|d| d.message.contains("no states for rfc"))
+            .find(|d| d.message.contains("no states for proposal"))
             .expect("should warn about missing RFC states");
         assert!(
             rfc_gap.message.contains("consider adding"),
@@ -1606,7 +1590,7 @@ mod tests {
         assert!(
             !diags
                 .iter()
-                .any(|d| d.message.contains("multiple thread kinds")),
+                .any(|d| d.message.contains("multiple lifecycles")),
             "scoped guard should not trigger multi-kind note"
         );
     }
