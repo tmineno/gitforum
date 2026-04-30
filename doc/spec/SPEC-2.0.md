@@ -17,11 +17,12 @@ core value statement, this document is wrong and must be revised.
 > Earlier 2.0 drafts also introduced a *topic* entity for grouping
 > related threads under a memorable handle. That mechanism has been
 > removed. Empirically the grouping users wanted is "an RFC plus the
-> threads that link to it via `--rel implements` / `--rel relates-to`" —
-> something the existing thread-link relations already express. Display
-> the group via advisory output (`git forum show <parent>` lists its
-> linked children, see CORE-VALUE.md "Advisories"); no separate topic
-> entity, ref tree, alias scheme, or `!` symbol is required.
+> threads that link to it with `--rel implements`" — something the
+> existing thread-link relations already express. Display the group via
+> advisory output (`git forum show <parent> --tree` lists its direct
+> incoming `implements` children; see CORE-VALUE.md "Advisories"); no
+> separate topic entity, ref tree, alias scheme, or `!` symbol is
+> required.
 >
 > **Distribution is not git-forum's job.** Forum data lives in `refs/forum/*` Git refs;
 > users replicate it across clones with standard `git push` / `git fetch` on those refs.
@@ -43,7 +44,7 @@ core value statement, this document is wrong and must be revised.
 | State machines | 4 kind-specific machines | 1 unified machine, allowed states gated by `lifecycle` facet |
 | Node types | 10 types (claim, question, ...) | 4 types: `comment`, `approval`, `objection`, `action` (ADR-006) |
 | Top-level CLI | `git forum new rfc ...` etc. | `git forum new rfc/task/bug/dec ...` remain as the **stable everyday surface**; `git forum thread new --lifecycle ...` is the canonical/scriptable form |
-| Thread grouping | Links between threads (`--link-to ... --rel ...`) | Unchanged. The "group" is a parent thread + its linked children, surfaced as an advisory in `show` / `verify`. No separate topic entity. |
+| Thread grouping | Links between threads (`--link-to ... --rel ...`) | Unchanged. The "group" surfaced by `show --tree` is a parent thread + its direct incoming `--rel implements` children (one hop), an advisory display only. No separate topic entity. |
 
 ### 1.2 Design principles (additions to 1.x)
 
@@ -656,7 +657,7 @@ git forum show <THREAD>                            # show one thread (with --tre
 
 ### 9.3 Discussion, lifecycle, evidence, links, hooks
 
-Inherits SPEC.md §9.4 / §9.5 / §9.7 / §9.10 with the **node-shorthand reduction** from
+Inherits SPEC.md §9.4 / §9.5 / §9.6 / §9.7 / §9.10 with the **node-shorthand reduction** from
 ADR-006 / §2.5:
 
 | Canonical command | Shorthand | Status in 2.0 |
