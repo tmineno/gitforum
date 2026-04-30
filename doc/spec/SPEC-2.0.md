@@ -908,103 +908,40 @@ A future minor release SHOULD add a deferred capability only when:
 
 Speculative implementation of F-T1 without this trigger is explicitly discouraged.
 
-## Appendix B: Examples
+## Appendix B: End-to-end workflow
 
-These examples illustrate the 2.0 model end-to-end. Output formatting is illustrative; exact
-column layouts may differ.
+This appendix walks through one realistic scenario from problem report to merged
+fix, exercising every load-bearing surface of 2.0:
 
-### B.1 Quick bug capture
+- `lifecycle=execution` (bug, task) and `lifecycle=proposal` (rfc) and
+  `lifecycle=record` (dec) threads, all in one project
+- the four node types from ADR-006 (`comment`, `approval`, `objection`, `action`)
+- a guard that blocks transition (`no_open_objections`), resolved by a human, plus
+  an `--approve` gate (`one_human_approval`)
+- the link-based grouping advisory (`show --tree`)
+- code linkage: `branch bind`, `evidence add`, the `commit-msg` hook
+- human/AI parity: identical CLI for `human/alice` and `ai/claude`
+- preflight (`verify`) and health (`doctor`) advisories
 
-```text
-$ git forum new bug "TUI crashes on terminal resize"
-created thread @a3f9b2k1
-  lifecycle:  execution
-  tags:       bug
-  status:     open
+Output formatting is illustrative; exact column layouts may differ.
 
-$ git forum comment @a3f9 "Resize handler doesn't account for negative width on shrink"
-appended comment node n-5h2m9p1k
+**Scenario.** `git forum search` runs slowly on the project's own repo (~250
+threads). A user files a bug. The team proposes a fix (replace `LIKE` scan with
+FTS5), implements it as two linked tasks, records the tokenizer choice as a
+DEC, and ships.
 
-$ git forum evidence add @a3f9 --kind file --ref src/tui/render.rs:42
-appended evidence n-7c4d8e3a
-
-# After fix lands:
-$ git forum close @a3f9 --comment "Fixed in commit 7c8d2e1"
-state: open -> done
-```
-
-### B.2 RFC with implementing tasks (link-based group)
+### B.1 Repository setup and policy
 
 ```text
-$ git forum new rfc "Replace synchronous gateway with async queue" --edit
-created thread @x9k2m4p7
-  lifecycle:  proposal
-  tags:       cross-cutting
-  status:     draft
-
-$ git forum comment   @x9k2 "Q: How do we handle ordering invariants in the queue?"
-$ git forum objection @x9k2 "Async retries can violate at-most-once delivery"
-
-# After review:
-$ git forum resolve @x9k2 n-9b3c4d5e
-$ git forum comment @x9k2 "Decision: queue-based dispatch with idempotency keys"
-$ git forum propose @x9k2          # draft -> open
-$ git forum state   @x9k2 review   # open -> review
-$ git forum accept  @x9k2 --approve human/alice
-state: review -> done
-
-$ git forum new task "Implement async queue dispatcher" \
-    --link-to @x9k2 --rel implements \
-    --branch feat/async-dispatcher
-created thread @y3p7n2q4
-  lifecycle:  execution
-  tags:       task
-  status:     open
-  links:      implements @x9k2m4p7
-  branch:     feat/async-dispatcher
-
-$ git forum show @x9k2 --tree
-@x9k2m4p7  proposal/done    Replace synchronous gateway with async queue
-└── @y3p7n2q4  execution/open   Implement async queue dispatcher
+$ git forum init
+initialized .forum/ and refs/forum/*
+$ git forum hook install
+installed .git/hooks/commit-msg
 ```
 
-`thread show --tree` is an advisory display (§9.1, §9.3): it lists the threads that
-link to the parent with `--rel implements` (one hop, incoming) and shows their
-current state. It does not traverse other relations, does not recurse, and does
-not gate any operation. This replaces the topic-as-grouping affordance from
-earlier 2.0 drafts (see §2.1).
-
-### B.3 Lightweight decision record
-
-```text
-$ git forum new dec "Use UUIDv7 for new entity IDs" --edit
-created thread @q8w2e1r3
-  lifecycle:  record
-  tags:       (none)
-  status:     open
-
-$ git forum close @q8w2
-state: open -> done
-```
-
-`lifecycle=record` skips the `working` / `review` states — records go straight to `done`.
-
-### B.4 Listing
-
-```text
-$ git forum ls --status open
-ID         TITLE                                       LIFECYCLE  TAGS    UPDATED
-@a3f9b2   TUI crashes on terminal resize              execution  bug     2026-04-28
-@y3p7n2   Implement async queue dispatcher            execution  task    2026-04-28
-@7m4k9p   How does retry policy interact with quotas? execution  bug     2026-04-26
-
-$ git forum thread ls --lifecycle execution --tag bug --status open
-ID         TITLE                                  CREATED
-@a3f9b2   TUI crashes on terminal resize         2026-04-25
-@7m4k9p   How does retry policy interact ...     2026-04-26
-```
-
-### B.5 Tag-driven policy customization
+The repository's `policy.toml` codifies the project's expectations. Rules use
+the lifecycle facet and optional tag specialization; there is no kind-keyed
+syntax in 2.0:
 
 ```toml
 # .forum/policy.toml
@@ -1012,22 +949,293 @@ ID         TITLE                                  CREATED
 required_body = false                  # bugs can be one-liners
 
 [creation_rules.execution.tag.task]
-required_body = true                   # but tasks need structured bodies
+required_body = true                   # tasks need structured bodies
 body_sections = ["Background", "Acceptance criteria"]
 
 [creation_rules.proposal]
 required_body = true
 body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
 
+[creation_rules.record]
+required_body = true
+body_sections = ["Context", "Decision", "Rationale", "Impact"]
+
+# Cross-cutting RFCs need at least one human approval and no unresolved
+# objections before they can leave review.
 [[guards]]
 on = "lifecycle=proposal AND tag=cross-cutting : review->done"
 requires = ["one_human_approval", "no_open_objections"]
+
+# Tasks must point at the commit that resolves them before they close.
+[[guards]]
+on = "lifecycle=execution AND tag=task : review->done"
+requires = ["has_commit_evidence"]
 ```
 
-When a thread tagged `task` is created without acceptance criteria, the operation check fires a
-warning (or error if `strict = true`). The 1.x `at_least_one_summary` predicate is no longer
-shipped (ADR-006 removed `summary` as a node type); maintainers who want forced summaries
-can require a body section via `body_sections`.
+The 1.x `at_least_one_summary` predicate is no longer shipped (ADR-006 removed
+`summary` as a node type). When a project wants forced narrative content, use
+`body_sections` on `creation_rules.<lifecycle>` instead.
+
+### B.2 Capture — quick bug report
+
+A user notices the slowdown and files a bug in seconds. No mandatory body
+(per the `creation_rules.execution` policy above):
+
+```text
+$ git forum new bug "search is slow on large forums" --as human/alice
+created thread @a3f9b2k1
+  lifecycle:  execution
+  tags:       bug
+  status:     open
+
+$ git forum comment @a3f9 "noticed ~700ms for 'tui' on 250 threads. \
+suspect LIKE scan in index.rs::search_threads" --as human/alice
+appended comment node n-5h2m9p1k
+
+$ git forum evidence add @a3f9 --kind file --ref src/internal/index.rs:353 \
+    --as human/alice
+appended evidence e-7c4d8e3a
+```
+
+The bug is now actionable: a one-liner title, a comment with a hypothesis, and
+a pointer at the suspected code site.
+
+### B.3 Deliberate — RFC drafted by AI, reviewed by human
+
+The change is bigger than a one-shot fix (it touches the index schema and
+search API), so it gets an RFC. An AI agent drafts it; a human reviews. Both
+use the same CLI surface — only the `--as` actor differs.
+
+```text
+$ git forum new rfc "Replace LIKE scan with FTS5 in search index" \
+    --link-to @a3f9 --rel relates-to \
+    --as ai/claude --edit
+# (editor opens; ai/claude writes Goal / Non-goals / Context / Proposal sections)
+created thread @x9k2m4p7
+  lifecycle:  proposal
+  tags:       cross-cutting
+  status:     draft
+  links:      relates-to @a3f9b2k1
+
+$ git forum propose @x9k2 --as ai/claude        # draft -> open
+state: draft -> open
+
+$ git forum comment @x9k2 \
+    "Q: do we want stemming on by default, or porter only when --stem requested?" \
+    --as human/alice
+appended comment node n-bb12f0a4
+
+$ git forum objection @x9k2 \
+    "FTS5 ships in default sqlite builds on Linux/macOS but is *opt-in* on \
+some Windows distros — we'd be adding a build precondition" --as human/alice
+appended objection node n-c8e91d77
+
+$ git forum state @x9k2 review --as ai/claude   # open -> review
+state: open -> review
+
+# Try to accept while the objection is open:
+$ git forum accept @x9k2 --approve human/alice --as ai/claude
+error: guard violations for transition review -> done:
+  no_open_objections: 1 open objection (n-c8e91d77)
+hint: resolve the objection or address it before accepting
+```
+
+The `no_open_objections` guard reads only this thread's events (per CORE-VALUE
+"Guards") and blocks the transition. The objection has to be addressed:
+
+```text
+$ git forum comment @x9k2 \
+    "Confirmed: bundled-FTS5 in rusqlite covers all our targets. \
+filed @b1c3d2e4 to track the build flag." --as ai/claude
+appended comment node n-d6f5a890
+
+$ git forum new task "Verify rusqlite build feature includes FTS5 on all targets" \
+    --link-to @x9k2 --rel relates-to --as ai/claude
+created thread @b1c3d2e4
+  lifecycle:  execution
+  tags:       task
+  status:     open
+
+$ git forum resolve @x9k2 n-c8e91d77 --as human/alice
+resolved objection n-c8e91d77 in @x9k2
+
+# Pre-flight before re-attempting accept:
+$ git forum verify @x9k2 --as human/alice
+@x9k2m4p7 (review)
+guard check (review -> done): PASS
+open objections: 0
+open actions:    0
+nodes:           5
+links:           2 (relates-to @a3f9b2k1, relates-to @b1c3d2e4)
+has summary:     yes
+
+$ git forum accept @x9k2 --approve human/alice --as ai/claude
+state: review -> done
+```
+
+`verify` is an advisory: it reports the policy state but does not change
+anything. The actual transition is the `accept` call.
+
+### B.4 Implement — linked tasks, branch bind, evidence, commit-msg hook
+
+Two tasks implement the RFC. Both link with `--rel implements` so they show up
+under `show --tree`:
+
+```text
+$ git forum new task "Add FTS5 schema and index builder" \
+    --link-to @x9k2 --rel implements \
+    --branch feat/search-fts5-schema \
+    --as ai/claude --edit
+created thread @y3p7n2q4
+  lifecycle:  execution
+  tags:       task
+  status:     open
+  links:      implements @x9k2m4p7
+  branch:     feat/search-fts5-schema
+
+$ git forum new task "Switch search_threads to use the FTS5 index" \
+    --link-to @x9k2 --rel implements \
+    --branch feat/search-fts5-query \
+    --as ai/claude --edit
+created thread @z6m8r1s5
+  lifecycle:  execution
+  tags:       task
+  status:     open
+  links:      implements @x9k2m4p7
+  branch:     feat/search-fts5-query
+```
+
+`show --tree` walks one hop of incoming `--rel implements` and reports the
+state of each child:
+
+```text
+$ git forum show @x9k2 --tree --as human/alice
+@x9k2m4p7  proposal/done    Replace LIKE scan with FTS5 in search index
+├── @y3p7n2q4  execution/open   Add FTS5 schema and index builder
+└── @z6m8r1s5  execution/open   Switch search_threads to use the FTS5 index
+```
+
+(The verification task `@b1c3d2e4` is linked with `relates-to`, not
+`implements`, so it is not shown in `--tree`. That keeps the advisory tight; a
+broader graph view is deliberately deferred — see §2.1.)
+
+The AI agent picks up the first task, moves it to `working`, commits with a
+thread reference, then moves to `review`:
+
+```text
+$ git checkout feat/search-fts5-schema
+$ git forum pend @y3p7 --as ai/claude            # open -> working
+state: open -> working
+
+# (edits src/internal/index.rs)
+$ git commit -m "Add FTS5 virtual table and rebuild path
+
+@y3p7n2q4: implements the index half of @x9k2m4p7."
+# commit-msg hook validates the @-references resolve; commit succeeds.
+
+$ git forum evidence add @y3p7 --kind commit --ref HEAD --as ai/claude
+appended evidence e-2a8b4c91 (commit 9ad2f31...)
+
+$ git forum state @y3p7 review --as ai/claude    # working -> review
+state: working -> review
+```
+
+The human reviews the diff, approves, and the task closes. The
+`has_commit_evidence` guard reads only this thread's events and confirms an
+evidence pointer to a real commit exists:
+
+```text
+$ git forum verify @y3p7 --as human/alice
+@y3p7n2q4 (review)
+guard check (review -> done): PASS
+  has_commit_evidence: ok (commit 9ad2f31...)
+open objections: 0
+open actions:    0
+
+$ git forum close @y3p7 --approve human/alice --as human/alice
+state: review -> done
+```
+
+The second task `@z6m8r1s5` is still in progress at this point — see B.6.
+
+### B.5 Record — decision record for an implementation choice
+
+During implementation, the team picks `unicode61 remove_diacritics 2` as the
+FTS5 tokenizer. That's a concrete tradeoff worth recording so a future
+maintainer can find the *why*:
+
+```text
+$ git forum new dec "FTS5 tokenizer: unicode61 with remove_diacritics" \
+    --link-to @x9k2 --rel relates-to \
+    --as ai/claude --edit
+# (Context / Decision / Rationale / Impact, per the record creation_rules)
+created thread @q8w2e1r3
+  lifecycle:  record
+  tags:       (none)
+  status:     open
+  links:      relates-to @x9k2m4p7
+
+# `lifecycle=record` skips working/review — records go straight to done:
+$ git forum close @q8w2 --as ai/claude
+state: open -> done
+```
+
+The decision is now discoverable from the parent RFC: `git forum show @x9k2`
+lists `relates-to @q8w2e1r3` in the body.
+
+### B.6 Operate — listing, search, advisory health
+
+Day-to-day operations stay close to the data:
+
+```text
+$ git forum ls --status open
+ID        TITLE                                              LIFECYCLE   TAGS  UPDATED
+@a3f9b2   search is slow on large forums                     execution   bug   2026-04-29
+@b1c3d2   Verify rusqlite build feature includes FTS5 ...    execution   task  2026-04-30
+@z6m8r1   Switch search_threads to use the FTS5 index        execution   task  2026-04-30
+
+$ git forum ls --lifecycle proposal --status done
+ID        TITLE                                              TAGS              UPDATED
+@x9k2m4   Replace LIKE scan with FTS5 in search index        cross-cutting     2026-04-30
+
+$ git forum search "FTS5"
+@x9k2m4  rfc      done   Replace LIKE scan with FTS5 in search index
+@y3p7n2  task     done   Add FTS5 schema and index builder
+@z6m8r1  task     open   Switch search_threads to use the FTS5 index
+@q8w2e1  dec      done   FTS5 tokenizer: unicode61 with remove_diacritics
+
+$ git forum doctor
+forum config        OK
+local index         OK  (5 threads, 0 orphans)
+refs/forum/threads  OK  (5 refs)
+remote divergence   none observed (origin)
+advisory            @x9k2 (done) has 1 implementing child still open (@z6m8r1)
+```
+
+The trailing advisory line is informational — it surfaces a cross-thread
+observation (the parent RFC `@x9k2` is `done` but one of its `implements`
+children is still `open`) without blocking any operation, per CORE-VALUE
+"Advisories".
+
+### B.7 What this workflow exercised
+
+- **One thread, one concern.** The bug, the RFC, the two implementing tasks, the
+  build-feature verification, and the tokenizer decision are five distinct
+  threads — each with a single state machine step at a time.
+- **Same CLI for both kinds of contributor.** `--as ai/claude` and
+  `--as human/alice` issue the identical commands. There is no AI-only command,
+  no human-only command, and no agent-coordination layer.
+- **Guards block; resolves unblock; advisories inform.** The
+  `no_open_objections` guard refused the `accept` until a human resolved the
+  objection. `verify` and `show --tree` reported cross-thread context but never
+  blocked.
+- **Code linkage is bidirectional.** Threads point at code via `evidence add`
+  and `branch bind`; code points at threads via the `commit-msg` hook. The
+  question "why was this code written?" is answerable from the commit alone.
+- **No topics, no orchestration, no custom protocol.** Grouping is one hop of
+  `--rel implements`. Distribution is plain `git push` / `git fetch`. There is
+  no `git forum push`, no `--cascade`, no automatic agent dispatch — exactly
+  the boundary CORE-VALUE.md draws.
 
 ## Appendix C: References
 
