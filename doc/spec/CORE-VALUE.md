@@ -29,22 +29,62 @@ document, the spec/implementation must change — not this document.
 
 ---
 
-## What we do (the guard-rail scope)
+## Scope: what the tool may do
 
-Inside the boundary above, the tool may:
+Inside the non-goal boundary above, the tool implements two categories
+of behavior. The boundary between them is load-bearing — confusing the
+two is how feature creep starts.
 
-- Validate state transitions and node-level operations on a single thread
-  (single-thread guard rails — `RFC-0018` operation checks).
-- Surface structured help, diagnostics, and discoverable next-steps for
-  agents that have to reason about repo state without prior context.
-- Connect threads to code via Git primitives (`branch bind`, commit-msg
-  hook, evidence pointing at commits / files / hunks).
-- Provide named grouping (`topic` in 2.0) when a single thread is too
-  small a unit to talk about, with no state machine and no guards on the
-  group itself.
+### Guards (single-thread, blocking)
 
-These are in scope because they protect "the discussion stays usable as
-agents and humans contribute to it" without crossing into orchestration.
+Rules that *block* an operation. To stay inside the core value, a
+guard MUST evaluate by reading only the events of the thread being
+modified. A guard whose evaluator needs to read another thread
+crosses into cross-thread workflow enforcement (non-goal §1) and is
+therefore not a guard — it is either an advisory (below) or
+out-of-scope.
+
+Examples:
+
+- "Cannot transition to `done` while open objections exist on this
+  thread." (`RFC-0018` operation checks.)
+- "Cannot add an `evidence` event when the thread is in a terminal
+  state."
+- "Required body sections must be present at thread creation."
+
+### Advisories (display / observation, never blocking)
+
+Surfaces that *inform* without gating any operation. An advisory MAY
+read across threads — answering questions like "what is the state of
+the parent RFC?" or "which children of this thread are still open?"
+— but it never blocks an operation. The user (or agent) can always
+proceed; the advisory just makes the relevant cross-thread context
+visible.
+
+Examples:
+
+- `git forum show RFC-X` lists threads that link to RFC-X with
+  `--rel implements` and their current state.
+- `git forum verify TASK-Y` reports "linked RFC-X is not yet
+  `done`" *without* preventing TASK-Y's transition.
+- Post-action stderr hints suggesting the next plausible command.
+- `doctor`'s "untriaged" count.
+
+This is how the tool surfaces cross-thread *information* without
+taking on cross-thread *enforcement*. If a future feature looks like
+it should block based on another thread's state, the answer is
+"reframe it as an advisory, or it's out-of-scope" — not "loosen the
+guard definition".
+
+### Connection to code (always in scope)
+
+- `branch bind`: a thread can name a Git branch.
+- `commit-msg` hook: validates that referenced thread IDs exist.
+- `evidence add`: pointers from threads to commits, files, hunks,
+  tests.
+
+These keep discussion adjacent to the code it concerns. They do not
+introduce cross-thread enforcement.
 
 ---
 
@@ -121,9 +161,10 @@ new directions appear.
 |---|---|---|
 | Reduce thread kinds (collapse dec/task) | **Keep** | Empirically supported (ADR-002). |
 | Reduce node types to {comment, approval, objection, action} | **Keep** | Cut by *protocol effect* (none / approve / block / obligation), not rhetorical type. claim/question/summary/risk/review/alternative/assumption collapse to `comment`. |
-| Single-thread state guards (operation checks, RFC-0018) | **Keep** | Guard-rail scope. |
+| Single-thread state guards (operation checks, RFC-0018) | **Keep** (guard) | Reads only the thread being modified. |
 | Connect threads to commits (commit-msg hook, evidence, branch bind) | **Keep** | Thread-code linkage is core. |
-| Topic as named grouping, no state machine, no guards | **Keep (slim)** | Affordance only; does not become a coordination layer. |
+| Display linked-thread state in `show` / `verify` (no blocking) | **Keep** (advisory) | Cross-thread *information* without cross-thread *enforcement*. |
+| Topic mechanism (handle, alias, attach/detach, archive) | **Reject** | Empirically the "group" the dogfood wanted is RFC + its `--rel implements` children — link relations already cover that. Topic adds an entity, an event family, a ref tree, and a markup symbol (`!`) for value already obtained from links + advisory display. |
 | Cross-clone conflict-resolution protocol (ADR-005) | **Reject** | Distribution is Git's job. |
 | `git forum push` / `git forum fetch` | **Reject** | Same. |
 | Cross-thread workflow policy (RFC-ij6g130o) | **Reject** | Cross-thread orchestration is non-goal #1. |

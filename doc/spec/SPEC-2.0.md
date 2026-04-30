@@ -5,7 +5,7 @@ Status: **Authoritative**. Inherits from SPEC.md v1.2 except where explicitly ov
 Bound by `doc/spec/CORE-VALUE.md` — when this document conflicts with the
 core value statement, this document is wrong and must be revised.
 
-> This specification introduces three structural changes to the 1.x model:
+> This specification introduces two structural changes to the 1.x model:
 > 1. **Kind reduction** — the four thread kinds (`rfc`, `dec`, `task`, `issue`) collapse into a
 >    single `thread` entity carried by `lifecycle` + free-form `tags`. The four 1.x kinds remain
 >    as **stable CLI presets** (`new rfc`, `new task`, `new bug`, `new dec`) — the muscle memory
@@ -13,24 +13,24 @@ core value statement, this document is wrong and must be revised.
 > 2. **Node type reduction** — the ten 1.x node types collapse to four, cut by *protocol
 >    effect* rather than rhetorical move: `comment`, `approval`, `objection`, `action`. The
 >    standalone Approval concept (SPEC.md §2.7) folds into the node namespace.
-> 3. **Topic as named context** — a new `topic` entity provides a memorable handle for
->    grouping related threads. **Threads remain the primary unit of work**; topics are
->    optional context wrappers, not a required ceremony layer. Standalone threads (no topic)
->    are first-class throughout the CLI, TUI, and default views.
 >
-> The topic concept in 2.0 is intentionally **slim**: a named container with an optional
-> charter, and an archive flag. There is no topic state machine, no topic-level guards, and
-> no nesting in 2.0. These capabilities are explicitly deferred to future minor releases (see
-> Appendix A.3 for the forward-compatibility plan).
+> Earlier 2.0 drafts also introduced a *topic* entity for grouping
+> related threads under a memorable handle. That mechanism has been
+> removed. Empirically the grouping users wanted is "an RFC plus the
+> threads that link to it via `--rel implements` / `--rel relates-to`" —
+> something the existing thread-link relations already express. Display
+> the group via advisory output (`git forum show <parent>` lists its
+> linked children, see CORE-VALUE.md "Advisories"); no separate topic
+> entity, ref tree, alias scheme, or `!` symbol is required.
 >
 > **Distribution is not git-forum's job.** Forum data lives in `refs/forum/*` Git refs;
 > users replicate it across clones with standard `git push` / `git fetch` on those refs.
 > git-forum does not introduce its own push/fetch protocol or cross-clone conflict
 > resolution. This is mandated by `CORE-VALUE.md`.
 >
-> The motivating analysis is recorded separately in ADR-002 (kind reduction), ADR-003 (topic
-> handles), ADR-004 (migration), and ADR-006 (node type reduction). This document
-> specifies the resulting model.
+> The motivating analysis is recorded separately in ADR-002 (kind reduction), ADR-004
+> (migration), and ADR-006 (node type reduction). This document specifies the resulting
+> model.
 
 ## 1. Overview
 
@@ -38,12 +38,12 @@ core value statement, this document is wrong and must be revised.
 
 | Concern | 1.x | 2.0 |
 |---|---|---|
-| Primary unit of work | Thread (`RFC-...`, `JOB-...`) | **Thread** (unchanged). Topic is a named context that can group threads, but threads stay first-class. |
+| Primary unit of work | Thread (`RFC-...`, `JOB-...`) | **Thread** (unchanged). |
 | Thread classification | `kind` enum: `rfc` / `dec` / `task` / `issue` | **Single required facet** (`lifecycle`) + free-form `tags` |
 | State machines | 4 kind-specific machines | 1 unified machine, allowed states gated by `lifecycle` facet |
+| Node types | 10 types (claim, question, ...) | 4 types: `comment`, `approval`, `objection`, `action` (ADR-006) |
 | Top-level CLI | `git forum new rfc ...` etc. | `git forum new rfc/task/bug/dec ...` remain as the **stable everyday surface**; `git forum thread new --lifecycle ...` is the canonical/scriptable form |
-| Topic concept | None (links only) | Named context with handle and (optional) child threads. Slim by design: **no state machine, no guards, no nesting in 2.0**. |
-| Thread ID readability | Opaque (`RFC-6m4kap23`) — unmemorable | Unchanged. Topics carry the readable handle. |
+| Thread grouping | Links between threads (`--link-to ... --rel ...`) | Unchanged. The "group" is a parent thread + its linked children, surfaced as an advisory in `show` / `verify`. No separate topic entity. |
 
 ### 1.2 Design principles (additions to 1.x)
 
@@ -51,18 +51,9 @@ In addition to the six principles in SPEC.md §1.1, 2.0 adds:
 
 7. **Composable taxonomy.** Thread classification is built from independent facets, not enumerated
    kinds. New use cases extend the facet vocabulary, not the kind set.
-8. **Two-layer identity.** Receipt-quality identity (opaque, conflict-free) is decoupled from
-   handle-quality identity (slug, memorable, possibly mutable). Threads use the former, topics
-   use the latter.
-9. **Topic as named context, not as ceremony.** Topics in 2.0 are optional grouping
-   devices with memorable names. They do not enforce sequencing, do not run state machines, and
-   do not gate transitions. Threads — including standalone threads — remain the primary unit of
-   capture and work; topics wrap them when grouping helps. Coordination semantics — when
-   warranted — are added later as opt-in extensions (see Appendix A.3).
-10. **Quick-capture-first.** A short bug report or note must take seconds, not minutes. Stable
-    kind presets (`new bug`, `new task`, `new rfc`, `new dec`) and the standalone-thread default
-    keep the friction low for common cases. Topic attachment, charters, and structured
-    proposals are available when warranted, never required.
+8. **Quick-capture-first.** A short bug report or note must take seconds, not minutes. Stable
+   kind presets (`new bug`, `new task`, `new rfc`, `new dec`) keep the friction low for common
+   cases.
 
 ### 1.3 Implementation constraints
 
@@ -70,71 +61,26 @@ Unchanged from SPEC.md §1.2.
 
 ## 2. Core model
 
-### 2.1 Topic (NEW)
+### 2.1 Thread grouping (links, not topics)
 
-A **topic** is a long-lived container for related threads. It represents a unit of work a human
-or team can name, point at, and reason about as a whole (e.g., "the payment rewrite", "Q2
-onboarding").
+Threads in 2.0 are grouped via the **link relations** that already exist in 1.x
+(`--rel implements`, `--rel relates-to`, `--rel depends-on`, `--rel blocks`,
+`--rel supersedes`, etc.). The "group" associated with a parent thread `P` is the
+set of threads transitively reachable from `P` through these relations; there is
+no separate topic entity.
 
-Required fields:
+Earlier 2.0 drafts introduced a `topic` entity with handles (`!payment-rewrite`),
+alias refs, attach/detach events, and a topic-scoped short-index (`!foo/3`).
+That mechanism has been removed:
 
-| Field | Type | Description |
-|---|---|---|
-| `handle` | string | Human-readable handle (e.g. `!payment-rewrite`) — unique within the repo |
-| `id` | string | Internal opaque ID (e.g. `x8n2q1d4`, 8 base36 chars) — used for ref storage and aliasing. Topic IDs have no prefix in storage; the `!` symbol appears only in the user-facing handle layer. |
-| `title` | string | Human-readable title |
-| `created_at` | datetime | Creation timestamp |
-| `created_by` | string | Actor ID |
-
-Optional fields:
-
-| Field | Type | Description |
-|---|---|---|
-| `body` | string | Topic charter / brief |
-| `aliases[]` | array | Additional handles that resolve to this topic |
-| `archived_at` | datetime | Archive timestamp (set = archived; unset = active) |
-
-A topic has **no `status` enum and no state machine** in 2.0. The only lifecycle binary is
-`archived_at` (present or absent). This is a deliberate scope choice — see Appendix A.3 / F-W1
-for the path to add a richer state model later.
-
-#### 2.1.1 Topic handle
-
-- **Display format**: `!<slug>` where slug is `[a-z0-9-]+`, length 3–48. The `!` is the topic
-  type marker; the slug is what is stored under `refs/forum/aliases/<slug>`.
-- **Allocation**: derived from title via slug + collision-resolved petname suffix
-  (see §6.1).
-- **Mutability**: handles MAY be renamed. Old handles become aliases automatically. Aliases never
-  expire (links keep working).
-
-#### 2.1.2 Topic membership
-
-A thread belongs to **at most one** topic. Membership is recorded via a `topic_attach` event
-on the thread. A topic may contain zero or more threads.
-
-Standalone threads (no topic) are permitted (see §2.2.2).
-
-#### 2.1.3 Topic handle in references
-
-Within a topic context, child threads may be referenced by **short index**:
-
-```
-!payment-rewrite          # the topic itself
-!payment-rewrite/3        # the 3rd attached thread (display order)
-```
-
-The `/N` short index is a **display-only convenience**, not an identifier:
-
-- It is computed from locally-visible `topic_attach` events ordered by
-  `(timestamp, actor_id, event_oid)` — see §8.2 for stability rules.
-- It MAY appear as input to interactive CLI commands (e.g.
-  `git forum show !payment-rewrite/3`) and in `show` / `ls` output for human convenience.
-- It is **rejected** anywhere a value would be persisted: as an evidence ref, link target,
-  topic attach argument, or in a commit message scanned by the `commit-msg` hook (§13
-  `ShortIndexInPersistedRef` is an error in 2.0, not a warning).
-
-Named role labels (e.g. `!foo/design`) are **not specified in 2.0**. Forward-compatible: if
-roles are introduced later, the syntax is reserved.
+- The dogfood-observed grouping need ("the RFC and everything implementing it")
+  is already expressible with `--rel implements` and friends.
+- A separate handle namespace, ref tree, and event family added implementation
+  surface and a markup symbol (`!`) for value already obtainable from
+  link-tree advisories.
+- Per CORE-VALUE.md, advisory cross-thread display (e.g. `git forum show <RFC>`
+  listing its linked children with their states) covers the visualization
+  need without a new entity.
 
 ### 2.2 Thread
 
@@ -157,9 +103,8 @@ Optional fields:
 | Field | Type | Description |
 |---|---|---|
 | `body` | string | Thread body |
-| `topic` | string | Owning topic handle (absent for standalone threads) |
 | `scope.branch` | string | Bound Git branch |
-| `links[]` | array | Thread-to-thread links |
+| `links[]` | array | Thread-to-thread links (the only grouping mechanism in 2.0; see §2.1) |
 
 #### 2.2.1 ID surface change
 
@@ -169,27 +114,12 @@ no longer encodes a category.
 
 | Surface | 1.x | 2.0 |
 |---|---|---|
-| Display | `RFC-6m4kap23` (kind-prefixed) | `@6m4kap23` (`@` type marker, see §6.0) |
+| Display | `RFC-6m4kap23` (kind-prefixed) | `@6m4kap23` (`@` type marker, see §6.1) |
 | Storage | `refs/forum/threads/RFC-6m4kap23` | `refs/forum/threads/6m4kap23` (bare token) |
 
 Legacy 1.x IDs (`RFC-XXXXXXXX`, `ASK-NNNN`, `JOB-...`, `DEC-...`) remain valid for reading and
 referencing in migrated repos via the alias table (see §10.1). New thread allocation always
 uses the bare-token / `@`-display form (§6.2).
-
-#### 2.2.2 Standalone threads
-
-Threads MAY exist without a topic. This is the natural form for:
-
-- Bug reports captured quickly before triage
-- Questions that don't yet belong to any workstream
-- One-off observations
-
-Standalone threads can be promoted into a topic at any time via `topic attach`. Standalone is
-a legitimate steady state, not a fault to be cleaned up — many bug reports and decision records
-never need a topic. `doctor` reports the standalone count under the "Untriaged" section
-(§9.5) as informational signal, never as a warning, and there is no inactivity threshold or
-"becomes orphan after N days" rule. Users curate threads into topics when grouping helps and
-otherwise leave them in the inbox.
 
 ### 2.3 Facets
 
@@ -202,7 +132,7 @@ A thread's classification is **one required facet** plus free-form tags.
 | `lifecycle` | `proposal` / `execution` / `record` | How the thread progresses (gates the state machine) |
 
 `lifecycle` is the only required facet because it is the only one the **state machine itself**
-depends on (§3.2.1). Everything else — bug-vs-task, cross-cutting-vs-local, sub-team routing — is a
+depends on (§3.1.1). Everything else — bug-vs-task, cross-cutting-vs-local, sub-team routing — is a
 tag.
 
 Earlier drafts of 2.0 included additional required facets (`intent` with 5 values; `scope` with
@@ -218,7 +148,7 @@ Threads carry a free-form `tags[]` (string array). Tags are first-class:
 - The discriminator for sub-categories within a lifecycle (e.g. `bug` vs `task` within
   `lifecycle=execution`).
 
-Three tag strings are emitted by the kind presets (§9.2):
+Three tag strings are emitted by the kind presets (§9.1):
 
 | Tag | Conventional meaning | Emitted by |
 |---|---|---|
@@ -241,7 +171,7 @@ The 1.x four-kind taxonomy maps to 2.0 as follows:
 | `task` (`JOB`) | `execution` | `task` |
 | `issue` (`ASK`) | `execution` | `bug` |
 
-These four combinations are exposed as **kind presets** (compatibility shorthands; §9.2).
+These four combinations are exposed as **kind presets** (compatibility shorthands; §9.1).
 
 #### 2.3.4 Why one required facet and not more
 
@@ -276,7 +206,7 @@ Every tag MUST satisfy:
 - Starts with a letter (`[a-z]`).
 - Length 2–32 characters.
 - Not equal to a reserved literal (`all`, `none`, `any`, `untagged`, `archived` — used as
-  filter shorthands in `ls`/search, §9.3).
+  filter shorthands in `ls`/search, §9.2).
 
 Violations are rejected at write time with `InvalidTagSyntax` (§13). The grammar is intentionally
 narrow so tags compose cleanly with shell, search filters (`tag:bug`), and policy keys
@@ -293,23 +223,21 @@ release, gated on documented evidence of drift (per Appendix A.3 trigger
 discipline).
 
 The three conventional tag values used by the kind presets (`bug`,
-`task`, `cross-cutting`; §9.2) are still produced by the presets, but
+`task`, `cross-cutting`; §9.1) are still produced by the presets, but
 they are not preregistered anywhere — they are simply the strings the
 preset emits.
 
 ### 2.4 Event
 
-Unchanged from SPEC.md §2.3. New event types added in 2.0:
+Unchanged from SPEC.md §2.3. One new event type added in 2.0:
 
 | Event type | Purpose | Payload (JSON shape; required fields shown) |
 |---|---|---|
-| `topic_create` | Initialize a topic (recorded on topic ref) | `{ "topic_id": <topic-id>, "title": <string>, "body"?: <string> }` |
-| `topic_archive` | Mark topic as archived (sets `archived_at`) | `{ "at": <iso8601> }` |
-| `topic_unarchive` | Reverse archive (clears `archived_at`) | `{}` |
-| `topic_attach` | Bind a thread to a topic (recorded on the thread ref) | `{ "topic_id": <topic-id> }` |
-| `topic_detach` | Remove a thread from a topic | `{}` |
-| `topic_alias` | Add (default) or remove a topic alias | `{ "slug": <slug>, "op": "add" \| "remove" }` |
 | `facet_set` | Change a thread's facet values (audited; see §7.3) | `{ "lifecycle"?: <string>, "tags_add"?: [<string>...], "tags_remove"?: [<string>...] }` |
+
+Earlier 2.0 drafts also added six topic event types (`topic_create`, `topic_archive`,
+`topic_unarchive`, `topic_attach`, `topic_detach`, `topic_alias`). These are removed
+along with the topic mechanism (§2.1).
 
 #### 2.4.1 `facet_set` payload semantics
 
@@ -328,13 +256,9 @@ Unchanged from SPEC.md §2.3. New event types added in 2.0:
   pattern).
 - Replay is purely append-order over the locally-visible event chain. There is no bespoke
   per-tag LWW reconciliation across clones; cross-clone tag merging follows whatever
-  ordering Git presents after fetch, the same way any other event ordering does (§8.3).
+  ordering Git presents after fetch, the same way any other event ordering does (§8.2).
 - An empty `facet_set` payload (no `lifecycle`, no tag arrays) is valid and a no-op (allowed
   for backfill / hook purposes).
-
-There is intentionally no `topic_state` event in 2.0. If a richer topic lifecycle is added
-later (F-W1), it will be introduced as a new additive event without breaking topics created
-under 2.0.
 
 ### 2.5 Node
 
@@ -371,43 +295,16 @@ Unchanged from SPEC.md §2.6.
 The standalone Approval concept from SPEC.md §2.7 is folded into the
 node namespace (§2.5). An approval is an `approval` node event, not a
 separate event kind. The `--approve <actor>` flag on state-change
-commands (§9.4) is preserved as a shortcut: it appends an `approval`
+commands (§9.3) is preserved as a shortcut: it appends an `approval`
 node and applies the state change in a single CLI invocation. Policy
 guards (e.g. `one_human_approval`) key off `approval` nodes uniformly.
 
 ## 3. State machines
 
-### 3.1 Topic lifecycle (no state machine in 2.0)
-
-A topic has no formal state machine. Its lifecycle is a binary derived from `archived_at`:
-
-| Derived state | Condition |
-|---|---|
-| `active` | `archived_at` is unset |
-| `archived` | `archived_at` is set |
-
-Transitions: `archive` and `unarchive` (idempotent).
-
-#### 3.1.1 Derived topic summary
-
-For UI and listing purposes, each topic exposes a derived **summary** computed from its child
-threads. The summary is informational and does not appear in events.
-
-| Summary | Condition |
-|---|---|
-| `empty` | Topic has no child threads |
-| `has-open` | One or more child threads in a non-terminal state |
-| `all-terminal` | All child threads in a terminal state (`done`, `rejected`, `deprecated`, `withdrawn` — see §3.2) |
-
-A topic whose only attached thread is `withdrawn` reports `all-terminal`, not `has-open` —
-withdrawal is a deliberate end-state, not parking.
-
-The richer red/yellow/green health model is deferred to F-W3 (Appendix A.3).
-
-### 3.2 Thread state machine (unified)
+### 3.1 Thread state machine (unified)
 
 A single state set with a deliberately permissive transition graph replaces the four 1.x
-machines. Per-lifecycle restrictions are applied as a filter (§3.2.1) — the global graph below
+machines. Per-lifecycle restrictions are applied as a filter (§3.1.1) — the global graph below
 contains every edge any lifecycle might need; the filter chooses which edges are reachable for
 a given thread.
 
@@ -431,13 +328,12 @@ done    -> deprecated
 rejected -> deprecated
 ```
 
-Terminal states for the purposes of `topic show` summary (§3.1.1) and search filtering:
-`done`, `rejected`, `deprecated`, `withdrawn`. No outgoing edges from `withdrawn` or
-`deprecated` — both are absorbing terminals.
+Terminal states for search filtering: `done`, `rejected`, `deprecated`, `withdrawn`.
+No outgoing edges from `withdrawn` or `deprecated` — both are absorbing terminals.
 
-Initial state: depends on `lifecycle` (see §3.2.1).
+Initial state: depends on `lifecycle` (see §3.1.1).
 
-#### 3.2.1 Lifecycle-filtered allowed states
+#### 3.1.1 Lifecycle-filtered allowed states
 
 The unified machine §3.2 is filtered by the thread's `lifecycle` facet. An edge is reachable
 only if its destination state is in the lifecycle's allowed set:
@@ -456,30 +352,26 @@ Terminal states (no outgoing edges in the global graph): `withdrawn`, `deprecate
 `done` / `rejected` / `deprecated` are present in the global graph but their reachability per
 lifecycle is determined by the table above.
 
-#### 3.2.2 Mapping from 1.x states
+#### 3.1.2 Mapping from 1.x states
 
 Migration §10 specifies the 1.x → 2.0 state mapping. The mapping is lossless: every 1.x state has a
 unique 2.0 equivalent.
 
-### 3.3 State derivation
+### 3.2 State derivation
 
 Unchanged from SPEC.md §3.5.
 
 ## 4. Data model
 
-### 4.1 Topic
-
-See §2.1 for fields.
-
-### 4.2 Thread
+### 4.1 Thread
 
 See §2.2 for fields. Field `kind` from 1.x is **removed**; replaced by `facets`.
 
-### 4.3 Event
+### 4.2 Event
 
 See §2.4. New event types listed; existing event types unchanged.
 
-### 4.4 Node types, Evidence, Approval
+### 4.3 Node types, Evidence, Approval
 
 - **Node types**: see §2.5 (overrides SPEC.md §4.3 — reduced to 4 types).
 - **Evidence**: unchanged from SPEC.md §4.4.
@@ -493,63 +385,23 @@ See §2.4. New event types listed; existing event types unchanged.
 Authoritative data in 2.0:
 
 ```text
-refs/forum/topics/<topic-id>      # topic event chain (NEW)
-refs/forum/threads/<thread-id>    # thread event chain (unchanged structure)
-refs/forum/aliases/<slug>         # alias-marker ref pointing at the current owner topic (NEW)
+refs/forum/threads/<thread-id>    # thread event chain (unchanged structure from 1.x)
 ```
 
-All ref-name segments are the **storage tokens** — bare alphanumeric (with `-` allowed in slug),
-no `!` and no `@`. The user-facing markers (§6.0) are display-only and are stripped before the
-ref name is constructed.
-
-#### 5.1.1 Alias ref representation
-
-Each `refs/forum/aliases/<slug>` ref is an **ordinary Git ref** (not a symref, not a note)
-pointing at a **marker commit object**. The choice of "ordinary ref" is deliberate: it
-makes alias refs work with standard `git push` / `git fetch` on the `refs/forum/*`
-namespace, with no notes-fetch refspec gymnastics and no symref propagation quirks.
-
-The marker commit has:
-
-- An **empty tree** (`4b825dc...`, the canonical empty-tree OID).
-- A **structured commit message** in trailer form:
-  ```
-  topic-alias <topic-id>
-
-  slug: <slug>
-  op: add | remove
-  by: <actor-id>
-  at: <iso8601>
-  ```
-- A **parent** equal to the previous tip of the same alias ref, when one exists. For a fresh
-  `add` (slug previously unused), there is no parent. For a `remove` (rare; aliases never
-  expire normally), the marker records `op: remove` and the resolver treats the slug as
-  unbound from that commit forward.
-
-The alias ref's own commit history therefore records the slug's binding history. A reader
-walking `refs/forum/aliases/payment-rewrite` can reconstruct every claim and rename of the
-slug, in addition to learning the current owner from the tip commit's `topic-alias` line.
-
-#### 5.1.2 Handle resolution
-
-Topic handle resolution walks `refs/forum/aliases/<slug>` first:
-
-1. If the ref exists, parse the tip commit's `topic-alias <topic-id>` line. If the most recent
-   `op` is `add`, the resolved owner is `<topic-id>`. If `remove`, the slug is currently
-   unbound (resolver returns `TopicNotFound`).
-2. If the ref does not exist, treat the input as a possible topic ID and look up
-   `refs/forum/topics/<input>`.
+The 1.x layout is preserved: only one ref tree (`refs/forum/threads/<thread-id>`) is
+authoritative. Earlier 2.0 drafts also defined `refs/forum/topics/<topic-id>` and
+`refs/forum/aliases/<slug>` for the topic mechanism; with topics removed, those ref
+trees do not exist in 2.0.
 
 ### 5.2 Repository files
 
-Same as SPEC.md §5.2 with added templates:
+Same as SPEC.md §5.2 with simplified templates:
 
 ```text
 .forum/
   policy.toml
   actors.toml
   templates/
-    topic.md            # topic charter template (NEW)
     thread.md           # generic thread template (NEW)
     proposal.md         # preset for lifecycle=proposal (replaces rfc.md)
     execution.md        # preset for lifecycle=execution (replaces task.md / issue.md)
@@ -567,107 +419,45 @@ Unchanged from SPEC.md §5.3.
 
 ## 6. Identity scheme
 
-### 6.0 Type-marker symbols
+### 6.1 Type-marker symbol
 
-User-facing identifiers carry a single-character **type marker** as the first character:
+User-facing thread identifiers carry a leading `@` type marker:
 
 | Marker | Type | Storage form | Display form |
 |---|---|---|---|
-| `!` | topic handle | `<slug>` (alphanumeric + `-`) under `refs/forum/aliases/<slug>` | `!<slug>` |
 | `@` | thread ID | `<8-char-base36>` under `refs/forum/threads/<token>` | `@<token>` |
-| `/` | (separator) | n/a — display-only | `!<slug>/<index>` short reference |
 
-Rationale:
+The earlier 2.0 draft also defined `!` for topic handles and `/` as a topic-scoped
+short-index separator; both have been removed along with the topic mechanism (§2.1).
 
-- **`!` for topic** carries "named focus area / collection", visually distinct from `#` (which
-  is conventionally a tag prefix and would conflict with the first-class `tags[]` concept in
-  this spec).
-- **`@` for thread** is **shell-safe** (no quoting needed), echoes the "at this address /
-  conversation point" meaning, and visually contrasts with `!` so the two never blur in prose.
-- The symbols appear only at the user-facing layer — refs, file paths, and serialized event
-  fields use the bare token. This keeps Git ref-name validation rules (which forbid `!` mid-ref
-  and reserve `@{` syntax) out of scope.
-- `!` requires shell quoting (`'!payment-rewrite'`) because of bash history expansion. To keep
-  interactive use friction-free, the bang is **optional at every CLI input position** — see
-  §6.0.1 below. The `!` is **mandatory in machine-interpreted persisted references**
-  (evidence refs, link targets, the `commit-msg` hook's structured ref scan) where type
-  disambiguation matters. Free-form prose — body text, charter, comment-node bodies — is
-  **not scanned**; users may write `!foo` or `foo` in prose without producing or violating a
-  marker rule. The persisted-context check fires only at structured slots that the system
-  itself parses as references (see §9.6).
+The `@` marker is **shell-safe** (no quoting needed), echoes the "at this address /
+conversation point" meaning, and is preserved purely as a display-form prefix — refs, file
+paths, and serialized event fields all use the bare token (Git ref-name validation reserves
+`@{` syntax, so `@` itself is allowed as a display-only prefix that is stripped before ref
+construction).
 
-This scheme gives every reference in commit messages, log output, and prose an unambiguous
-visual type — an easy win over alphabetic prefixes (`wf-`, `t-`) that blur into the
-identifier itself.
+#### 6.1.1 Type-marker omission at CLI input
 
-#### 6.0.1 Type-marker omission at CLI input
+The CLI **MUST accept** thread references with the `@` omitted in every position. The
+command grammar always knows whether a thread is expected (no other entity type exists in
+2.0), so the marker carries no disambiguation load.
 
-To avoid forcing users to quote `!` on every interactive command, the CLI **MUST accept** topic
-and thread references with the leading marker omitted, whenever the surrounding command makes
-the expected type unambiguous.
+```
+git forum show a3f9b2k1            # equivalent to: git forum show @a3f9b2k1
+git forum thread state a3f9 review # equivalent to: git forum thread state @a3f9 review
+```
 
-| Position | Bang/at required? | Notes |
-|---|---|---|
-| Positional or flag value of `topic show / topic ls / topic attach / topic detach / topic rename / topic archive / topic unarchive` | optional | The command grammar already requires a topic at this slot. `topic show payment-rewrite` is equivalent to `topic show '!payment-rewrite'`. |
-| `--topic <ref>` flag on `thread new`, `thread ls`, etc. | optional | Type is fixed by the flag name. |
-| Positional or flag value where a thread is required (`thread show`, `thread state`, `comment`, `objection`, `action`, `evidence add`, etc.) | optional | `@` may be omitted for the same reason. `thread show a3f9b2k1` is equivalent to `thread show @a3f9b2k1`. |
-| Mixed positions where either a topic or a thread is acceptable (e.g. `git forum show <REF>`) | **required** | Without the marker, the parser cannot disambiguate. Missing-marker input here returns `AmbiguousReferenceWithoutMarker` (§13) listing both candidate types. |
-| Anywhere a reference is **structurally** persisted (evidence refs, link targets, the `commit-msg` hook's structured scan) | **required** | The persisted-context rule (§9.6) is unchanged: bare tokens at these slots are rejected as ambiguous. **Free-form body text, charter, and comment-node body prose are explicitly out of scope** — prose is not parsed for references. |
-
-Error messages that surface a quoting failure SHOULD include a tip such as:
-
-> Tip: drop the leading `!` to skip shell quoting — `topic show payment-rewrite` works the same.
-
-This rule applies symmetrically to `@` for threads, even though `@` itself does not require
-quoting. The benefit there is consistency, not friction reduction.
-
-### 6.1 Topic handles
-
-#### 6.1.1 Generation
-
-When `git forum topic new "Payment rewrite"` is invoked:
-
-1. Compute base slug: lowercase, strip non-alphanumerics, collapse hyphens, max 32 chars.
-   `"Payment rewrite"` → `payment-rewrite`.
-2. Candidate handle: `!payment-rewrite`.
-3. **Within-clone collision** (the handle already exists locally): append a deterministic
-   two-word petname derived from `sha256(topic_id)` (e.g. `!payment-rewrite-quick-fox`)
-   and notify the user of the chosen handle in the command output. The petname dictionary is
-   bundled (~2,048 adjectives × ~2,048 nouns ≈ 4M combinations; collision negligible).
-
-User MAY override with `--handle !pay`. The override is validated against the handle format
-and locally checked for collision. Within-clone petname appending also applies to overridden
-handles.
-
-Cross-clone handle collisions (two clones independently claim the same slug) are detected by
-standard Git push semantics: the second pusher's `refs/forum/aliases/<slug>` push fails as a
-non-fast-forward, the way any other Git ref push fails. git-forum does not interpret this
-failure or rewrite the handle automatically; the user resolves it by `topic rename` and
-re-pushes, or by accepting whichever value Git fast-forwards to during fetch.
-
-#### 6.1.2 Reserved prefixes
-
-The slug grammar (§2.1.1) allows only `[a-z0-9-]+`, so a leading underscore is already
-syntactically invalid. The `_` character remains reserved at the slug level — if a future
-release widens the grammar, a leading underscore SHOULD continue to be reserved for
-system-allocated handles. No auto-allocated topic exists in 2.0; migration explicitly
-leaves 1.x threads as standalone (see §10.1).
-
-#### 6.1.3 Handle rename
-
-`git forum topic rename <old> <new>`:
-
-- Validates new handle availability and format.
-- Records a `topic_alias` event keeping `<old>` as a permanent alias.
-- Updates the SQLite index.
-- `<old>` continues to resolve forever.
+The `@` remains the canonical display form in `show` / `ls` output and is **mandatory** in
+machine-interpreted persisted references (evidence refs, link targets, the `commit-msg`
+hook's structured ref scan) so future widening of the marker scheme remains
+forward-compatible. Free-form prose — body text, comment-node bodies — is **not scanned**;
+users may write `@foo` or `foo` without producing or violating a marker rule.
 
 ### 6.2 Thread IDs
 
-**Display form**: `@XXXXXXXX` where `XXXXXXXX` is 8 base36 chars. The `@` is a type marker;
-storage uses the bare `XXXXXXXX` under `refs/forum/threads/`. Generation algorithm and collision
-analysis identical to SPEC.md §6.1, but the kind-prefix machinery is replaced by the type
-symbol.
+**Display form**: `@XXXXXXXX` where `XXXXXXXX` is 8 base36 chars. Storage uses the bare
+`XXXXXXXX` under `refs/forum/threads/`. Generation algorithm and collision analysis
+identical to SPEC.md §6.1, but the kind-prefix machinery is replaced by the type symbol.
 
 Legacy 1.x thread IDs (`RFC-XXXXXXXX`, `ASK-NNNN`, etc.) remain valid for reading. The parser
 accepts:
@@ -679,23 +469,7 @@ accepts:
 
 Unambiguous prefixes (≥4 chars after `@`) accepted as in 1.x.
 
-### 6.3 Topic-scoped short references
-
-Within a known topic context, `<handle>/<N>` references the Nth thread attached to the topic
-(1-indexed by `topic_attach` event order). Examples:
-
-```
-git forum show '!payment-rewrite/3'
-```
-
-Short references resolve to canonical thread IDs at parse time. They MUST NOT be stored as
-canonical references in events or evidence (only canonical thread IDs are stored), and they
-are rejected with `ShortIndexInPersistedRef` at every persisted entry point — see §8.3 and §9.6.
-
-Named role labels (e.g. `!foo/design`) are reserved syntactically but **not specified** in 2.0
-(see §2.1.3). The slash separator is used exclusively for numeric short index in 2.0.
-
-### 6.4 Canonical event/node IDs
+### 6.3 Canonical event/node IDs
 
 Unchanged from SPEC.md §6.2 (Git commit OID).
 
@@ -755,9 +529,6 @@ intersection combiner. Multi-tag combiners (field-level union with explicit
 `OR`/`MAX` semantics) are deferred until dogfood evidence shows the simple resolution
 is insufficient.
 
-There are intentionally no topic-level guards in 2.0. See F-W2 (Appendix A.3) for the
-forward-compatibility plan if these become needed.
-
 ### 7.3 Facet mutation rules
 
 Changing a thread's facet values after creation MAY invalidate prior policy decisions. Rules:
@@ -791,122 +562,56 @@ Inherits SPEC.md §8 verbatim:
 - `write_event` reads the current ref tip, creates a new commit, atomically updates the ref only
   if the tip has not changed.
 - `create_ref` fails if the ref already exists.
-- Concurrent writes to different threads/topics are fully safe.
+- Concurrent writes to different threads are fully safe.
 - Concurrent writes to the same thread fail with a conflict error; the caller retries.
 
 #### 8.1.1 Semantic merge (extended for 2.0)
 
 Auto-merge cases, in addition to those in SPEC.md §8.1:
 
-- Concurrent `topic_attach` to **the same topic** on the same thread (idempotent — second is
-  a no-op).
 - Concurrent `facet_set` events that change disjoint tag sets (additive merge).
 
-Conflict cases (concurrent writes that touch overlapping state) fail at
-the local CAS layer and are surfaced to the caller as a write failure.
-Resolution is by re-reading and re-writing — the same retry pattern as
-1.x. Cross-clone divergence (e.g. two clones independently attached
-the same thread to different topics, then both pushed) is left to the
-user to reconcile via Git tooling; `doctor` (§9.5) reports observed
-divergence informationally.
+Conflict cases (concurrent writes that touch overlapping state) fail at the local CAS layer
+and are surfaced to the caller as a write failure. Resolution is by re-reading and
+re-writing — the same retry pattern as 1.x. Cross-clone divergence is left to the user to
+reconcile via Git tooling; `doctor` (§9.4) reports observed divergence informationally.
 
-### 8.2 Short-index stability
+### 8.2 Distribution
 
-Topic short indices (`!foo/3`, §2.1.3) are **derived, session-local references**,
-not canonical IDs:
+Forum data is replicated between clones with standard `git push` and `git fetch` on the
+`refs/forum/*` namespace. git-forum does not wrap these commands and does not introduce
+its own push/fetch protocol.
 
-- The mapping is computed at query time from locally-visible `topic_attach` events sorted by
-  `(attach_event.timestamp, actor_id, event_oid)`.
-- The mapping is local to the clone. After a fetch from a remote that introduces or
-  reorders attach events, `/N` values may shift; users who care about a specific thread
-  should reference it by canonical ID (`@<token>`).
-- `/N` MUST NOT appear in stored data: not in evidence refs, not in link targets, not in commit
-  messages used by hooks. Only canonical thread IDs (`@XXXXXXXX`) and topic handles are
-  stored.
-- Implementations **MUST reject** `/N` references at every persisted entry point with
-  `ShortIndexInPersistedRef` (an error in 2.0 — see §13 and the entry-point table in §9.6).
-  This is a hard error, not a warning, in 2.0; treating it as advisory was rejected because
-  the failure mode it prevents (a stored short-ref silently meaning a different thread on
-  another clone) is a correctness issue, not a stylistic one.
-
-### 8.3 Distribution
-
-Forum data is replicated between clones with standard `git push` and
-`git fetch` on the `refs/forum/*` namespace. git-forum does not wrap
-these commands and does not introduce its own push/fetch protocol.
-The atomic-push and recommended-ordering guidance from earlier drafts
-of this section has been removed; users follow whatever Git fetch/push
-workflow they already use for code refs.
-
-When a non-fast-forward push fails, the user resolves it with the
-standard Git workflow (fetch, rebase or merge their forum refs,
-re-push). git-forum does not assume responsibility for the merge
-strategy. `git forum doctor` (§9.5) reports any divergence visible in
-the local refs (e.g., a thread attached to two different topics in
-two different ancestor commits) so the user knows what needs manual
-attention.
+When a non-fast-forward push fails, the user resolves it with the standard Git workflow
+(fetch, rebase or merge their forum refs, re-push). git-forum does not assume responsibility
+for the merge strategy. `git forum doctor` (§9.5) reports any divergence visible in the
+local refs informationally.
 
 ## 9. CLI surface
 
-### 9.1 Topic commands (NEW)
-
-```text
-git forum topic new <TITLE> [--handle <HANDLE>]
-    [--body <TEXT> | --body-file <PATH> | --edit]
-git forum topic show <TOPIC>
-git forum topic ls [--archived] [--summary <SUMMARY>]
-git forum topic attach <TOPIC> <THREAD>...
-git forum topic detach <TOPIC> <THREAD>...
-git forum topic rename <OLD_HANDLE> <NEW_HANDLE>
-git forum topic archive <TOPIC>
-git forum topic unarchive <TOPIC>
-```
-
-- `--archived` includes archived topics (default: hidden in `ls`).
-- `--summary <empty|has-open|all-terminal>` filters by derived summary.
-- There is no `git forum topic state` command — topic has no state machine.
-- `topic attach` to an archived topic is **rejected** with `AttachToArchivedTopic`
-  unless `--force` is passed. Rationale: archived topics are hidden by default in `ls`, so a
-  silent attach would put work in a place users won't see.
-
-#### 9.1.1 `topic show` output
-
-`topic show` displays a header block followed by the attached threads grouped by lifecycle. The
-header MUST surface publication state so the user knows whether a handle is shared with the
-remote:
-
-| Header line | When shown |
-|---|---|
-| `Topic: !<handle>` | always |
-| `Title: <title>` | always |
-| `State: active` / `State: archived (since <date>)` | always |
-| `Charter: <first non-empty body line>` / `Charter: (none)` | always |
-| `Summary: <empty / has-open / all-terminal> (<n> threads attached)` | always |
-
-Because git-forum delegates push/fetch to standard Git (§8.3), publication-state lines (e.g.
-"local only", "handle not pushed") are not part of the header. Whether a topic has been
-pushed to a remote is a question for `git for-each-ref` / `git ls-remote`, the same way it
-would be answered for any other ref namespace.
-
-### 9.2 Thread commands (unified + presets)
+### 9.1 Thread commands (unified + presets)
 
 Canonical form:
 
 ```text
 git forum thread new <TITLE>
     --lifecycle <LIFECYCLE>
-    [--topic <TOPIC>] [--tag <TAG>...]
+    [--tag <TAG>...]
     [--body <TEXT> | --body-file <PATH> | --edit]
     [--branch <BRANCH>] [--link-to <THREAD> --rel <REL>]
     [--from-commit <REV>] [--from-thread <THREAD>] [--force]
-git forum thread show <THREAD>
-git forum thread ls [--topic <TOPIC>]
-    [--lifecycle <LIFECYCLE>]
+git forum thread show <THREAD> [--tree]
+git forum thread ls [--lifecycle <LIFECYCLE>]
     [--status <STATUS>] [--tag <TAG>] [--branch <BRANCH>]
 git forum thread state <THREAD> <NEW_STATE> [--approve <ACTOR>]... [--comment <TEXT>]
 git forum thread tag add <THREAD> <TAG>...
 git forum thread tag rm  <THREAD> <TAG>...
 ```
+
+`thread show --tree` is an **advisory** display: it lists the thread's linked children
+(via `--rel implements` / `relates-to` / etc.) and their current states. It does not gate
+any operation. See CORE-VALUE.md "Advisories" for the boundary against cross-thread
+enforcement.
 
 Kind presets — **stable, first-class commands** (not compat aliases). They are the everyday
 surface; the canonical `thread new --lifecycle ...` form above is reserved for power-users and
@@ -924,27 +629,20 @@ git forum new bug   <TITLE>    → --lifecycle execution --tag bug    (alias of 
 all 2.x and 3.x releases — they are not on the removal schedule. Only kind-prefixed thread IDs
 (`RFC-0001`) and kind-keyed policy keys (`creation_rules.rfc`) are deprecated by ADR-004.
 
-### 9.3 Listing and display
+### 9.2 Listing and display
 
 ```text
-git forum ls                            # default: mixed view (active topics + standalone inbox)
-git forum ls --topics                # active topics only
-git forum ls --threads                  # all threads, flat
-git forum ls --inbox                    # standalone threads only (no topic attached)
-git forum show <REF>                    # auto-detects topic vs thread
+git forum ls                                       # all threads, sorted by updated_at desc
+git forum ls --lifecycle <LIFECYCLE>               # filter by lifecycle facet
+git forum ls --tag <TAG>                           # filter by tag
+git forum ls --status <STATUS>                     # filter by state
+git forum show <THREAD>                            # show one thread (with --tree, list linked children)
 ```
 
-The default `ls` is a **mixed view** with two stacked sections:
+`git forum ls` is a flat list. Earlier 2.0 drafts split the default view into "Topics" and
+"Inbox" sections; with topics removed, the default is the simple flat list.
 
-1. **Topics** — non-archived topics with their derived summary and thread count.
-2. **Inbox** — standalone (unattached) threads, sorted by `updated_at` desc.
-
-This default ensures that newly captured threads (the most common case immediately after
-migration, and the common case for quick bug capture in steady state) are visible without
-needing to remember a flag. Users who prefer a single view can use `--topics`,
-`--threads`, or `--inbox`.
-
-### 9.4 Discussion, lifecycle, evidence, links, hooks
+### 9.3 Discussion, lifecycle, evidence, links, hooks
 
 Inherits SPEC.md §9.4 / §9.5 / §9.7 / §9.10 with the **node-shorthand reduction** from
 ADR-006 / §2.5:
@@ -974,78 +672,17 @@ unified state machine via the thread's lifecycle facet:
 | `withdraw` | (rejected: use `close` or `reject`) | → `withdrawn` (from `draft` or `open`) | (rejected) |
 | `deprecate` | → `deprecated` | → `deprecated` | → `deprecated` |
 
-Shorthand commands work uniformly on **both topic-attached and standalone threads**. Topic
-membership is never required for state changes. (Future topic-level guards — F-W2 in
-Appendix A.3 — would only add constraints for attached threads; standalone threads remain
-unconstrained by topic policy.)
+### 9.4 Preflight, doctor
 
-### 9.5 Preflight, doctor
+`git forum verify <THREAD>` and `git forum doctor` continue to work as in 1.x:
 
-`git forum verify <THREAD>` and `git forum doctor` continue to work; both gain topic-aware
-output:
-
-- `verify` for a thread inside a topic notes the topic handle and summary.
-- `doctor` reports:
-  - **Untriaged standalone threads** (no topic attached) as an informational count, not a
-    warning. Standalone is a legitimate steady state — many bugs and notes never need a
-    topic. The doctor output names this section "Untriaged" rather than "Orphan" to reflect
-    that this is normal state, not a fault.
-  - Broken aliases, dangling attach references, and any divergence visible in local refs
-    after a fetch (e.g. a thread carrying two `topic_attach` events to different topics in
-    different ancestor commits) — these *are* warnings, surfaced for the user to reconcile
-    via plain Git tooling per §8.3.
-- (No topic-level guard preview in 2.0; see F-W2.)
-
-### 9.6 Persisted-context validation
-
-Topic short references (`/N`, §2.1.3) MUST be rejected as input wherever the value would be
-stored. The check fires `ShortIndexInPersistedRef` (an error per §13). Implementations enforce
-the check at every entry point listed below.
-
-| Entry point | Why persisted | Rejection point |
-|---|---|---|
-| `git forum link --to <ref>` | stored as link target on the thread ref | argument parser |
-| `git forum link <from> <to>` | both endpoints stored | argument parser |
-| `git forum evidence add --kind thread --ref <ref>` | stored as evidence reference | argument parser |
-| `git forum topic attach <topic> <thread>` | the thread positional must be a canonical thread ID; `/N` here would be circular | argument parser |
-| `git forum topic detach <topic> <thread>` | same as attach | argument parser |
-| `--link-to <ref>` (any creation command) | stored as link target | argument parser |
-| `--from-thread <ref>` (any creation command) | recorded in the new thread's source link | argument parser |
-| `commit-msg` hook input | scanned and validated against the forum index | hook handler |
-| `--topic <ref>` for `thread new` | accepts only canonical topic handles, not `!foo/N` (which is a thread reference, not a topic reference) | argument parser |
-
-`/N` is **accepted** at:
-
-- `git forum show <ref>` — read-only display.
-- `git forum thread state <ref> <new-state>` — interactive state change; the state event is
-  recorded against the canonical thread ID resolved from `/N` at parse time.
-- All other read-only / interactive query commands where the resolved canonical ID is used
-  internally and not echoed into stored data.
-
-Free-form body text (`--body`, `--body-file`, `--edit` content) is **not scanned** for `/N`.
-Authors who write `!foo/3` in prose are responsible for prose accuracy; the rule covers
-machine-interpreted references only.
-
-#### Error UX requirement: canonical-ID suggestions
-
-When `ShortIndexInPersistedRef` fires, the rejection MUST include the **canonical thread ID**
-that the short reference would have resolved to, so the user can fix the input by copy-paste
-without re-running `topic show`. Example commit-msg hook output:
-
-```
-git-forum: error: commit message references a short index that cannot be persisted
-
-  found:    !node-id-scheme-review/3
-  resolved: @d8f4q9aa  (slot /3 of '!node-id-scheme-review' on this clone)
-
-  Replace the short reference with the canonical thread ID and re-commit.
-  (Short references like '/3' are display-only; cross-clone they may point
-  to different threads.)
-```
-
-If the reference cannot be resolved at the moment of rejection (e.g., the topic itself does not
-exist locally), the error message MUST say so explicitly and recommend `topic show` rather than
-silently failing with "unknown reference".
+- `verify` is a single-thread guard preflight (no cross-thread enforcement).
+- `verify` MAY surface an **advisory** noting the state of threads linked from the verified
+  thread (e.g., "linked RFC `@1ooguji1` is not yet `done`"); this is informational only and
+  does not block the verification result. See CORE-VALUE.md "Advisories".
+- `doctor` reports broken refs, dangling link references, and any divergence visible in
+  local refs after a fetch — surfaced for the user to reconcile via plain Git tooling
+  (§8.2).
 
 ## 10. Migration from 1.x
 
@@ -1067,20 +704,13 @@ After migration:
 - Each thread gets a `facet_set` event added to its history populating `lifecycle` and the
   conventional `tags` (`cross-cutting` for `rfc`; `bug` for `issue`; `task` for `task`) per the
   §2.3.3 mapping.
-- States are remapped per §3.2.2.
+- States are remapped per §3.1.2.
 - **Node events are rewritten** per ADR-006 / §2.5: 1.x types `claim` / `question` /
   `summary` / `risk` / `review` / `alternative` / `assumption` become `comment` (with
   `legacy_subtype` preserved); standalone Approval events become `approval` nodes.
   `objection`, `action`, and `evidence` are unchanged.
-- **Migrated threads remain standalone** (no topic attachment). No `!_legacy` topic is
-  auto-created. Users attach threads to topics manually as they triage. `doctor` reports the
-  standalone count under the "Untriaged" section after migration as an informational signal
-  — it will be high initially and is expected to decrease over time as triage proceeds.
-
-Rationale for leaving threads standalone rather than auto-bucketing: a synthetic `!_legacy`
-topic would pollute the `topic ls` output indefinitely (since users rarely empty it
-completely) and creates a misleading impression that legacy threads form a coherent workstream.
-Standalone is the honest representation of "uncurated work".
+- Existing thread-to-thread links (`link` events with `--rel <REL>`) are preserved
+  unchanged. They are the only grouping mechanism in 2.0 (§2.1).
 
 ### 10.2 What is permanent vs deprecated
 
@@ -1088,7 +718,7 @@ Standalone is the honest representation of "uncurated work".
 
 - Top-level kind-named commands: `git forum new rfc/dec/task/issue/bug` and the corresponding
   `close` / `accept` / `pend` / `propose` / `reject` / `deprecate` shorthands. These are the
-  stable everyday surface (§9.2).
+  stable everyday surface (§9.1).
 
 **Deprecated (removal scheduled per §10.4):**
 
@@ -1119,30 +749,18 @@ schedule.
 
 ## 11. TUI
 
-The TUI default home view mirrors the CLI's mixed-listing default (§9.3):
+Inherits SPEC.md §11. The 2.0 changes are:
 
-1. **Mixed home** (default) — two stacked panels:
-   - Top: active (non-archived) topics with handle, summary, and child count.
-   - Bottom: standalone (unattached) threads, sorted by `updated_at` desc.
-   Both panels are simultaneously navigable; `Tab` switches focus between them.
-2. **Topic detail** showing the topic's charter (body) and attached threads grouped by
-   lifecycle.
-3. **Thread detail** (unchanged from 1.x in structure, but shows facets in header).
-4. **Single-mode views** for users who prefer one section at a time — `W` keybinding
-   (topics only), `T` keybinding (all threads, flat), `I` keybinding (inbox / standalone
-   only).
+- Thread detail header shows `lifecycle` and `tags` instead of `kind`.
+- A thread-detail "linked" panel surfaces children (advisory, no enforcement) — see
+  CORE-VALUE.md "Advisories".
 
-The mixed default ensures fresh captures (the common case immediately after migration and the
-common case for quick bug capture in steady state) are visible without keyboard rituals.
-
-Topic archive/unarchive is a single-key action from the topic detail view.
+No topic-related views: there are no topic, alias, or attach screens in 2.0.
 
 ## 12. Search
 
-Search index gains:
-
-- `topic_handle`, `topic_archived`, `topic_summary` columns on threads.
-- A `lifecycle` column and a `tags` join table replacing the `kind` column.
+Search index gains a `lifecycle` column and a `tags` join table replacing the `kind`
+column.
 
 Old search queries referencing `kind:rfc` are auto-translated to
 `lifecycle:proposal AND tag:cross-cutting` for one minor release. `kind:issue` translates to
@@ -1155,20 +773,16 @@ Unchanged from SPEC.md §13. New error and warning categories:
 
 | Code | Severity | Triggered by | Notes |
 |---|---|---|---|
-| `TopicNotFound` | error | handle resolution failure | Lists similar handles |
-| `ThreadNotInTopic` | error | `<handle>/N` index out of bounds | |
 | `FacetTransitionDisallowed` | error | facet mutation in a state that doesn't allow it | |
 | `LifecycleStateMismatch` | error | state transition not allowed for thread's lifecycle | |
-| `AttachToArchivedTopic` | **error** | attach attempt to a topic whose `archived_at` is set | `--force` overrides; intentional gate to keep work visible |
-| `ShortIndexInPersistedRef` | **error** | `/N` short reference appears where it would be stored (e.g. commit message scanned by `commit-msg` hook, evidence ref, link target) | Error message MUST include the canonical thread ID resolved at the moment the short reference was rejected (e.g., "did you mean `@d8f4q9aa`?"). |
-| `AmbiguousReferenceWithoutMarker` | error | Bare token (no `!`/`@`) used in a CLI position that accepts both a topic and a thread (e.g. `git forum show <REF>`) | Lists candidate topic / thread matches; suggests prefixing with `!` or `@` to disambiguate. |
 | `InvalidTagSyntax` | error | `--tag <value>` or `facet_set` payload violates the tag grammar (§2.3.5) | Message names the offending character / length / reserved-literal violation; suggests a sanitized form. |
 
-Cross-clone divergence (handle conflicts, attach conflicts, tag drift) is **not** surfaced
-through dedicated error codes in 2.0 — it appears as ordinary Git push/fetch failures, the
-same way any other ref divergence would. Tag-vocabulary diagnostics (`UnknownTag`,
-`UnknownPolicyTag`, `TagDeprecated`) and the standalone-Approval error space are removed
-along with the features they reported on (§2.3.5, §2.8, §8.3).
+Cross-clone divergence is **not** surfaced through dedicated error codes in 2.0 — it appears
+as ordinary Git push/fetch failures (§8.2). Topic-related codes
+(`TopicNotFound` / `ThreadNotInTopic` / `AttachToArchivedTopic` / `ShortIndexInPersistedRef`
+/ `AmbiguousReferenceWithoutMarker`) and tag-vocabulary diagnostics
+(`UnknownTag` / `UnknownPolicyTag` / `TagDeprecated`) are removed along with the features
+they reported on.
 
 ## 14. Testing strategy
 
@@ -1177,8 +791,7 @@ Unchanged from SPEC.md §14, plus:
 ### Migration
 
 - Every state in every 1.x kind round-trips to a defined 2.0 state.
-- Migrated threads remain standalone (no synthetic `!_legacy` topic created).
-- Default `git forum ls` post-migration shows all migrated threads in the inbox section.
+- Existing thread-to-thread links are preserved unchanged.
 
 ### Facet model
 
@@ -1186,8 +799,6 @@ Unchanged from SPEC.md §14, plus:
   `tag=...`, `AND`/`OR`/`NOT`).
 - Kind preset commands (`new rfc/dec/task/bug`) produce identical facet/tag combinations as the
   canonical `thread new --lifecycle ... --tag ...` form.
-- A topic can hold threads of all three lifecycles simultaneously; `topic show` groups
-  them correctly.
 
 ### Tag grammar (§2.3.5)
 
@@ -1204,46 +815,34 @@ Unchanged from SPEC.md §14, plus:
 - 1.x standalone Approval events migrate to `approval` node events.
 - Policy guards predicated on the old types resolve via the same legacy-subtype
   preservation; `at_least_one_summary` is no longer shipped as a guard predicate (§7.1).
+  Migration MUST emit a warning naming any `policy.toml` line that still references it
+  (per ADR-006 Consequences).
 
-### CLI / UX defaults
+### Type-marker omission (§6.1.1)
 
-- Default `git forum ls` returns mixed topics + inbox; `--topics` / `--threads` /
-  `--inbox` produce single-section variants.
-- `doctor` reports standalone-thread count under "Untriaged" (informational), not warning.
-- Standalone threads accept all state-change shorthands (`close`, `accept`, `pend`, ...) without
-  topic attachment.
-
-### Type-marker omission (§6.0.1)
-
-- `git forum topic show payment-rewrite` resolves identically to
-  `git forum topic show '!payment-rewrite'`.
 - `git forum thread show a3f9b2k1` resolves identically to `git forum thread show @a3f9b2k1`.
-- `git forum show <bare-token>` returns `AmbiguousReferenceWithoutMarker` when the token
-  matches both an existing topic slug and a thread token (lists both candidates).
-- Shell-quoting failure messages include the "drop the leading `!`" tip.
+- The `@` marker remains the canonical display form in CLI output.
 
-### `/N` short-index validation
+### Linked-thread advisory display (§9.3)
 
-- `/N` accepted as input to read-only CLI commands (`show`, etc.).
-- `/N` **rejected with `ShortIndexInPersistedRef`** in every persisted-context check point
-  enumerated in §9.6.
-- The rejection message includes the canonical thread ID the short reference resolved to
-  (e.g. `@d8f4q9aa`); when the topic itself does not resolve locally, the message says so
-  explicitly instead of returning an opaque "unknown reference" error.
+- `thread show --tree` lists threads linked from the named thread (depth 1 by default) with
+  current state. The tree display does not block any operation.
+- `verify` may surface advisories about linked threads' states; the verification result
+  itself is computed only from the named thread.
 
 ## 15. Non-goals
 
 In addition to SPEC.md §15 and the five non-goals in `doc/spec/CORE-VALUE.md`:
 
-- General-purpose project management (Gantt charts, dependency graphs across topics).
-- Topic state machines, topic-level guards, topic nesting in 2.0
-  (intentionally deferred — see Appendix A.3).
-- Multi-parent topics (DAG of topics).
+- General-purpose project management (Gantt, dependency graphs).
+- A topic / handle / alias / attach-detach mechanism. Earlier 2.0 drafts introduced a
+  topic entity; it has been removed in favor of existing thread-link relations
+  (§2.1, CORE-VALUE.md litmus). The `!` markup symbol, `topic_*` event types, the
+  `refs/forum/topics/` and `refs/forum/aliases/` ref trees, and the `/N` topic-scoped
+  short-index do not exist in 2.0.
 - User-defined required facet axes beyond `lifecycle` (use `tags` instead).
-- Mandatory topic membership for threads.
-- A `git forum push` / `git forum fetch` command, atomic-ref-group semantics, or any
-  cross-clone conflict-resolution protocol. Distribution is plain Git on `refs/forum/*`
-  (§8.3, CORE-VALUE.md non-goal §3).
+- A `git forum push` / `git forum fetch` command or cross-clone conflict-resolution
+  protocol. Distribution is plain Git on `refs/forum/*` (§8.2, CORE-VALUE.md non-goal §3).
 - A tag registry, conventional-tag list, unknown-tag warnings, deprecation surfacing, or
   tag-vocabulary policy lint. Earlier drafts of 2.0 specified `.forum/tags.toml` and
   related diagnostics; these are removed in 2.0 and deferred per §2.3.5.
@@ -1254,12 +853,11 @@ In addition to SPEC.md §15 and the five non-goals in `doc/spec/CORE-VALUE.md`:
 
 | ID | Question | Resolution |
 |---|---|---|
-| O-1 | Should `!_legacy` migration bucket be created automatically, or should threads stay orphan until manually attached? | **Orphan**. No synthetic topic on migration; `doctor` reports orphan count. (§10.1) |
 | O-2 | Are 5 intent values enough? | **Dropped entirely**, and `scope` was dropped too. Sole required facet is `lifecycle`; everything else (bug/task/cross-cutting) is a tag. (§2.3) |
-| O-3 | Should standalone threads be allowed to use shorthand commands (`close`, `accept`) directly? | **Yes**. Shorthand commands work uniformly on standalone and attached threads. Topic attachment is never required for state changes. (§9.4) |
 | O-4 | Should free-form tags have any constraint, given the language-drift risk (`bug` vs `defect` vs `issue`)? | **Grammar only.** Hard tag grammar (`[a-z][a-z0-9-]{1,31}`); no registry, no conventional-tag list, no unknown-tag diagnostic, no policy lint over tag vocabulary. Drift remediation is deferred per F-T1 (Appendix A.3) until dogfood evidence shows the grammar is insufficient. (§2.3.5) |
 | O-5 | Should the ten 1.x node types be preserved, or reduced? | **Reduced to four** by protocol effect: `comment`, `approval`, `objection`, `action`. The standalone Approval concept folds into the `approval` node. See ADR-006 / §2.5. |
-| O-6 | Should 2.0 ship a `git forum push` / `git forum fetch` and cross-clone conflict-resolution protocol? | **No.** Distribution is delegated to plain Git on `refs/forum/*`. CORE-VALUE.md non-goal §3 forbids reinventing the protocol. (§8.3) |
+| O-6 | Should 2.0 ship a `git forum push` / `git forum fetch` and cross-clone conflict-resolution protocol? | **No.** Distribution is delegated to plain Git on `refs/forum/*`. CORE-VALUE.md non-goal §3 forbids reinventing the protocol. (§8.2) |
+| O-7 | Should 2.0 introduce a topic entity (named groupings of related threads)? | **No.** Earlier drafts introduced topic + handle + alias + attach. The grouping need is empirically "an RFC plus its `--rel implements` children", which existing thread-link relations already cover. The visualization need is met by an advisory `thread show --tree` (§9.1), not by a new entity. (§2.1) |
 
 ### A.2 Remaining for 2.0 implementation
 
@@ -1273,18 +871,12 @@ provided the additive contracts below are honored.
 
 | ID | Capability | Current 2.0 substitute | Trigger to add | Forward-compat contract |
 |---|---|---|---|---|
-| F-W1 | Topic state machine (e.g. `planning` / `active` / `wrapping` / `done` / `abandoned`) | `archived_at` flag + derived summary | Need to express stage of work as a queryable signal beyond "active vs archived" | Introduce `topic_state` event type (additive). Topics without any `topic_state` event default to `active`. `archived` remains derived from `archived_at` and is orthogonal to status. **Note: per CORE-VALUE non-goal §1, this MUST NOT introduce cross-thread workflow enforcement.** |
-| F-W2 | Topic-level guards | None (rely on per-thread guards) | Need to enforce conditions on topic archival or future state transitions (e.g. "all children terminal before archive") | Add `[[topic_guards]]` policy section. Guards on `unrestricted` operations (archive in 2.0) are absent by default; adding rules later affects only repos that opt in. **Note: same constraint as F-W1 — cross-thread coupling crosses the CORE-VALUE line.** |
-| F-W3 | Richer derived health (`green` / `yellow` / `red`) replacing the simple summary | `empty` / `has-open` / `all-terminal` | Need to surface "stuck" topics visually (e.g. unresolved objections, stale activity) | Health is a pure function of child state. Richer logic adds without breaking simpler clients; index columns gain a `topic_health` field, summary remains for backward queries. |
-| F-W4 | Topic nesting (single-parent) | Flat topics only | Need to express epic / sub-topic hierarchy | Add optional `parent` field to topics. Absent = root. Cycles rejected at write time. Existing 2.0 topics are roots by default. |
 | F-T1 | Tag-vocabulary discipline (registry, conventional list, deprecation, lint) | None — bare grammar only (§2.3.5) | Documented language drift across clones (`bug` vs `defect`) producing search/policy split | Re-introduce `.forum/tags.toml` with the schema described in earlier 2.0 drafts (`description`, `aliases`, `deprecated`, `replaced_by`). All write paths emit warnings only by default; strict mode is opt-in. |
+| F-A1 | Cascade state changes across linked children (`git forum deprecate <RFC> --cascade`) | None — user changes states one at a time | Repeated user requests to retire whole RFC + implementing-task groups in one step | Implement as a CLI batch (an explicit user-initiated walk of the link tree applying the same state change). Per CORE-VALUE non-goal §1, this MUST remain user-initiated batch execution; it MUST NOT become an automatic policy trigger fired by another thread's state. |
 
-#### Why Level XS over Level XXS
-
-Level XXS would have collapsed `topic` to a tag-like string field on threads, eliminating the
-topic ref tree entirely. That model is simpler still, but it would have made F-W1 and F-W4
-**re-architecture** changes (introducing a new entity), not additive ones. Level XS preserves
-topic as a first-class entity so all four future capabilities above remain forward-compatible.
+Earlier draft entries for topic-related forward-compat (F-W1 topic state machine, F-W2
+topic guards, F-W3 derived health, F-W4 topic nesting, F-W5 HLC, F-W6 CRDT tags) have
+been removed along with the topic entity. They are not deferred; they are out of scope.
 
 #### Trigger discipline
 
@@ -1294,14 +886,14 @@ A future minor release SHOULD add a deferred capability only when:
 2. The additive contract above is honored (no breaking change for clients on prior minor).
 3. The corresponding ADR is written and accepted.
 
-Speculative implementation of F-W1–F-W4 / F-T1 without these triggers is explicitly discouraged.
+Speculative implementation of F-T1 / F-A1 without these triggers is explicitly discouraged.
 
 ## Appendix B: Examples
 
 These examples illustrate the 2.0 model end-to-end. Output formatting is illustrative; exact
 column layouts may differ.
 
-### B.1 Quick bug capture (standalone, no topic)
+### B.1 Quick bug capture
 
 ```text
 $ git forum new bug "TUI crashes on terminal resize"
@@ -1309,7 +901,6 @@ created thread @a3f9b2k1
   lifecycle:  execution
   tags:       bug
   status:     open
-  topic:   (standalone)
 
 $ git forum comment @a3f9 "Resize handler doesn't account for negative width on shrink"
 appended comment node n-5h2m9p1k
@@ -1322,22 +913,14 @@ $ git forum close @a3f9 --comment "Fixed in commit 7c8d2e1"
 state: open -> done
 ```
 
-The thread never joined a topic. Standalone use is fully supported (see §9.4).
-
-### B.2 RFC inside a topic
+### B.2 RFC with implementing tasks (link-based group)
 
 ```text
-$ git forum topic new "Payment system rewrite"
-created topic !payment-system-rewrite
-  active, no charter
-
-$ git forum new rfc "Replace synchronous gateway with async queue" \
-    --topic payment-system-rewrite --edit          # `--topic` accepts the bare slug; the `!` is display-only
+$ git forum new rfc "Replace synchronous gateway with async queue" --edit
 created thread @x9k2m4p7
   lifecycle:  proposal
   tags:       cross-cutting
   status:     draft
-  topic:   !payment-system-rewrite (slot /1)
 
 $ git forum comment   @x9k2 "Q: How do we handle ordering invariants in the queue?"
 $ git forum objection @x9k2 "Async retries can violate at-most-once delivery"
@@ -1349,35 +932,27 @@ $ git forum propose @x9k2          # draft -> open
 $ git forum state   @x9k2 review   # open -> review
 $ git forum accept  @x9k2 --approve human/alice
 state: review -> done
-```
 
-`--approve human/alice` appends an `approval` node and applies the state change in a single
-event (§2.8); it satisfies the `one_human_approval` predicate of the
-`lifecycle=proposal AND tag=cross-cutting : review->done` guard from §7.1. Rhetorical
-distinctions ("Q:", "Decision:") are conveyed in the comment body, not via separate node
-types (ADR-006).
-
-### B.3 Implementation task linked to the RFC
-
-```text
 $ git forum new task "Implement async queue dispatcher" \
-    --topic payment-system-rewrite \
     --link-to @x9k2 --rel implements \
     --branch feat/async-dispatcher
 created thread @y3p7n2q4
   lifecycle:  execution
   tags:       task
   status:     open
-  topic:   !payment-system-rewrite (slot /2)
+  links:      implements @x9k2m4p7
   branch:     feat/async-dispatcher
 
-# Commits on feat/async-dispatcher reference @y3p7 in their messages.
-# When merged:
-$ git forum close @y3p7
-state: open -> done
+$ git forum show @x9k2 --tree
+@x9k2m4p7  proposal/done    Replace synchronous gateway with async queue
+└── @y3p7n2q4  execution/open   Implement async queue dispatcher
 ```
 
-### B.4 Lightweight decision record (standalone)
+`thread show --tree` is an advisory display (§9.1, §9.3): it walks the link relations and
+shows linked children with their states, but it does not gate any operation. This replaces
+the topic-as-grouping affordance from earlier 2.0 drafts.
+
+### B.3 Lightweight decision record
 
 ```text
 $ git forum new dec "Use UUIDv7 for new entity IDs" --edit
@@ -1385,7 +960,6 @@ created thread @q8w2e1r3
   lifecycle:  record
   tags:       (none)
   status:     open
-  topic:   (standalone)
 
 $ git forum close @q8w2
 state: open -> done
@@ -1393,55 +967,22 @@ state: open -> done
 
 `lifecycle=record` skips the `working` / `review` states — records go straight to `done`.
 
-### B.5 Listing — default mixed view
+### B.4 Listing
 
 ```text
-$ git forum ls
-TOPICS (active)
-  HANDLE                          SUMMARY        THREADS
-  !payment-system-rewrite       has-open       3
-  !onboarding-revamp            all-terminal   12
-
-INBOX (standalone, sorted by updated_at desc)
-  ID         TITLE                                       LIFECYCLE  TAGS    UPDATED
-  @a3f9b2   TUI crashes on terminal resize              execution  bug     2026-04-28
-  @q8w2e1   Use UUIDv7 for new entity IDs               record     -       2026-04-27
-  @7m4k9p   How does retry policy interact with quotas? execution  bug     2026-04-26
-
-$ git forum ls --topics --archived           # explicit archived view
-HANDLE                          SUMMARY        THREADS  ARCHIVED
-!q1-perf                      empty          0        2026-02-15
+$ git forum ls --status open
+ID         TITLE                                       LIFECYCLE  TAGS    UPDATED
+@a3f9b2   TUI crashes on terminal resize              execution  bug     2026-04-28
+@y3p7n2   Implement async queue dispatcher            execution  task    2026-04-28
+@7m4k9p   How does retry policy interact with quotas? execution  bug     2026-04-26
 
 $ git forum thread ls --lifecycle execution --tag bug --status open
-ID         TITLE                                  TOPIC                     CREATED
-@a3f9b2   TUI crashes on terminal resize         (standalone)              2026-04-25
-@r7n8m1   Auth retry loop on token refresh       !payment-system-rewrite 2026-04-26
-
-$ git forum show '!payment-system-rewrite'      # mixed-position command: marker required + quoted to defeat `!` history expansion
-Topic: !payment-system-rewrite
-Title:    Payment system rewrite
-State:    active
-Summary:  has-open  (3 threads attached)
-
-Threads:
-  /1 [proposal/done   ] Replace synchronous gateway with async queue   @x9k2m4
-  /2 [execution/done  ] Implement async queue dispatcher               @y3p7n2
-  /3 [execution/open  ] Migrate gateway clients                        @d8f4q9
+ID         TITLE                                  CREATED
+@a3f9b2   TUI crashes on terminal resize         2026-04-25
+@7m4k9p   How does retry policy interact ...     2026-04-26
 ```
 
-The default `git forum ls` shows both stacked sections, ensuring that newly captured standalone
-threads remain visible without needing to remember a flag.
-
-### B.6 Promoting a standalone thread
-
-```text
-$ git forum topic attach payment-system-rewrite @a3f9b2     # topic-typed slot: marker optional
-attached @a3f9b2 to !payment-system-rewrite (slot /4)
-```
-
-The thread is no longer standalone; it now appears in the topic's `show` output.
-
-### B.7 Tag-driven policy customization
+### B.5 Tag-driven policy customization
 
 ```toml
 # .forum/policy.toml
@@ -1472,14 +1013,15 @@ can require a body section via `body_sections`.
 - SPEC.md v1.2 — inherited specification (unchanged sections noted by reference).
 - ADR-001 — Git OID as canonical event/node ID (unchanged).
 - ADR-002 — Kind reduction rationale.
-- ADR-003 — Topic handle scheme.
 - ADR-004 — Migration strategy.
 - ADR-006 — Node type reduction (collapses 10 types to 4 by protocol effect).
+- (ADR-003 — topic handle scheme — was removed when topic was dropped in favor of
+  link-based grouping; see §2.1 and CORE-VALUE.md litmus.)
 - (ADR-005 — cross-clone conflict resolution — was removed when distribution was
-  delegated to plain Git; see §8.3 and CORE-VALUE.md non-goal §3.)
-- RFC-0027 — Topic meta-thread (superseded by this draft; this draft promotes the meta-thread to
-  a first-class entity rather than a thread variant, but in slimmed form, and explicitly
-  rejects the cross-thread workflow enforcement that motivated RFC-0027).
+  delegated to plain Git; see §8.2 and CORE-VALUE.md non-goal §3.)
+- RFC-0027 — Topic meta-thread (rejected by this draft; the cross-thread workflow
+  enforcement that motivated RFC-0027 is a CORE-VALUE non-goal, and the grouping
+  affordance is met by existing link relations rather than a topic entity).
 - RFC-0030 — Thread ID scheme (extended: kind-named prefixes drop entirely; the `@` type
-  marker becomes the display form per §6.0 and §6.2; storage is the bare 8-char token).
+  marker becomes the display form per §6.1 and §6.2; storage is the bare 8-char token).
 - RFC-0031 — 3-letter kind prefixes (deprecated by this draft).
