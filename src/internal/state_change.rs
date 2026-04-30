@@ -272,9 +272,8 @@ pub fn remediation_hint(rule: &str, state: &thread::ThreadState, thread_id: &str
                 ids.join(", ")
             )
         }
-        "at_least_one_summary" => {
-            format!("add a summary first: `summary {thread_id} \"<text>\"`")
-        }
+        // `at_least_one_summary` was removed in 2.0 (ADR-006); the rule
+        // never fires after Policy::load strips it. Hint left empty.
         "one_human_approval" => "supply --approve human/<name>".to_string(),
         _ => String::new(),
     }

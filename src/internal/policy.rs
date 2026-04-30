@@ -304,8 +304,17 @@ impl Policy {
     pub fn load(path: &std::path::Path) -> ForumResult<Self> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| ForumError::Config(format!("cannot read policy.toml: {e}")))?;
+        // ADR-006 Consequences: scan for the removed `at_least_one_summary`
+        // predicate before parsing so we can name the file + line of every
+        // mention. Emit warnings irrespective of whether the parse succeeds.
+        for warning in scan_at_least_one_summary_warnings(path, &text) {
+            eprintln!("warning: {warning}");
+        }
         let mut policy: Self = toml::from_str(&text)
             .map_err(|e| ForumError::Config(format!("invalid policy.toml: {e}")))?;
+        // Strip any AtLeastOneSummary entries that still slipped through —
+        // the predicate no longer fires (ADR-006).
+        policy.strip_removed_predicates();
         for warning in policy.resolve_guard_scopes() {
             eprintln!("warning: {warning}");
         }
@@ -313,6 +322,18 @@ impl Policy {
             eprintln!("warning: {warning}");
         }
         Ok(policy)
+    }
+
+    /// Drop `AtLeastOneSummary` entries from every guard's `requires`
+    /// list. ADR-006: the predicate is no longer enforced; this keeps
+    /// 1.x policies loadable while ensuring the runtime never tries to
+    /// evaluate the removed rule.
+    fn strip_removed_predicates(&mut self) {
+        for guard in &mut self.guards {
+            guard
+                .requires
+                .retain(|r| !matches!(r, GuardRule::AtLeastOneSummary));
+        }
     }
 
     /// SPEC-2.0 §2.3.3 / §7.2 / §10.4: rewrite any legacy kind-keyed
@@ -495,14 +516,12 @@ pub fn evaluate_rule(rule: &GuardRule, state: &ThreadState) -> Option<GuardViola
             }
         }
         GuardRule::AtLeastOneSummary => {
-            if state.latest_summary().is_none() {
-                Some(GuardViolation {
-                    rule: rule.to_string(),
-                    reason: "no summary node found".into(),
-                })
-            } else {
-                None
-            }
+            // ADR-006: predicate removed in 2.0. `Policy::load` strips
+            // these entries from `requires` and warns at load time. If
+            // a guard somehow still carries one (e.g. constructed
+            // programmatically), treat it as a no-op rather than
+            // half-enforcing a removed rule.
+            None
         }
         GuardRule::OneHumanApproval => {
             // SPEC-2.0 §2.8: approvals are `approval`-typed nodes. Count any
@@ -924,6 +943,25 @@ fn parse_guard_on(on: &str) -> Result<(FacetPredicate, String, Option<String>), 
     Ok((predicate, transition.to_string(), None))
 }
 
+/// ADR-006 / SPEC-2.0 §7.1: scan a policy.toml text for occurrences of
+/// the removed `at_least_one_summary` predicate and produce one
+/// warning per line that mentions it, naming the source file + line.
+fn scan_at_least_one_summary_warnings(path: &std::path::Path, text: &str) -> Vec<String> {
+    let display = path.display();
+    let mut warnings = Vec::new();
+    for (idx, line) in text.lines().enumerate() {
+        if line.contains("at_least_one_summary") {
+            warnings.push(format!(
+                "{display}:{lineno}: predicate `at_least_one_summary` is removed (ADR-006); \
+                 it no longer fires. Either delete the predicate or require a non-empty \
+                 `body_sections` entry on the relevant `creation_rules`.",
+                lineno = idx + 1,
+            ));
+        }
+    }
+    warnings
+}
+
 /// Normalize the `from->to` portion of a guard transition string to 2.0
 /// state names (per `state_machine::normalize_state_name`). Trims
 /// surrounding whitespace so guards written with spaces around the `:`
@@ -1076,7 +1114,6 @@ mod tests {
             requires: vec![
                 GuardRule::NoOpenObjections,
                 GuardRule::NoOpenActions,
-                GuardRule::AtLeastOneSummary,
                 GuardRule::OneHumanApproval,
             ],
             ..Default::default()
@@ -1095,6 +1132,50 @@ mod tests {
         assert!(policy
             .guards_for("draft->under-review", &state_for(ThreadKind::Rfc))
             .is_empty());
+    }
+
+    #[test]
+    fn at_least_one_summary_scanner_names_file_and_line() {
+        // ADR-006: every line that mentions the removed predicate
+        // produces a warning naming source path + 1-based line number.
+        let path = std::path::Path::new(".forum/policy.toml");
+        let toml = "[[guards]]\non = \"x->y\"\nrequires = [\"at_least_one_summary\"]\n";
+        let warnings = scan_at_least_one_summary_warnings(path, toml);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains(".forum/policy.toml:3"));
+        assert!(warnings[0].contains("at_least_one_summary"));
+        assert!(warnings[0].contains("removed"));
+    }
+
+    #[test]
+    fn at_least_one_summary_stripped_from_loaded_guards() {
+        let mut p = Policy {
+            guards: vec![GuardEntry {
+                on: "x->y".into(),
+                requires: vec![
+                    GuardRule::NoOpenObjections,
+                    GuardRule::AtLeastOneSummary,
+                    GuardRule::OneHumanApproval,
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        p.strip_removed_predicates();
+        assert!(!p.guards[0]
+            .requires
+            .iter()
+            .any(|r| matches!(r, GuardRule::AtLeastOneSummary)));
+        assert_eq!(p.guards[0].requires.len(), 2);
+    }
+
+    #[test]
+    fn at_least_one_summary_evaluate_is_noop() {
+        let state = state_for(ThreadKind::Rfc);
+        // Even if a programmatic caller smuggles the variant through,
+        // evaluate_rule returns no violation (ADR-006 — predicate
+        // semantically removed).
+        assert!(evaluate_rule(&GuardRule::AtLeastOneSummary, &state).is_none());
     }
 
     #[test]

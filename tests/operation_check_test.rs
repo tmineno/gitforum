@@ -332,7 +332,9 @@ fn strict_mode_force_downgrades_warning_back() {
 fn existing_policy_without_new_sections_works() {
     let (_repo, _git, paths) = setup();
     let policy_path = paths.dot_forum.join("policy.toml");
-    // Write a policy with only guards (the old format)
+    // Write a policy with only guards (the old format). The
+    // `at_least_one_summary` predicate is removed in 2.0 (ADR-006);
+    // Policy::load strips it from `requires` and warns on the line.
     fs::write(
         &policy_path,
         r#"
@@ -344,6 +346,13 @@ requires = ["no_open_objections", "at_least_one_summary"]
     .unwrap();
     let policy = Policy::load(&policy_path).unwrap();
     assert_eq!(policy.guards.len(), 1);
+    assert!(
+        !policy.guards[0]
+            .requires
+            .iter()
+            .any(|r| matches!(r, git_forum::internal::policy::GuardRule::AtLeastOneSummary)),
+        "AtLeastOneSummary should be stripped at load time per ADR-006",
+    );
     assert!(policy.creation_rules.is_empty());
     assert!(policy.node_rules.is_empty());
     assert!(policy.revise_rules.is_none());

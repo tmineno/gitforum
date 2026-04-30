@@ -77,13 +77,11 @@ fn make_policy(guards: Vec<GuardEntry>) -> Policy {
 }
 
 fn policy_with_guards() -> Policy {
+    // ADR-006: `AtLeastOneSummary` removed in 2.0; remaining guards
+    // exercise the same review→done transition.
     make_policy(vec![GuardEntry {
         on: "under-review->accepted".into(),
-        requires: vec![
-            GuardRule::NoOpenObjections,
-            GuardRule::AtLeastOneSummary,
-            GuardRule::OneHumanApproval,
-        ],
+        requires: vec![GuardRule::NoOpenObjections, GuardRule::OneHumanApproval],
         ..Default::default()
     }])
 }

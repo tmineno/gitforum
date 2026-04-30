@@ -41,13 +41,14 @@ const DEFAULT_POLICY: &str = r#"# git-forum default policy
 # Available guard rules:
 #   no_open_objections  — all objection nodes must be resolved/retracted
 #   no_open_actions     — all action nodes must be resolved/retracted
-#   at_least_one_summary — thread must have a non-retracted summary node
 #   one_human_approval  — at least one recorded human/… actor approval required
 #   has_commit_evidence  — thread must have commit-type evidence attached
+# (`at_least_one_summary` was removed in 2.0 per ADR-006; require a
+#  non-empty `body_sections` entry on creation_rules instead.)
 
 [[guards]]
 on = "under-review->accepted"
-requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
+requires = ["one_human_approval", "no_open_objections"]
 
 [[guards]]
 on = "open->closed"
