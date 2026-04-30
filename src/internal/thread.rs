@@ -17,7 +17,11 @@ pub struct ThreadLink {
 }
 
 /// Materialized state of a thread, derived from event replay.
-#[derive(Debug, Clone)]
+///
+/// `Default` is derived so test fixtures and helpers can construct partial
+/// states with `ThreadState { id: …, kind: …, ..Default::default() }`,
+/// matching the pattern used on `Event` and `Node`.
+#[derive(Debug, Clone, Default)]
 pub struct ThreadState {
     pub id: String,
     pub kind: ThreadKind,
@@ -38,6 +42,15 @@ pub struct ThreadState {
     pub body_revision_count: usize,
     /// Node IDs that have been incorporated into the body.
     pub incorporated_node_ids: Vec<String>,
+    /// SPEC-2.0 §2.3.4 / §7.3: lifecycle facet, set once on the first
+    /// `facet_set` carrying it. Immutable after creation; subsequent
+    /// `facet_set` events that carry `lifecycle` are silently ignored at
+    /// replay (write-side rejection lands in Track B).
+    pub lifecycle: Option<String>,
+    /// SPEC-2.0 §2.3.5: derived tag set after replaying every `facet_set`
+    /// event in chain order. `tags_add` is applied before `tags_remove`
+    /// within each event.
+    pub tags: Vec<String>,
 }
 
 /// Resolved view of a single node inside a thread.
@@ -127,6 +140,8 @@ pub fn replay(events: &[Event]) -> ForumResult<ThreadState> {
         links: vec![],
         body_revision_count: 0,
         incorporated_node_ids: vec![],
+        lifecycle: None,
+        tags: Vec::new(),
     };
 
     for ev in &events[1..] {
@@ -241,9 +256,30 @@ fn apply_event(state: &mut ThreadState, event: &Event) -> ForumResult<()> {
         // These event types are no-ops during replay:
         EventType::Create => {} // handled in replay() before apply_event loop
         EventType::Verify | EventType::Merge => {}
-        // 2.0: facet_set replay logic lands in Track B (lifecycle/tags fields on
-        // ThreadState). For Track A (additive types only), this is a no-op.
-        EventType::FacetSet => {}
+        // SPEC-2.0 §2.4.1: per-event facet mutation, not a full-state
+        // replacement.
+        EventType::FacetSet => {
+            // First-lifecycle-wins: §7.3 makes lifecycle immutable, so any
+            // subsequent facet_set carrying `lifecycle` is silently ignored
+            // at replay (write-side rejection with FacetTransitionDisallowed
+            // is Track B's responsibility).
+            if state.lifecycle.is_none() {
+                if let Some(ref lc) = event.lifecycle {
+                    state.lifecycle = Some(lc.clone());
+                }
+            }
+            // Within a single event, tags_add is applied before tags_remove
+            // (an event that simultaneously adds and removes the same tag
+            // is a removal). Insertion is set-style (no duplicates).
+            for tag in &event.tags_add {
+                if !state.tags.iter().any(|t| t == tag) {
+                    state.tags.push(tag.clone());
+                }
+            }
+            for tag in &event.tags_remove {
+                state.tags.retain(|t| t != tag);
+            }
+        }
     }
     Ok(())
 }
@@ -767,5 +803,96 @@ mod tests {
             msg.contains("did you mean"),
             "should show 'did you mean'; got: {msg}"
         );
+    }
+
+    // ---- facet_set replay (SPEC-2.0 §2.4.1) ----
+
+    fn make_facet_set(
+        thread_id: &str,
+        seq: u32,
+        lifecycle: Option<&str>,
+        tags_add: &[&str],
+        tags_remove: &[&str],
+    ) -> Event {
+        Event {
+            event_id: format!("evt-facet-{seq:04}"),
+            thread_id: thread_id.into(),
+            event_type: EventType::FacetSet,
+            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, seq.min(59), 0).unwrap(),
+            actor: "human/alice".into(),
+            lifecycle: lifecycle.map(str::to_string),
+            tags_add: tags_add.iter().map(|s| s.to_string()).collect(),
+            tags_remove: tags_remove.iter().map(|s| s.to_string()).collect(),
+            ..Event::default()
+        }
+    }
+
+    #[test]
+    fn facet_set_first_lifecycle_wins() {
+        let events = vec![
+            make_create("RFC-0001", ThreadKind::Rfc, "T"),
+            make_facet_set("RFC-0001", 1, Some("proposal"), &[], &[]),
+            // Second facet_set carrying lifecycle: silently ignored at replay
+            // (write-side rejection is Track B).
+            make_facet_set("RFC-0001", 2, Some("execution"), &[], &[]),
+        ];
+        let state = replay(&events).unwrap();
+        assert_eq!(state.lifecycle.as_deref(), Some("proposal"));
+    }
+
+    #[test]
+    fn facet_set_lifecycle_optional() {
+        let events = vec![
+            make_create("RFC-0001", ThreadKind::Rfc, "T"),
+            // facet_set with no lifecycle, no tags — valid no-op (§2.4.1).
+            make_facet_set("RFC-0001", 1, None, &[], &[]),
+        ];
+        let state = replay(&events).unwrap();
+        assert_eq!(state.lifecycle, None);
+        assert!(state.tags.is_empty());
+    }
+
+    #[test]
+    fn facet_set_tags_add_then_remove_within_event() {
+        // Within one event tags_add applies before tags_remove.
+        let events = vec![
+            make_create("RFC-0001", ThreadKind::Rfc, "T"),
+            make_facet_set("RFC-0001", 1, None, &["bug", "ux"], &["bug"]),
+        ];
+        let state = replay(&events).unwrap();
+        assert_eq!(state.tags, vec!["ux".to_string()]);
+    }
+
+    #[test]
+    fn facet_set_tags_accumulate_across_events() {
+        let events = vec![
+            make_create("RFC-0001", ThreadKind::Rfc, "T"),
+            make_facet_set("RFC-0001", 1, None, &["a", "b"], &[]),
+            make_facet_set("RFC-0001", 2, None, &["c"], &["a"]),
+        ];
+        let state = replay(&events).unwrap();
+        assert_eq!(state.tags, vec!["b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn facet_set_tags_add_dedupes() {
+        let events = vec![
+            make_create("RFC-0001", ThreadKind::Rfc, "T"),
+            make_facet_set("RFC-0001", 1, None, &["bug"], &[]),
+            // Re-adding the same tag is a no-op.
+            make_facet_set("RFC-0001", 2, None, &["bug"], &[]),
+        ];
+        let state = replay(&events).unwrap();
+        assert_eq!(state.tags, vec!["bug".to_string()]);
+    }
+
+    #[test]
+    fn facet_set_tags_remove_unknown_is_noop() {
+        let events = vec![
+            make_create("RFC-0001", ThreadKind::Rfc, "T"),
+            make_facet_set("RFC-0001", 1, None, &[], &["nonexistent"]),
+        ];
+        let state = replay(&events).unwrap();
+        assert!(state.tags.is_empty());
     }
 }

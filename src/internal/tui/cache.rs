@@ -81,17 +81,10 @@ mod tests {
             id: id.to_string(),
             kind: crate::internal::event::ThreadKind::Rfc,
             title: format!("Thread {id}"),
-            body: None,
-            branch: None,
             status: "draft".to_string(),
             created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             created_by: "human/test".to_string(),
-            events: vec![],
-            nodes: vec![],
-            evidence_items: vec![],
-            links: vec![],
-            body_revision_count: 0,
-            incorporated_node_ids: vec![],
+            ..ThreadState::default()
         }
     }
 

@@ -486,8 +486,6 @@ mod tests {
             id: id.into(),
             kind: ThreadKind::Rfc,
             title: "Test RFC".into(),
-            body: None,
-            branch: None,
             status: "draft".into(),
             created_at: t,
             created_by: "human/alice".into(),
@@ -501,11 +499,7 @@ mod tests {
                 kind: Some(ThreadKind::Rfc),
                 ..Event::default()
             }],
-            nodes: vec![],
-            evidence_items: vec![],
-            links: vec![],
-            body_revision_count: 0,
-            incorporated_node_ids: vec![],
+            ..ThreadState::default()
         }
     }
 
