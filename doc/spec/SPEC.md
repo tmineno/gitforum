@@ -1,6 +1,10 @@
 # git-forum Product Specification
 
-Version 1.2 — 2026-03-21
+Version 1.2 — 2026-04-30 (rev. for core-value alignment)
+Bound by `doc/spec/CORE-VALUE.md` — when this document conflicts with the
+core value statement, this document is wrong and must be revised. The 2.0
+specification (`doc/spec/SPEC-2.0.md`) defines the next-version surface
+and should be consulted for decisions about what to add or extend.
 
 ## 1. Overview
 
@@ -15,12 +19,16 @@ transitions as append-only events inside a Git repository.
 2. **Event-sourced.** Thread state is derived from replaying an immutable event stream. Events are
    Git commits; the commit graph is the audit trail.
 3. **Local-first.** The tool operates entirely on a local clone. Collaboration happens through
-   standard Git push/fetch.
+   standard Git `push` / `fetch` on `refs/forum/*`. There is no git-forum-specific
+   distribution protocol (CORE-VALUE.md non-goal §3).
 4. **Structured discussion.** Contributions are typed nodes (claim, objection, summary, etc.)
-   rather than opaque comments.
+   rather than opaque comments. (The 1.x ten-type set is frozen; ADR-006 reduces it to four
+   in 2.0.)
 5. **Human-agent parity.** Humans and AI agents use the same CLI surface and identity model.
-6. **Policy-driven.** State transitions are gated by configurable guard rules and role
-   restrictions.
+   No AI-only command set (CORE-VALUE.md non-goal §5).
+6. **Policy-driven.** State transitions are gated by configurable guard rules within a single
+   thread. Cross-thread workflow enforcement and agent dispatch are explicit non-goals
+   (CORE-VALUE.md non-goals §1, §2).
 
 ### 1.2 Implementation constraints
 
@@ -44,6 +52,16 @@ Four thread kinds:
   `rejected`, with `designing`, `implementing`, and `reviewing` phases.
 - **issue** — bug reports and feature requests. Lifecycle: `open` through `closed` or `rejected`.
 
+#### Status of the four-kind taxonomy
+
+The four-kind set is **frozen** in 1.x and slated for collapse in 2.0 (ADR-002). Empirical
+usage across ~250 threads in this project's own forum is heavily skewed: `issue` 197,
+`rfc` 43, `task` 16, `dec` **0**. The `dec` kind in particular has never been used in
+practice — decision records are produced as `summary` nodes inside whatever thread reached
+the decision. ADR-002 collapses the four kinds into a single `thread` entity carrying a
+`lifecycle` facet plus tags; the four kind-named CLI presets (`new rfc/dec/task/issue/bug`)
+are kept indefinitely as the everyday surface.
+
 ### 2.2 Workflow model
 
 - Cross-cutting design decisions start as an RFC.
@@ -51,6 +69,11 @@ Four thread kinds:
 - Implementable work is tracked as TASKs with phase discipline.
 - Bugs and feature requests are tracked as ISSUEs.
 - Agents are participants, not a separate control plane.
+
+The workflow above is **descriptive** — it describes the typical shape of work, not an
+enforced sequence. Cross-thread workflow enforcement (e.g. "TASK cannot reach `closed` until
+its linked RFC is `accepted`") is an explicit non-goal (CORE-VALUE.md non-goal §1; §15
+below).
 
 ### 2.3 Event
 
@@ -242,6 +265,17 @@ them. `retract` is a **soft-delete**: it marks any node inactive while preservin
 original node body remains in the git commit that created it and is recoverable via `git log`.
 Retract does not remove data from the repository. `incorporated` marks a node as folded into a
 thread body revision.
+
+#### Status of the ten-type set
+
+This ten-type set is **frozen** in 1.x. ADR-006 reduces it to four in 2.0 (`comment`,
+`approval`, `objection`, `action`), cut by *protocol effect* rather than rhetorical move.
+The seven types collapsing into `comment` (`claim`, `question`, `summary`, `risk`, `review`,
+`alternative`, `assumption`) carry no policy or state-machine consequence in 1.x either —
+the rhetorical distinction lives in the body text. New 1.x usage SHOULD prefer the
+narrow set actually consulted by the system (`objection`, `action`, plus `evidence`-add and
+recorded approvals via state-change `--approve`); the seven prose-only types remain
+accepted for compatibility.
 
 ### 4.4 Evidence
 
@@ -728,16 +762,19 @@ digits). Comment lines (respecting `core.commentChar`) and scissors sections are
 Hook paths are resolved via `git rev-parse --git-path hooks/<name>` (worktree and
 `core.hooksPath` safe). `--force` overwrites without backup.
 
-### 9.11 Import / export (planned)
+### 9.11 Import / export
 
-Import and export commands are planned but not yet implemented:
+GitHub issue import/export is implemented at the scope below and **frozen** — no further
+extension is planned.
 
 ```text
 git forum import github-issue --repo <OWNER/REPO> --issue <NUMBER>
 git forum export github-issue <THREAD_ID> --repo <OWNER/REPO>
 ```
 
-Scope: GitHub issue interoperability only. RFC import/export is not planned.
+Scope: GitHub issue interoperability only. RFC import/export, GitLab/Bitbucket support, and
+mass-migration tooling are explicit non-goals — the surface exists as a one-way bridge for
+existing project history, not as a sustained interop layer.
 
 ### 9.12 Purge (hard-delete)
 
@@ -871,7 +908,11 @@ Read-only preflight check for the next forward transition:
 
 ## 11. TUI
 
-The TUI is a terminal UI for browsing and basic creation.
+The TUI is a terminal UI for browsing and basic creation. It is **maintained, not extended**:
+new TUI features are accepted only when they directly serve the core value (CORE-VALUE.md) —
+e.g., a missing affordance that prevents an agent or human from completing a workflow the
+CLI already supports. Additions in the "polish" category (richer rendering, more keybindings,
+new visualization modes) are out of scope going forward.
 
 ### 11.1 Views
 
@@ -950,15 +991,31 @@ cargo test
 
 ## 15. Non-goals
 
-The following are explicitly out of scope:
+The following are explicitly out of scope. The first five mirror the non-goals stated in
+`doc/spec/CORE-VALUE.md` and are upstream of this document — they govern any feature
+proposal regardless of release.
 
-- A separate heavyweight decision workflow (DEC is lightweight by design).
+1. **Cross-thread workflow enforcement.** No thread-to-thread state coupling, no automatic
+   transitions triggered by other threads, no policy predicates that dispatch on the state
+   of another thread. State machines stay per-thread; coordination across threads is the
+   user's responsibility.
+2. **Agent dispatch / coordination.** No leases, no claims, no assignment scheduling, no
+   automatic agent invocation from forum events. Agents are participants on the same CLI
+   surface as humans, not subjects of orchestration.
+3. **Reinventing distribution.** No `git forum push` / `git forum fetch`, no cross-clone
+   conflict-resolution protocol, no merge logic above what plain Git provides on
+   `refs/forum/*`.
+4. **Project management / dashboards.** Not a replacement for external PM tools. No Gantt,
+   no velocity, no burndown, no SLA tracking, no resource allocation.
+5. **Other surfaces.** No real-time collaborative editing. No proprietary Web UI as a
+   primary interface. No AI-only command set parallel to the human one.
+
+In addition to those five, the following 1.x-specific exclusions are retained:
+
+- A separate heavyweight decision workflow (DEC is lightweight by design; ADR-002 collapses
+  it entirely in 2.0).
 - Mandatory AI provenance tracking.
-- AI-only high-level command sets.
-- A Web UI.
 - A central server.
-- Real-time collaboration.
 - Advanced access control beyond role-based policy.
 - Automatic patch application.
-- Large PM-style workflow systems.
 - Embedding-based recommendation or semantic search.
