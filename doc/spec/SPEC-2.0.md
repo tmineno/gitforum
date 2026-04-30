@@ -639,8 +639,16 @@ git forum new bug   <TITLE>    → --lifecycle execution --tag bug    (alias of 
 ```
 
 `--help` for both forms shows the other as a cross-reference. Presets remain supported across
-all 2.x and 3.x releases — they are not on the removal schedule. Only kind-prefixed thread IDs
-(`RFC-0001`) and kind-keyed policy keys (`creation_rules.rfc`) are deprecated by ADR-004.
+all 2.x and 3.x releases — they are not on the removal schedule.
+
+Per ADR-004 (and pulled forward from the original 3.0 schedule by RFC-nm3d31yk Q1):
+
+- **Removed in 2.0**: kind-prefixed *subcommand* groupings (`git forum rfc new`,
+  `git forum issue close`, etc.) — invoking them prints a hard error pointing at the
+  top-level preset form.
+- **Deprecated in 2.0** (per §10.4 schedule): kind-prefixed thread IDs (`RFC-0001`)
+  resolve via alias for read; kind-keyed policy keys (`creation_rules.rfc`) auto-rewrite
+  to lifecycle keys at config-load time with a warning.
 
 ### 9.2 Listing and display
 
@@ -733,11 +741,16 @@ After migration:
   `close` / `accept` / `pend` / `propose` / `reject` / `deprecate` shorthands. These are the
   stable everyday surface (§9.1).
 
+**Removed in 2.0:**
+
+- Kind-prefixed *subcommand* forms — `git forum rfc new`, `git forum issue close`, etc. —
+  are **removed** in 2.0. Invoking them prints a hard error pointing at the top-level form.
+  These were 1.x hidden aliases and were already documented as deprecated in SPEC.md
+  §9.2 / §9.3 / §9.6. ADR-004 records the rationale for pulling this forward from 3.0
+  (the duplication blocks the kind-reduction LOC cleanup; see RFC-nm3d31yk).
+
 **Deprecated (removal scheduled per §10.4):**
 
-- Kind-prefixed *subcommand* forms — `git forum rfc new`, `git forum issue close`, etc. — work
-  as silent aliases in 2.0. These were the 1.x grouping convention and are superseded by the
-  top-level forms above.
 - Kind-prefixed thread IDs (`RFC-0001`, `ASK-XXXXXXXX`) resolve via the alias table for read.
 - Kind-keyed policy keys (`creation_rules.rfc`, `[[guards]] on = "rfc:..."`) auto-rewrite to
   lifecycle keys at load time with a warning.
@@ -756,9 +769,9 @@ schedule.
 
 | Version | Kind-prefixed subcommands | Kind-keyed policy | Legacy IDs |
 |---|---|---|---|
-| 2.0 | silent alias, `--help` cross-references | auto-rewrite + warning | resolve via alias |
-| 2.1 | warn on use | unchanged | resolve via alias |
-| 3.0 | removed | rejected (must be migrated) | read-only resolve |
+| 2.0 | **removed** (hard error) | auto-rewrite + warning | resolve via alias |
+| 2.x | — | warn on use | resolve via alias |
+| 3.0 | — | rejected (must be migrated) | read-only resolve |
 
 ## 11. TUI
 
