@@ -802,48 +802,24 @@ fn resolve_node_id_in_thread_scopes_prefix_lookup() {
     .unwrap();
 
     let first_event = Event {
-        event_id: String::new(),
         thread_id: first_thread_id.clone(),
         event_type: EventType::Say,
         created_at: fixed_clock().now(),
         actor: "human/alice".into(),
-        base_rev: None,
-        parents: vec![],
-        title: None,
-        kind: None,
         body: Some("First objection.".into()),
         node_type: Some(NodeType::Objection),
         target_node_id: Some("deadbeef11111111111111111111111111111111".into()),
-        new_state: None,
-        approvals: vec![],
-        evidence: None,
-        link_rel: None,
-        branch: None,
-        incorporated_node_ids: vec![],
-        reply_to: None,
-        old_node_type: None,
+        ..Event::default()
     };
     let second_event = Event {
-        event_id: String::new(),
         thread_id: second_thread_id.clone(),
         event_type: EventType::Say,
         created_at: fixed_clock().now(),
         actor: "human/bob".into(),
-        base_rev: None,
-        parents: vec![],
-        title: None,
-        kind: None,
         body: Some("Second objection.".into()),
         node_type: Some(NodeType::Objection),
         target_node_id: Some("deadbeef22222222222222222222222222222222".into()),
-        new_state: None,
-        approvals: vec![],
-        evidence: None,
-        link_rel: None,
-        branch: None,
-        incorporated_node_ids: vec![],
-        reply_to: None,
-        old_node_type: None,
+        ..Event::default()
     };
     event::write_event(&git, &first_event).unwrap();
     event::write_event(&git, &second_event).unwrap();

@@ -221,6 +221,9 @@ fn apply_event(state: &mut ThreadState, event: &Event) -> ForumResult<()> {
         // These event types are no-ops during replay:
         EventType::Create => {} // handled in replay() before apply_event loop
         EventType::Verify | EventType::Merge => {}
+        // 2.0: facet_set replay logic lands in Track B (lifecycle/tags fields on
+        // ThreadState). For Track A (additive types only), this is a no-op.
+        EventType::FacetSet => {}
     }
     Ok(())
 }
@@ -569,21 +572,9 @@ mod tests {
             event_type: EventType::Create,
             created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             actor: "human/alice".into(),
-            base_rev: None,
-            parents: vec![],
             title: Some(title.into()),
             kind: Some(kind),
-            body: None,
-            node_type: None,
-            target_node_id: None,
-            new_state: None,
-            approvals: vec![],
-            evidence: None,
-            link_rel: None,
-            branch: None,
-            incorporated_node_ids: vec![],
-            reply_to: None,
-            old_node_type: None,
+            ..Event::default()
         }
     }
 
@@ -594,21 +585,8 @@ mod tests {
             event_type: EventType::State,
             created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
             actor: "human/alice".into(),
-            base_rev: None,
-            parents: vec![],
-            title: None,
-            kind: None,
-            body: None,
-            node_type: None,
-            target_node_id: None,
             new_state: Some(new_state.into()),
-            approvals: vec![],
-            evidence: None,
-            link_rel: None,
-            branch: None,
-            incorporated_node_ids: vec![],
-            reply_to: None,
-            old_node_type: None,
+            ..Event::default()
         }
     }
 

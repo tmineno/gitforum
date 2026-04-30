@@ -259,21 +259,9 @@ mod tests {
             event_type: super::super::event::EventType::Say,
             created_at: chrono::Utc::now(),
             actor: "human/alice".into(),
-            base_rev: None,
-            parents: vec![],
             title: Some("Secret title".into()),
-            kind: None,
             body: Some("Secret body".into()),
-            node_type: None,
-            target_node_id: None,
-            new_state: None,
-            approvals: vec![],
-            evidence: None,
-            link_rel: None,
-            branch: None,
-            incorporated_node_ids: vec![],
-            reply_to: None,
-            old_node_type: None,
+            ..Event::default()
         };
         purge_event_content(&mut ev);
         assert_eq!(ev.body.as_deref(), Some("[purged]"));
@@ -289,21 +277,8 @@ mod tests {
             event_type: super::super::event::EventType::State,
             created_at: chrono::Utc::now(),
             actor: "human/alice".into(),
-            base_rev: None,
-            parents: vec![],
-            title: None,
-            kind: None,
-            body: None,
-            node_type: None,
-            target_node_id: None,
             new_state: Some("closed".into()),
-            approvals: vec![],
-            evidence: None,
-            link_rel: None,
-            branch: None,
-            incorporated_node_ids: vec![],
-            reply_to: None,
-            old_node_type: None,
+            ..Event::default()
         };
         purge_event_content(&mut ev);
         assert!(ev.body.is_none());

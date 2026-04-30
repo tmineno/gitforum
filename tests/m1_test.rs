@@ -36,21 +36,9 @@ fn sample_create(thread_id: &str, kind: ThreadKind, title: &str) -> Event {
         event_type: EventType::Create,
         created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
         actor: "human/alice".into(),
-        base_rev: None,
-        parents: vec![],
         title: Some(title.into()),
         kind: Some(kind),
-        body: None,
-        branch: None,
-        node_type: None,
-        target_node_id: None,
-        new_state: None,
-        approvals: vec![],
-        evidence: None,
-        link_rel: None,
-        incorporated_node_ids: vec![],
-        reply_to: None,
-        old_node_type: None,
+        ..Event::default()
     }
 }
 
@@ -61,21 +49,8 @@ fn sample_state(thread_id: &str, new_state: &str) -> Event {
         event_type: EventType::State,
         created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
         actor: "human/bob".into(),
-        base_rev: None,
-        parents: vec![],
-        title: None,
-        kind: None,
-        body: None,
-        branch: None,
-        node_type: None,
-        target_node_id: None,
         new_state: Some(new_state.into()),
-        approvals: vec![],
-        evidence: None,
-        link_rel: None,
-        incorporated_node_ids: vec![],
-        reply_to: None,
-        old_node_type: None,
+        ..Event::default()
     }
 }
 

@@ -8,9 +8,10 @@ use super::git_ops::GitOps;
 use super::refs;
 
 /// Thread kinds supported by git-forum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ThreadKind {
+    #[default]
     Issue,
     Rfc,
     Dec,
@@ -65,9 +66,10 @@ impl std::fmt::Display for ThreadKind {
 }
 
 /// Event types as defined in the spec.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum EventType {
+    #[default]
     Create,
     Edit,
     Retract,
@@ -82,6 +84,9 @@ pub enum EventType {
     #[serde(rename = "revise-body")]
     ReviseBody,
     Retype,
+    /// 2.0: change a thread's facet values (lifecycle / tags). See SPEC-2.0 §2.4.
+    #[serde(rename = "facet-set")]
+    FacetSet,
 }
 
 impl std::fmt::Display for EventType {
@@ -100,6 +105,7 @@ impl std::fmt::Display for EventType {
             Self::Merge => "merge",
             Self::ReviseBody => "revise-body",
             Self::Retype => "retype",
+            Self::FacetSet => "facet-set",
         };
         f.write_str(s)
     }
@@ -161,7 +167,12 @@ impl std::str::FromStr for NodeType {
 /// An immutable event in a thread's history.
 ///
 /// Stored as `event.json` inside each Git commit's tree.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `Default` is implemented so test sites and helpers can construct events
+/// with `Event { thread_id: "...".into(), event_type: ..., ..Default::default() }`
+/// rather than enumerating every field. This keeps adding new optional fields
+/// from cascading edits across the codebase.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Event {
     #[serde(default, skip_serializing)]
     pub event_id: String,
@@ -207,6 +218,16 @@ pub struct Event {
     /// Previous node type before a Retype event.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub old_node_type: Option<NodeType>,
+    /// 2.0: lifecycle facet value set on this `facet_set` event. Present only on
+    /// the thread's first `facet_set` (immutable after creation per SPEC-2.0 §7.3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<String>,
+    /// 2.0: tags added by this `facet_set` event. Replay: applied before `tags_remove`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags_add: Vec<String>,
+    /// 2.0: tags removed by this `facet_set` event. Replay: applied after `tags_add`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags_remove: Vec<String>,
 }
 
 impl Event {
@@ -218,27 +239,30 @@ impl Event {
         clock: &dyn super::clock::Clock,
     ) -> Self {
         Self {
-            event_id: String::new(),
             thread_id: thread_id.to_string(),
             event_type,
             created_at: clock.now(),
             actor: actor.to_string(),
-            base_rev: None,
-            parents: vec![],
-            title: None,
-            kind: None,
-            body: None,
-            node_type: None,
-            target_node_id: None,
-            new_state: None,
-            approvals: vec![],
-            evidence: None,
-            link_rel: None,
-            branch: None,
-            incorporated_node_ids: vec![],
-            reply_to: None,
-            old_node_type: None,
+            ..Self::default()
         }
+    }
+
+    /// Builder: set the `lifecycle` facet on a `facet_set` event.
+    pub fn with_lifecycle(mut self, lifecycle: &str) -> Self {
+        self.lifecycle = Some(lifecycle.to_string());
+        self
+    }
+
+    /// Builder: set tags added by this `facet_set` event.
+    pub fn with_tags_add(mut self, tags: Vec<String>) -> Self {
+        self.tags_add = tags;
+        self
+    }
+
+    /// Builder: set tags removed by this `facet_set` event.
+    pub fn with_tags_remove(mut self, tags: Vec<String>) -> Self {
+        self.tags_remove = tags;
+        self
     }
 
     pub fn with_old_node_type(mut self, old_type: NodeType) -> Self {
@@ -423,21 +447,10 @@ mod tests {
             event_type: EventType::Create,
             created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             actor: "human/alice".into(),
-            base_rev: None,
-            parents: vec![],
             title: Some("Test RFC".into()),
             kind: Some(ThreadKind::Rfc),
             body: Some("Thread body".into()),
-            node_type: None,
-            target_node_id: None,
-            new_state: None,
-            approvals: vec![],
-            evidence: None,
-            link_rel: None,
-            branch: None,
-            incorporated_node_ids: vec![],
-            reply_to: None,
-            old_node_type: None,
+            ..Event::default()
         }
     }
 
@@ -464,6 +477,53 @@ mod tests {
         assert!(!json.contains("target_node_id"));
         assert!(!json.contains("new_state"));
         assert!(!json.contains("branch"));
+        assert!(!json.contains("lifecycle"));
+        assert!(!json.contains("tags_add"));
+        assert!(!json.contains("tags_remove"));
+    }
+
+    #[test]
+    fn facet_set_event_roundtrip() {
+        let mut event = sample_create_event();
+        event.event_type = EventType::FacetSet;
+        event.title = None;
+        event.kind = None;
+        event.body = None;
+        event.lifecycle = Some("proposal".into());
+        event.tags_add = vec!["cross-cutting".into(), "task".into()];
+        event.tags_remove = vec!["bug".into()];
+        let json = serde_json::to_string_pretty(&event).unwrap();
+        assert!(json.contains("\"event_type\": \"facet-set\""));
+        assert!(json.contains("\"lifecycle\": \"proposal\""));
+        assert!(json.contains("cross-cutting"));
+        assert!(json.contains("bug"));
+        let parsed: Event = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.event_type, EventType::FacetSet);
+        assert_eq!(parsed.lifecycle.as_deref(), Some("proposal"));
+        assert_eq!(
+            parsed.tags_add,
+            vec!["cross-cutting".to_string(), "task".to_string()]
+        );
+        assert_eq!(parsed.tags_remove, vec!["bug".to_string()]);
+    }
+
+    #[test]
+    fn facet_set_event_empty_payload_serializes_minimally() {
+        let mut event = sample_create_event();
+        event.event_type = EventType::FacetSet;
+        event.title = None;
+        event.kind = None;
+        event.body = None;
+        let json = serde_json::to_string_pretty(&event).unwrap();
+        // Empty facet_set is allowed (backfill / hook no-op per SPEC-2.0 §2.4.1).
+        assert!(!json.contains("lifecycle"));
+        assert!(!json.contains("tags_add"));
+        assert!(!json.contains("tags_remove"));
+        let parsed: Event = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.event_type, EventType::FacetSet);
+        assert!(parsed.lifecycle.is_none());
+        assert!(parsed.tags_add.is_empty());
+        assert!(parsed.tags_remove.is_empty());
     }
 
     #[test]
