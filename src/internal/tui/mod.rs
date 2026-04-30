@@ -1780,7 +1780,10 @@ mod tests {
 
         match &app.view {
             View::ThreadDetail(id) => {
-                assert!(id.starts_with("RFC-"), "expected RFC- prefix, got: {id}")
+                assert!(
+                    crate::internal::id_alloc::is_bare_token(id),
+                    "expected bare token, got: {id}"
+                )
             }
             other => panic!("expected ThreadDetail, got: {other:?}"),
         }
@@ -1812,7 +1815,10 @@ mod tests {
 
         match &app.view {
             View::ThreadDetail(id) => {
-                assert!(id.starts_with("ASK-"), "expected ASK- prefix, got: {id}")
+                assert!(
+                    crate::internal::id_alloc::is_bare_token(id),
+                    "expected bare token, got: {id}"
+                )
             }
             other => panic!("expected ThreadDetail, got: {other:?}"),
         }

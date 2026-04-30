@@ -10,6 +10,7 @@ use git_forum::internal::create;
 use git_forum::internal::event::NodeType;
 use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
+use git_forum::internal::id_alloc;
 use git_forum::internal::init;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::state_change;
@@ -118,8 +119,8 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
     )
     .unwrap();
     assert!(
-        rfc_0001.starts_with("RFC-"),
-        "expected RFC prefix, got {rfc_0001}"
+        id_alloc::is_bare_token(&rfc_0001),
+        "expected bare token, got {rfc_0001}"
     );
 
     // Nodes for RFC-0001
@@ -194,8 +195,8 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
     )
     .unwrap();
     assert!(
-        rfc_0002.starts_with("RFC-"),
-        "expected RFC prefix, got {rfc_0002}"
+        id_alloc::is_bare_token(&rfc_0002),
+        "expected bare token, got {rfc_0002}"
     );
 
     // Nodes for RFC-0002
@@ -249,8 +250,8 @@ fn phase_rfc_review(agents: &[Agent], scenario: &ScenarioDef) -> RfcIds {
     )
     .unwrap();
     assert!(
-        rfc_0003.starts_with("RFC-"),
-        "expected RFC prefix, got {rfc_0003}"
+        id_alloc::is_bare_token(&rfc_0003),
+        "expected bare token, got {rfc_0003}"
     );
 
     let state = thread::replay_thread(&alice.git, &rfc_0003).unwrap();
@@ -295,8 +296,8 @@ fn phase_implementation(
     )
     .unwrap();
     assert!(
-        issue_0001.starts_with("ASK-"),
-        "expected ASK prefix, got {issue_0001}"
+        id_alloc::is_bare_token(&issue_0001),
+        "expected bare token, got {issue_0001}"
     );
 
     // Links for ISSUE-0001
@@ -350,8 +351,8 @@ fn phase_implementation(
     )
     .unwrap();
     assert!(
-        issue_0002.starts_with("ASK-"),
-        "expected ASK prefix, got {issue_0002}"
+        id_alloc::is_bare_token(&issue_0002),
+        "expected bare token, got {issue_0002}"
     );
 
     for link in phase
@@ -403,8 +404,8 @@ fn phase_implementation(
     )
     .unwrap();
     assert!(
-        issue_0003.starts_with("ASK-"),
-        "expected ASK prefix, got {issue_0003}"
+        id_alloc::is_bare_token(&issue_0003),
+        "expected bare token, got {issue_0003}"
     );
 
     // Create a commit to use as evidence
@@ -477,8 +478,8 @@ fn phase_implementation(
     )
     .unwrap();
     assert!(
-        issue_0004.starts_with("ASK-"),
-        "expected ASK prefix, got {issue_0004}"
+        id_alloc::is_bare_token(&issue_0004),
+        "expected bare token, got {issue_0004}"
     );
 
     // Verify closed issues
@@ -653,8 +654,8 @@ fn phase_expanded_lifecycle(
     )
     .unwrap();
     assert!(
-        rfc_0004.starts_with("RFC-"),
-        "expected RFC prefix, got {rfc_0004}"
+        id_alloc::is_bare_token(&rfc_0004),
+        "expected bare token, got {rfc_0004}"
     );
 
     let t1 = &phase.threads[1]; // ISSUE-0005
@@ -669,8 +670,8 @@ fn phase_expanded_lifecycle(
     )
     .unwrap();
     assert!(
-        issue_0005.starts_with("ASK-"),
-        "expected ASK prefix, got {issue_0005}"
+        id_alloc::is_bare_token(&issue_0005),
+        "expected bare token, got {issue_0005}"
     );
 
     // Build label map for this phase's new threads

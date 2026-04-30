@@ -96,7 +96,11 @@ fn create_thread_core(
     let mut last_err = None;
 
     for _ in 0..MAX_CREATE_RETRIES {
-        let thread_id = id_alloc::alloc_thread_id(kind, actor, title, &timestamp_str);
+        // SPEC-2.0 §6.2: 2.0 native creation produces bare 8-char base36
+        // tokens (no kind prefix). Storage path is `refs/forum/threads/<token>`;
+        // display form is `@<token>` via id::display_thread_id. The thread's
+        // kind survives on the Create event (`kind` field).
+        let thread_id = id_alloc::alloc_bare_thread_id(actor, title, &timestamp_str);
         let mut event = Event::base(&thread_id, EventType::Create, actor, clock)
             .with_title(title)
             .with_kind(kind)

@@ -101,22 +101,25 @@ pub fn reallocate_thread(git: &GitOps, old_thread_id: &str) -> ForumResult<(Stri
     let mut ordered: Vec<&str> = shas.iter().map(|s| s.as_str()).collect();
     ordered.reverse();
 
-    // Read the Create event to determine kind, actor, title for ID generation
+    // Read the Create event to source actor / title / timestamp for the new ID.
+    // (Kind is no longer needed for ID generation in 2.0 — bare tokens carry
+    // no prefix — but the Create event's `kind` field still defines thread kind.)
     let create_event = event::read_event(git, ordered[0])?;
     if create_event.event_type != EventType::Create {
         return Err(ForumError::Repo(format!(
             "first event of thread '{old_thread_id}' is not a Create event"
         )));
     }
-    let kind = create_event.kind.ok_or_else(|| {
-        ForumError::Repo(format!(
+    if create_event.kind.is_none() {
+        return Err(ForumError::Repo(format!(
             "Create event for '{old_thread_id}' is missing thread kind"
-        ))
-    })?;
+        )));
+    }
     let title = create_event.title.as_deref().unwrap_or("");
     let timestamp = create_event.created_at.to_rfc3339();
 
-    let new_thread_id = id_alloc::alloc_thread_id(kind, &create_event.actor, title, &timestamp);
+    // SPEC-2.0 §6.2: repaired threads get bare-token IDs.
+    let new_thread_id = id_alloc::alloc_bare_thread_id(&create_event.actor, title, &timestamp);
 
     // Rewrite all commits with the new thread_id
     let new_head = rewrite_chain_with_new_id(git, &ordered, &new_thread_id)?;
@@ -247,7 +250,8 @@ mod tests {
         let (returned_old, new_id) = reallocate_thread(&git, &old_id).unwrap();
         assert_eq!(returned_old, old_id);
         assert_ne!(old_id, new_id);
-        assert!(new_id.starts_with("ASK-"));
+        // SPEC-2.0 §6.2: reallocation now produces bare 8-char base36 tokens.
+        assert!(id_alloc::is_bare_token(&new_id), "got: {new_id}");
 
         // Old ref should be gone
         let old_ref = refs::thread_ref(&old_id);
@@ -289,7 +293,7 @@ mod tests {
 
         let (_, new_id) = reallocate_thread(&git, &old_id).unwrap();
         assert_ne!(old_id, new_id);
-        assert!(new_id.starts_with("RFC-"));
+        assert!(id_alloc::is_bare_token(&new_id), "got: {new_id}");
 
         // Verify thread replays with all events
         let state = crate::internal::thread::replay_thread(&git, &new_id).unwrap();

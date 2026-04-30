@@ -103,7 +103,7 @@ fn is_valid_thread_id_both_formats() {
 // ---- Thread creation ----
 
 #[test]
-fn create_issue_returns_opaque_id() {
+fn create_issue_returns_bare_token_id() {
     let (_repo, git, _paths) = setup();
     let id = create::create_thread(
         &git,
@@ -114,8 +114,11 @@ fn create_issue_returns_opaque_id() {
         &fixed_clock(),
     )
     .unwrap();
-    assert!(id.starts_with("ASK-"), "got: {id}");
-    assert!(id_alloc::is_opaque_id(&id), "expected opaque ID, got: {id}");
+    // SPEC-2.0 §6.2: 2.0 native creation produces bare 8-char base36 tokens.
+    assert!(
+        id_alloc::is_bare_token(&id),
+        "expected bare token, got: {id}"
+    );
 }
 
 #[test]
@@ -223,9 +226,13 @@ fn resolve_thread_id_token_only() {
         &fixed_clock(),
     )
     .unwrap();
-    let token = &id[4..]; // just the 8-char token
-    let resolved = thread::resolve_thread_id(&git, token).unwrap();
+    // 2.0 native IDs are bare tokens already; resolve must accept them
+    // verbatim via the exact-match path.
+    let resolved = thread::resolve_thread_id(&git, &id).unwrap();
     assert_eq!(resolved, id);
+    // The leading-`@` display form must also resolve.
+    let resolved_at = thread::resolve_thread_id(&git, &format!("@{id}")).unwrap();
+    assert_eq!(resolved_at, id);
 }
 
 #[test]

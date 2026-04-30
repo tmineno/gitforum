@@ -273,9 +273,14 @@ fn list_thread_ids_finds_stored_threads() {
         ids.iter().any(|id| id == &rfc_id),
         "should contain RFC thread"
     );
-    // All returned IDs should be valid opaque IDs
+    // The fixture's `test_thread_id` helper still uses the legacy
+    // kind-prefixed form to exercise the 1.x-on-disk path that
+    // list_thread_ids must keep reading; assert any valid form.
     for id in &ids {
-        assert!(id_alloc::is_opaque_id(id), "expected opaque ID, got: {id}");
+        assert!(
+            id_alloc::is_valid_thread_id(id),
+            "expected valid thread id, got: {id}"
+        );
     }
 }
 
@@ -400,13 +405,10 @@ fn doctor_warns_on_stale_index() {
         &clock,
     )
     .unwrap();
+    // SPEC-2.0 §6.2: native 2.0 creation produces bare 8-char base36 tokens.
     assert!(
-        created_id.starts_with("ASK-"),
-        "expected ASK- prefix, got: {created_id}"
-    );
-    assert!(
-        id_alloc::is_opaque_id(&created_id),
-        "expected opaque ID, got: {created_id}"
+        id_alloc::is_bare_token(&created_id),
+        "expected bare token, got: {created_id}"
     );
     let report = doctor::run_doctor(&git, &paths).unwrap();
     let freshness_check = report

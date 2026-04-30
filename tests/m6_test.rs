@@ -99,7 +99,8 @@ fn dec_create_sets_proposed_state() {
     let state = thread::replay_thread(&git, &id).unwrap();
     assert_eq!(state.status, "proposed");
     assert_eq!(state.kind, ThreadKind::Dec);
-    assert!(id.starts_with("DEC-"));
+    // SPEC-2.0 §6.2: kind is on the Create event, not the ID.
+    assert!(git_forum::internal::id_alloc::is_bare_token(&id));
 }
 
 #[test]
@@ -285,7 +286,7 @@ fn task_create_sets_open_state() {
     let state = thread::replay_thread(&git, &id).unwrap();
     assert_eq!(state.status, "open");
     assert_eq!(state.kind, ThreadKind::Task);
-    assert!(id.starts_with("JOB-"));
+    assert!(git_forum::internal::id_alloc::is_bare_token(&id));
 }
 
 #[test]
