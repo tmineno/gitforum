@@ -80,6 +80,17 @@ impl ThreadKind {
             _ => None,
         }
     }
+
+    /// SPEC-2.0 §2.3.3: each 1.x kind maps to a canonical lifecycle facet.
+    /// Used to derive `lifecycle` for legacy threads with no `facet_set`
+    /// event in their chain.
+    pub fn lifecycle(self) -> Lifecycle {
+        match self {
+            Self::Issue | Self::Task => Lifecycle::Execution,
+            Self::Rfc => Lifecycle::Proposal,
+            Self::Dec => Lifecycle::Record,
+        }
+    }
 }
 
 impl std::fmt::Display for ThreadKind {
@@ -90,6 +101,41 @@ impl std::fmt::Display for ThreadKind {
             Self::Dec => write!(f, "dec"),
             Self::Task => write!(f, "task"),
         }
+    }
+}
+
+/// SPEC-2.0 §2.3.1 — the sole required facet, gates the unified state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Lifecycle {
+    Proposal,
+    #[default]
+    Execution,
+    Record,
+}
+
+impl Lifecycle {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Proposal => "proposal",
+            Self::Execution => "execution",
+            Self::Record => "record",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "proposal" => Some(Self::Proposal),
+            "execution" => Some(Self::Execution),
+            "record" => Some(Self::Record),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Lifecycle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
