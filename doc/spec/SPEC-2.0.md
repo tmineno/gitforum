@@ -65,22 +65,33 @@ Unchanged from SPEC.md §1.2.
 
 Threads in 2.0 are grouped via the **link relations** that already exist in 1.x
 (`--rel implements`, `--rel relates-to`, `--rel depends-on`, `--rel blocks`,
-`--rel supersedes`, etc.). The "group" associated with a parent thread `P` is the
-set of threads transitively reachable from `P` through these relations; there is
-no separate topic entity.
+`--rel supersedes`, etc.). There is no separate topic entity.
+
+The "group" associated with a parent thread `P` is defined narrowly:
+
+> The threads that link to `P` with relation `implements` (direct incoming
+> references, one hop).
+
+`thread show --tree` walks **only this set** in 2.0 — direct incoming
+`implements` children, not transitive descendants and not other relations.
+Deeper traversal, multi-relation filters, or arbitrary graph views are
+deferred; they would turn `--tree` from a small advisory into a dependency
+graph / dashboard feature, which CORE-VALUE.md rejects as scope creep
+(non-goal §4). A future RFC may broaden the default if dogfood evidence
+demands it.
 
 Earlier 2.0 drafts introduced a `topic` entity with handles (`!payment-rewrite`),
 alias refs, attach/detach events, and a topic-scoped short-index (`!foo/3`).
 That mechanism has been removed:
 
 - The dogfood-observed grouping need ("the RFC and everything implementing it")
-  is already expressible with `--rel implements` and friends.
+  is already expressible with `--rel implements`.
 - A separate handle namespace, ref tree, and event family added implementation
-  surface and a markup symbol (`!`) for value already obtainable from
-  link-tree advisories.
+  surface and a markup symbol (`!`) for value already obtainable from the
+  one-hop incoming `implements` advisory.
 - Per CORE-VALUE.md, advisory cross-thread display (e.g. `git forum show <RFC>`
-  listing its linked children with their states) covers the visualization
-  need without a new entity.
+  listing its direct implementing children with their states) covers the
+  visualization need without a new entity.
 
 ### 2.2 Thread
 
@@ -93,7 +104,7 @@ Required fields:
 |---|---|---|
 | `id` | string | Opaque content-addressed ID. **Display form**: `@XXXXXXXX` (8 base36 chars). **Storage form**: bare `XXXXXXXX` under `refs/forum/threads/`. See §6.2. |
 | `title` | string | Human-readable title |
-| `status` | enum | Current state (see §3.2) |
+| `status` | enum | Current state (see §3.1) |
 | `facets` | object | See §2.3 |
 | `created_at` | datetime | Creation timestamp |
 | `created_by` | string | Actor ID |
@@ -205,7 +216,7 @@ Every tag MUST satisfy:
 - ASCII lowercase only, `[a-z0-9-]` (no spaces, slashes, colons, `/`, `:`, `@`, `!`).
 - Starts with a letter (`[a-z]`).
 - Length 2–32 characters.
-- Not equal to a reserved literal (`all`, `none`, `any`, `untagged`, `archived` — used as
+- Not equal to a reserved literal (`all`, `none`, `any`, `untagged` — used as
   filter shorthands in `ls`/search, §9.2).
 
 Violations are rejected at write time with `InvalidTagSyntax` (§13). The grammar is intentionally
@@ -335,7 +346,7 @@ Initial state: depends on `lifecycle` (see §3.1.1).
 
 #### 3.1.1 Lifecycle-filtered allowed states
 
-The unified machine §3.2 is filtered by the thread's `lifecycle` facet. An edge is reachable
+The unified machine §3.1 is filtered by the thread's `lifecycle` facet. An edge is reachable
 only if its destination state is in the lifecycle's allowed set:
 
 | `lifecycle` | Allowed states | Initial | Typical path | Notes |
@@ -584,7 +595,7 @@ its own push/fetch protocol.
 
 When a non-fast-forward push fails, the user resolves it with the standard Git workflow
 (fetch, rebase or merge their forum refs, re-push). git-forum does not assume responsibility
-for the merge strategy. `git forum doctor` (§9.5) reports any divergence visible in the
+for the merge strategy. `git forum doctor` (§9.4) reports any divergence visible in the
 local refs informationally.
 
 ## 9. CLI surface
@@ -608,10 +619,11 @@ git forum thread tag add <THREAD> <TAG>...
 git forum thread tag rm  <THREAD> <TAG>...
 ```
 
-`thread show --tree` is an **advisory** display: it lists the thread's linked children
-(via `--rel implements` / `relates-to` / etc.) and their current states. It does not gate
-any operation. See CORE-VALUE.md "Advisories" for the boundary against cross-thread
-enforcement.
+`thread show --tree` is an **advisory** display: it lists the threads that link to the
+named thread with `--rel implements` (direct incoming references, one hop) and their
+current states. It does not recurse, does not include other relations, and does not
+gate any operation. See §2.1 for the scope rationale and CORE-VALUE.md "Advisories"
+for the boundary against cross-thread enforcement.
 
 Kind presets — **stable, first-class commands** (not compat aliases). They are the everyday
 surface; the canonical `thread new --lifecycle ...` form above is reserved for power-users and
@@ -636,7 +648,7 @@ git forum ls                                       # all threads, sorted by upda
 git forum ls --lifecycle <LIFECYCLE>               # filter by lifecycle facet
 git forum ls --tag <TAG>                           # filter by tag
 git forum ls --status <STATUS>                     # filter by state
-git forum show <THREAD>                            # show one thread (with --tree, list linked children)
+git forum show <THREAD>                            # show one thread (with --tree, list direct incoming `implements` children)
 ```
 
 `git forum ls` is a flat list. Earlier 2.0 drafts split the default view into "Topics" and
@@ -804,7 +816,7 @@ Unchanged from SPEC.md §14, plus:
 
 - `--tag` rejects values violating the grammar (uppercase, leading digit, length &lt;2 or
   &gt;32, contains `/`, `:`, `@`, `!`, space, reserved literals like
-  `all`/`untagged`/`archived`) with `InvalidTagSyntax`. The error message names the specific
+  `all`/`untagged`) with `InvalidTagSyntax`. The error message names the specific
   violation and proposes a sanitized form.
 
 ### Node type reduction (ADR-006, §2.5)
@@ -825,8 +837,9 @@ Unchanged from SPEC.md §14, plus:
 
 ### Linked-thread advisory display (§9.3)
 
-- `thread show --tree` lists threads linked from the named thread (depth 1 by default) with
-  current state. The tree display does not block any operation.
+- `thread show --tree` lists the direct incoming `implements` children of the named thread
+  (one hop, no recursion, no other relations) with current state. The tree display does not
+  block any operation. See §2.1 for the rationale and the deferred broader-traversal options.
 - `verify` may surface advisories about linked threads' states; the verification result
   itself is computed only from the named thread.
 
@@ -872,11 +885,17 @@ provided the additive contracts below are honored.
 | ID | Capability | Current 2.0 substitute | Trigger to add | Forward-compat contract |
 |---|---|---|---|---|
 | F-T1 | Tag-vocabulary discipline (registry, conventional list, deprecation, lint) | None — bare grammar only (§2.3.5) | Documented language drift across clones (`bug` vs `defect`) producing search/policy split | Re-introduce `.forum/tags.toml` with the schema described in earlier 2.0 drafts (`description`, `aliases`, `deprecated`, `replaced_by`). All write paths emit warnings only by default; strict mode is opt-in. |
-| F-A1 | Cascade state changes across linked children (`git forum deprecate <RFC> --cascade`) | None — user changes states one at a time | Repeated user requests to retire whole RFC + implementing-task groups in one step | Implement as a CLI batch (an explicit user-initiated walk of the link tree applying the same state change). Per CORE-VALUE non-goal §1, this MUST remain user-initiated batch execution; it MUST NOT become an automatic policy trigger fired by another thread's state. |
 
 Earlier draft entries for topic-related forward-compat (F-W1 topic state machine, F-W2
 topic guards, F-W3 derived health, F-W4 topic nesting, F-W5 HLC, F-W6 CRDT tags) have
 been removed along with the topic entity. They are not deferred; they are out of scope.
+
+A previous draft also listed **F-A1 (cascade state changes across linked children)**
+as a deferred capability. It has been removed: even a user-initiated `--cascade`
+flag mutates state across thread boundaries based on a graph traversal, which is
+adjacent to the cross-thread-workflow territory CORE-VALUE.md non-goal §1 rejects.
+A future RFC that wants this MUST justify it from fresh dogfood evidence rather
+than inherit a "deferred" label here.
 
 #### Trigger discipline
 
@@ -886,7 +905,7 @@ A future minor release SHOULD add a deferred capability only when:
 2. The additive contract above is honored (no breaking change for clients on prior minor).
 3. The corresponding ADR is written and accepted.
 
-Speculative implementation of F-T1 / F-A1 without these triggers is explicitly discouraged.
+Speculative implementation of F-T1 without this trigger is explicitly discouraged.
 
 ## Appendix B: Examples
 
@@ -948,9 +967,11 @@ $ git forum show @x9k2 --tree
 └── @y3p7n2q4  execution/open   Implement async queue dispatcher
 ```
 
-`thread show --tree` is an advisory display (§9.1, §9.3): it walks the link relations and
-shows linked children with their states, but it does not gate any operation. This replaces
-the topic-as-grouping affordance from earlier 2.0 drafts.
+`thread show --tree` is an advisory display (§9.1, §9.3): it lists the threads that
+link to the parent with `--rel implements` (one hop, incoming) and shows their
+current state. It does not traverse other relations, does not recurse, and does
+not gate any operation. This replaces the topic-as-grouping affordance from
+earlier 2.0 drafts (see §2.1).
 
 ### B.3 Lightweight decision record
 
