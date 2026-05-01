@@ -139,6 +139,15 @@ enum Commands {
     },
     /// Rebuild local index from Git refs
     Reindex,
+    /// Migrate a 1.x repo to the 2.0 storage format (ADR-004 / SPEC-2.0 §10)
+    Migrate {
+        /// Report planned changes without writing anything
+        #[arg(long)]
+        dry_run: bool,
+        /// Override the actor recorded on synthetic facet_set events
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
     /// Detect and fix thread ID conflicts with a remote
     Repair {
         /// Remote to compare against
@@ -1427,6 +1436,29 @@ fn main() -> Result<(), ForumError> {
             for (id, err) in &report.errors {
                 eprintln!("  error: {id}: {err}");
             }
+        }
+
+        Commands::Migrate { dry_run, as_actor } => {
+            let (git, paths) = discover_repo_with_init_warning()?;
+            let actor = as_actor
+                .or_else(|| git.default_actor().map(str::to_string))
+                .unwrap_or_else(|| "system/migrate".to_string());
+            let outcome = git_forum::internal::migrate::run(&git, &paths, &actor, dry_run)?;
+            // After a write run, the local index can drift (refs renamed,
+            // events rewritten). Rebuild it so subsequent reads see the
+            // migrated state.
+            if !dry_run {
+                let db_path = paths.git_forum.join("index.db");
+                if db_path.exists() {
+                    if let Err(e) = reindex::run_reindex(&git, &db_path) {
+                        eprintln!("warning: reindex failed after migrate: {e}");
+                    }
+                }
+            }
+            // Non-zero exit if any thread plan failed — currently `run`
+            // already printed warnings; the outcome counts both successes
+            // and skips. Normal exit unless we want hard errors later.
+            let _ = outcome;
         }
 
         Commands::Repair { remote, dry_run } => {

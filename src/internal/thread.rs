@@ -405,7 +405,8 @@ pub fn list_thread_ids(git: &GitOps) -> ForumResult<Vec<String>> {
 /// Accepts (per SPEC-2.0 §6.1.1 / §6.2):
 /// - 2.0 display form (e.g. `@a7f3b2x1`) — leading `@` is stripped before matching
 /// - 2.0 bare token (e.g. `a7f3b2x1`)
-/// - Legacy full ID (e.g. `RFC-0001`, `ASK-a7f3b2x1`) — returned as-is if the ref exists
+/// - Legacy full ID (e.g. `RFC-0001`, `ASK-a7f3b2x1`) — resolved either via a
+///   live ref or the post-migration alias table (`refs/forum/aliases/<old-id>`)
 /// - KIND-prefix (e.g. `RFC-a7f3`) — expanded if unambiguous
 /// - Token-only prefix (e.g. `a7f3`) — matched against all thread IDs if unambiguous
 /// - Case-insensitive variants of the above (e.g. `rfc-0001` resolves to `RFC-0001`)
@@ -414,7 +415,73 @@ pub fn list_thread_ids(git: &GitOps) -> ForumResult<Vec<String>> {
 /// or if no matching thread is found.
 pub fn resolve_thread_id(git: &GitOps, user_input: &str) -> ForumResult<String> {
     let all_ids = list_thread_ids(git)?;
-    resolve_from_list(&all_ids, user_input)
+    match resolve_from_list(&all_ids, user_input) {
+        Ok(id) => Ok(id),
+        Err(direct_err) => {
+            if let Some(token) = resolve_alias(git, user_input)? {
+                Ok(token)
+            } else {
+                Err(direct_err)
+            }
+        }
+    }
+}
+
+/// Look up `user_input` in the alias table populated by `git forum migrate`
+/// (SPEC-2.0 §10.1). Returns the canonical bare-token thread ID, or `None`
+/// if no alias matches.
+fn resolve_alias(git: &GitOps, user_input: &str) -> ForumResult<Option<String>> {
+    let stripped = super::id::strip_thread_marker(user_input);
+    // Exact match against an alias ref name.
+    let alias_ref = super::migrate::alias_ref(stripped);
+    let Some(tip_sha) = git.resolve_ref(&alias_ref)? else {
+        // Case-insensitive fallback (`rfc-0001` → `RFC-0001`).
+        return resolve_alias_case_insensitive(git, stripped);
+    };
+    canonical_id_for_tip(git, &tip_sha)
+}
+
+fn resolve_alias_case_insensitive(git: &GitOps, user_input: &str) -> ForumResult<Option<String>> {
+    let aliases = git.list_refs(super::migrate::ALIASES_PREFIX)?;
+    let target = user_input.to_ascii_uppercase();
+    let mut hits: Vec<String> = aliases
+        .iter()
+        .filter_map(|r| r.strip_prefix(super::migrate::ALIASES_PREFIX))
+        .filter(|name| name.to_ascii_uppercase() == target)
+        .map(|s| s.to_string())
+        .collect();
+    hits.sort();
+    let alias = match hits.len() {
+        0 => return Ok(None),
+        1 => hits.remove(0),
+        _ => {
+            return Err(ForumError::Repo(format!(
+                "ambiguous legacy alias '{user_input}'; candidates:\n  {}",
+                hits.join("\n  ")
+            )));
+        }
+    };
+    let alias_ref = super::migrate::alias_ref(&alias);
+    let Some(tip) = git.resolve_ref(&alias_ref)? else {
+        return Ok(None);
+    };
+    canonical_id_for_tip(git, &tip)
+}
+
+/// Find the thread ref whose tip equals `tip_sha` and return its bare-token
+/// ID. The alias migration sets all three (canonical, alias) refs to the
+/// same commit; the canonical thread ref is the one under
+/// `refs/forum/threads/`.
+fn canonical_id_for_tip(git: &GitOps, tip_sha: &str) -> ForumResult<Option<String>> {
+    let pairs = git.list_refs_with_shas(refs::THREADS_PREFIX)?;
+    for (refname, sha) in pairs {
+        if sha == tip_sha {
+            if let Some(id) = refs::thread_id_from_ref(&refname) {
+                return Ok(Some(id.to_string()));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Pure resolution logic for testability — matches user input against a list of
