@@ -20,8 +20,31 @@ fn say_subcommand_shows_node_shorthand_hint() {
         "should suggest node shorthands; stderr: {stderr}"
     );
     assert!(
-        stderr.contains("git forum claim"),
-        "should mention claim shorthand; stderr: {stderr}"
+        stderr.contains("git forum comment"),
+        "should mention comment shorthand; stderr: {stderr}"
+    );
+}
+
+#[test]
+fn rfc_subcommand_shows_kind_removal_hint() {
+    let repo = support::repo::TestRepo::new();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .arg("rfc")
+        .output()
+        .expect("failed to run git-forum rfc");
+
+    assert_eq!(output.status.code(), Some(2));
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be valid UTF-8");
+    assert!(
+        stderr.contains("removed in 2.0"),
+        "should mention 2.0 removal; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("git forum new <kind>"),
+        "should redirect to top-level form; stderr: {stderr}"
     );
 }
 

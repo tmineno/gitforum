@@ -14,7 +14,7 @@ use git_forum::internal::doctor;
 use git_forum::internal::editor;
 use git_forum::internal::error::ForumError;
 use git_forum::internal::event;
-use git_forum::internal::event::{NodeType, ThreadKind};
+use git_forum::internal::event::{Lifecycle, NodeType, ThreadKind};
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
@@ -45,12 +45,12 @@ setup and repo health
    doctor      Diagnose repo health (config, index, refs)
    repair      Detect and fix thread ID conflicts with a remote
    reindex     Rebuild local index from Git refs
+   migrate     Rewrite a 1.x repo to the 2.0 storage format
 
 create and browse threads
-   new         Create a new thread (kinds: ask, rfc, dec, job)
-   ask         Ask (issue) sub-commands
-   job         Job (task) sub-commands
-   ls          List threads (filter by kind, status, or branch)
+   new         Create a new thread via kind preset (rfc/dec/task/issue/bug)
+   thread      Canonical lifecycle/tag form (power-user / scripts)
+   ls          List threads (filter by lifecycle, tag, status, or branch)
    show        Show thread details (use --what-next for diagnostics)
    diff        Show diff between body revisions
    search      Search threads and nodes
@@ -87,23 +87,20 @@ import / export
    import      Import from external sources
    export      Export to external platforms
 
-state shorthands (convenience aliases for 'state <ID> <target>')
-   close       state <ID> closed
-   pend        state <ID> pending
-   accept      state <ID> accepted
-   propose     state <ID> proposed
-   reject      state <ID> rejected
-   deprecate   state <ID> deprecated
-   withdraw    state <ID> withdrawn
+state shorthands (lifecycle-aware: close/accept/propose/pend/reject/withdraw/deprecate)
+   close       proposal: rejected (use accept) | execution/record: -> done
+   accept      proposal/record: -> done | execution: rejected (use close)
+   propose     proposal: draft -> open | other lifecycles: rejected
+   pend        execution: -> working | other lifecycles: rejected
+   reject      any lifecycle: -> rejected
+   withdraw    proposal: -> withdrawn | other lifecycles: rejected
+   deprecate   any lifecycle: -> deprecated
 
 node shorthands (convenience aliases for 'node add <ID> --type <type>')
-   claim       node add --type claim
-   question    node add --type question
+   comment     node add --type comment (canonical 2.0 form)
    objection   node add --type objection
-   summary     node add --type summary
    action      node add --type action
-   risk        node add --type risk
-   review      node add --type review
+   claim, question, summary, risk, review — deprecated aliases for `comment`
 
 'git forum <command> --help' for more on a specific command.
 'git forum --help-llm' for the full manual.";
@@ -185,43 +182,14 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Ask (issue) sub-commands
-    Ask {
+    /// Canonical thread sub-commands (lifecycle/tag — power-user form)
+    Thread {
         #[command(subcommand)]
         cmd: ThreadCmd,
     },
-    /// Issue sub-commands (legacy alias for ask)
-    #[command(hide = true)]
-    Issue {
-        #[command(subcommand)]
-        cmd: ThreadCmd,
-    },
-    /// RFC sub-commands
-    #[command(hide = true)]
-    Rfc {
-        #[command(subcommand)]
-        cmd: ThreadCmd,
-    },
-    /// DEC sub-commands
-    #[command(hide = true)]
-    Dec {
-        #[command(subcommand)]
-        cmd: ThreadCmd,
-    },
-    /// Job (task) sub-commands
-    Job {
-        #[command(subcommand)]
-        cmd: ThreadCmd,
-    },
-    /// Task sub-commands (legacy alias for job)
-    #[command(hide = true)]
-    Task {
-        #[command(subcommand)]
-        cmd: ThreadCmd,
-    },
-    /// Create a new thread
+    /// Create a new thread via kind preset (rfc, dec, task, issue, bug)
     New {
-        /// Thread kind: rfc or issue
+        /// Kind preset: rfc, dec, task, issue, bug
         kind: String,
         /// Thread title (omit when using --from-commit)
         #[arg(
@@ -985,10 +953,17 @@ enum StateCmd {
     },
 }
 
+/// Canonical thread sub-commands per SPEC-2.0 §9.1.
+///
+/// Power-user / scripting interface keyed on `--lifecycle` and `--tag` rather
+/// than the `new <kind>` preset. The kind presets at the top level
+/// (`git forum new rfc`, etc.) are the everyday surface; this `thread`
+/// namespace exists so scripts can set arbitrary lifecycle/tag combinations
+/// without depending on the preset table.
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum ThreadCmd {
-    /// Create a new thread
+    /// Create a new thread with explicit lifecycle and tag values
     New {
         /// Thread title (omit when using --from-commit)
         #[arg(
@@ -996,175 +971,34 @@ enum ThreadCmd {
             required_unless_present_any = ["from_commit", "from_thread"]
         )]
         title: Option<String>,
-        /// Initial thread body
+        /// Lifecycle facet (proposal | execution | record). SPEC-2.0 §2.3.4.
+        #[arg(long, value_name = "LIFECYCLE")]
+        lifecycle: String,
+        /// Tag(s) to attach via the create-time facet_set (may be repeated). SPEC-2.0 §2.3.5.
+        #[arg(long, value_name = "TAG")]
+        tag: Vec<String>,
         #[arg(long, conflicts_with = "body_file")]
         body: Option<String>,
-        /// Read initial thread body from a file
         #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
         body_file: Option<PathBuf>,
         /// Open $EDITOR to compose the body
         #[arg(long, conflicts_with_all = ["body", "body_file"])]
         edit: bool,
-        /// Bind the new thread to an existing Git branch
         #[arg(long, value_name = "BRANCH")]
         branch: Option<String>,
-        /// Create thread links immediately after creation (may be repeated)
         #[arg(long = "link-to", value_name = "THREAD_ID")]
         link_to: Vec<String>,
-        /// Relation to use with --link-to
         #[arg(long, requires = "link_to", value_name = "REL")]
         rel: Option<String>,
-        /// Override actor ID (default: from git config)
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
-        /// Populate title/body from a commit and auto-add it as evidence
         #[arg(long = "from-commit", value_name = "REV")]
         from_commit: Option<String>,
-        /// Create from an existing thread (supersede pattern: copies title/body, links both, auto-deprecates source RFC)
         #[arg(long = "from-thread", value_name = "THREAD_ID")]
         from_thread: Option<String>,
-        /// Add a claim node after creation
-        #[arg(long)]
-        claim: Vec<String>,
-        /// Add a question node after creation
-        #[arg(long)]
-        question: Vec<String>,
-        /// Add an objection node after creation
-        #[arg(long)]
-        objection: Vec<String>,
-        /// Add an action node after creation
-        #[arg(long)]
-        action: Vec<String>,
-        /// Add a risk node after creation
-        #[arg(long)]
-        risk: Vec<String>,
-        /// Add a summary node after creation
-        #[arg(long)]
-        summary: Vec<String>,
         /// Bypass warning-level operation checks (does not bypass errors)
         #[arg(long)]
         force: bool,
-    },
-    /// List threads of this kind
-    #[command(alias = "list")]
-    Ls {
-        #[arg(long, value_name = "BRANCH")]
-        branch: Option<String>,
-        /// Filter by thread status (open, closed, draft, etc.)
-        #[arg(long, value_name = "STATUS")]
-        status: Option<String>,
-    },
-    /// Close a thread (shorthand for state <ID> closed)
-    Close {
-        thread_id: String,
-        #[arg(long = "approve", value_name = "ACTOR")]
-        approve: Vec<String>,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        #[arg(long)]
-        resolve_open_actions: bool,
-        #[arg(long = "link-to", value_name = "THREAD_ID")]
-        link_to: Vec<String>,
-        #[arg(long, requires = "link_to", value_name = "REL")]
-        rel: Option<String>,
-        /// Attach a comment to the state-change event
-        #[arg(long)]
-        comment: Option<String>,
-    },
-    /// Mark a thread as pending (shorthand for state <ID> pending)
-    Pend {
-        thread_id: String,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Attach a comment to the state-change event
-        #[arg(long)]
-        comment: Option<String>,
-    },
-    /// Reopen a closed or rejected thread (shorthand for state <ID> open)
-    #[command(alias = "open")]
-    Reopen {
-        thread_id: String,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Attach a comment to the state-change event
-        #[arg(long)]
-        comment: Option<String>,
-    },
-    /// Reject a thread (shorthand for state <ID> rejected)
-    Reject {
-        thread_id: String,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Attach a comment to the state-change event
-        #[arg(long)]
-        comment: Option<String>,
-    },
-    /// Accept an RFC (shorthand for state <ID> accepted)
-    Accept {
-        thread_id: String,
-        #[arg(long = "approve", value_name = "ACTOR")]
-        approve: Vec<String>,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        #[arg(long = "link-to", value_name = "THREAD_ID")]
-        link_to: Vec<String>,
-        #[arg(long, requires = "link_to", value_name = "REL")]
-        rel: Option<String>,
-        /// Attach a comment to the state-change event
-        #[arg(long)]
-        comment: Option<String>,
-    },
-    /// Propose an RFC for review (shorthand for state <ID> proposed)
-    Propose {
-        thread_id: String,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Attach a comment to the state-change event
-        #[arg(long)]
-        comment: Option<String>,
-    },
-    /// Deprecate an RFC (shorthand for state <ID> deprecated)
-    Deprecate {
-        thread_id: String,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Attach a comment to the state-change event
-        #[arg(long)]
-        comment: Option<String>,
-    },
-    /// Withdraw a thread (shorthand for state <ID> withdrawn)
-    Withdraw {
-        thread_id: String,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Attach a comment to the state-change event
-        #[arg(long)]
-        comment: Option<String>,
-    },
-    /// Revise thread body (default) or node body
-    #[command(args_conflicts_with_subcommands = true)]
-    Revise {
-        /// Thread ID (for default body revision)
-        thread_id: Option<String>,
-        /// New thread body text (use "-" to read from stdin)
-        #[arg(long, conflicts_with = "body_file")]
-        body: Option<String>,
-        /// Read new thread body from a file
-        #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
-        body_file: Option<PathBuf>,
-        /// Open $EDITOR to compose the body
-        #[arg(long, conflicts_with_all = ["body", "body_file"])]
-        edit: bool,
-        /// Node IDs to mark as incorporated into this body revision
-        #[arg(long = "incorporates", alias = "incorporate", value_name = "NODE_ID")]
-        incorporates: Vec<String>,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Bypass warning-level operation checks (does not bypass errors)
-        #[arg(long)]
-        force: bool,
-        #[command(subcommand)]
-        cmd: Option<ReviseCmd>,
     },
 }
 
@@ -1611,7 +1445,12 @@ fn main() -> Result<(), ForumError> {
             let (_git, paths) = discover_repo_with_init_warning()?;
             let db_path = paths.git_forum.join("index.db");
             let conn = index::open_db(&db_path)?;
-            let results = index::search_threads(&conn, &query)?;
+            // SPEC-2.0 §9.2 / Track D: legacy `kind:<name>` query tokens
+            // auto-translate to lifecycle/tag pairs for one minor release,
+            // emitting a deprecation warning so scripts have a runway to
+            // migrate to the canonical vocabulary.
+            let translated = translate_legacy_kind_query(&query);
+            let results = index::search_threads(&conn, &translated)?;
             print!("{}", show::render_search_results(&results));
         }
 
@@ -1701,17 +1540,42 @@ fn main() -> Result<(), ForumError> {
             }
         },
 
-        Commands::Ask { cmd } | Commands::Issue { cmd } => {
-            run_thread_cmd(cmd, ThreadKind::Issue, &clock)?;
-        }
-        Commands::Rfc { cmd } => {
-            run_thread_cmd(cmd, ThreadKind::Rfc, &clock)?;
-        }
-        Commands::Dec { cmd } => {
-            run_thread_cmd(cmd, ThreadKind::Dec, &clock)?;
-        }
-        Commands::Job { cmd } | Commands::Task { cmd } => {
-            run_thread_cmd(cmd, ThreadKind::Task, &clock)?;
+        Commands::Thread {
+            cmd:
+                ThreadCmd::New {
+                    title,
+                    lifecycle,
+                    tag,
+                    body,
+                    body_file,
+                    edit,
+                    branch,
+                    link_to,
+                    rel,
+                    as_actor,
+                    from_commit,
+                    from_thread,
+                    force,
+                },
+        } => {
+            let lifecycle = parse_lifecycle(&lifecycle)?;
+            run_canonical_thread_new(
+                title,
+                body,
+                body_file,
+                edit,
+                branch,
+                link_to,
+                rel,
+                as_actor,
+                from_commit,
+                from_thread,
+                ThreadNewInline::default(),
+                force,
+                lifecycle,
+                tag,
+                &clock,
+            )?;
         }
 
         Commands::New {
@@ -1734,28 +1598,38 @@ fn main() -> Result<(), ForumError> {
             summary,
             force,
         } => {
-            let thread_kind = parse_thread_kind(&kind)?;
-            run_thread_cmd(
-                ThreadCmd::New {
-                    title,
-                    body,
-                    body_file,
-                    edit,
-                    branch,
-                    link_to,
-                    rel,
-                    as_actor,
-                    from_commit,
-                    from_thread,
+            let preset = preset_lookup(&kind).ok_or_else(|| {
+                ForumError::Config(format!(
+                    "unknown kind '{kind}'; valid presets: {}",
+                    KIND_PRESETS
+                        .iter()
+                        .map(|p| p.name)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })?;
+            run_canonical_thread_new(
+                title,
+                body,
+                body_file,
+                edit,
+                branch,
+                link_to,
+                rel,
+                as_actor,
+                from_commit,
+                from_thread,
+                ThreadNewInline {
                     claim,
                     question,
                     objection,
                     action,
                     risk,
                     summary,
-                    force,
                 },
-                thread_kind,
+                force,
+                preset.lifecycle,
+                preset.tags.iter().map(|s| s.to_string()).collect(),
                 &clock,
             )?;
         }
@@ -2950,385 +2824,271 @@ fn resolve_body_required(
         .ok_or_else(|| ForumError::Config("--body, --body-file, or --edit is required".into()))
 }
 
-fn run_thread_cmd(
-    cmd: ThreadCmd,
-    kind: ThreadKind,
+/// Inline-node bodies attached during `git forum new <preset>` (kind preset
+/// path only). The canonical `thread new --lifecycle ...` form does not
+/// accept inline nodes — scripts compose them with `node add` after.
+#[derive(Default)]
+struct ThreadNewInline {
+    claim: Vec<String>,
+    question: Vec<String>,
+    objection: Vec<String>,
+    action: Vec<String>,
+    risk: Vec<String>,
+    summary: Vec<String>,
+}
+
+/// Lifecycle/tag-keyed thread creation, the single dispatch shared by both
+/// the `git forum new <preset>` everyday surface and the canonical
+/// `git forum thread new --lifecycle ... --tag ...` power-user form.
+///
+/// Behaviors:
+/// - Picks a backing [`ThreadKind`] (proposal→Rfc, execution→Issue,
+///   record→Dec). The kind survives only on the `Create` event for legacy
+///   reads; the lifecycle/tag set is the canonical 2.0 facet state, applied
+///   via a follow-on `facet_set` event.
+/// - `--from-thread`: rejects creating a thread in `execution` lifecycle
+///   sourced from a `proposal` thread (SPEC-2.0 §9.3 lifecycle restatement
+///   of the 1.x §9.2 RFC→issue rule). Use `link --rel implements` instead.
+/// - Auto-deprecates the source on proposal→proposal supersede.
+#[allow(clippy::too_many_arguments)]
+fn run_canonical_thread_new(
+    title: Option<String>,
+    body: Option<String>,
+    body_file: Option<PathBuf>,
+    edit: bool,
+    branch: Option<String>,
+    link_to: Vec<String>,
+    rel: Option<String>,
+    as_actor: Option<String>,
+    from_commit: Option<String>,
+    from_thread: Option<String>,
+    inline: ThreadNewInline,
+    force: bool,
+    lifecycle: Lifecycle,
+    tags: Vec<String>,
     clock: &dyn git_forum::internal::clock::Clock,
 ) -> Result<(), ForumError> {
-    match cmd {
-        ThreadCmd::New {
-            title,
-            body,
-            body_file,
-            edit,
-            branch,
-            link_to,
-            rel,
-            as_actor,
-            from_commit,
-            from_thread,
-            claim,
-            question,
-            objection,
-            action,
-            risk,
-            summary,
-            force,
-        } => {
-            let (git, paths) = discover_repo_with_init_warning()?;
-            let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
-            let actor = resolve_actor(as_actor, &git);
+    let (git, paths) = discover_repo_with_init_warning()?;
+    let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
+    let actor = resolve_actor(as_actor, &git);
 
-            let edit_hint = format!("Compose body for new {kind} thread");
-            // Resolve title and body from --from-thread, --from-commit, or direct args
-            let (effective_title, effective_body, commit_ref, source_thread) = if let Some(
-                ref source_id,
-            ) = from_thread
-            {
-                let source_id = &resolve_tid(&git, source_id)?;
-                let source = thread::replay_thread(&git, source_id)?;
-                // Reject RFC -> issue: an issue does not supersede an RFC
-                if source.kind == ThreadKind::Rfc && kind == ThreadKind::Issue {
-                    return Err(ForumError::Config(
-                            "cannot create an issue --from-thread an RFC; an issue does not supersede an RFC. Use `git forum link --rel implements` instead.".into(),
-                        ));
-                }
-                let t = title.unwrap_or_else(|| format!("v2: {}", source.title));
-                let b =
-                    resolve_thread_body(body, body_file, edit, &edit_hint)?.or(source.body.clone());
-                (t, b, None, Some((source_id.clone(), source.kind)))
-            } else if let Some(rev) = from_commit {
-                let commit_sha = git.resolve_commit(&rev)?;
-                let msg = git.run(&["log", "-1", "--format=%B", &commit_sha])?;
-                let mut lines = msg.lines();
-                let subject = lines.next().unwrap_or("").to_string();
-                let body_text: String = lines
-                    .skip_while(|l| l.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let t = title.unwrap_or(subject);
-                let b = resolve_thread_body(body, body_file, edit, &edit_hint)?.or(
-                    if body_text.is_empty() {
-                        None
-                    } else {
-                        Some(body_text)
-                    },
-                );
-                (t, b, Some(commit_sha), None)
-            } else {
-                let t = title.ok_or_else(|| {
-                    ForumError::Config(
-                        "title is required (or use --from-commit / --from-thread)".into(),
-                    )
-                })?;
-                let b = resolve_thread_body(body, body_file, edit, &edit_hint)?;
-                (t, b, None, None)
-            };
-            // source_thread is now Option<(String, ThreadKind)>
+    let kind = match lifecycle {
+        Lifecycle::Proposal => ThreadKind::Rfc,
+        Lifecycle::Execution => ThreadKind::Issue,
+        Lifecycle::Record => ThreadKind::Dec,
+    };
+    let edit_hint = format!("Compose body for new {lifecycle} thread");
 
-            // Operation check: validate creation rules. Tags come from the
-            // kind preset (per ADR-002 §2.3.3): rfc → cross-cutting, issue →
-            // bug, task → task, dec → none. (Track D will surface --tag.)
-            let derived_tags: Vec<String> = match kind {
-                ThreadKind::Rfc => vec!["cross-cutting".into()],
-                ThreadKind::Issue => vec!["bug".into()],
-                ThreadKind::Task => vec!["task".into()],
-                ThreadKind::Dec => vec![],
-            };
-            let violations = operation_check::check_op(
-                &policy,
-                operation_check::Op::Create {
-                    lifecycle: kind.lifecycle(),
-                    tags: &derived_tags,
-                    body: effective_body.as_deref(),
-                },
-            );
-            let _ = &effective_title; // Title is not consulted by §7.2 rules.
-            apply_operation_checks(&violations, force, policy.checks.strict)?;
-
-            let thread_id = create::create_thread_with_branch(
-                &git,
-                kind,
-                &effective_title,
-                effective_body.as_deref(),
-                branch.as_deref(),
-                &actor,
-                clock,
-            )?;
-            if !link_to.is_empty() {
-                let rel = rel.as_deref().ok_or_else(|| {
-                    ForumError::Config("--rel is required when --link-to is used".into())
-                })?;
-                for target in &link_to {
-                    let resolved_target = resolve_tid(&git, target)?;
-                    evidence_ops::add_thread_link(
-                        &git,
-                        &thread_id,
-                        &resolved_target,
-                        rel,
-                        &actor,
-                        clock,
-                    )?;
-                }
-            }
-            if let Some(sha) = commit_ref {
-                evidence_ops::add_evidence(
-                    &git,
-                    &thread_id,
-                    EvidenceKind::Commit,
-                    &sha,
-                    None,
-                    &actor,
-                    clock,
-                )?;
-            }
-            // --from-thread: link new→old (supersedes), old→new (superseded-by),
-            // auto-deprecate only when source is RFC and target is RFC
-            if let Some((source_id, source_kind)) = source_thread {
-                evidence_ops::add_thread_link(
-                    &git,
-                    &thread_id,
-                    &source_id,
-                    "supersedes",
-                    &actor,
-                    clock,
-                )?;
-                evidence_ops::add_thread_link(
-                    &git,
-                    &source_id,
-                    &thread_id,
-                    "superseded-by",
-                    &actor,
-                    clock,
-                )?;
-                if source_kind == ThreadKind::Rfc && kind == ThreadKind::Rfc {
-                    let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
-                    state_change::change_state(
-                        &git,
-                        &source_id,
-                        "deprecated",
-                        &[],
-                        &actor,
-                        clock,
-                        &policy,
-                        state_change::StateChangeOptions::default(),
-                    )?;
-                }
-                println!("Created {thread_id} (supersedes {source_id})");
-                if !(source_kind == ThreadKind::Rfc && kind == ThreadKind::Rfc) {
-                    eprintln!("hint: consider closing {source_id} (now superseded)");
-                }
-            } else {
-                println!("Created {thread_id}");
-            }
-            // Add inline nodes
-            let inline_nodes: Vec<(NodeType, &[String])> = vec![
-                (NodeType::Claim, &claim),
-                (NodeType::Question, &question),
-                (NodeType::Objection, &objection),
-                (NodeType::Action, &action),
-                (NodeType::Risk, &risk),
-                (NodeType::Summary, &summary),
-            ];
-            for (node_type, bodies) in &inline_nodes {
-                for body_text in *bodies {
-                    let node_id = write_ops::say_node(
-                        &git, &thread_id, *node_type, body_text, &actor, clock, None,
-                    )?;
-                    println!("Added {node_type} {}", show::short_oid(&node_id));
-                }
-            }
+    let (effective_title, effective_body, commit_ref, source_thread) = if let Some(ref source_id) =
+        from_thread
+    {
+        let source_id = &resolve_tid(&git, source_id)?;
+        let source = thread::replay_thread(&git, source_id)?;
+        // SPEC-2.0 §9.3 lifecycle-keyed restatement of 1.x §9.2: an
+        // execution thread cannot supersede a proposal. Use
+        // `link --rel implements` instead.
+        if source.lifecycle() == Lifecycle::Proposal && lifecycle == Lifecycle::Execution {
+            return Err(ForumError::Config(
+                "cannot create an execution thread --from-thread a proposal thread; \
+                     an execution thread does not supersede a proposal. \
+                     Use `git forum link <NEW> <SOURCE> --rel implements` instead."
+                    .into(),
+            ));
         }
-        ThreadCmd::Ls { branch, status } => {
-            let (git, _paths) = discover_repo_with_init_warning()?;
-            let states = list_thread_states(&git, Some(kind), branch.as_deref())?;
-            let filtered: Vec<&thread::ThreadState> = states
-                .iter()
-                .filter(|s| status.as_deref().is_none_or(|st| s.status == st))
-                .collect();
-            print!("{}", show::render_ls(&filtered));
-        }
-        ThreadCmd::Revise {
-            thread_id,
-            body,
-            body_file,
-            edit,
-            incorporates,
-            as_actor,
-            force,
-            cmd,
-        } => run_revise_dispatch(
-            cmd,
-            thread_id,
-            body,
-            body_file,
-            edit,
-            incorporates,
-            as_actor,
-            force,
+        let t = title.unwrap_or_else(|| format!("v2: {}", source.title));
+        let b = resolve_thread_body(body, body_file, edit, &edit_hint)?.or(source.body.clone());
+        (t, b, None, Some((source_id.clone(), source.lifecycle())))
+    } else if let Some(rev) = from_commit {
+        let commit_sha = git.resolve_commit(&rev)?;
+        let msg = git.run(&["log", "-1", "--format=%B", &commit_sha])?;
+        let mut lines = msg.lines();
+        let subject = lines.next().unwrap_or("").to_string();
+        let body_text: String = lines
+            .skip_while(|l| l.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let t = title.unwrap_or(subject);
+        let b =
+            resolve_thread_body(body, body_file, edit, &edit_hint)?.or(if body_text.is_empty() {
+                None
+            } else {
+                Some(body_text)
+            });
+        (t, b, Some(commit_sha), None)
+    } else {
+        let t = title.ok_or_else(|| {
+            ForumError::Config("title is required (or use --from-commit / --from-thread)".into())
+        })?;
+        let b = resolve_thread_body(body, body_file, edit, &edit_hint)?;
+        (t, b, None, None)
+    };
+
+    // §7.2 creation rules — keyed on the real `lifecycle`/`tags` the caller
+    // selected, not the backing kind.
+    let violations = operation_check::check_op(
+        &policy,
+        operation_check::Op::Create {
+            lifecycle,
+            tags: &tags,
+            body: effective_body.as_deref(),
+        },
+    );
+    let _ = &effective_title; // Title is not consulted by §7.2 rules.
+    apply_operation_checks(&violations, force, policy.checks.strict)?;
+
+    let thread_id = create::create_thread_with_branch(
+        &git,
+        kind,
+        &effective_title,
+        effective_body.as_deref(),
+        branch.as_deref(),
+        &actor,
+        clock,
+    )?;
+
+    // Persist `lifecycle` and the requested tag set as a `facet_set` event so
+    // 2.0 native threads carry the canonical facet state in their chain
+    // rather than only deriving it from `kind` at replay time. Skipped when
+    // there are no tags AND the lifecycle matches the kind's auto-derivation
+    // (the replay fallback handles it).
+    let needs_facet_set = !tags.is_empty() || lifecycle != kind.lifecycle();
+    if needs_facet_set {
+        write_ops::write_facet_set(
+            &git,
+            &thread_id,
+            Some(lifecycle.as_str()),
+            &tags,
+            &[],
+            &actor,
             clock,
-        )?,
-        ThreadCmd::Close {
-            thread_id,
-            approve,
-            as_actor,
-            resolve_open_actions,
-            link_to,
-            rel,
-            comment,
-        } => {
-            run_state_shorthand(
-                &thread_id,
-                "closed",
-                &approve,
-                as_actor,
-                resolve_open_actions,
-                &link_to,
-                rel.as_deref(),
-                comment.as_deref(),
-                false,
-                false,
-                clock,
-            )?;
+        )?;
+    }
+
+    if !link_to.is_empty() {
+        let rel = rel
+            .as_deref()
+            .ok_or_else(|| ForumError::Config("--rel is required when --link-to is used".into()))?;
+        for target in &link_to {
+            let resolved_target = resolve_tid(&git, target)?;
+            evidence_ops::add_thread_link(&git, &thread_id, &resolved_target, rel, &actor, clock)?;
         }
-        ThreadCmd::Pend {
-            thread_id,
-            as_actor,
-            comment,
-        } => {
-            run_state_shorthand(
-                &thread_id,
-                "pending",
-                &[],
-                as_actor,
-                false,
-                &[],
-                None,
-                comment.as_deref(),
-                false,
-                false,
-                clock,
-            )?;
-        }
-        ThreadCmd::Reopen {
-            thread_id,
-            as_actor,
-            comment,
-        } => {
-            run_state_shorthand(
-                &thread_id,
-                "open",
-                &[],
-                as_actor,
-                false,
-                &[],
-                None,
-                comment.as_deref(),
-                false,
-                false,
-                clock,
-            )?;
-        }
-        ThreadCmd::Reject {
-            thread_id,
-            as_actor,
-            comment,
-        } => {
-            run_state_shorthand(
-                &thread_id,
-                "rejected",
-                &[],
-                as_actor,
-                false,
-                &[],
-                None,
-                comment.as_deref(),
-                false,
-                false,
-                clock,
-            )?;
-        }
-        ThreadCmd::Accept {
-            thread_id,
-            approve,
-            as_actor,
-            link_to,
-            rel,
-            comment,
-        } => {
-            run_state_shorthand(
-                &thread_id,
-                "accepted",
-                &approve,
-                as_actor,
-                false,
-                &link_to,
-                rel.as_deref(),
-                comment.as_deref(),
-                false,
-                false,
-                clock,
-            )?;
-        }
-        ThreadCmd::Propose {
-            thread_id,
-            as_actor,
-            comment,
-        } => {
-            run_state_shorthand(
-                &thread_id,
-                "proposed",
-                &[],
-                as_actor,
-                false,
-                &[],
-                None,
-                comment.as_deref(),
-                false,
-                false,
-                clock,
-            )?;
-        }
-        ThreadCmd::Deprecate {
-            thread_id,
-            as_actor,
-            comment,
-        } => {
-            run_state_shorthand(
-                &thread_id,
+    }
+    if let Some(sha) = commit_ref {
+        evidence_ops::add_evidence(
+            &git,
+            &thread_id,
+            EvidenceKind::Commit,
+            &sha,
+            None,
+            &actor,
+            clock,
+        )?;
+    }
+    // --from-thread supersede: bidirectional link, plus auto-deprecate the
+    // source on proposal→proposal (the 1.x RFC→RFC supersede pattern,
+    // restated in lifecycle terms).
+    if let Some((source_id, source_lifecycle)) = source_thread {
+        evidence_ops::add_thread_link(&git, &thread_id, &source_id, "supersedes", &actor, clock)?;
+        evidence_ops::add_thread_link(
+            &git,
+            &source_id,
+            &thread_id,
+            "superseded-by",
+            &actor,
+            clock,
+        )?;
+        let proposal_supersede =
+            source_lifecycle == Lifecycle::Proposal && lifecycle == Lifecycle::Proposal;
+        if proposal_supersede {
+            let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
+            state_change::change_state(
+                &git,
+                &source_id,
                 "deprecated",
                 &[],
-                as_actor,
-                false,
-                &[],
-                None,
-                comment.as_deref(),
-                false,
-                false,
+                &actor,
                 clock,
+                &policy,
+                state_change::StateChangeOptions::default(),
             )?;
         }
-        ThreadCmd::Withdraw {
-            thread_id,
-            as_actor,
-            comment,
-        } => {
-            run_state_shorthand(
-                &thread_id,
-                "withdrawn",
-                &[],
-                as_actor,
-                false,
-                &[],
-                None,
-                comment.as_deref(),
-                false,
-                false,
-                clock,
-            )?;
+        println!("Created {thread_id} (supersedes {source_id})");
+        if !proposal_supersede {
+            eprintln!("hint: consider closing {source_id} (now superseded)");
+        }
+    } else {
+        println!("Created {thread_id}");
+    }
+
+    let inline_nodes: [(NodeType, &[String]); 6] = [
+        (NodeType::Claim, &inline.claim),
+        (NodeType::Question, &inline.question),
+        (NodeType::Objection, &inline.objection),
+        (NodeType::Action, &inline.action),
+        (NodeType::Risk, &inline.risk),
+        (NodeType::Summary, &inline.summary),
+    ];
+    for (node_type, bodies) in &inline_nodes {
+        for body_text in *bodies {
+            let node_id =
+                write_ops::say_node(&git, &thread_id, *node_type, body_text, &actor, clock, None)?;
+            println!("Added {node_type} {}", show::short_oid(&node_id));
         }
     }
     Ok(())
+}
+
+/// Resolve a state-change shorthand to a concrete target state for the
+/// thread's current lifecycle, per SPEC-2.0 §9.3.
+///
+/// | shorthand | execution           | proposal                    | record    |
+/// |-----------|---------------------|-----------------------------|-----------|
+/// | close     | -> done             | rejected — use `accept`     | -> done   |
+/// | accept    | rejected — use `close` | -> done                  | -> done   |
+/// | propose   | rejected            | draft -> open               | rejected  |
+/// | pend      | -> working          | rejected                    | rejected  |
+/// | reject    | -> rejected         | -> rejected                 | -> rejected |
+/// | withdraw  | rejected — use `close`/`reject` | -> withdrawn   | rejected  |
+/// | deprecate | -> deprecated       | -> deprecated               | -> deprecated |
+///
+/// `open` (used by `reopen` thread-level) is allowed for every lifecycle and
+/// is delegated to the unified state machine without table consultation.
+fn shorthand_target_for_lifecycle(
+    shorthand: &str,
+    lifecycle: Lifecycle,
+) -> Result<&'static str, ForumError> {
+    use Lifecycle::*;
+    let outcome: Result<&'static str, &'static str> = match (shorthand, lifecycle) {
+        ("closed", Execution | Record) => Ok("done"),
+        ("closed", Proposal) => Err("close is rejected on a proposal thread — use `accept`"),
+
+        ("accepted", Proposal | Record) => Ok("done"),
+        ("accepted", Execution) => Err("accept is rejected on an execution thread — use `close`"),
+
+        ("proposed", Proposal) => Ok("open"),
+        ("proposed", _) => Err("propose is only valid on proposal threads"),
+
+        ("pending", Execution) => Ok("working"),
+        ("pending", _) => Err("pend is only valid on execution threads"),
+
+        ("rejected", _) => Ok("rejected"),
+        ("deprecated", _) => Ok("deprecated"),
+
+        ("withdrawn", Proposal) => Ok("withdrawn"),
+        ("withdrawn", _) => {
+            Err("withdraw is only valid on proposal threads — use `close` or `reject`")
+        }
+
+        // Unified `open` (thread reopen) — keep a single edge for every
+        // lifecycle and let the state machine reject unreachable cases.
+        ("open", _) => Ok("open"),
+        (other, _) => {
+            return Err(ForumError::Config(format!(
+                "unknown state-change shorthand '{other}'",
+            )));
+        }
+    };
+    outcome.map_err(|hint| ForumError::Config(format!("{hint} (SPEC-2.0 §9.3)",)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3349,13 +3109,17 @@ fn run_state_shorthand(
     let thread_id = &resolve_tid(&git, thread_id)?;
     let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
     let actor = resolve_actor(as_actor, &git);
+    // Replay once up front to resolve the lifecycle facet — the §9.3 table
+    // is keyed on lifecycle, not the legacy `kind` field.
+    let pre_state = thread::replay_thread(&git, thread_id)?;
+    let target = shorthand_target_for_lifecycle(new_state, pre_state.lifecycle())?;
     let options = state_change::StateChangeOptions {
         resolve_open_actions,
         comment: comment.map(|s| s.to_string()),
     };
     if fast_track {
         let walked = state_change::fast_track_state(
-            &git, thread_id, new_state, approve, &actor, clock, &policy, options,
+            &git, thread_id, target, approve, &actor, clock, &policy, options,
         )?;
         for (i, step) in walked.iter().enumerate() {
             let is_final = i == walked.len() - 1;
@@ -3367,9 +3131,9 @@ fn run_state_shorthand(
         }
     } else {
         state_change::change_state(
-            &git, thread_id, new_state, approve, &actor, clock, &policy, options,
+            &git, thread_id, target, approve, &actor, clock, &policy, options,
         )?;
-        println!("{thread_id} -> {new_state}");
+        println!("{thread_id} -> {target}");
     }
     if !link_to.is_empty() {
         let rel = rel
@@ -3445,16 +3209,119 @@ fn thread_matches_filters(
         && status.is_none_or(|status| state.status == status)
 }
 
+/// SPEC-2.0 §9.1 kind preset table: the single source of truth that maps a
+/// preset name (the everyday `git forum new <kind>` surface) to the storage
+/// `ThreadKind`, the canonical `lifecycle` facet, and the conventional tag
+/// set the preset attaches.
+///
+/// Aliases (legacy 1.x names like `ask` / `job`) live alongside primary
+/// names; resolution scans `name` then `aliases` and returns the first match.
+struct KindPreset {
+    name: &'static str,
+    aliases: &'static [&'static str],
+    kind: ThreadKind,
+    lifecycle: Lifecycle,
+    tags: &'static [&'static str],
+}
+
+const KIND_PRESETS: &[KindPreset] = &[
+    KindPreset {
+        name: "rfc",
+        aliases: &[],
+        kind: ThreadKind::Rfc,
+        lifecycle: Lifecycle::Proposal,
+        tags: &["cross-cutting"],
+    },
+    KindPreset {
+        name: "dec",
+        aliases: &[],
+        kind: ThreadKind::Dec,
+        lifecycle: Lifecycle::Record,
+        tags: &[],
+    },
+    KindPreset {
+        name: "task",
+        aliases: &["job"],
+        kind: ThreadKind::Task,
+        lifecycle: Lifecycle::Execution,
+        tags: &["task"],
+    },
+    KindPreset {
+        name: "issue",
+        aliases: &["ask", "bug"],
+        kind: ThreadKind::Issue,
+        lifecycle: Lifecycle::Execution,
+        tags: &["bug"],
+    },
+];
+
+fn preset_lookup(name: &str) -> Option<&'static KindPreset> {
+    KIND_PRESETS
+        .iter()
+        .find(|p| p.name == name || p.aliases.contains(&name))
+}
+
 fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
-    match kind {
-        "ask" | "issue" => Ok(ThreadKind::Issue),
-        "rfc" => Ok(ThreadKind::Rfc),
-        "dec" => Ok(ThreadKind::Dec),
-        "job" | "task" => Ok(ThreadKind::Task),
-        other => Err(ForumError::Config(format!(
-            "unknown kind '{other}'; valid: ask, rfc, dec, job (aliases: issue, task)"
-        ))),
+    preset_lookup(kind).map(|p| p.kind).ok_or_else(|| {
+        ForumError::Config(format!(
+            "unknown kind '{kind}'; valid presets: {}",
+            KIND_PRESETS
+                .iter()
+                .map(|p| p.name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    })
+}
+
+fn parse_lifecycle(s: &str) -> Result<Lifecycle, ForumError> {
+    Lifecycle::parse(s).ok_or_else(|| {
+        ForumError::Config(format!(
+            "unknown lifecycle '{s}'; valid: proposal, execution, record"
+        ))
+    })
+}
+
+/// SPEC-2.0 §9.2 / Track D: rewrite legacy `kind:<name>` tokens in a search
+/// query string to the equivalent `lifecycle:<L> AND tag:<T>` form for one
+/// minor release, then prints a deprecation warning to stderr.
+///
+/// Mapping (drawn from the kind preset table):
+/// - `kind:rfc`  → `lifecycle:proposal AND tag:cross-cutting`
+/// - `kind:dec`  → `lifecycle:record`
+/// - `kind:task` (alias `job`) → `lifecycle:execution AND tag:task`
+/// - `kind:issue` (aliases `ask`, `bug`) → `lifecycle:execution AND tag:bug`
+///
+/// Tokens are split on whitespace; `kind:` matching is case-insensitive on
+/// the prefix and value. Unknown values pass through unchanged. The query
+/// returned is a plain substring expression (the index search is LIKE-based;
+/// SPEC-2.0 §9.2 reserves the right to add a real grammar later).
+fn translate_legacy_kind_query(query: &str) -> String {
+    let mut out: Vec<String> = Vec::with_capacity(8);
+    let mut translated_any = false;
+    for token in query.split_whitespace() {
+        let lower = token.to_ascii_lowercase();
+        if let Some(rest) = lower.strip_prefix("kind:") {
+            if let Some(preset) = preset_lookup(rest) {
+                let mut parts = vec![format!("lifecycle:{}", preset.lifecycle.as_str())];
+                for tag in preset.tags {
+                    parts.push(format!("tag:{tag}"));
+                }
+                out.push(parts.join(" AND "));
+                translated_any = true;
+                continue;
+            }
+        }
+        out.push(token.to_string());
     }
+    if translated_any {
+        eprintln!(
+            "warning: `kind:<name>` is deprecated in search queries (SPEC-2.0 §9.2). \
+             Use `lifecycle:<L>` and/or `tag:<T>` instead. \
+             Auto-translation will be removed in 3.0."
+        );
+    }
+    out.join(" ")
 }
 
 fn parse_since_date(
@@ -3494,16 +3361,7 @@ fn terminal_state_date(state: &thread::ThreadState) -> Option<chrono::DateTime<c
 }
 
 fn parse_thread_kind_filter(kind: Option<&str>) -> Result<Option<ThreadKind>, ForumError> {
-    match kind {
-        None => Ok(None),
-        Some("ask") | Some("issue") => Ok(Some(ThreadKind::Issue)),
-        Some("rfc") => Ok(Some(ThreadKind::Rfc)),
-        Some("dec") => Ok(Some(ThreadKind::Dec)),
-        Some("job") | Some("task") => Ok(Some(ThreadKind::Task)),
-        Some(other) => Err(ForumError::Config(format!(
-            "unknown kind '{other}'; valid: ask, rfc, dec, job (aliases: issue, task)"
-        ))),
-    }
+    kind.map(parse_thread_kind).transpose()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3723,12 +3581,25 @@ fn parse_unrecognized_subcommand(msg: &str) -> Option<String> {
 }
 
 /// Return a custom hint for known unrecognized subcommands.
+///
+/// SPEC-2.0 §10.2: kind-prefixed subcommand groupings (`git forum rfc new`,
+/// `git forum issue close`, etc.) are removed in 2.0 (pulled forward from
+/// 3.0 by RFC-nm3d31yk Q1). Invoking them prints a hard error pointing at
+/// the top-level form.
 fn subcommand_hint(sub: &str) -> Option<&'static str> {
     match sub {
+        "rfc" | "issue" | "ask" | "dec" | "task" | "job" => Some(
+            "kind-prefixed subcommand groupings (`git forum rfc new`, \
+             `git forum issue close`, etc.) were removed in 2.0 (SPEC-2.0 §10.2). \
+             Use the top-level form:\n  \
+             git forum new <kind> \"title\"      (create — kinds: rfc, dec, task, issue, bug)\n  \
+             git forum close|accept|propose|pend|reject|withdraw|deprecate <ID>\n  \
+             git forum thread new --lifecycle <X> --tag <Y> ...   (canonical / scripts)",
+        ),
         "say" => Some(
             "\"say\" is an internal module, not a CLI command. \
              Use node shorthands instead:\n  \
-             git forum claim, question, objection, summary, action, risk, review\n  \
+             git forum comment, objection, action  (canonical 2.0)\n  \
              or: git forum node add <THREAD> --type <TYPE> \"body\"",
         ),
         "revise-body" => Some(

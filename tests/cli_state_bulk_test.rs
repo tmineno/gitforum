@@ -49,7 +49,7 @@ fn state_bulk_partial_apply_reports_failures() {
 
     let issue_a = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "new", "Setup CI", "--branch", "v0.1.0"])
+        .args(["new", "issue", "Setup CI", "--branch", "v0.1.0"])
         .output()
         .expect("failed to create issue A");
     assert!(issue_a.status.success());
@@ -57,7 +57,7 @@ fn state_bulk_partial_apply_reports_failures() {
 
     let issue_b = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "new", "Build engine", "--branch", "v0.1.0"])
+        .args(["new", "issue", "Build engine", "--branch", "v0.1.0"])
         .output()
         .expect("failed to create issue B");
     assert!(issue_b.status.success());
@@ -99,7 +99,7 @@ fn state_bulk_can_resolve_open_actions_before_close() {
 
     let issue = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "new", "Build engine", "--branch", "v0.1.0"])
+        .args(["new", "issue", "Build engine", "--branch", "v0.1.0"])
         .output()
         .expect("failed to create issue");
     assert!(issue.status.success());

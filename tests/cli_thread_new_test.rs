@@ -33,7 +33,7 @@ fn thread_new_accepts_body_from_stdin() {
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "new", "Parser fails", "--body", "-"])
+        .args(["new", "issue", "Parser fails", "--body", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -67,7 +67,7 @@ fn thread_new_body_stdin_rejects_empty_input() {
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "new", "Empty body", "--body", "-"])
+        .args(["new", "issue", "Empty body", "--body", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -94,7 +94,7 @@ fn thread_new_body_stdin_rejects_whitespace_only() {
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "new", "Whitespace body", "--body", "-"])
+        .args(["new", "issue", "Whitespace body", "--body", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -129,8 +129,8 @@ fn thread_new_can_create_link_immediately() {
     let create_rfc = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
         .args([
-            "rfc",
             "new",
+            "rfc",
             "Switch backend",
             "--body",
             "## Goal\nSwitch to a new backend.",
@@ -143,8 +143,8 @@ fn thread_new_can_create_link_immediately() {
     let create_issue = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
         .args([
-            "issue",
             "new",
+            "issue",
             "Implement backend",
             "--link-to",
             &rfc_id,
@@ -219,7 +219,7 @@ fn from_thread_without_title_uses_default() {
     // Create new RFC from source without explicit title (regression for finding #2)
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["rfc", "new", "--from-thread", &rfc_id])
+        .args(["new", "rfc", "--from-thread", &rfc_id])
         .output()
         .expect("failed to run git-forum rfc new --from-thread");
     assert!(
@@ -254,7 +254,7 @@ fn from_thread_issue_to_issue_does_not_deprecate_source() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "new", "--from-thread", &source_id])
+        .args(["new", "issue", "--from-thread", &source_id])
         .output()
         .expect("failed to run git-forum issue new --from-thread");
     assert!(
@@ -300,7 +300,7 @@ fn from_thread_issue_to_rfc_does_not_deprecate_source() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["rfc", "new", "--from-thread", &source_id])
+        .args(["new", "rfc", "--from-thread", &source_id])
         .output()
         .expect("failed to run git-forum rfc new --from-thread");
     assert!(
@@ -346,7 +346,7 @@ fn from_thread_rfc_to_issue_is_rejected() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "new", "--from-thread", &rfc_id])
+        .args(["new", "issue", "--from-thread", &rfc_id])
         .output()
         .expect("failed to run git-forum issue new --from-thread");
     assert!(
@@ -354,8 +354,113 @@ fn from_thread_rfc_to_issue_is_rejected() {
         "issue --from-thread RFC should fail"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
+    // Track D: 1.x §9.2 RFC→issue rule restated in lifecycle terms.
     assert!(
-        stderr.contains("cannot create an issue --from-thread an RFC"),
+        stderr.contains("cannot create an execution thread --from-thread a proposal"),
         "error should explain why: {stderr}"
+    );
+}
+
+/// Track D: canonical `git forum thread new --lifecycle X --tag Y` form
+/// (SPEC-2.0 §9.1) — power-user / scripting interface that lets callers set
+/// arbitrary lifecycle/tag combinations without going through the kind preset.
+#[test]
+fn canonical_thread_new_with_lifecycle_and_tag() {
+    let repo = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(repo.path());
+    init::init_forum(&paths).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args([
+            "thread",
+            "new",
+            "Tracker for migration sweep",
+            "--lifecycle",
+            "execution",
+            "--tag",
+            "migration",
+            "--tag",
+            "backend",
+            "--body",
+            "Sweep all callers.",
+        ])
+        .output()
+        .expect("failed to run git-forum thread new");
+    assert!(
+        output.status.success(),
+        "thread new failed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let thread_id = extract_created_id(&output);
+
+    let git = GitOps::new(repo.path().to_path_buf());
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(
+        state.lifecycle.as_deref(),
+        Some("execution"),
+        "facet_set should persist execution lifecycle"
+    );
+    assert!(
+        state.tags.contains(&"migration".to_string()),
+        "expected `migration` tag on the thread, got {:?}",
+        state.tags
+    );
+    assert!(
+        state.tags.contains(&"backend".to_string()),
+        "expected `backend` tag on the thread, got {:?}",
+        state.tags
+    );
+}
+
+/// Track D: rejecting unknown lifecycle values surfaces a usable error so
+/// scripts can detect and adjust.
+#[test]
+fn canonical_thread_new_rejects_unknown_lifecycle() {
+    let repo = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(repo.path());
+    init::init_forum(&paths).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args([
+            "thread",
+            "new",
+            "Doomed thread",
+            "--lifecycle",
+            "bogus",
+            "--body",
+            "ignored",
+        ])
+        .output()
+        .expect("failed to run git-forum thread new");
+    assert!(!output.status.success(), "should reject unknown lifecycle");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown lifecycle 'bogus'"),
+        "error should name the bad value: {stderr}",
+    );
+}
+
+/// Track D / SPEC-2.0 §10.2: kind-prefixed subcommand groupings are removed
+/// in 2.0 and produce a hard error with a redirect to the top-level form.
+#[test]
+fn kind_prefixed_subcommand_is_a_hard_error() {
+    let repo = support::repo::TestRepo::new();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["rfc", "new", "Whatever"])
+        .output()
+        .expect("failed to run git-forum rfc new");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("removed in 2.0"),
+        "should advertise the 2.0 removal: {stderr}",
+    );
+    assert!(
+        stderr.contains("git forum new"),
+        "should redirect to top-level form: {stderr}",
     );
 }

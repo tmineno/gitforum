@@ -1,10 +1,24 @@
 # Manual
 
+> **2.0 vocabulary note.** Threads carry a `lifecycle` facet
+> (`proposal` / `execution` / `record`) and a free-form `tags` set. The 1.x
+> `kind` (`ask`/`rfc`/`dec`/`job`) lives on as an everyday preset shortcut
+> mapped to a (lifecycle, tags) pair, but the kind-prefixed *subcommand
+> groupings* (`git forum rfc new`, `git forum issue close`, etc.) were
+> removed in 2.0 — invoking them prints a hard error pointing at the
+> top-level form. See SPEC-2.0 §9 / §10.2 / ADR-002 / ADR-004.
+
 ## Quick Reference
 
 ```
-# create
-git forum new <kind> "Title" [--body "..."|--edit] Create a thread
+# create — kind preset (everyday)
+git forum new <kind> "Title" [--body "..."|--edit]   Create via kind preset
+                                                     (rfc/dec/task/issue/bug)
+
+# create — canonical (power-user, scriptable; SPEC-2.0 §9.1)
+git forum thread new "Title" --lifecycle <L> [--tag <T>]...
+                                                     Create with explicit
+                                                     lifecycle + tags
 
 # inspect
 git forum ls [--kind <kind>]                       List threads
@@ -16,35 +30,41 @@ git forum log <ID>                                 Show event timeline for a thr
 git forum log <ID> --reverse                       Show newest events first
 git forum log <ID> -n <N>                          Limit to last N events
 git forum search <query>                           Search threads and nodes
+                                                   (kind:<name> auto-translates
+                                                    to lifecycle:/tag: with a
+                                                    deprecation warning)
 git forum shortlog --since <DATE_OR_REV>           Threads resolved after date/tag
 git forum status <ID>                              Check open items
 git forum node show <NODE_ID>                      Inspect a single node
 
-# discussion (canonical + shorthands)
+# discussion (canonical 2.0 + deprecated shorthands)
 git forum node add <ID> --type <type> "body"       Add a typed node
-git forum claim <ID> "body"                        node add --type claim
-git forum question <ID> "body"                     node add --type question
+git forum comment <ID> "body"                      node add --type comment (2.0 canonical)
 git forum objection <ID> "body"                    node add --type objection
-git forum summary <ID> "body"                      node add --type summary
 git forum action <ID> "body"                       node add --type action
-git forum risk <ID> "body"                         node add --type risk
-git forum review <ID> "body"                       node add --type review
+git forum claim|question|summary|risk|review <ID> "body"
+                                                   Deprecated aliases for
+                                                   `comment` (warn + alias for
+                                                   one minor; removed in 3.0)
 git forum retype <ID> <NODE_ID> --type <TYPE>      Change a node's type
 git forum resolve <ID> <NODE_ID>                   Resolve a node
 git forum retract <ID> <NODE_ID>                   Retract a node
 git forum reopen <ID> <NODE_ID>                    Reopen a node
 
-# state (canonical + shorthands)
+# state (canonical + lifecycle-aware shorthands; SPEC-2.0 §9.3)
 git forum state <ID> <state>                       Change thread state
 git forum state <ID> <state> --approve human/alice State change with approval
 git forum state <ID> <state> --comment "Done"      State change with comment
 git forum state bulk --to <state> [--kind <kind>]  Bulk state change
-git forum close <ID>                               state <ID> closed
-git forum pend <ID>                                state <ID> pending
-git forum accept <ID> --approve human/alice        state <ID> accepted
-git forum propose <ID>                             state <ID> proposed
-git forum reject <ID>                              state <ID> rejected
-git forum deprecate <ID>                           state <ID> deprecated
+git forum close <ID>                               execution/record: -> done;
+                                                   proposal: rejected (use `accept`)
+git forum accept <ID> --approve human/alice        proposal/record: -> done;
+                                                   execution: rejected (use `close`)
+git forum propose <ID>                             proposal: draft -> open
+git forum pend <ID>                                execution: -> working
+git forum reject <ID>                              any lifecycle: -> rejected
+git forum withdraw <ID>                            proposal: -> withdrawn
+git forum deprecate <ID>                           any lifecycle: -> deprecated
 
 # evidence & links
 git forum evidence add <ID> --kind <kind> --ref <ref>  Add evidence
@@ -68,6 +88,7 @@ git forum policy check <ID> --transition from->to  Check guards for transition
 git forum init                                     Initialize forum in repo
 git forum doctor                                   Check repository health
 git forum reindex                                  Rebuild local index from Git refs
+git forum migrate [--dry-run]                      Rewrite a 1.x repo to 2.0 storage
 git forum hook install                             Install commit-msg hook
 git forum tui                                      Open interactive TUI
 git forum purge --thread <ID> --event <SHA>        Purge event content
@@ -76,7 +97,10 @@ git forum purge --actor <ACTOR_ID>                 Purge all events by actor
 
 ## Conventions
 
-- thread kinds: `ask` (alias: `issue`), `rfc`, `dec`, `job` (alias: `task`)
+- thread kind presets (lifecycle + conventional tag): `rfc` (proposal+cross-cutting),
+  `dec` (record), `task` (execution+task; alias `job`), `issue` (execution+bug;
+  aliases `ask`, `bug`). Presets are the everyday CLI surface and are not on
+  any removal schedule (SPEC-2.0 §9.1).
 - thread IDs: opaque `KIND-XXXXXXXX` (e.g. `RFC-a7f3b2x1`) for new threads; legacy sequential `KIND-NNNN` (e.g. `ASK-0001`) also accepted. Unambiguous prefixes work (e.g. `RFC-a7f3`).
 - node IDs: printed by shorthand node commands (e.g. `claim`, `question`); canonical IDs are Git commit OIDs of the say event
 - CLI/TUI displays of node and event OIDs usually show the first 16 characters
@@ -263,8 +287,10 @@ git forum ls dec                                   # positional shorthand
 git forum ls job
 ```
 
-The old forms `git forum issue ls`, `git forum rfc ls`, etc. remain as hidden aliases for backward
-compatibility. `--kind issue` and `--kind task` also still work.
+The kind-prefixed *subcommand groupings* (`git forum issue ls`, `git forum rfc ls`,
+etc.) were **removed** in 2.0 (SPEC-2.0 §10.2). Invoking them prints a hard
+error pointing at the top-level form (`git forum ls --kind issue`).
+`--kind issue` / `--kind task` aliases still resolve via the preset table.
 
 ## Structured discussion
 

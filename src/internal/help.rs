@@ -43,19 +43,26 @@ Pass "-" as the positional body to read from stdin (e.g. `echo "body" | git foru
 --edit opens $VISUAL / $EDITOR / vi for interactive composition (requires a TTY; conflicts with body args).
 In scripts or agent workflows, use --body, --body-file, or --body - instead of --edit.
 
-## Shorthand commands (convenience aliases)
+## Shorthand commands (2.0 canonical + deprecated aliases)
 
 ```
-git forum claim <THREAD> "body"         # node add --type claim
-git forum question <THREAD> "body"      # node add --type question
+git forum comment <THREAD> "body"       # canonical 2.0 (node add --type comment)
 git forum objection <THREAD> "body"     # node add --type objection
-git forum summary <THREAD> "body"       # node add --type summary
 git forum action <THREAD> "body"        # node add --type action
-git forum risk <THREAD> "body"          # node add --type risk
-git forum review <THREAD> "body"        # node add --type review
 ```
 
-alternative and assumption have no shorthand — use `node add --type <TYPE>` for these.
+The following shorthands are deprecated aliases for `comment` (ADR-006 / SPEC-2.0 §2.5);
+they still work in 2.0 but emit a deprecation warning and will be removed in 3.0:
+
+```
+git forum claim, question, summary, risk, review  # deprecated → comment
+```
+
+Authors who relied on the rhetorical distinction express it in the body
+(e.g. start with `Q:`, `Decision:`, `Risk:`).
+
+alternative and assumption have no shorthand — use `node add --type <TYPE>` for these
+(also deprecated to `comment` in 2.0 migration; see ADR-006).
 
 ## Reading a node's full body
 
@@ -89,22 +96,35 @@ pub fn state_transition_map() -> String {
     out.push_str("## Canonical form\n\n");
     out.push_str("```\n");
     out.push_str("git forum state <ID> <state>   # single grammar for all transitions\n");
-    out.push_str("git forum state <ID> open       # thread reopen (closed/rejected -> open)\n");
+    out.push_str("git forum state <ID> open       # thread reopen (done/rejected -> open)\n");
     out.push_str("```\n\n");
-    out.push_str("For TASK phase transitions: `git forum state <ID> <state>` with:\n");
-    out.push_str("designing, implementing, reviewing.\n\n");
+    out.push_str("State names are 2.0 canonical: `draft`, `open`, `working`, `review`, `done`,\n");
+    out.push_str("`rejected`, `withdrawn`, `deprecated`. Reachability is keyed on the thread's\n");
+    out.push_str("`lifecycle` facet (proposal/execution/record), not the legacy 1.x `kind`.\n\n");
     out.push_str("All accept --as, --comment, and --fast-track.\n");
-    out.push_str("`state` with closed/accepted also accepts --approve, --link-to, --rel.\n");
-    out.push_str("`state` with closed also accepts --resolve-open-actions.\n");
+    out.push_str(
+        "`state` with done also accepts --approve, --link-to, --rel, --resolve-open-actions.\n",
+    );
     out.push_str("--fast-track walks through intermediate states to reach the target, checking guards at each step.\n\n");
-    out.push_str("## Shorthand commands (convenience aliases)\n\n");
+    out.push_str("## Shorthand commands (lifecycle-aware, SPEC-2.0 §9.3)\n\n");
     out.push_str("```\n");
-    out.push_str("git forum close <ID>       # state <ID> closed\n");
-    out.push_str("git forum pend <ID>        # state <ID> pending\n");
-    out.push_str("git forum reject <ID>      # state <ID> rejected\n");
-    out.push_str("git forum propose <ID>     # state <ID> proposed\n");
-    out.push_str("git forum accept <ID>      # state <ID> accepted\n");
-    out.push_str("git forum deprecate <ID>   # state <ID> deprecated\n");
+    out.push_str(
+        "git forum close <ID>       # execution/record: -> done; proposal: rejected (use accept)\n",
+    );
+    out.push_str(
+        "git forum accept <ID>      # proposal/record: -> done; execution: rejected (use close)\n",
+    );
+    out.push_str(
+        "git forum propose <ID>     # proposal: draft -> open; other lifecycles: rejected\n",
+    );
+    out.push_str(
+        "git forum pend <ID>        # execution: -> working; other lifecycles: rejected\n",
+    );
+    out.push_str("git forum reject <ID>      # any lifecycle: -> rejected\n");
+    out.push_str(
+        "git forum withdraw <ID>    # proposal: -> withdrawn; other lifecycles: rejected\n",
+    );
+    out.push_str("git forum deprecate <ID>   # any lifecycle: -> deprecated\n");
     out.push_str("```\n\n");
     out.push_str("## Discoverability\n\n");
     out.push_str("`git forum show <ID>` includes a compact `next:` line and state diagram.\n");
@@ -112,14 +132,14 @@ pub fn state_transition_map() -> String {
         "`git forum show <ID> --what-next` shows guard checks and operation check rules.\n",
     );
     out.push_str("`git forum policy show` displays the full loaded policy.\n\n");
-    out.push_str("## Kind-scoped guard keys\n\n");
-    out.push_str("Guards support an optional kind prefix to restrict to a specific thread kind:\n");
+    out.push_str("## Lifecycle-scoped guard keys (2.0)\n\n");
+    out.push_str("Guards support an optional `lifecycle:`/`tag:` prefix to scope a rule:\n");
     out.push_str("```toml\n");
     out.push_str("[[guards]]\n");
-    out.push_str("on = \"dec:proposed->accepted\"  # only DEC threads\n");
+    out.push_str("on = \"lifecycle:record open->done\"  # only record-lifecycle threads\n");
     out.push_str("requires = [\"no_open_objections\"]\n\n");
     out.push_str("[[guards]]\n");
-    out.push_str("on = \"proposed->accepted\"      # all kinds (wildcard)\n");
+    out.push_str("on = \"open->done\"                    # all lifecycles (wildcard)\n");
     out.push_str("requires = [\"no_open_objections\"]\n");
     out.push_str("```\n");
     out.push_str("When both scoped and unscoped guards match, both apply (union).\n\n");
@@ -131,7 +151,7 @@ pub fn state_transition_map() -> String {
         "`git forum log <ID> --since <DATE>` shows only events after a date (ISO date, RFC 3339, or git revision).\n",
     );
     out.push_str("`git forum log <ID> -n <N>` limits output to the last N events.\n");
-    out.push_str("`git forum log <ID> --type <TYPE>` filters by displayed event type (e.g. review, state, claim, revise-body).\n\n");
+    out.push_str("`git forum log <ID> --type <TYPE>` filters by displayed event type (e.g. comment, state, action, revise-body).\n\n");
     out.push_str("## Hooks\n\n");
     out.push_str("`git forum hook install` installs commit-msg and post-checkout hooks.\n");
     out.push_str("`git forum hook fix-index` repairs missing blob references in the index.\n");

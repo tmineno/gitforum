@@ -101,20 +101,20 @@ fn revise_via_issue_subcommand_shorthand() {
     )
     .unwrap();
 
-    // `git forum issue revise ISSUE-0001 --body "..."` should default to body
+    // `git forum revise <THREAD> --body "..."` is the 2.0 top-level form
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "revise", &thread_id, "--body", "via issue cmd"])
+        .args(["revise", &thread_id, "--body", "via top-level revise"])
         .output()
-        .expect("failed to run git-forum issue revise");
+        .expect("failed to run git-forum revise");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "issue revise shorthand failed: stdout={stdout}, stderr={stderr}"
+        "top-level revise failed: stdout={stdout}, stderr={stderr}"
     );
     assert!(stdout.contains("Body revised"));
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    assert_eq!(state.body.as_deref(), Some("via issue cmd"));
+    assert_eq!(state.body.as_deref(), Some("via top-level revise"));
 }

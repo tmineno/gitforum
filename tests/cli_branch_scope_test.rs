@@ -50,8 +50,8 @@ fn thread_new_can_bind_branch_scope() {
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
         .args([
-            "issue",
             "new",
+            "issue",
             "Parser fails",
             "--branch",
             "feat/parser-rewrite",
@@ -75,7 +75,7 @@ fn branch_bind_and_clear_update_thread_scope() {
 
     let create = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "new", "Implement solver"])
+        .args(["new", "issue", "Implement solver"])
         .output()
         .expect("failed to create issue");
     assert!(create.status.success());
@@ -118,7 +118,7 @@ fn issue_ls_can_filter_by_branch() {
 
     let issue_a = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "new", "Setup CI", "--branch", "v0.1.0"])
+        .args(["new", "issue", "Setup CI", "--branch", "v0.1.0"])
         .output()
         .expect("failed to create issue A");
     assert!(issue_a.status.success());
@@ -126,7 +126,7 @@ fn issue_ls_can_filter_by_branch() {
 
     let issue_b = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "new", "Refactor parser"])
+        .args(["new", "issue", "Refactor parser"])
         .output()
         .expect("failed to create issue B");
     assert!(issue_b.status.success());
@@ -134,7 +134,7 @@ fn issue_ls_can_filter_by_branch() {
 
     let ls = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "ls", "--branch", "v0.1.0"])
+        .args(["ls", "--kind", "issue", "--branch", "v0.1.0"])
         .output()
         .expect("failed to list issues by branch");
     assert!(ls.status.success());

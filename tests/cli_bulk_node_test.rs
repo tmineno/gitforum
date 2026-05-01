@@ -324,16 +324,16 @@ fn thread_reopen_via_issue_subcommand() {
         .expect("failed to run");
     assert!(output.status.success());
 
-    // Reopen via issue subcommand
+    // Reopen via top-level shorthand
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "reopen", &thread_id])
+        .args(["reopen", &thread_id])
         .output()
         .expect("failed to run");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success(),
-        "thread reopen via issue subcommand failed: {}",
+        "thread reopen via top-level shorthand failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(stdout.contains("-> open"));

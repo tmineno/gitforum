@@ -766,31 +766,34 @@ fn cli_smoke_tests(repo_path: &Path, rfc_id: &str, issue_id: &str) {
         .unwrap();
     assert!(output.status.success(), "verify {issue_id} failed");
 
-    // 4. rfc ls
+    // 4. ls --kind rfc
     let output = std::process::Command::new(binary)
-        .args(["rfc", "ls"])
+        .args(["ls", "--kind", "rfc"])
         .current_dir(repo_path)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .output()
         .unwrap();
-    assert!(output.status.success(), "rfc ls failed");
+    assert!(output.status.success(), "ls --kind rfc failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains(rfc_id),
-        "rfc ls output should contain {rfc_id}"
+        "ls --kind rfc output should contain {rfc_id}"
     );
-    assert!(!stdout.contains("ASK-"), "rfc ls should not show issues");
+    assert!(
+        !stdout.contains("ASK-"),
+        "ls --kind rfc should not show issues"
+    );
 
-    // 5. issue ls
+    // 5. ls --kind issue
     let output = std::process::Command::new(binary)
-        .args(["issue", "ls"])
+        .args(["ls", "--kind", "issue"])
         .current_dir(repo_path)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .output()
         .unwrap();
-    assert!(output.status.success(), "issue ls failed");
+    assert!(output.status.success(), "ls --kind issue failed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains(issue_id),

@@ -29,8 +29,8 @@ fn question_command_creates_question_node() {
     let create_rfc = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
         .args([
-            "rfc",
             "new",
+            "rfc",
             "Parser rewrite",
             "--body",
             "## Goal\nRewrite the parser.",

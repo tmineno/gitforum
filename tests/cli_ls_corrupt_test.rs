@@ -51,7 +51,7 @@ fn ls_skips_corrupt_thread_with_warning() {
     // Create a valid issue
     let create = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["issue", "new", "Valid issue"])
+        .args(["new", "issue", "Valid issue"])
         .output()
         .expect("failed to create issue");
     assert!(create.status.success(), "issue creation failed");
@@ -111,7 +111,7 @@ fn ls_kind_filter_works_with_corrupt_thread() {
     // Create a valid RFC
     let create = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
-        .args(["rfc", "new", "Valid RFC", "--body", "## Goal\nTest."])
+        .args(["new", "rfc", "Valid RFC", "--body", "## Goal\nTest."])
         .output()
         .expect("failed to create rfc");
     assert!(create.status.success(), "rfc creation failed");

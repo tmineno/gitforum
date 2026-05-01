@@ -21,7 +21,7 @@ fn init_repo(repo: &support::repo::TestRepo) {
 
 fn create_issue(repo: &support::repo::TestRepo, title: &str) -> String {
     let output = git_forum_cmd(repo.path())
-        .args(["issue", "new", title])
+        .args(["new", "issue", title])
         .output()
         .expect("failed to create issue");
     assert!(
