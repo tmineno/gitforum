@@ -109,7 +109,7 @@ fn conventional_tags(kind: ThreadKind) -> Vec<String> {
 ///   characters. The leading character is forced to a letter so the result is
 ///   never all-digit (the bare-token grammar forbids that).
 /// - Already-bare tokens: returned unchanged.
-fn bare_token_for(legacy_id: &str) -> String {
+pub fn bare_token_for(legacy_id: &str) -> String {
     if id_alloc::is_bare_token(legacy_id) {
         return legacy_id.to_string();
     }

@@ -461,6 +461,38 @@ fn migrate_does_not_double_migrate_already_bare_threads() {
 }
 
 #[test]
+fn alias_resolves_after_canonical_thread_advances() {
+    // Regression: aliases are frozen at the migration-time tip, but the
+    // canonical thread ref keeps moving forward as new events land.
+    // Resolution must NOT depend on alias-tip ↔ canonical-tip equality.
+    let (_repo, git, paths) = setup();
+    let legacy = "RFC-0001".to_string();
+    build_legacy_thread(&git, &legacy, ThreadKind::Rfc, vec![]);
+    migrate::run(&git, &paths, "system/migrate", false).unwrap();
+
+    let token = thread::resolve_thread_id(&git, &legacy).unwrap();
+    // Append a fresh event, advancing the canonical tip past the alias's
+    // frozen position.
+    let new_event = state_event(&token, "review", 100);
+    event::write_event(&git, &new_event).unwrap();
+
+    // Legacy ID still resolves.
+    let resolved_after = thread::resolve_thread_id(&git, &legacy).unwrap();
+    assert_eq!(resolved_after, token);
+
+    // Sanity: the alias is now stale (different SHA from canonical).
+    let canonical_tip = git.resolve_ref(&refs::thread_ref(&token)).unwrap().unwrap();
+    let alias_tip = git
+        .resolve_ref(&migrate::alias_ref(&legacy))
+        .unwrap()
+        .unwrap();
+    assert_ne!(
+        canonical_tip, alias_tip,
+        "test premise: alias must be stale relative to canonical after a new event"
+    );
+}
+
+#[test]
 fn migrate_populates_round_trip_token_map() {
     let ids = vec![
         "RFC-0001".into(),
