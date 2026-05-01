@@ -9,9 +9,17 @@ use serde::{Deserialize, Serialize};
 
 use super::{App, FilterCriteria, SortColumn, View};
 
+/// Persisted-schema version. Bumped to 2 in JOB-d4cdyi5b for the
+/// kind→lifecycle/tags split. v1 reads continue to succeed via the
+/// `filter_kinds` field; writes always emit v2.
+pub(super) const SCHEMA_VERSION: u32 = 2;
+
 /// Serializable snapshot of TUI state.
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct TuiState {
+    /// Schema version (default 1 for back-compat reads).
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
     /// Last active view: "list", "thread", or "node".
     #[serde(default)]
     pub view: String,
@@ -48,9 +56,15 @@ pub(super) struct TuiState {
     /// Collapsed node IDs in the tree view.
     #[serde(default)]
     pub collapsed: Vec<String>,
-    /// Kind filter selections.
-    #[serde(default)]
+    /// Legacy v1 kind filter selections (still read for migration; never written by v2).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub filter_kinds: Vec<String>,
+    /// Lifecycle filter selections (v2).
+    #[serde(default)]
+    pub filter_lifecycles: Vec<String>,
+    /// Tag filter selections (v2).
+    #[serde(default)]
+    pub filter_tags: Vec<String>,
     /// Status filter selections.
     #[serde(default)]
     pub filter_statuses: Vec<String>,
@@ -62,9 +76,14 @@ pub(super) struct TuiState {
     pub sort_ascending: bool,
 }
 
+fn default_schema_version() -> u32 {
+    1
+}
+
 impl Default for TuiState {
     fn default() -> Self {
         Self {
+            schema_version: SCHEMA_VERSION,
             view: String::new(),
             thread_id: None,
             node_id: None,
@@ -78,6 +97,8 @@ impl Default for TuiState {
             markdown_mode: false,
             collapsed: Vec::new(),
             filter_kinds: Vec::new(),
+            filter_lifecycles: Vec::new(),
+            filter_tags: Vec::new(),
             filter_statuses: Vec::new(),
             sort_column: "updated".to_string(),
             sort_ascending: false,
@@ -109,6 +130,7 @@ impl TuiState {
         };
 
         TuiState {
+            schema_version: SCHEMA_VERSION,
             view,
             thread_id,
             node_id,
@@ -121,7 +143,11 @@ impl TuiState {
             tree_fullscreen: app.tree_fullscreen,
             markdown_mode: app.markdown_mode,
             collapsed: app.collapsed.iter().cloned().collect(),
-            filter_kinds: app.filter.kinds.iter().cloned().collect(),
+            // v2 never serialises kinds; the field stays present for back-compat
+            // schemas only.
+            filter_kinds: Vec::new(),
+            filter_lifecycles: app.filter.lifecycles.iter().cloned().collect(),
+            filter_tags: app.filter.tags.iter().cloned().collect(),
             filter_statuses: app.filter.statuses.iter().cloned().collect(),
             sort_column: sort_column_to_str(app.sort_column).to_string(),
             sort_ascending: app.sort_ascending,
@@ -135,8 +161,22 @@ impl TuiState {
         app.markdown_mode = self.markdown_mode;
         app.sort_column = sort_column_from_str(&self.sort_column);
         app.sort_ascending = self.sort_ascending;
+        // v1 → v2 migration: translate `filter_kinds` to lifecycles + tags
+        // per SPEC-2.0 §2.3.3. v2 fields take precedence when both present.
+        let mut lifecycles: std::collections::HashSet<String> =
+            self.filter_lifecycles.iter().cloned().collect();
+        let mut tags: std::collections::HashSet<String> =
+            self.filter_tags.iter().cloned().collect();
+        for kind in &self.filter_kinds {
+            let (lc, conv_tag) = legacy_kind_to_lifecycle_and_tag(kind);
+            lifecycles.insert(lc.to_string());
+            if let Some(tag) = conv_tag {
+                tags.insert(tag.to_string());
+            }
+        }
         app.filter = FilterCriteria {
-            kinds: self.filter_kinds.iter().cloned().collect(),
+            lifecycles,
+            tags,
             statuses: self.filter_statuses.iter().cloned().collect(),
         };
         if let Some(sel) = self.list_selected {
@@ -145,6 +185,18 @@ impl TuiState {
                 app.table_state.select(Some(sel.min(n - 1)));
             }
         }
+    }
+}
+
+/// SPEC-2.0 §2.3.3: each 1.x kind maps to a lifecycle and an optional
+/// conventional tag. Used by `apply_to_app` for v1→v2 filter migration.
+fn legacy_kind_to_lifecycle_and_tag(kind: &str) -> (&'static str, Option<&'static str>) {
+    match kind {
+        "rfc" => ("proposal", Some("cross-cutting")),
+        "issue" => ("execution", Some("bug")),
+        "task" => ("execution", Some("task")),
+        "dec" => ("record", None),
+        _ => ("execution", None),
     }
 }
 
@@ -176,7 +228,7 @@ pub(super) fn load_state(db_path: &Path) -> Option<TuiState> {
 fn sort_column_to_str(col: SortColumn) -> &'static str {
     match col {
         SortColumn::Id => "id",
-        SortColumn::Kind => "kind",
+        SortColumn::Lifecycle => "lifecycle",
         SortColumn::Status => "status",
         SortColumn::Created => "created",
         SortColumn::Updated => "updated",
@@ -187,7 +239,8 @@ fn sort_column_to_str(col: SortColumn) -> &'static str {
 fn sort_column_from_str(s: &str) -> SortColumn {
     match s {
         "id" => SortColumn::Id,
-        "kind" => SortColumn::Kind,
+        // v1 used "kind"; v2 reads it as "lifecycle".
+        "lifecycle" | "kind" => SortColumn::Lifecycle,
         "status" => SortColumn::Status,
         "created" => SortColumn::Created,
         "title" => SortColumn::Title,
@@ -212,6 +265,7 @@ mod tests {
     #[test]
     fn roundtrip_with_data() {
         let state = TuiState {
+            schema_version: SCHEMA_VERSION,
             view: "thread".to_string(),
             thread_id: Some("RFC-abc123".to_string()),
             node_id: None,
@@ -224,9 +278,11 @@ mod tests {
             tree_fullscreen: false,
             markdown_mode: true,
             collapsed: vec!["node1".to_string(), "node2".to_string()],
-            filter_kinds: vec!["rfc".to_string()],
+            filter_kinds: Vec::new(),
+            filter_lifecycles: vec!["proposal".to_string()],
+            filter_tags: vec!["cross-cutting".to_string()],
             filter_statuses: vec!["open".to_string(), "draft".to_string()],
-            sort_column: "kind".to_string(),
+            sort_column: "lifecycle".to_string(),
             sort_ascending: true,
         };
         let toml_str = toml::to_string_pretty(&state).unwrap();
@@ -237,8 +293,9 @@ mod tests {
         assert!(loaded.split_horizontal);
         assert!(loaded.markdown_mode);
         assert_eq!(loaded.collapsed.len(), 2);
-        assert_eq!(loaded.filter_kinds, vec!["rfc"]);
-        assert_eq!(loaded.sort_column, "kind");
+        assert_eq!(loaded.filter_lifecycles, vec!["proposal"]);
+        assert_eq!(loaded.filter_tags, vec!["cross-cutting"]);
+        assert_eq!(loaded.sort_column, "lifecycle");
         assert!(loaded.sort_ascending);
     }
 
@@ -279,7 +336,7 @@ mod tests {
     fn sort_column_roundtrip() {
         for col in &[
             SortColumn::Id,
-            SortColumn::Kind,
+            SortColumn::Lifecycle,
             SortColumn::Status,
             SortColumn::Created,
             SortColumn::Updated,
@@ -383,9 +440,9 @@ markdown_mode = true
             detail_split: 35,
             split_horizontal: true,
             markdown_mode: true,
-            sort_column: "kind".to_string(),
+            sort_column: "lifecycle".to_string(),
             sort_ascending: true,
-            filter_kinds: vec!["rfc".to_string()],
+            filter_lifecycles: vec!["proposal".to_string()],
             filter_statuses: vec!["open".to_string()],
             list_selected: Some(0),
             ..TuiState::default()
@@ -395,10 +452,60 @@ markdown_mode = true
         assert_eq!(app.detail_split, 35);
         assert!(app.split_horizontal);
         assert!(app.markdown_mode);
-        assert_eq!(app.sort_column, SortColumn::Kind);
+        assert_eq!(app.sort_column, SortColumn::Lifecycle);
         assert!(app.sort_ascending);
-        assert!(app.filter.kinds.contains("rfc"));
+        assert!(app.filter.lifecycles.contains("proposal"));
         assert!(app.filter.statuses.contains("open"));
+    }
+
+    /// SPEC-2.0 §2.3.3: a v1 state file with `filter_kinds = ["rfc"]` must
+    /// load as `filter_lifecycles = ["proposal"]` + `filter_tags =
+    /// ["cross-cutting"]`. Writes always emit v2.
+    #[test]
+    fn v1_filter_kinds_translates_to_v2_lifecycles_and_tags() {
+        let threads = vec![make_thread_row("RFC-001", "rfc")];
+        let mut app = App::new(threads);
+        let v1 = TuiState {
+            schema_version: 1,
+            filter_kinds: vec!["rfc".to_string()],
+            ..TuiState::default()
+        };
+        v1.apply_to_app(&mut app);
+        assert!(app.filter.lifecycles.contains("proposal"));
+        assert!(app.filter.tags.contains("cross-cutting"));
+
+        // Re-serialise: v2 must drop filter_kinds and emit filter_lifecycles.
+        let v2 = TuiState::from_app(&app);
+        assert_eq!(v2.schema_version, SCHEMA_VERSION);
+        assert!(v2.filter_kinds.is_empty());
+        assert!(v2.filter_lifecycles.contains(&"proposal".to_string()));
+        assert!(v2.filter_tags.contains(&"cross-cutting".to_string()));
+    }
+
+    /// v1 → v2 round-trip on disk: write v1 TOML, read it back, observe v2.
+    #[test]
+    fn v1_on_disk_to_v2_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("index.db");
+        let path = state_file_path(&db_path);
+        let v1_toml = r#"
+view = "list"
+filter_kinds = ["issue", "task"]
+sort_column = "kind"
+"#;
+        std::fs::write(&path, v1_toml).unwrap();
+
+        let loaded = load_state(&db_path).unwrap();
+        assert_eq!(loaded.schema_version, 1);
+        assert_eq!(loaded.filter_kinds, vec!["issue", "task"]);
+
+        let mut app = App::new(vec![make_thread_row("ISSUE-001", "issue")]);
+        loaded.apply_to_app(&mut app);
+        // both issue + task → execution; bug + task tags
+        assert!(app.filter.lifecycles.contains("execution"));
+        assert!(app.filter.tags.contains("bug"));
+        assert!(app.filter.tags.contains("task"));
+        assert_eq!(app.sort_column, SortColumn::Lifecycle);
     }
 
     #[test]

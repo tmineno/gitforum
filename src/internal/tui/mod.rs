@@ -32,7 +32,7 @@ use render::render;
 
 /// Number of lines/rows to scroll per PageUp/PageDown press.
 const PAGE_SCROLL: u16 = 20;
-use state::{auto_refresh, default_thread_kind_index};
+use state::{auto_refresh, default_thread_lifecycle_index};
 
 /// Compute the maximum scroll offset for wrapped text in a bordered area.
 ///
@@ -126,7 +126,8 @@ pub enum LinkOrigin {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ThreadFormField {
-    Kind,
+    Lifecycle,
+    Tags,
     Title,
     Body,
     Submit,
@@ -134,10 +135,13 @@ enum ThreadFormField {
 
 #[derive(Debug, Clone)]
 struct ThreadForm {
-    kind_index: usize,
+    lifecycle_index: usize,
+    tags: String,
     title: String,
     body: String,
     field: ThreadFormField,
+    /// Inline form-level error from §2.3.5 tag validation, blocks submit.
+    tag_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,51 +167,52 @@ struct NodeForm {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FilterField {
-    Kind,
+    Lifecycle,
+    Tag,
     Status,
 }
 
 #[derive(Debug, Clone, Default)]
-struct FilterCriteria {
-    kinds: HashSet<String>,
-    statuses: HashSet<String>,
+pub(super) struct FilterCriteria {
+    pub lifecycles: HashSet<String>,
+    pub tags: HashSet<String>,
+    pub statuses: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
 struct FilterBar {
     field: FilterField,
     cursor: usize,
-    kinds: HashSet<String>,
+    lifecycles: HashSet<String>,
+    tags: HashSet<String>,
     statuses: HashSet<String>,
 }
 
-const FILTER_KIND_LABELS: [&str; 4] = ["issue", "rfc", "dec", "task"];
-const FILTER_STATUS_LABELS: [&str; 10] = [
-    "open",
+pub(super) const FILTER_LIFECYCLE_LABELS: [&str; 3] = ["proposal", "execution", "record"];
+pub(super) const FILTER_STATUS_LABELS: [&str; 8] = [
     "draft",
-    "pending",
-    "proposed",
-    "under-review",
-    "accepted",
-    "closed",
+    "open",
+    "working",
+    "review",
+    "done",
     "rejected",
-    "deprecated",
     "withdrawn",
+    "deprecated",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SortColumn {
     Id,
-    Kind,
+    Lifecycle,
     Status,
     Created,
     Updated,
     Title,
 }
 
-const SORT_COLUMNS: [SortColumn; 6] = [
+pub(super) const SORT_COLUMNS: [SortColumn; 6] = [
     SortColumn::Id,
-    SortColumn::Kind,
+    SortColumn::Lifecycle,
     SortColumn::Status,
     SortColumn::Created,
     SortColumn::Updated,
@@ -332,7 +337,12 @@ pub struct App {
     split_horizontal: bool,
     /// Metadata of the currently viewed thread (for display as root row in nodes pane).
     thread_title: String,
-    thread_kind: String,
+    /// SPEC-2.0 §11: lifecycle facet for the open thread (replaces 1.x kind).
+    /// `None` only before `open_thread_detail` runs.
+    thread_lifecycle: Option<String>,
+    /// SPEC-2.0 §11: derived tag set for the open thread. For unmigrated 1.x
+    /// threads (no `facet_set` event) this is the §2.3.3 conventional tag.
+    thread_tags: Vec<String>,
     thread_status: String,
     /// LRU cache for replayed thread states (RFC-0017 Phase 1).
     replay_cache: ReplayCache,
@@ -368,10 +378,12 @@ impl App {
             node_detail_text: String::new(),
             node_detail_scroll: 0,
             thread_form: ThreadForm {
-                kind_index: 1,
+                lifecycle_index: 0,
+                tags: String::new(),
                 title: String::new(),
                 body: String::new(),
-                field: ThreadFormField::Kind,
+                field: ThreadFormField::Lifecycle,
+                tag_error: None,
             },
             node_form: NodeForm {
                 node_type_index: 0,
@@ -400,7 +412,8 @@ impl App {
             tree_fullscreen: false,
             split_horizontal: false,
             thread_title: String::new(),
-            thread_kind: String::new(),
+            thread_lifecycle: None,
+            thread_tags: Vec::new(),
             thread_status: String::new(),
             replay_cache: ReplayCache::new(),
             error_flash: None,
@@ -415,17 +428,27 @@ impl App {
             .threads
             .iter()
             .filter(|t| {
-                let kind_ok = self.filter.kinds.is_empty() || self.filter.kinds.contains(&t.kind);
+                let lifecycle_ok = self.filter.lifecycles.is_empty()
+                    || self
+                        .filter
+                        .lifecycles
+                        .contains(render::row_lifecycle(t).as_str());
+                let tag_ok = self.filter.tags.is_empty()
+                    || self
+                        .filter
+                        .tags
+                        .iter()
+                        .all(|t1| render::row_tags(t).iter().any(|t2| t2 == t1));
                 let status_ok =
                     self.filter.statuses.is_empty() || self.filter.statuses.contains(&t.status);
-                kind_ok && status_ok
+                lifecycle_ok && tag_ok && status_ok
             })
             .collect();
         let asc = self.sort_ascending;
         rows.sort_by(|a, b| {
             let ord = match self.sort_column {
                 SortColumn::Id => a.id.cmp(&b.id),
-                SortColumn::Kind => a.kind.cmp(&b.kind),
+                SortColumn::Lifecycle => render::row_lifecycle(a).cmp(&render::row_lifecycle(b)),
                 SortColumn::Status => a.status.cmp(&b.status),
                 SortColumn::Created => a.created_at.cmp(&b.created_at),
                 SortColumn::Updated => a.updated_at.cmp(&b.updated_at),
@@ -438,6 +461,20 @@ impl App {
             }
         });
         rows
+    }
+
+    /// Discovered tags across the loaded thread set, sorted ascending.
+    /// SPEC-2.0 §2.3.5 ships no preregistered tag list — discovered from data.
+    fn discovered_tags(&self) -> Vec<String> {
+        let mut set: HashSet<String> = HashSet::new();
+        for t in &self.threads {
+            for tag in render::row_tags(t) {
+                set.insert(tag);
+            }
+        }
+        let mut v: Vec<String> = set.into_iter().collect();
+        v.sort();
+        v
     }
 
     fn selected_thread_id(&self) -> Option<String> {
@@ -516,16 +553,18 @@ impl App {
 
     fn open_filter_bar(&mut self) {
         self.filter_bar = Some(FilterBar {
-            field: FilterField::Kind,
+            field: FilterField::Lifecycle,
             cursor: 0,
-            kinds: self.filter.kinds.clone(),
+            lifecycles: self.filter.lifecycles.clone(),
+            tags: self.filter.tags.clone(),
             statuses: self.filter.statuses.clone(),
         });
     }
 
     fn apply_filter_bar(&mut self) {
         if let Some(bar) = self.filter_bar.take() {
-            self.filter.kinds = bar.kinds;
+            self.filter.lifecycles = bar.lifecycles;
+            self.filter.tags = bar.tags;
             self.filter.statuses = bar.statuses;
             let n = self.visible_threads().len();
             self.table_state.select(if n > 0 { Some(0) } else { None });
@@ -538,22 +577,31 @@ impl App {
 
     fn clear_filter_bar(&mut self) {
         self.filter_bar = None;
-        self.filter.kinds.clear();
+        self.filter.lifecycles.clear();
+        self.filter.tags.clear();
         self.filter.statuses.clear();
         let n = self.visible_threads().len();
         self.table_state.select(if n > 0 { Some(0) } else { None });
     }
 
     fn toggle_filter_checkbox(&mut self) {
+        let tags = self.discovered_tags();
         let Some(ref mut bar) = self.filter_bar else {
             return;
         };
         match bar.field {
-            FilterField::Kind => {
-                if bar.cursor < FILTER_KIND_LABELS.len() {
-                    let label = FILTER_KIND_LABELS[bar.cursor].to_string();
-                    if !bar.kinds.remove(&label) {
-                        bar.kinds.insert(label);
+            FilterField::Lifecycle => {
+                if bar.cursor < FILTER_LIFECYCLE_LABELS.len() {
+                    let label = FILTER_LIFECYCLE_LABELS[bar.cursor].to_string();
+                    if !bar.lifecycles.remove(&label) {
+                        bar.lifecycles.insert(label);
+                    }
+                }
+            }
+            FilterField::Tag => {
+                if let Some(label) = tags.get(bar.cursor) {
+                    if !bar.tags.remove(label) {
+                        bar.tags.insert(label.clone());
                     }
                 }
             }
@@ -791,12 +839,14 @@ impl App {
 
     fn begin_create_thread(&mut self) {
         self.thread_form = ThreadForm {
-            kind_index: default_thread_kind_index(
-                self.filter.kinds.iter().next().map(|s| s.as_str()),
+            lifecycle_index: default_thread_lifecycle_index(
+                self.filter.lifecycles.iter().next().map(|s| s.as_str()),
             ),
+            tags: String::new(),
             title: String::new(),
             body: String::new(),
-            field: ThreadFormField::Kind,
+            field: ThreadFormField::Lifecycle,
+            tag_error: None,
         };
         self.view = View::CreateThread;
     }
@@ -1285,7 +1335,7 @@ mod tests {
     #[test]
     fn list_view_contains_title() {
         let mut app = App::new(vec![make_row("RFC-0001", "rfc", "draft", "Test RFC")]);
-        let out = render_to_string(&mut app, 80, 20);
+        let out = render_to_string(&mut app, 110, 20);
         assert!(out.contains("Test RFC"), "expected 'Test RFC' in:\n{out}");
     }
 
@@ -1430,7 +1480,7 @@ mod tests {
             make_row("RFC-0001", "rfc", "draft", "Proposal"),
         ];
         let mut app = App::new(rows);
-        app.filter.kinds.insert("issue".into());
+        app.filter.lifecycles.insert("execution".into());
         let out = render_to_string(&mut app, 80, 20);
         assert!(out.contains("ISSUE-0001"));
         assert!(out.contains("1 threads"));
@@ -1530,12 +1580,13 @@ mod tests {
         app.begin_create_thread();
         let out = render_to_string(&mut app, 80, 20);
         assert!(out.contains("create thread"));
-        assert!(out.contains("kind: issue"));
+        assert!(out.contains("lifecycle: execution"));
+        assert!(out.contains("tags: (none)"));
         assert!(out.contains("title:"));
         assert!(out.contains("body: (empty)"));
         assert!(out.contains("submit: [Create thread]"));
-        assert!(out.contains("thread kinds"));
-        assert!(out.contains("> issue"));
+        assert!(out.contains("thread lifecycles"));
+        assert!(out.contains("> execution"));
     }
 
     #[test]
@@ -1544,11 +1595,12 @@ mod tests {
         app.begin_create_node("RFC-0001");
         let out = render_to_string(&mut app, 80, 20);
         assert!(out.contains("create node"));
-        assert!(out.contains("type: claim"));
+        // SPEC-2.0 §2.5: default node type is `comment` (was `claim` in 1.x).
+        assert!(out.contains("type: comment"));
         assert!(out.contains("body: (empty)"));
         assert!(out.contains("submit: [Create node]"));
         assert!(out.contains("node types"));
-        assert!(out.contains("> claim"));
+        assert!(out.contains("> comment"));
     }
 
     #[test]
@@ -1651,14 +1703,14 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_thread_kind_field_does_not_submit() {
+    fn enter_on_thread_lifecycle_field_does_not_submit() {
         let mut app = App::new(vec![]);
         app.begin_create_thread();
 
         handle_edit_transition_via_create_thread(&mut app);
 
         assert_eq!(app.view, View::CreateThread);
-        assert_eq!(app.thread_form.field, ThreadFormField::Kind);
+        assert_eq!(app.thread_form.field, ThreadFormField::Lifecycle);
     }
 
     fn handle_edit_transition_via_create_thread(app: &mut App) {
@@ -1772,7 +1824,9 @@ mod tests {
         let (_dir, git, _paths, conn, db_path) = setup_repo();
         let mut app = App::new(vec![]);
         app.begin_create_thread();
-        app.thread_form.kind_index = 1;
+        // Lifecycle index 0 = proposal, with conventional tag → RFC preset.
+        app.thread_form.lifecycle_index = 0;
+        app.thread_form.tags = "cross-cutting".into();
         app.thread_form.title = "Created in TUI".into();
         app.thread_form.body = "Body from TUI".into();
 
@@ -2050,22 +2104,21 @@ mod tests {
     }
 
     #[test]
-    fn filter_bar_apply_sets_kind_and_status() {
+    fn filter_bar_apply_sets_lifecycle_and_status() {
         let mut app = App::new(vec![]);
-        assert!(app.filter.kinds.is_empty());
+        assert!(app.filter.lifecycles.is_empty());
         assert!(app.filter.statuses.is_empty());
 
         app.open_filter_bar();
         assert!(app.filter_bar.is_some());
 
-        // Toggle "issue" for kind, "draft" for status
         if let Some(ref mut bar) = app.filter_bar {
-            bar.kinds.insert("issue".into());
+            bar.lifecycles.insert("execution".into());
             bar.statuses.insert("draft".into());
         }
         app.apply_filter_bar();
 
-        assert!(app.filter.kinds.contains("issue"));
+        assert!(app.filter.lifecycles.contains("execution"));
         assert!(app.filter.statuses.contains("draft"));
         assert!(app.filter_bar.is_none());
     }
@@ -2073,26 +2126,25 @@ mod tests {
     #[test]
     fn filter_bar_cancel_preserves_existing_filter() {
         let mut app = App::new(vec![]);
-        app.filter.kinds.insert("rfc".into());
+        app.filter.lifecycles.insert("proposal".into());
         app.open_filter_bar();
-        // Change something in the bar but cancel
         if let Some(ref mut bar) = app.filter_bar {
-            bar.kinds.clear();
-            bar.kinds.insert("issue".into());
+            bar.lifecycles.clear();
+            bar.lifecycles.insert("execution".into());
         }
         app.cancel_filter_bar();
-        assert!(app.filter.kinds.contains("rfc"));
+        assert!(app.filter.lifecycles.contains("proposal"));
         assert!(app.filter_bar.is_none());
     }
 
     #[test]
     fn filter_bar_clear_resets_both_dimensions() {
         let mut app = App::new(vec![]);
-        app.filter.kinds.insert("issue".into());
+        app.filter.lifecycles.insert("execution".into());
         app.filter.statuses.insert("open".into());
         app.open_filter_bar();
         app.clear_filter_bar();
-        assert!(app.filter.kinds.is_empty());
+        assert!(app.filter.lifecycles.is_empty());
         assert!(app.filter.statuses.is_empty());
         assert!(app.filter_bar.is_none());
     }
@@ -2100,39 +2152,50 @@ mod tests {
     #[test]
     fn filter_bar_open_reflects_current_filter() {
         let mut app = App::new(vec![]);
-        app.filter.kinds.insert("rfc".into());
-        app.filter.statuses.insert("pending".into());
+        app.filter.lifecycles.insert("proposal".into());
+        app.filter.statuses.insert("review".into());
         app.open_filter_bar();
         let bar = app.filter_bar.as_ref().unwrap();
-        assert!(bar.kinds.contains("rfc"));
-        assert!(bar.statuses.contains("pending"));
+        assert!(bar.lifecycles.contains("proposal"));
+        assert!(bar.statuses.contains("review"));
     }
 
     #[test]
     fn filter_bar_toggle_checkbox() {
         let mut app = App::new(vec![]);
         app.open_filter_bar();
-        // Toggle "issue" on (cursor 0 = "issue")
+        // FILTER_LIFECYCLE_LABELS = ["proposal", "execution", "record"];
+        // cursor 1 = execution.
         if let Some(ref mut bar) = app.filter_bar {
-            bar.field = FilterField::Kind;
-            bar.cursor = 0;
+            bar.field = FilterField::Lifecycle;
+            bar.cursor = 1;
         }
         app.toggle_filter_checkbox();
-        assert!(app.filter_bar.as_ref().unwrap().kinds.contains("issue"));
+        assert!(app
+            .filter_bar
+            .as_ref()
+            .unwrap()
+            .lifecycles
+            .contains("execution"));
         // Toggle it off
         app.toggle_filter_checkbox();
-        assert!(!app.filter_bar.as_ref().unwrap().kinds.contains("issue"));
+        assert!(!app
+            .filter_bar
+            .as_ref()
+            .unwrap()
+            .lifecycles
+            .contains("execution"));
     }
 
     #[test]
-    fn filter_multi_select_kinds() {
+    fn filter_multi_select_lifecycles() {
         let rows = vec![
             make_row("ISSUE-0001", "issue", "open", "Bug"),
             make_row("RFC-0001", "rfc", "draft", "Proposal"),
         ];
         let mut app = App::new(rows);
-        app.filter.kinds.insert("issue".into());
-        app.filter.kinds.insert("rfc".into());
+        app.filter.lifecycles.insert("execution".into());
+        app.filter.lifecycles.insert("proposal".into());
         let visible = app.visible_threads();
         assert_eq!(visible.len(), 2);
     }
@@ -2142,7 +2205,7 @@ mod tests {
         let rows = vec![
             make_row("ISSUE-0001", "issue", "open", "Bug"),
             make_row("RFC-0001", "rfc", "draft", "Proposal"),
-            make_row("ISSUE-0002", "issue", "closed", "Old bug"),
+            make_row("ISSUE-0002", "issue", "done", "Old bug"),
         ];
         let mut app = App::new(rows);
         app.filter.statuses.insert("open".into());
@@ -2152,14 +2215,14 @@ mod tests {
     }
 
     #[test]
-    fn visible_threads_filters_by_kind_and_status() {
+    fn visible_threads_filters_by_lifecycle_and_status() {
         let rows = vec![
             make_row("ISSUE-0001", "issue", "open", "Bug"),
             make_row("RFC-0001", "rfc", "open", "Proposal"),
-            make_row("ISSUE-0002", "issue", "closed", "Old bug"),
+            make_row("ISSUE-0002", "issue", "done", "Old bug"),
         ];
         let mut app = App::new(rows);
-        app.filter.kinds.insert("issue".into());
+        app.filter.lifecycles.insert("execution".into());
         app.filter.statuses.insert("open".into());
         let visible = app.visible_threads();
         assert_eq!(visible.len(), 1);
@@ -2253,5 +2316,207 @@ mod tests {
         let err = ForumError::Repo("not found".into());
         let flash = to_error_flash(&app, &err);
         assert!(flash.hint.is_none());
+    }
+
+    // ------------------------------------------------------------------
+    // JOB-d4cdyi5b AC#10 — Track H acceptance tests
+    // ------------------------------------------------------------------
+
+    /// AC#10: list-view row renders the lifecycle column, tag chip prefix,
+    /// and `@`-marker on bare-token IDs (legacy IDs unchanged).
+    #[test]
+    fn list_row_shows_lifecycle_and_tag_chip_with_at_marker() {
+        let rows = vec![
+            // Bare 8-char token → @-marker
+            make_row("a7f3b2x1", "issue", "open", "fix the bug"),
+            // Legacy ID → unchanged
+            make_row("RFC-0001", "rfc", "draft", "propose a thing"),
+        ];
+        let mut app = App::new(rows);
+        let out = render_to_string(&mut app, 110, 20);
+        assert!(out.contains("@a7f3b2x1"), "missing @-marker:\n{out}");
+        assert!(
+            out.contains("RFC-0001"),
+            "legacy ID should render unchanged:\n{out}"
+        );
+        assert!(
+            out.contains("LIFECYCLE"),
+            "expected LIFECYCLE column header:\n{out}"
+        );
+        // Tag chip prefix on the title cell
+        assert!(
+            out.contains("[bug] fix the bug"),
+            "missing [bug] tag chip:\n{out}"
+        );
+        assert!(
+            out.contains("[cross-cutting]"),
+            "missing [cross-cutting] tag chip:\n{out}"
+        );
+    }
+
+    /// AC#10: thread-detail header shows lifecycle / tags / linked panel for
+    /// a legacy thread (no facet_set), with the §2.3.3 fallback applied.
+    #[test]
+    fn thread_detail_header_shows_lifecycle_tags_linked_panel() {
+        let (_dir, git, _paths, _conn, db_path) = setup_repo();
+        let thread_id = crate::internal::create::create_thread(
+            &git,
+            crate::internal::event::ThreadKind::Rfc,
+            "Header test",
+            None,
+            "human/test-user",
+            &crate::internal::clock::FixedClock {
+                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            },
+        )
+        .unwrap();
+        reindex::run_reindex(&git, &db_path).unwrap();
+
+        let mut app = App::new(Vec::new());
+        let mut perf = Perf::disabled();
+        open_thread_detail(&mut app, &git, &thread_id, None, &mut perf).unwrap();
+
+        // App-side derivation: legacy RFC → lifecycle=proposal, tags=[cross-cutting].
+        assert_eq!(app.thread_lifecycle.as_deref(), Some("proposal"));
+        assert_eq!(app.thread_tags, vec!["cross-cutting".to_string()]);
+
+        // Render and check the body header surfaces lifecycle/tags + linked panel
+        let out = render_to_string(&mut app, 120, 28);
+        assert!(
+            out.contains("lifecycle:"),
+            "missing lifecycle in header:\n{out}"
+        );
+        assert!(
+            out.contains("proposal"),
+            "expected proposal lifecycle:\n{out}"
+        );
+        assert!(
+            out.contains("cross-cutting"),
+            "expected cross-cutting tag:\n{out}"
+        );
+        assert!(
+            out.contains("linked-children index unavailable"),
+            "missing linked panel fallback:\n{out}"
+        );
+    }
+
+    /// AC#10: create-thread form integration — `(execution, [bug])` produces
+    /// the same on-disk Event shape as `git forum new bug --title …`.
+    /// The kind preset path emits exactly one `create` event (no facet_set).
+    #[test]
+    fn create_thread_form_execution_bug_matches_kind_preset() {
+        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let mut app = App::new(vec![]);
+        app.begin_create_thread();
+        // Lifecycle 1 = execution; tag = bug → Issue preset (§2.3.3).
+        app.thread_form.lifecycle_index = 1;
+        app.thread_form.tags = "bug".into();
+        app.thread_form.title = "fix the bug".into();
+        submit_create_thread(&mut app, &git, &conn, &db_path, &mut Perf::disabled()).unwrap();
+
+        let rows = index::list_threads(&conn).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, "issue");
+        assert_eq!(rows[0].title, "fix the bug");
+
+        // The on-disk thread has exactly one event (the create event).
+        // Preset path means no follow-up facet_set was written.
+        let state = crate::internal::thread::replay_thread(&git, &rows[0].id).unwrap();
+        assert_eq!(
+            state.events.len(),
+            1,
+            "preset path must produce a single create event (no facet_set)"
+        );
+        assert!(matches!(
+            state.events[0].event_type,
+            crate::internal::event::EventType::Create
+        ));
+    }
+
+    /// AC#10: when (lifecycle, tags) doesn't match a §9.1 preset, the form
+    /// falls back to the canonical path: kind-by-lifecycle plus a facet_set
+    /// event recording the user's tag list.
+    #[test]
+    fn create_thread_form_non_preset_writes_facet_set() {
+        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let mut app = App::new(vec![]);
+        app.begin_create_thread();
+        app.thread_form.lifecycle_index = 1; // execution
+        app.thread_form.tags = "bug, urgent".into();
+        app.thread_form.title = "two-tag bug".into();
+        submit_create_thread(&mut app, &git, &conn, &db_path, &mut Perf::disabled()).unwrap();
+
+        let rows = index::list_threads(&conn).unwrap();
+        assert_eq!(rows.len(), 1);
+
+        let state = crate::internal::thread::replay_thread(&git, &rows[0].id).unwrap();
+        // Two events: create + facet_set
+        assert_eq!(state.events.len(), 2);
+        assert!(state.tags.contains(&"bug".to_string()));
+        assert!(state.tags.contains(&"urgent".to_string()));
+    }
+
+    /// AC#10: invalid tag input blocks submission and records a form-level
+    /// error (§2.3.5 grammar). No thread is created.
+    #[test]
+    fn create_thread_form_invalid_tag_blocks_submit() {
+        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let mut app = App::new(vec![]);
+        app.begin_create_thread();
+        app.thread_form.lifecycle_index = 1;
+        app.thread_form.tags = "BadTag".into(); // uppercase rejected by §2.3.5
+        app.thread_form.title = "should not be created".into();
+        submit_create_thread(&mut app, &git, &conn, &db_path, &mut Perf::disabled()).unwrap();
+
+        assert!(app.thread_form.tag_error.is_some());
+        let rows = index::list_threads(&conn).unwrap();
+        assert!(rows.is_empty(), "no thread should be written on tag error");
+    }
+
+    /// AC#10: create-node form default selection writes a `Comment` Say event
+    /// (no `legacy_subtype`).
+    #[test]
+    fn create_node_form_default_writes_comment() {
+        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let thread_id = crate::internal::create::create_thread(
+            &git,
+            crate::internal::event::ThreadKind::Rfc,
+            "Comment default",
+            None,
+            "human/test-user",
+            &crate::internal::clock::FixedClock {
+                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            },
+        )
+        .unwrap();
+        reindex::run_reindex(&git, &db_path).unwrap();
+
+        let mut app = App::new(index::list_threads(&conn).unwrap());
+        let mut perf = Perf::disabled();
+        open_thread_detail(&mut app, &git, &thread_id, None, &mut perf).unwrap();
+        app.begin_create_node(&thread_id);
+        // Default selection is index 0 → Comment.
+        app.node_form.body = "default-typed reply".into();
+        app.node_form.field = NodeFormField::Submit;
+        handle_create_node_key(
+            &mut app,
+            crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &git,
+            &conn,
+            &db_path,
+            &thread_id,
+            &mut perf,
+        )
+        .unwrap();
+
+        assert_eq!(app.thread_nodes.len(), 1);
+        assert_eq!(
+            app.thread_nodes[0].node_type,
+            crate::internal::event::NodeType::Comment
+        );
+        assert!(
+            app.thread_nodes[0].legacy_subtype.is_none(),
+            "default Comment must have no legacy_subtype"
+        );
     }
 }

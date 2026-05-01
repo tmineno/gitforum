@@ -5,7 +5,7 @@ use crate::internal::actor;
 use crate::internal::clock::SystemClock;
 use crate::internal::create;
 use crate::internal::error::ForumResult;
-use crate::internal::event::{NodeType, ThreadKind};
+use crate::internal::event::{self, Lifecycle, NodeType, ThreadKind};
 use crate::internal::evidence_ops;
 use crate::internal::git_ops::GitOps;
 use crate::internal::index::{self, ThreadRow};
@@ -48,7 +48,14 @@ pub(super) fn open_thread_detail(
     };
 
     app.thread_title = state.title.clone();
-    app.thread_kind = state.kind.to_string();
+    app.thread_lifecycle = Some(state.lifecycle().as_str().to_string());
+    // SPEC-2.0 §2.3.3: unmigrated 1.x threads (no facet_set) display the
+    // conventional tag derived from kind; migrated threads use replayed tags.
+    app.thread_tags = if state.lifecycle.is_none() && state.tags.is_empty() {
+        super::render::conventional_tags_for_kind(state.kind)
+    } else {
+        state.tags.clone()
+    };
     app.thread_status = state.status.to_string();
     app.thread_text = show::render_show(&state, false);
     app.thread_scroll = 0;
@@ -121,17 +128,36 @@ pub(super) fn submit_create_thread(
         return Ok(());
     }
 
+    // Parse + validate tags (§2.3.5 grammar). Form blocks submission on error.
+    let parsed_tags = match parse_tag_input(&app.thread_form.tags) {
+        Ok(tags) => tags,
+        Err(msg) => {
+            app.thread_form.tag_error = Some(msg);
+            return Ok(());
+        }
+    };
+    app.thread_form.tag_error = None;
+
     let t = Instant::now();
     let actor = actor::current_actor(git, git.default_actor());
     let clock = SystemClock;
-    let kind = thread_kind_values()[app.thread_form.kind_index];
+    let lifecycle = thread_lifecycle_values()[app.thread_form.lifecycle_index];
     let body = if app.thread_form.body.trim().is_empty() {
         None
     } else {
         Some(app.thread_form.body.trim())
     };
 
+    // §2.3.3 / §9.1: when (lifecycle, tags) matches a kind preset shape, the
+    // form invokes the preset path (no facet_set). Otherwise it falls back to
+    // a kind-by-lifecycle default and writes a facet_set for the user's tags.
+    let preset = match_kind_preset(lifecycle, &parsed_tags);
+    let kind = preset.unwrap_or_else(|| default_kind_for_lifecycle(lifecycle));
+
     let thread_id = create::create_thread(git, kind, title, body, &actor, &clock)?;
+    if preset.is_none() {
+        write_ops::write_facet_set(git, &thread_id, None, &parsed_tags, &[], &actor, &clock)?;
+    }
     reindex::run_reindex(git, db_path)?;
     app.threads = index::list_threads(conn)?;
     perf.record("submit_create", Some(&thread_id), t.elapsed());
@@ -288,51 +314,77 @@ pub(super) fn build_tree_entries(nodes: &[Node]) -> Vec<TreeEntry> {
     entries
 }
 
-pub(super) fn thread_kind_values() -> [ThreadKind; 4] {
-    [
-        ThreadKind::Issue,
-        ThreadKind::Rfc,
-        ThreadKind::Dec,
-        ThreadKind::Task,
-    ]
+pub(super) fn thread_lifecycle_values() -> [Lifecycle; 3] {
+    [Lifecycle::Proposal, Lifecycle::Execution, Lifecycle::Record]
 }
 
-pub(super) fn thread_kind_labels() -> [&'static str; 4] {
-    ["issue", "rfc", "dec", "task"]
+pub(super) fn thread_lifecycle_labels() -> [&'static str; 3] {
+    ["proposal", "execution", "record"]
 }
 
-pub(super) fn default_thread_kind_index(kind_filter: Option<&str>) -> usize {
-    match kind_filter {
-        Some("issue") | Some("ask") => 0,
-        Some("rfc") => 1,
-        Some("dec") => 2,
-        Some("task") | Some("job") => 3,
-        _ => 0,
+pub(super) fn default_thread_lifecycle_index(lifecycle_filter: Option<&str>) -> usize {
+    match lifecycle_filter {
+        Some("proposal") => 0,
+        Some("execution") => 1,
+        Some("record") => 2,
+        _ => 1, // execution default — most common preset target
     }
 }
 
-pub(super) fn node_type_values() -> [NodeType; 7] {
+/// SPEC-2.0 §2.5: the four canonical 2.0 node types offered for creation.
+/// Legacy prose-only types (claim, question, summary, risk, review,
+/// alternative, assumption) are no longer offered; pre-existing nodes still
+/// render with their stored label.
+pub(super) fn node_type_values() -> [NodeType; 4] {
     [
-        NodeType::Claim,
-        NodeType::Question,
+        NodeType::Comment,
+        NodeType::Approval,
         NodeType::Objection,
-        NodeType::Evidence,
-        NodeType::Summary,
         NodeType::Action,
-        NodeType::Risk,
     ]
 }
 
-pub(super) fn node_type_labels() -> [&'static str; 7] {
-    [
-        "claim",
-        "question",
-        "objection",
-        "evidence",
-        "summary",
-        "action",
-        "risk",
-    ]
+pub(super) fn node_type_labels() -> [&'static str; 4] {
+    ["comment", "approval", "objection", "action"]
+}
+
+/// Parse a comma-separated tag list per §2.3.5 grammar.
+/// Empty / whitespace-only entries are dropped; remaining tags are validated.
+pub(super) fn parse_tag_input(input: &str) -> Result<Vec<String>, String> {
+    let mut tags = Vec::new();
+    for raw in input.split(',') {
+        let t = raw.trim();
+        if t.is_empty() {
+            continue;
+        }
+        event::validate_tag(t).map_err(|e| e.to_string())?;
+        if !tags.iter().any(|x: &String| x == t) {
+            tags.push(t.to_string());
+        }
+    }
+    Ok(tags)
+}
+
+/// SPEC-2.0 §2.3.3 + §9.1: detect whether (lifecycle, tags) matches one of
+/// the four kind-preset shapes so the form can invoke the preset path.
+pub(super) fn match_kind_preset(lifecycle: Lifecycle, tags: &[String]) -> Option<ThreadKind> {
+    match (lifecycle, tags) {
+        (Lifecycle::Proposal, t) if t == ["cross-cutting"] => Some(ThreadKind::Rfc),
+        (Lifecycle::Record, []) => Some(ThreadKind::Dec),
+        (Lifecycle::Execution, t) if t == ["task"] => Some(ThreadKind::Task),
+        (Lifecycle::Execution, t) if t == ["bug"] => Some(ThreadKind::Issue),
+        _ => None,
+    }
+}
+
+/// Fallback kind when the form's (lifecycle, tags) combination doesn't match
+/// a §2.3.3 preset. The kind only needs to share the chosen lifecycle.
+pub(super) fn default_kind_for_lifecycle(lifecycle: Lifecycle) -> ThreadKind {
+    match lifecycle {
+        Lifecycle::Proposal => ThreadKind::Rfc,
+        Lifecycle::Execution => ThreadKind::Issue,
+        Lifecycle::Record => ThreadKind::Dec,
+    }
 }
 
 pub(super) fn link_relation_labels() -> [&'static str; 4] {
@@ -408,7 +460,7 @@ pub(super) fn selected_link_target_label(app: &App, source_thread_id: &str) -> S
                 .map(|row| {
                     format!(
                         "{}  {}",
-                        row.id,
+                        super::render::display_thread_id(&row.id),
                         super::render::single_line_preview(&row.title, 28)
                     )
                 })

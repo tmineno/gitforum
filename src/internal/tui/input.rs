@@ -19,11 +19,11 @@ use super::state::{
     apply_node_status_action, auto_link_candidates, link_relation_labels, link_target_kind_labels,
     link_target_kind_values, node_type_labels, node_type_values, open_node_detail,
     open_thread_detail, submit_create_link, submit_create_node, submit_create_thread,
-    thread_kind_labels, thread_kind_values,
+    thread_lifecycle_labels, thread_lifecycle_values,
 };
 use super::{
     App, FilterField, LinkFormField, LinkOrigin, LinkTargetKind, NodeFormField, NodeStatusAction,
-    ThreadFormField, View, FILTER_KIND_LABELS, FILTER_STATUS_LABELS,
+    ThreadFormField, View, FILTER_LIFECYCLE_LABELS, FILTER_STATUS_LABELS,
 };
 
 use super::persist;
@@ -492,24 +492,26 @@ pub(super) fn handle_mouse(
                     submit_create_thread(app, git, conn, db_path, perf)?;
                 } else if let Some(area) = app.ui_rects.dropdown {
                     if let Some(index) = dropdown_item_at(area, mouse.row) {
-                        let max = thread_kind_labels().len();
+                        let max = thread_lifecycle_labels().len();
                         if index < max {
-                            app.thread_form.kind_index = index;
-                            app.thread_form.field = ThreadFormField::Kind;
+                            app.thread_form.lifecycle_index = index;
+                            app.thread_form.field = ThreadFormField::Lifecycle;
                         }
                     }
                 } else {
-                    // Click form field labels to focus
+                    // Click form field labels to focus. Only the first 4
+                    // tracked rects fit in `form_fields` (tags slot replaces
+                    // the old kind dropdown line; submit row is detected
+                    // separately above).
                     let fields = [
-                        ThreadFormField::Kind,
+                        ThreadFormField::Lifecycle,
+                        ThreadFormField::Tags,
                         ThreadFormField::Title,
                         ThreadFormField::Body,
-                        ThreadFormField::Submit,
                     ];
                     for (i, field) in fields.iter().enumerate() {
-                        if app.ui_rects.form_fields[i]
-                            .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
-                        {
+                        let rect: Option<Rect> = app.ui_rects.form_fields[i];
+                        if rect.is_some_and(|area| rect_contains(area, mouse.column, mouse.row)) {
                             app.thread_form.field = *field;
                             break;
                         }
@@ -607,13 +609,13 @@ pub(super) fn handle_mouse(
 }
 
 fn handle_filter_bar_mouse(app: &mut App, mouse: MouseEvent) {
-    // Click inside kind list — toggle checkbox
+    // Click inside lifecycle list — toggle checkbox
     if let Some(area) = app.ui_rects.filter_kind_area {
         if rect_contains(area, mouse.column, mouse.row) {
             if let Some(index) = dropdown_item_at(area, mouse.row) {
-                if index < FILTER_KIND_LABELS.len() {
+                if index < FILTER_LIFECYCLE_LABELS.len() {
                     if let Some(ref mut bar) = app.filter_bar {
-                        bar.field = FilterField::Kind;
+                        bar.field = FilterField::Lifecycle;
                         bar.cursor = index;
                     }
                     app.toggle_filter_checkbox();
@@ -648,23 +650,28 @@ fn handle_filter_bar_mouse(app: &mut App, mouse: MouseEvent) {
 }
 
 pub(super) fn handle_filter_bar_key(app: &mut App, key: crossterm::event::KeyEvent) {
+    let tag_count = app.discovered_tags().len();
     let Some(ref mut bar) = app.filter_bar else {
         return;
     };
     let max = match bar.field {
-        FilterField::Kind => FILTER_KIND_LABELS.len(),
+        FilterField::Lifecycle => FILTER_LIFECYCLE_LABELS.len(),
+        FilterField::Tag => tag_count,
         FilterField::Status => FILTER_STATUS_LABELS.len(),
     };
     match key.code {
         KeyCode::Tab | KeyCode::BackTab => {
             bar.field = match bar.field {
-                FilterField::Kind => FilterField::Status,
-                FilterField::Status => FilterField::Kind,
+                FilterField::Lifecycle => FilterField::Tag,
+                FilterField::Tag => FilterField::Status,
+                FilterField::Status => FilterField::Lifecycle,
             };
             bar.cursor = 0;
         }
         KeyCode::Char('j') | KeyCode::Down => {
-            bar.cursor = (bar.cursor + 1).min(max - 1);
+            if max > 0 {
+                bar.cursor = (bar.cursor + 1).min(max - 1);
+            }
         }
         KeyCode::Char('k') | KeyCode::Up => {
             bar.cursor = bar.cursor.saturating_sub(1);
@@ -695,37 +702,46 @@ pub(super) fn handle_create_thread_key(
         }
         KeyCode::Tab => {
             app.thread_form.field = match app.thread_form.field {
-                ThreadFormField::Kind => ThreadFormField::Title,
+                ThreadFormField::Lifecycle => ThreadFormField::Tags,
+                ThreadFormField::Tags => ThreadFormField::Title,
                 ThreadFormField::Title => ThreadFormField::Body,
                 ThreadFormField::Body => ThreadFormField::Submit,
-                ThreadFormField::Submit => ThreadFormField::Kind,
+                ThreadFormField::Submit => ThreadFormField::Lifecycle,
             };
         }
         KeyCode::Up => {
-            if app.thread_form.field == ThreadFormField::Kind {
-                app.thread_form.kind_index = app.thread_form.kind_index.saturating_sub(1);
+            if app.thread_form.field == ThreadFormField::Lifecycle {
+                app.thread_form.lifecycle_index = app.thread_form.lifecycle_index.saturating_sub(1);
             }
         }
         KeyCode::Down => {
-            if app.thread_form.field == ThreadFormField::Kind {
-                app.thread_form.kind_index =
-                    (app.thread_form.kind_index + 1).min(thread_kind_values().len() - 1);
+            if app.thread_form.field == ThreadFormField::Lifecycle {
+                app.thread_form.lifecycle_index =
+                    (app.thread_form.lifecycle_index + 1).min(thread_lifecycle_values().len() - 1);
             }
         }
         KeyCode::Backspace => match app.thread_form.field {
             ThreadFormField::Title => {
                 app.thread_form.title.pop();
             }
-            ThreadFormField::Body | ThreadFormField::Kind | ThreadFormField::Submit => {}
+            ThreadFormField::Tags => {
+                app.thread_form.tags.pop();
+                app.thread_form.tag_error = None;
+            }
+            ThreadFormField::Body | ThreadFormField::Lifecycle | ThreadFormField::Submit => {}
         },
         KeyCode::Char(ch) => match app.thread_form.field {
             ThreadFormField::Title => app.thread_form.title.push(ch),
-            ThreadFormField::Body | ThreadFormField::Kind | ThreadFormField::Submit => {}
+            ThreadFormField::Tags => {
+                app.thread_form.tags.push(ch);
+                app.thread_form.tag_error = None;
+            }
+            ThreadFormField::Body | ThreadFormField::Lifecycle | ThreadFormField::Submit => {}
         },
         KeyCode::Enter => match app.thread_form.field {
             ThreadFormField::Body => app.view = View::EditThreadBody,
             ThreadFormField::Submit => submit_create_thread(app, git, conn, db_path, perf)?,
-            ThreadFormField::Kind | ThreadFormField::Title => {}
+            ThreadFormField::Lifecycle | ThreadFormField::Tags | ThreadFormField::Title => {}
         },
         _ => {}
     }

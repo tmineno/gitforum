@@ -4,16 +4,19 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
 use ratatui::Frame;
 
+use crate::internal::event::ThreadKind;
+use crate::internal::id;
+use crate::internal::index::ThreadRow;
 use crate::internal::node::Node;
 
 use super::markdown::markdown_to_text;
 use super::state::{
     auto_link_candidates, link_relation_labels, link_target_kind_labels, link_target_kind_values,
-    node_type_labels, selected_link_target_label, thread_kind_labels,
+    node_type_labels, selected_link_target_label, thread_lifecycle_labels,
 };
 use super::{
     App, ErrorFlash, FilterField, LinkFormField, LinkTargetKind, NodeFormField, ThreadFormField,
-    UiRects, View, FILTER_KIND_LABELS, FILTER_STATUS_LABELS, SORT_COLUMNS,
+    UiRects, View, FILTER_LIFECYCLE_LABELS, FILTER_STATUS_LABELS, SORT_COLUMNS,
 };
 
 /// Render the current app state into `frame`.
@@ -63,6 +66,65 @@ pub(super) fn short_id(id: &str) -> String {
     id[..id.len().min(16)].to_string()
 }
 
+/// SPEC-2.0 §6.1: format a thread ID for human-facing display in the TUI.
+/// Bare 8-char base36 tokens render as `@XXXXXXXX`; legacy `KIND-…` IDs
+/// render unchanged. Single source of truth for every TUI render site.
+pub(super) fn display_thread_id(thread_id: &str) -> String {
+    id::display_thread_id(thread_id)
+}
+
+/// SPEC-2.0 §2.3.3: the conventional tag set a 1.x kind would emit if it
+/// were created today via the kind preset. Used as the display fallback for
+/// unmigrated threads that have no `facet_set` event in their chain.
+pub(super) fn conventional_tags_for_kind(kind: ThreadKind) -> Vec<String> {
+    match kind {
+        ThreadKind::Rfc => vec!["cross-cutting".to_string()],
+        ThreadKind::Issue => vec!["bug".to_string()],
+        ThreadKind::Task => vec!["task".to_string()],
+        ThreadKind::Dec => Vec::new(),
+    }
+}
+
+/// Lifecycle string for a `ThreadRow` — derived from `kind` since the index
+/// schema is still pre-Track-B (no lifecycle column).
+pub(super) fn row_lifecycle(row: &ThreadRow) -> String {
+    match row.kind.as_str() {
+        "rfc" => "proposal".to_string(),
+        "dec" => "record".to_string(),
+        _ => "execution".to_string(),
+    }
+}
+
+/// Display tags for a `ThreadRow` — falls back to §2.3.3 conventional tag
+/// since the index schema doesn't yet carry the replayed tag set.
+pub(super) fn row_tags(row: &ThreadRow) -> Vec<String> {
+    match row.kind.as_str() {
+        "rfc" => vec!["cross-cutting".to_string()],
+        "issue" => vec!["bug".to_string()],
+        "task" => vec!["task".to_string()],
+        _ => Vec::new(),
+    }
+}
+
+/// SPEC-2.0 §11 / JOB-d4cdyi5b AC#7 — thread-detail "linked" advisory panel.
+///
+/// One-line text summarising direct incoming `implements` children. Track G
+/// is responsible for the reverse-link index this should read from; until
+/// that index ships, the panel falls back to the documented "rebuild
+/// required" message. Pure display per CORE-VALUE.md "Advisories".
+fn linked_panel_text() -> &'static str {
+    "**linked:** (linked-children index unavailable; run `git forum reindex`)"
+}
+
+fn lifecycle_color(lifecycle: &str) -> Color {
+    match lifecycle {
+        "proposal" => Color::Cyan,
+        "execution" => Color::Yellow,
+        "record" => Color::Magenta,
+        _ => Color::Reset,
+    }
+}
+
 pub(super) fn form_line(active: bool, label: &str, value: &str) -> String {
     let marker = if active { ">" } else { " " };
     format!("{marker} {label}: {value}")
@@ -98,36 +160,24 @@ pub(super) fn node_status(node: &Node) -> &'static str {
     }
 }
 
-fn kind_color(kind: &str) -> Color {
-    match kind {
-        "rfc" => Color::Cyan,
-        "issue" => Color::Yellow,
-        "dec" => Color::Magenta,
-        "task" => Color::Green,
-        _ => Color::Reset,
-    }
-}
-
 fn status_color(status: &str) -> Color {
     match status {
         "open" | "draft" => Color::Green,
-        "pending" | "proposed" | "under-review" => Color::Yellow,
-        "accepted" | "closed" => Color::Magenta,
+        "working" | "review" => Color::Yellow,
+        "done" => Color::Magenta,
         "rejected" => Color::Red,
-        "deprecated" => Color::DarkGray,
+        "deprecated" | "withdrawn" => Color::DarkGray,
         _ => Color::Reset,
     }
 }
 
 fn node_type_color(node_type: &str) -> Color {
+    // SPEC-2.0 §2.5 + ADR-006: palette reduced to the four canonical types;
+    // legacy prose-only types collapse to Reset.
     match node_type {
         "objection" => Color::Red,
-        "risk" => Color::Red,
-        "question" => Color::Yellow,
-        "summary" => Color::Green,
+        "approval" => Color::Green,
         "action" => Color::Cyan,
-        "claim" => Color::Reset,
-        "review" => Color::Blue,
         _ => Color::Reset,
     }
 }
@@ -229,10 +279,17 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
         ])
         .split(area);
 
-    let kind_label = if app.filter.kinds.is_empty() {
+    let lifecycle_label = if app.filter.lifecycles.is_empty() {
         "all".to_string()
     } else {
-        let mut v: Vec<&str> = app.filter.kinds.iter().map(|s| s.as_str()).collect();
+        let mut v: Vec<&str> = app.filter.lifecycles.iter().map(|s| s.as_str()).collect();
+        v.sort();
+        v.join(",")
+    };
+    let tag_label = if app.filter.tags.is_empty() {
+        "all".to_string()
+    } else {
+        let mut v: Vec<&str> = app.filter.tags.iter().map(|s| s.as_str()).collect();
         v.sort();
         v.join(",")
     };
@@ -244,12 +301,11 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
         v.join(",")
     };
     let help_text = format!(
-        " [q]quit  [enter]detail  [c]create thread  [r]refresh  [f]filter:{kind_label}/{status_label}  [j/k]navigate"
+        " [q]quit  [enter]detail  [c]create thread  [r]refresh  [f]filter:{lifecycle_label}/{tag_label}/{status_label}  [j/k]navigate"
     );
-    // Track filter label position for mouse click
     let filter_prefix = " [q]quit  [enter]detail  [c]create thread  [r]refresh  ";
     let filter_start = filter_prefix.len() as u16;
-    let filter_len = format!("[f]filter:{kind_label}/{status_label}").len() as u16;
+    let filter_len = format!("[f]filter:{lifecycle_label}/{tag_label}/{status_label}").len() as u16;
     app.ui_rects.filter_label = Some(Rect {
         x: chunks[0].x + filter_start,
         y: chunks[0].y,
@@ -266,14 +322,22 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
         let rows: Vec<Row> = visible
             .iter()
             .map(|t| {
+                let lifecycle = row_lifecycle(t);
+                let tags = row_tags(t);
+                let title_cell = if tags.is_empty() {
+                    t.title.clone()
+                } else {
+                    format!("[{}] {}", tags.join(","), t.title)
+                };
                 Row::new(vec![
-                    Cell::from(t.id.clone()),
-                    Cell::from(t.kind.clone()).style(Style::default().fg(kind_color(&t.kind))),
+                    Cell::from(display_thread_id(&t.id)),
+                    Cell::from(lifecycle.clone())
+                        .style(Style::default().fg(lifecycle_color(&lifecycle))),
                     Cell::from(t.status.clone())
                         .style(Style::default().fg(status_color(&t.status))),
                     Cell::from(short_datetime(&t.created_at)),
                     Cell::from(short_datetime(&t.updated_at)),
-                    Cell::from(t.title.clone()),
+                    Cell::from(title_cell),
                 ])
             })
             .collect();
@@ -282,13 +346,13 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
 
     let widths = [
         Constraint::Length(13),
-        Constraint::Length(10),
-        Constraint::Length(14),
+        Constraint::Length(11),
+        Constraint::Length(11),
         Constraint::Length(12),
         Constraint::Length(12),
         Constraint::Min(20),
     ];
-    let labels = ["ID", "KIND", "STATUS", "CREATED", "UPDATED", "TITLE"];
+    let labels = ["ID", "LIFECYCLE", "STATUS", "CREATED", "UPDATED", "TITLE"];
     let indicator = if app.sort_ascending {
         " \u{25b2}"
     } else {
@@ -397,11 +461,12 @@ fn render_filter_checkbox_list<'a>(
 }
 
 fn render_filter_bar(f: &mut Frame, area: Rect, app: &mut App) {
+    let discovered_tags = app.discovered_tags();
     let Some(ref bar) = app.filter_bar else {
         return;
     };
 
-    let popup = centered_rect(40, 18, area);
+    let popup = centered_rect(60, 18, area);
     app.ui_rects.filter_popup = Some(popup);
 
     f.render_widget(Clear, popup);
@@ -417,19 +482,49 @@ fn render_filter_bar(f: &mut Frame, area: Rect, app: &mut App) {
 
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+        .constraints([
+            Constraint::Percentage(28),
+            Constraint::Percentage(36),
+            Constraint::Percentage(36),
+        ])
         .split(chunks[0]);
 
-    // KIND checkboxes
-    let kind_active = bar.field == FilterField::Kind;
-    let kind_cursor = if kind_active { bar.cursor } else { usize::MAX };
-    let kind_items =
-        render_filter_checkbox_list(&FILTER_KIND_LABELS, &bar.kinds, kind_cursor, kind_active);
-    let kind_title = if kind_active { " KIND* " } else { " KIND " };
-    let kind_list =
-        List::new(kind_items).block(Block::default().borders(Borders::ALL).title(kind_title));
+    // LIFECYCLE checkboxes
+    let lifecycle_active = bar.field == FilterField::Lifecycle;
+    let lifecycle_cursor = if lifecycle_active {
+        bar.cursor
+    } else {
+        usize::MAX
+    };
+    let lifecycle_items = render_filter_checkbox_list(
+        &FILTER_LIFECYCLE_LABELS,
+        &bar.lifecycles,
+        lifecycle_cursor,
+        lifecycle_active,
+    );
+    let lifecycle_title = if lifecycle_active {
+        " LIFECYCLE* "
+    } else {
+        " LIFECYCLE "
+    };
+    let lifecycle_list = List::new(lifecycle_items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(lifecycle_title),
+    );
     app.ui_rects.filter_kind_area = Some(cols[0]);
-    f.render_widget(kind_list, cols[0]);
+    f.render_widget(lifecycle_list, cols[0]);
+
+    // TAG checkboxes — discovered from the loaded thread set (§2.3.5: no
+    // preregistered list).
+    let tag_active = bar.field == FilterField::Tag;
+    let tag_cursor = if tag_active { bar.cursor } else { usize::MAX };
+    let tag_label_refs: Vec<&str> = discovered_tags.iter().map(|s| s.as_str()).collect();
+    let tag_items = render_filter_checkbox_list(&tag_label_refs, &bar.tags, tag_cursor, tag_active);
+    let tag_title = if tag_active { " TAGS* " } else { " TAGS " };
+    let tag_list =
+        List::new(tag_items).block(Block::default().borders(Borders::ALL).title(tag_title));
+    f.render_widget(tag_list, cols[1]);
 
     // STATUS checkboxes
     let status_active = bar.field == FilterField::Status;
@@ -451,8 +546,8 @@ fn render_filter_bar(f: &mut Frame, area: Rect, app: &mut App) {
     };
     let status_list =
         List::new(status_items).block(Block::default().borders(Borders::ALL).title(status_title));
-    app.ui_rects.filter_status_area = Some(cols[1]);
-    f.render_widget(status_list, cols[1]);
+    app.ui_rects.filter_status_area = Some(cols[2]);
+    f.render_widget(status_list, cols[2]);
 
     // Help line
     f.render_widget(
@@ -492,6 +587,7 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
     } else {
         ""
     };
+    let thread_id_display = display_thread_id(thread_id);
 
     // Feature 2: split direction toggle (horizontal = top/bottom, vertical = left/right)
     if app.tree_fullscreen {
@@ -539,6 +635,10 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
             if let Some(ref reply_to) = node.reply_to {
                 content.push_str(&format!("**reply-to:** {}\n", short_id(reply_to)));
             }
+            content.push_str(&format!(
+                "**in thread:** {}\n",
+                display_thread_id(thread_id)
+            ));
             content.push_str("\n---\n\n");
             for line in node.body.lines() {
                 content.push_str(&format!("{line}\n"));
@@ -548,7 +648,27 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
             }
             (title, content)
         } else {
-            (format!(" {thread_id} "), app.thread_text.clone())
+            // SPEC-2.0 §11: thread-detail header surfaces lifecycle + tags
+            // (replacing 1.x kind), plus a one-line "linked" advisory panel
+            // (incoming `implements` children, advisory only).
+            let lifecycle = app.thread_lifecycle.as_deref().unwrap_or("execution");
+            let tags_line = if app.thread_tags.is_empty() {
+                "(none)".to_string()
+            } else {
+                app.thread_tags.join(", ")
+            };
+            let mut content = String::new();
+            content.push_str(&format!("**lifecycle:** {lifecycle}\n"));
+            content.push_str(&format!("**tags:**      {tags_line}\n"));
+            content.push_str(&format!("**status:**    {}\n", app.thread_status));
+            content.push_str("\n---\n\n");
+            content.push_str(&app.thread_text);
+            // Linked advisory panel — pure display, no enforcement.
+            // CORE-VALUE.md "Advisories": informational only.
+            content.push_str("\n\n---\n");
+            content.push_str(linked_panel_text());
+            content.push('\n');
+            (format!(" {thread_id_display} "), content)
         };
 
         let body_block = Block::default().borders(Borders::ALL).title(body_title);
@@ -574,14 +694,24 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         }
     }
 
-    // Thread root row: shows the RFC/issue itself as the first entry
+    // Thread root row: shows the thread itself as the first entry. SPEC-2.0
+    // §11: lifecycle column replaces kind; tag chip prepends the title.
+    let root_lifecycle = app.thread_lifecycle.clone().unwrap_or_default();
+    let root_title_cell = if app.thread_tags.is_empty() {
+        single_line_preview(&app.thread_title, 36)
+    } else {
+        single_line_preview(
+            &format!("[{}] {}", app.thread_tags.join(","), app.thread_title),
+            36,
+        )
+    };
     let root_row = Row::new(vec![
-        Cell::from(thread_id.to_string()),
-        Cell::from(app.thread_kind.clone())
-            .style(Style::default().fg(kind_color(&app.thread_kind))),
+        Cell::from(display_thread_id(thread_id)),
+        Cell::from(root_lifecycle.clone())
+            .style(Style::default().fg(lifecycle_color(&root_lifecycle))),
         Cell::from(app.thread_status.clone())
             .style(Style::default().fg(status_color(&app.thread_status))),
-        Cell::from(single_line_preview(&app.thread_title, 36)),
+        Cell::from(root_title_cell),
     ])
     .style(Style::default().add_modifier(Modifier::BOLD));
 
@@ -704,7 +834,8 @@ pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &mut App) {
         .split(area);
 
     let help = match app.thread_form.field {
-        ThreadFormField::Kind => " [tab]next field  [up/down]cycle kind  [esc]cancel",
+        ThreadFormField::Lifecycle => " [tab]next field  [up/down]cycle lifecycle  [esc]cancel",
+        ThreadFormField::Tags => " [tab]next field  [type]edit tags (comma-sep)  [esc]cancel",
         ThreadFormField::Title => " [tab]next field  [type]edit title  [esc]cancel",
         ThreadFormField::Body => " [tab]next field  [enter]edit body  [esc]cancel",
         ThreadFormField::Submit => " [tab]next field  [enter]submit  [esc]cancel",
@@ -717,11 +848,21 @@ pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &mut App) {
         .split(chunks[1]);
 
     let body_preview = thread_body_preview(&app.thread_form.body);
-    let lines = [
+    let tags_display = if app.thread_form.tags.is_empty() {
+        "(none)".to_string()
+    } else {
+        app.thread_form.tags.clone()
+    };
+    let mut lines = vec![
         form_line(
-            app.thread_form.field == ThreadFormField::Kind,
-            "kind",
-            thread_kind_labels()[app.thread_form.kind_index],
+            app.thread_form.field == ThreadFormField::Lifecycle,
+            "lifecycle",
+            thread_lifecycle_labels()[app.thread_form.lifecycle_index],
+        ),
+        form_line(
+            app.thread_form.field == ThreadFormField::Tags,
+            "tags",
+            &tags_display,
         ),
         form_line(
             app.thread_form.field == ThreadFormField::Title,
@@ -740,6 +881,9 @@ pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &mut App) {
             "[Create thread]",
         ),
     ];
+    if let Some(ref err) = app.thread_form.tag_error {
+        lines.push(format!("  ! {err}"));
+    }
     f.render_widget(
         Paragraph::new(lines.join("\n")).block(
             Block::default()
@@ -750,12 +894,12 @@ pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &mut App) {
     );
     app.ui_rects.thread_submit = Some(Rect {
         x: main[0].x + 1,
-        y: main[0].y + 5,
+        y: main[0].y + 6,
         width: main[0].width.saturating_sub(2),
         height: 1,
     });
-    // Track form field rects for click-to-focus (inside block: +1 for border)
-    for (i, field_y) in [1u16, 2, 3, 5].iter().enumerate() {
+    // Track form field rects: lifecycle(1), tags(2), title(3), body(4), submit(6)
+    for (i, field_y) in [1u16, 2, 3, 4].iter().enumerate() {
         app.ui_rects.form_fields[i] = Some(Rect {
             x: main[0].x + 1,
             y: main[0].y + field_y,
@@ -764,12 +908,12 @@ pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &mut App) {
         });
     }
 
-    let items: Vec<ListItem> = thread_kind_labels()
+    let items: Vec<ListItem> = thread_lifecycle_labels()
         .iter()
         .enumerate()
         .map(|(i, label)| {
-            let prefix = if app.thread_form.field == ThreadFormField::Kind
-                && i == app.thread_form.kind_index
+            let prefix = if app.thread_form.field == ThreadFormField::Lifecycle
+                && i == app.thread_form.lifecycle_index
             {
                 "> "
             } else {
@@ -781,7 +925,7 @@ pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &mut App) {
     let list = List::new(items).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" thread kinds "),
+            .title(" thread lifecycles "),
     );
     // Track dropdown rect for click-to-select
     app.ui_rects.dropdown = Some(main[1]);
@@ -970,11 +1114,9 @@ pub(crate) fn render_create_link(f: &mut Frame, area: Rect, app: &mut App) {
         ),
     ];
     f.render_widget(
-        Paragraph::new(lines.join("\n")).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" create link from {thread_id} ")),
-        ),
+        Paragraph::new(lines.join("\n")).block(Block::default().borders(Borders::ALL).title(
+            format!(" create link from {} ", display_thread_id(thread_id)),
+        )),
         main[0],
     );
     app.ui_rects.link_submit = Some(Rect {
@@ -1057,7 +1199,7 @@ pub(crate) fn render_create_link(f: &mut Frame, area: Rect, app: &mut App) {
                 };
                 ListItem::new(format!(
                     "{prefix} {}  {}",
-                    row.id,
+                    display_thread_id(&row.id),
                     single_line_preview(&row.title, 28)
                 ))
             })

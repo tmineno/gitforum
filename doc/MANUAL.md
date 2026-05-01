@@ -1121,22 +1121,58 @@ git forum tui
 git forum tui RFC-0001
 ```
 
+### Display surface (SPEC-2.0)
+
+- **Thread IDs**: bare 8-char base36 IDs render with a leading `@` marker
+  (e.g. `@a7f3b2x1`). Legacy kind-prefixed IDs (`RFC-…`, `ASK-…`, `DEC-…`,
+  `JOB-…`) render unchanged. The marker is display-only — every CLI surface
+  also accepts the bare token without `@`.
+- **Thread detail header**: shows `lifecycle`, `tags`, and `status` instead
+  of the 1.x `kind`. Unmigrated 1.x threads (no `facet_set` event) display
+  the conventional tag derived from kind per SPEC-2.0 §2.3.3 (`rfc` →
+  `cross-cutting`, `issue` → `bug`, `task` → `task`); no event is written.
+- **List view**: column header is `LIFECYCLE` (was `KIND`). Tags render as
+  a leading bracket prefix on the title cell when non-empty, e.g.
+  `[bug] search is slow`.
+- **Linked panel**: thread detail shows a one-line "linked" advisory below
+  the body. Pure display, no enforcement (CORE-VALUE.md "Advisories").
+
 ### Colors
 
-The TUI uses color to distinguish kinds, statuses, and node types:
+The TUI uses color to distinguish lifecycle, statuses, and node types:
 
-- **Thread kind**: cyan = rfc, yellow = ask, magenta = dec, green = job
-- **Thread status**: green = open/draft, yellow = pending/proposed/under-review/designing/implementing/reviewing,
-  magenta = accepted/closed, red = rejected, gray = deprecated
-- **Node type**: red = objection/risk, yellow = question, green = summary, cyan = action,
-  blue = review
-- **Node status**: green = open, gray = resolved/retracted/incorporated
+- **Thread lifecycle**: cyan = `proposal`, yellow = `execution`, magenta =
+  `record`.
+- **Thread status**: green = `open`/`draft`, yellow = `working`/`review`,
+  magenta = `done`, red = `rejected`, gray = `deprecated`/`withdrawn`.
+- **Node type**: red = `objection`, green = `approval`, cyan = `action`,
+  default = `comment`. Pre-existing nodes carrying legacy prose-only types
+  (claim, question, summary, risk, review, alternative, assumption) render
+  with their stored label and the default colour.
+- **Node status**: green = open, gray = resolved/retracted/incorporated.
 
 Resolved, retracted, and incorporated node rows are dimmed.
 
 ### Controls
 
-- **List view**: `j`/`k` navigate, `enter` opens thread, `c` creates, `f` cycles kind filter, `r` refreshes, `q` quits. Click column headers to sort; click/double-click rows to select/open.
-- **Thread detail**: `j`/`k` navigate nodes, `up`/`down` scroll body, `enter` opens node, `c` creates node, `l` creates link, `m` toggles markdown, `S` enters select mode, `r` refreshes, `esc`/`q` goes back.
-- **Node detail**: `c` creates node, `l` creates link, `x` resolves, `o` reopens, `R` retracts, `m` toggles markdown, `j`/`k` scroll, `r` refreshes, `esc`/`q` goes back.
-- **Create forms**: `tab` moves between fields, `up`/`down` cycles kind/type, `enter` on body opens editor, `enter` on submit creates, `ctrl+s` in body editor returns to form, `esc` cancels.
+- **List view**: `j`/`k` navigate, `enter` opens thread, `c` creates, `f`
+  cycles the lifecycle / tag / status filter, `r` refreshes, `q` quits.
+  Click column headers to sort; click/double-click rows to select/open.
+- **Thread detail**: `j`/`k` navigate nodes, `up`/`down` scroll body,
+  `enter` opens node, `c` creates node, `l` creates link, `m` toggles
+  markdown, `S` enters select mode, `r` refreshes, `esc`/`q` goes back.
+- **Node detail**: `c` creates node, `l` creates link, `x` resolves, `o`
+  reopens, `R` retracts, `m` toggles markdown, `j`/`k` scroll, `r`
+  refreshes, `esc`/`q` goes back.
+- **Create thread form**: fields are `lifecycle`, `tags`, `title`, `body`.
+  `tab` moves between fields; `up`/`down` cycle the lifecycle on the
+  `lifecycle` field. The `tags` field accepts a comma-separated list and
+  is validated against the SPEC-2.0 §2.3.5 grammar at submit time. When
+  `(lifecycle, tags)` matches one of the four §9.1 kind presets the form
+  emits the preset Event shape; otherwise it writes a `facet_set` event
+  carrying the chosen tag list. Tag editing of existing threads is
+  CLI-only in 2.0.
+- **Create node form**: defaults to `comment`. Available types are the
+  four canonical 2.0 types: `comment`, `approval`, `objection`, `action`.
+- **Body editor**: `enter` on body opens editor, `enter` on submit creates,
+  `ctrl+s` in body editor returns to form, `esc` cancels.
