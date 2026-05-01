@@ -461,6 +461,33 @@ fn migrate_does_not_double_migrate_already_bare_threads() {
 }
 
 #[test]
+fn commit_msg_hook_recognizes_legacy_alias_and_at_marker() {
+    // Regression: post-migration, the commit-msg hook's thread-reference
+    // checker must accept both the legacy kind-prefixed alias (`JOB-...`)
+    // and the 2.0 `@<token>` display form. Before the fix, both were
+    // reported as `not found` because the checker only consulted
+    // `refs/forum/threads/<id>` and didn't know about the alias namespace.
+    use git_forum::internal::hook;
+    let (_repo, git, paths) = setup();
+    let legacy = "RFC-0001".to_string();
+    build_legacy_thread(&git, &legacy, ThreadKind::Rfc, vec![]);
+    migrate::run(&git, &paths, "system/migrate", false).unwrap();
+    let token = thread::resolve_thread_id(&git, &legacy).unwrap();
+
+    // Extracting from a commit message picks up both forms (deduped per form).
+    let extracted = hook::extract_thread_ids(&format!("Closes {legacy} (aka @{token})"));
+    assert_eq!(extracted, vec![legacy.clone(), token.clone()]);
+
+    let result = hook::check_thread_refs(&git, &extracted).unwrap();
+    assert!(
+        result.missing_ids.is_empty(),
+        "expected both forms to resolve; missing={:?}",
+        result.missing_ids
+    );
+    assert_eq!(result.found_ids.len(), 2);
+}
+
+#[test]
 fn alias_resolves_after_canonical_thread_advances() {
     // Regression: aliases are frozen at the migration-time tip, but the
     // canonical thread ref keeps moving forward as new events land.

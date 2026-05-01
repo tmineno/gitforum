@@ -128,9 +128,14 @@ pub fn strip_comments(message: &str, comment_char: char) -> String {
 
 /// Extract git-forum thread IDs from a commit message.
 ///
-/// Matches both legacy sequential IDs (`ISSUE-0001`, `RFC-0042`) and
-/// opaque content-addressed IDs (`RFC-a7f3b2x1`, `ASK-0a1b2c3d`).
-/// Returns deduplicated results.
+/// Matches three forms (SPEC-2.0 §6.1):
+/// - 2.0 display form: `@<8 base36 chars>` (e.g. `@e216r3on`)
+/// - Legacy opaque: `KIND-<8 base36>` (e.g. `RFC-a7f3b2x1`)
+/// - Legacy sequential: `KIND-NNNN` (e.g. `ISSUE-0001`)
+///
+/// Returns deduplicated results in match order. The leading `@` is stripped
+/// so callers can resolve uniformly via `refs/forum/threads/<token>` or the
+/// alias namespace.
 pub fn extract_thread_ids(message: &str) -> Vec<String> {
     let mut ids = Vec::new();
     let chars: Vec<char> = message.chars().collect();
@@ -138,10 +143,37 @@ pub fn extract_thread_ids(message: &str) -> Vec<String> {
     let mut i = 0;
 
     while i < len {
-        // Check word boundary: start of string or previous char is not alphanumeric
+        // Check word boundary: start of string or previous char is not alphanumeric.
+        // The `@` marker is not alphanumeric, so it preserves the boundary.
         if i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
             i += 1;
             continue;
+        }
+
+        // 2.0 display form: `@<8-char base36 token>`.
+        if chars[i] == '@' {
+            let token_start = i + 1;
+            let mut token_len = 0;
+            while token_start + token_len < len
+                && token_len < 8
+                && (chars[token_start + token_len].is_ascii_digit()
+                    || chars[token_start + token_len].is_ascii_lowercase())
+            {
+                token_len += 1;
+            }
+            let end = token_start + token_len;
+            let trailing_word = end < len && (chars[end].is_alphanumeric() || chars[end] == '_');
+            let is_bare_token = token_len == 8
+                && !chars[token_start..end].iter().all(|c| c.is_ascii_digit())
+                && !trailing_word;
+            if is_bare_token {
+                let id: String = chars[token_start..end].iter().collect();
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+                i = end;
+                continue;
+            }
         }
 
         for prefix in KNOWN_PREFIXES {
@@ -211,16 +243,26 @@ pub fn extract_thread_ids(message: &str) -> Vec<String> {
 }
 
 /// Check which thread IDs exist as git-forum refs.
+///
+/// Resolution order (per SPEC-2.0 §6.1.1 / §10.1):
+/// 1. Canonical thread ref under `refs/forum/threads/<id>`.
+/// 2. Post-migration alias under `refs/forum/aliases/<id>` — covers legacy
+///    kind-prefixed IDs (`RFC-0001`, `JOB-e216r3on`, etc.) that were
+///    rewritten to bare tokens by `git forum migrate`.
 pub fn check_thread_refs(git: &GitOps, ids: &[String]) -> ForumResult<HookCheckResult> {
     let mut found_ids = Vec::new();
     let mut missing_ids = Vec::new();
 
     for id in ids {
-        let refname = refs::thread_ref(id);
-        match git.resolve_ref(&refname)? {
-            Some(_) => found_ids.push(id.clone()),
-            None => missing_ids.push(id.clone()),
+        if git.resolve_ref(&refs::thread_ref(id))?.is_some() {
+            found_ids.push(id.clone());
+            continue;
         }
+        if git.resolve_ref(&super::migrate::alias_ref(id))?.is_some() {
+            found_ids.push(id.clone());
+            continue;
+        }
+        missing_ids.push(id.clone());
     }
 
     Ok(HookCheckResult {
@@ -476,6 +518,46 @@ mod tests {
     #[test]
     fn extract_opaque_after_punctuation() {
         assert_eq!(extract_thread_ids("(JOB-x8n2q1d4)"), vec!["JOB-x8n2q1d4"]);
+    }
+
+    // SPEC-2.0 §6.1 `@<token>` display form.
+    #[test]
+    fn extract_at_marker_form() {
+        assert_eq!(
+            extract_thread_ids("see @e216r3on for details"),
+            vec!["e216r3on"]
+        );
+    }
+
+    #[test]
+    fn extract_at_marker_in_parens() {
+        assert_eq!(extract_thread_ids("(@a7f3b2x1)"), vec!["a7f3b2x1"]);
+    }
+
+    #[test]
+    fn extract_at_marker_dedup_and_mixed_with_legacy() {
+        // @e216r3on and the legacy alias JOB-e216r3on both surface; the bare
+        // form is deduplicated separately because the alias path resolves
+        // it via `migrate::alias_ref`.
+        let out = extract_thread_ids("Closes JOB-e216r3on (aka @e216r3on)");
+        assert_eq!(out, vec!["JOB-e216r3on", "e216r3on"]);
+    }
+
+    #[test]
+    fn extract_at_marker_word_boundary() {
+        // No bare bare-letters before/after the token.
+        assert!(extract_thread_ids("foo@e216r3on").is_empty());
+        assert!(extract_thread_ids("@e216r3on0extra").is_empty());
+    }
+
+    #[test]
+    fn extract_at_marker_rejects_short_or_all_digits() {
+        // Too short.
+        assert!(extract_thread_ids("@a7f3").is_empty());
+        // All-digit token is reserved by the bare-token grammar (id_alloc).
+        assert!(extract_thread_ids("@12345678").is_empty());
+        // Uppercase rejected.
+        assert!(extract_thread_ids("@E216R3ON").is_empty());
     }
 
     #[test]
