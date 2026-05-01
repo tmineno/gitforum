@@ -30,19 +30,19 @@ requires = ["no_open_actions"]
 strict = false
 
 # Creation rules: what is required when creating a new thread.
-[creation_rules.rfc]
+[creation_rules.proposal.tag.cross-cutting]
 required_body = true
 body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
 
-[creation_rules.issue]
+[creation_rules.execution.tag.bug]
 required_body = false
 body_sections = []
 
-[creation_rules.dec]
+[creation_rules.record]
 required_body = true
 body_sections = ["Context", "Decision", "Rationale", "Impact"]
 
-[creation_rules.task]
+[creation_rules.execution.tag.task]
 required_body = false
 body_sections = ["Background", "Acceptance criteria", "Exceptions"]
 
