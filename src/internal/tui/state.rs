@@ -469,7 +469,8 @@ fn incremental_refresh(git: &GitOps, conn: &rusqlite::Connection) -> ForumResult
             if let Ok(state) = thread::replay_thread(git, thread_id) {
                 let _ = index::upsert_thread(conn, &state)
                     .and_then(|_| index::replace_nodes_for_thread(conn, &state))
-                    .and_then(|_| index::replace_evidence_for_thread(conn, &state));
+                    .and_then(|_| index::replace_evidence_for_thread(conn, &state))
+                    .and_then(|_| index::replace_links_for_thread(conn, &state));
             }
             changed = true;
         }

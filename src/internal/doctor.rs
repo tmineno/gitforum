@@ -5,6 +5,7 @@ use super::hook;
 use super::index;
 use super::init;
 use super::refs;
+use super::event::normalize_state_name;
 use super::thread;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +17,11 @@ pub enum CheckLevel {
 
 pub struct DoctorReport {
     pub checks: Vec<DoctorCheck>,
+    /// SPEC-2.0 §B.6 cross-thread advisories — strictly informational
+    /// observations like "parent RFC @x9k2 is done but has 1 implementing
+    /// child still open". Per CORE-VALUE.md "Advisories", these never affect
+    /// `all_passed()` and never gate any operation.
+    pub advisories: Vec<String>,
 }
 
 pub struct DoctorCheck {
@@ -215,17 +221,104 @@ pub fn run_doctor(git: &GitOps, paths: &RepoPaths) -> ForumResult<DoctorReport> 
     }
 
     // 8. Replay each thread
+    let mut replayed_states: Vec<thread::ThreadState> = Vec::new();
     if let Some(ids) = &thread_ids {
         for id in ids {
             let ref_name = refs::thread_ref(id);
             match thread::replay_thread(git, id) {
-                Ok(_) => checks.push(ok(&format!("replay {ref_name}"))),
+                Ok(state) => {
+                    checks.push(ok(&format!("replay {ref_name}")));
+                    replayed_states.push(state);
+                }
                 Err(e) => checks.push(fail(&format!("replay {ref_name}"), &e.to_string())),
             }
         }
     }
 
-    Ok(DoctorReport { checks })
+    // 9. Cross-thread advisories (SPEC-2.0 §B.6).
+    //
+    // Strictly informational: never appended to `checks`, never affects exit
+    // status. The pattern surfaced is "parent is `done` but has children
+    // still in flight" — common cleanup oversight after closing an RFC.
+    let advisories = build_cross_thread_advisories(&replayed_states);
+
+    Ok(DoctorReport { checks, advisories })
+}
+
+/// Collect cross-thread advisory lines from already-replayed thread states.
+///
+/// One observation today: parent threads in terminal `done` state that still
+/// have incoming `--rel implements` children whose state isn't `done`. Per
+/// CORE-VALUE.md, this is read-only display — doctor does not propose,
+/// suggest, or perform any state change in response.
+///
+/// Link target IDs in legacy events use the `KIND-XXXXXXXX` form; we
+/// canonicalize via the migrate mapping (`migrate::bare_token_for`) so that
+/// links recorded before the Track C migration still match their parent's
+/// canonical bare-token ID in the `by_id` lookup.
+fn build_cross_thread_advisories(states: &[thread::ThreadState]) -> Vec<String> {
+    use std::collections::HashMap;
+
+    let by_id: HashMap<&str, &thread::ThreadState> =
+        states.iter().map(|s| (s.id.as_str(), s)).collect();
+    let known_ids: std::collections::HashSet<&str> = by_id.keys().copied().collect();
+
+    let mut implements_children_by_parent: HashMap<String, Vec<&thread::ThreadState>> =
+        HashMap::new();
+    for s in states {
+        for link in &s.links {
+            if link.rel != "implements" {
+                continue;
+            }
+            let canonical = canonicalize_target(&link.target_thread_id, &known_ids);
+            implements_children_by_parent
+                .entry(canonical)
+                .or_default()
+                .push(s);
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut parent_ids: Vec<String> = implements_children_by_parent.keys().cloned().collect();
+    parent_ids.sort();
+    for parent_id in &parent_ids {
+        let Some(parent) = by_id.get(parent_id.as_str()) else {
+            continue; // referenced parent not in this repo's refs — skip silently
+        };
+        if normalize_state_name(&parent.status) != "done" {
+            continue;
+        }
+        let children = &implements_children_by_parent[parent_id];
+        let open_children: Vec<&&thread::ThreadState> = children
+            .iter()
+            .filter(|c| normalize_state_name(&c.status) != "done")
+            .collect();
+        if open_children.is_empty() {
+            continue;
+        }
+        let count = open_children.len();
+        let plural = if count == 1 { "child" } else { "children" };
+        let ids: Vec<String> = open_children.iter().map(|c| c.id.clone()).collect();
+        out.push(format!(
+            "{} ({}) has {count} implementing {plural} still open ({})",
+            parent.id,
+            parent.status,
+            ids.join(", ")
+        ));
+    }
+    out
+}
+
+fn canonicalize_target(target: &str, known_ids: &std::collections::HashSet<&str>) -> String {
+    if known_ids.contains(target) {
+        return target.to_string();
+    }
+    let canonical = super::migrate::bare_token_for(target);
+    if canonical != target && known_ids.contains(canonical.as_str()) {
+        canonical
+    } else {
+        target.to_string()
+    }
 }
 
 fn check_dir(name: &str, path: &std::path::Path) -> DoctorCheck {

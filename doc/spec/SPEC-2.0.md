@@ -663,6 +663,39 @@ git forum show <THREAD>                            # show one thread (with --tre
 `git forum ls` is a flat list. Earlier 2.0 drafts split the default view into "Topics" and
 "Inbox" sections; with topics removed, the default is the simple flat list.
 
+#### 9.2.1 `brief` (read-only single-thread digest, RFC-5wf2v8hv)
+
+```text
+git forum brief <THREAD> [--json]
+```
+
+Read-only digest of one thread for AI agents and scripts that need a stable
+machine-readable surface. **Reads only the named thread's events**. Outgoing
+links are reported as counts grouped by relation; incoming links come from the
+SQLite reverse-link index and are likewise reported as counts grouped by
+relation only — `brief` never reads a linked thread's body, title, or state.
+
+`--json` emits a stable v1 schema:
+
+```json
+{
+  "id": "...", "title": "...",
+  "lifecycle": "...", "tags": [...], "status": "...",
+  "created_at": "...", "created_by": "...", "branch": "..." | null,
+  "links_in":  [{"rel": "...", "count": N}],
+  "links_out": [{"rel": "...", "count": N}],
+  "node_counts": {"comment": N, "approval": N, "objection": N, "action": N},
+  "open_objections": N, "open_actions": N,
+  "evidence_count": N,
+  "latest_summary": "..." | null
+}
+```
+
+Field set is fixed; new fields may be added (additive evolution only). Per
+RFC-5wf2v8hv non-goals, `brief` has no flag for cross-thread analysis (no
+`--tree`, no `--with-parent`, no `--show-blockers`). Cross-thread context is
+the job of `show --tree` (§9.1) and `verify` / `doctor` advisories (§9.4).
+
 ### 9.3 Discussion, lifecycle, evidence, links, hooks
 
 Inherits SPEC.md §9.4 / §9.5 / §9.6 / §9.7 / §9.10 with the **node-shorthand reduction** from
@@ -704,6 +737,11 @@ unified state machine via the thread's lifecycle facet:
 - `doctor` reports broken refs, dangling link references, and any divergence visible in
   local refs after a fetch — surfaced for the user to reconcile via plain Git tooling
   (§8.2).
+- `doctor` MAY also surface cross-thread **advisories** like "parent RFC `@x9k2` is `done`
+  but has 1 implementing child still open (@z6m8r1)" (see §B.6 example). These lines are
+  informational only — they do not affect doctor's pass/fail status, do not gate any
+  operation, and never trigger an automatic state change. Per CORE-VALUE.md non-goal #1
+  ("Cross-thread workflow enforcement"), the user decides whether and how to reconcile.
 
 ## 10. Migration from 1.x
 

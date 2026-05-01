@@ -812,10 +812,56 @@ pub fn short_oid(id: &str) -> &str {
     &id[..id.len().min(16)]
 }
 
+/// One row in the `show --tree` advisory output: a thread that links to
+/// the named thread with `--rel implements`.
+///
+/// Held as a value-type so the renderer is decoupled from how the rows are
+/// resolved (SQLite reverse index → ref tip read), which keeps the renderer
+/// trivially testable.
+#[derive(Debug, Clone)]
+pub struct TreeChild {
+    pub id: String,
+    pub title: String,
+    pub lifecycle_label: String,
+    pub status: String,
+}
+
+/// Render the `show --tree` advisory: the named thread plus its direct
+/// incoming `--rel implements` children, one hop, no recursion.
+///
+/// Per SPEC-2.0 §B.4 and CORE-VALUE.md "Advisories", this is informational
+/// only — it does not gate any operation. Callers must pass a `children`
+/// list that is already filtered to `rel == "implements"` (see
+/// `index::find_incoming_links`).
+pub fn render_tree(parent: &ThreadState, children: &[TreeChild]) -> String {
+    let parent_lifecycle = parent.lifecycle().as_str();
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "{}  {}/{}    {}",
+        parent.id, parent_lifecycle, parent.status, parent.title
+    ));
+
+    if children.is_empty() {
+        lines.push("  (no incoming `implements` links)".into());
+    } else {
+        let last = children.len() - 1;
+        for (i, child) in children.iter().enumerate() {
+            let connector = if i == last { "└──" } else { "├──" };
+            lines.push(format!(
+                "{} {}  {}/{}   {}",
+                connector, child.id, child.lifecycle_label, child.status, child.title
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
 // User-visible output is locked in by the golden snapshots in
 // `tests/snapshot_test.rs`. The unit tests below cover pure-function
 // invariants that snapshots can't reach (state-graph filtering, multibyte
 // truncation, what-next op-check projection).
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -966,5 +1012,50 @@ mod tests {
         assert!(out.contains("RFC-0001"));
         assert!(out.contains("objections (1)"));
         assert!(out.contains("Bench results missing"));
+    }
+
+    #[test]
+    fn render_tree_lists_implements_children() {
+        let parent = ThreadState {
+            id: "RFC-PARENT".into(),
+            kind: ThreadKind::Rfc,
+            title: "Parent RFC".into(),
+            status: "done".into(),
+            ..Default::default()
+        };
+        let children = vec![
+            TreeChild {
+                id: "TASK-A".into(),
+                title: "Add FTS5 schema".into(),
+                lifecycle_label: "execution".into(),
+                status: "open".into(),
+            },
+            TreeChild {
+                id: "TASK-B".into(),
+                title: "Switch search to FTS5".into(),
+                lifecycle_label: "execution".into(),
+                status: "open".into(),
+            },
+        ];
+        let out = render_tree(&parent, &children);
+        assert!(out.contains("RFC-PARENT"));
+        assert!(out.contains("Parent RFC"));
+        assert!(out.contains("├── TASK-A"));
+        assert!(out.contains("└── TASK-B"));
+        assert!(out.contains("execution/open"));
+    }
+
+    #[test]
+    fn render_tree_no_children_shows_marker() {
+        let parent = ThreadState {
+            id: "RFC-LONELY".into(),
+            kind: ThreadKind::Rfc,
+            title: "Lonely RFC".into(),
+            status: "draft".into(),
+            ..Default::default()
+        };
+        let out = render_tree(&parent, &[]);
+        assert!(out.contains("RFC-LONELY"));
+        assert!(out.contains("(no incoming `implements` links)"));
     }
 }
