@@ -75,8 +75,9 @@ pub(super) fn handle_key(
                     }
                     KeyCode::Char('y') => {
                         if let Some(id) = app.selected_thread_id() {
-                            match copy_to_clipboard(&id) {
-                                Ok(()) => app.info_flash = Some(format!("Copied: {id}")),
+                            let yank = format!("@{id}");
+                            match copy_to_clipboard(&yank) {
+                                Ok(()) => app.info_flash = Some(format!("Copied: {yank}")),
                                 Err(e) => app.info_flash = Some(format!("Copy failed: {e}")),
                             }
                         }
@@ -138,8 +139,9 @@ pub(super) fn handle_key(
             }
             KeyCode::Char('y') => {
                 let id = app.selected_node_id().unwrap_or_else(|| thread_id.clone());
-                match copy_to_clipboard(&id) {
-                    Ok(()) => app.info_flash = Some(format!("Copied: {id}")),
+                let yank = format!("@{id}");
+                match copy_to_clipboard(&yank) {
+                    Ok(()) => app.info_flash = Some(format!("Copied: {yank}")),
                     Err(e) => app.info_flash = Some(format!("Copy failed: {e}")),
                 }
             }
@@ -154,10 +156,13 @@ pub(super) fn handle_key(
             KeyCode::Char('q') | KeyCode::Esc => {
                 open_thread_detail(app, git, &thread_id, Some(&node_id), perf)?;
             }
-            KeyCode::Char('y') => match copy_to_clipboard(&node_id) {
-                Ok(()) => app.info_flash = Some(format!("Copied: {node_id}")),
-                Err(e) => app.info_flash = Some(format!("Copy failed: {e}")),
-            },
+            KeyCode::Char('y') => {
+                let yank = format!("@{node_id}");
+                match copy_to_clipboard(&yank) {
+                    Ok(()) => app.info_flash = Some(format!("Copied: {yank}")),
+                    Err(e) => app.info_flash = Some(format!("Copy failed: {e}")),
+                }
+            }
             KeyCode::Char('c') => app.begin_create_node(&thread_id),
             KeyCode::Char('l') => app.begin_create_link_from_node(&thread_id, &node_id),
             KeyCode::Char('m') => app.markdown_mode = !app.markdown_mode,
