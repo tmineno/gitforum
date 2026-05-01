@@ -1,10 +1,10 @@
 use super::clock::Clock;
 use super::error::{ForumError, ForumResult};
+use super::event;
 use super::event::{Event, EventType, NodeType};
 use super::git_ops::GitOps;
 use super::node::Node;
 use super::policy::Policy;
-use super::state_machine;
 use super::thread;
 use super::write_ops;
 
@@ -36,9 +36,9 @@ pub fn prepare_state_change(
     let from = state.status.clone();
 
     let lifecycle = state.lifecycle();
-    let normalized_target = state_machine::normalize_state_name(new_state);
-    if !state_machine::is_valid_transition(lifecycle, &from, new_state) {
-        let valid = state_machine::valid_targets(lifecycle, &from);
+    let normalized_target = event::normalize_state_name(new_state);
+    if !event::is_valid_transition(lifecycle, &from, new_state) {
+        let valid = event::valid_targets(lifecycle, &from);
         let valid_msg = if valid.is_empty() {
             "none".to_string()
         } else {
@@ -74,7 +74,7 @@ pub fn prepare_state_change(
             state.kind,
             super::event::ThreadKind::Issue | super::event::ThreadKind::Task
         )
-        && state_machine::normalize_state_name(new_state) == "done"
+        && event::normalize_state_name(new_state) == "done"
     {
         state
             .open_actions()
@@ -183,7 +183,7 @@ pub fn change_state(
     // SPEC-2.0 §3.1: persist transitions in 2.0 state names so replay /
     // policy / search see a single canonical vocabulary regardless of the
     // 1.x verb the caller passed in.
-    let canonical_state = state_machine::normalize_state_name(new_state);
+    let canonical_state = event::normalize_state_name(new_state);
     let mut ev =
         Event::base(thread_id, EventType::State, actor, clock).with_new_state(canonical_state);
     if let Some(ref text) = comment {
@@ -216,14 +216,13 @@ pub fn fast_track_state(
     // Normalize the target so legacy 1.x state names line up with the
     // 2.0-name path returned by find_path (otherwise the final-step check
     // below misses).
-    let normalized_target = state_machine::normalize_state_name(target);
-    let path =
-        state_machine::find_path(lifecycle, &state.status, normalized_target).ok_or_else(|| {
-            ForumError::StateMachine(format!(
-                "no path from '{}' to '{}' for {lifecycle}",
-                state.status, target,
-            ))
-        })?;
+    let normalized_target = event::normalize_state_name(target);
+    let path = event::find_path(lifecycle, &state.status, normalized_target).ok_or_else(|| {
+        ForumError::StateMachine(format!(
+            "no path from '{}' to '{}' for {lifecycle}",
+            state.status, target,
+        ))
+    })?;
 
     if path.is_empty() {
         return Ok(vec![]);

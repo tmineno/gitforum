@@ -20,7 +20,6 @@ use git_forum::internal::id_alloc;
 use git_forum::internal::init;
 use git_forum::internal::migrate;
 use git_forum::internal::refs;
-use git_forum::internal::state_machine;
 use git_forum::internal::thread;
 
 fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
@@ -278,7 +277,7 @@ fn migrate_lossless_state_round_trip_all_kinds() {
     ];
     for (kind, states) in cases {
         for state in *states {
-            let migrated = state_machine::migrate_legacy_state(*kind, state);
+            let migrated = event::migrate_legacy_state(*kind, state);
             assert!(
                 kind.lifecycle().allows_state(migrated),
                 "kind={kind} state={state} migrated={migrated} not in lifecycle's allowed set"

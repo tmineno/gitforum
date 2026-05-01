@@ -61,9 +61,10 @@ pub fn open_db(path: &Path) -> ForumResult<Connection> {
     Ok(conn)
 }
 
-fn ensure_schema(conn: &Connection) -> ForumResult<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS threads (
+/// Single 2.0 initial schema. The index is a derived cache of git refs and
+/// can be safely wiped, so `user_version=0` databases (any 1.x leftover) are
+/// dropped and recreated rather than migrated piecemeal.
+const SCHEMA_V1: &str = "CREATE TABLE IF NOT EXISTS threads (
             id              TEXT PRIMARY KEY,
             kind            TEXT NOT NULL,
             status          TEXT NOT NULL,
@@ -75,7 +76,8 @@ fn ensure_schema(conn: &Connection) -> ForumResult<()> {
             open_objections INTEGER NOT NULL DEFAULT 0,
             open_actions    INTEGER NOT NULL DEFAULT 0,
             has_summary     INTEGER NOT NULL DEFAULT 0,
-            tip_sha         TEXT NOT NULL
+            tip_sha         TEXT NOT NULL,
+            updated_at      TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS nodes (
             id              TEXT PRIMARY KEY,
@@ -90,55 +92,25 @@ fn ensure_schema(conn: &Connection) -> ForumResult<()> {
             kind            TEXT NOT NULL,
             ref_target      TEXT NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_evidence_ref ON evidence(ref_target);",
-    )
-    .map_err(|e| ForumError::Repo(e.to_string()))?;
-    ensure_thread_branch_column(conn)?;
-    ensure_thread_updated_at_column(conn)
-}
+        CREATE INDEX IF NOT EXISTS idx_evidence_ref ON evidence(ref_target);
+        PRAGMA user_version = 1;";
 
-fn ensure_thread_branch_column(conn: &Connection) -> ForumResult<()> {
-    let mut stmt = conn
-        .prepare("PRAGMA table_info(threads)")
+fn ensure_schema(conn: &Connection) -> ForumResult<()> {
+    let version: u32 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|e| ForumError::Repo(e.to_string()))?;
-    let cols = stmt
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|e| ForumError::Repo(e.to_string()))?;
-    let mut has_branch = false;
-    for col in cols {
-        if col.map_err(|e| ForumError::Repo(e.to_string()))? == "branch" {
-            has_branch = true;
-            break;
-        }
-    }
-    if !has_branch {
-        conn.execute("ALTER TABLE threads ADD COLUMN branch TEXT", [])
-            .map_err(|e| ForumError::Repo(e.to_string()))?;
-    }
-    Ok(())
-}
-
-fn ensure_thread_updated_at_column(conn: &Connection) -> ForumResult<()> {
-    let mut stmt = conn
-        .prepare("PRAGMA table_info(threads)")
-        .map_err(|e| ForumError::Repo(e.to_string()))?;
-    let cols = stmt
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|e| ForumError::Repo(e.to_string()))?;
-    let mut has_updated_at = false;
-    for col in cols {
-        if col.map_err(|e| ForumError::Repo(e.to_string()))? == "updated_at" {
-            has_updated_at = true;
-            break;
-        }
-    }
-    if !has_updated_at {
-        conn.execute(
-            "ALTER TABLE threads ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
-            [],
+    if version == 0 {
+        // Pre-2.0 schema (or fresh DB): drop any partial tables and recreate.
+        // Safe because the index is rebuilt from git refs by `reindex`.
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS threads;
+             DROP TABLE IF EXISTS nodes;
+             DROP TABLE IF EXISTS evidence;",
         )
         .map_err(|e| ForumError::Repo(e.to_string()))?;
     }
+    conn.execute_batch(SCHEMA_V1)
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
     Ok(())
 }
 
@@ -223,7 +195,7 @@ pub fn replace_nodes_for_thread(conn: &Connection, state: &ThreadState) -> Forum
             node.node_id,
             state.id,
             node.node_type.to_string(),
-            node_status(node),
+            node.status(),
             node.body,
         ])
         .map_err(|e| ForumError::Repo(e.to_string()))?;
@@ -454,18 +426,6 @@ fn search_node_hits(
         rows.push(r.map_err(|e| ForumError::Repo(e.to_string()))?);
     }
     Ok(rows)
-}
-
-fn node_status(node: &crate::internal::node::Node) -> &'static str {
-    if node.retracted {
-        "retracted"
-    } else if node.incorporated {
-        "incorporated"
-    } else if node.resolved {
-        "resolved"
-    } else {
-        "open"
-    }
 }
 
 #[cfg(test)]

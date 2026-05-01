@@ -39,7 +39,6 @@ use super::event::{self, Event, EventType, Lifecycle, ThreadKind};
 use super::git_ops::GitOps;
 use super::id_alloc;
 use super::refs;
-use super::state_machine;
 
 /// SPEC-2.0 §10: 2.0 alias entries live under `refs/forum/aliases/<old-id>`
 /// and point at the same commit as the canonical thread ref. They are
@@ -192,7 +191,7 @@ fn plan_thread(git: &GitOps, legacy_id: &str) -> ForumResult<ThreadPlan> {
             }
             EventType::State => {
                 if let Some(s) = ev.new_state.as_deref() {
-                    if state_machine::migrate_legacy_state(kind, s) != s {
+                    if event::migrate_legacy_state(kind, s) != s {
                         state_rewrites += 1;
                     }
                 }
@@ -245,7 +244,7 @@ fn rewrite_event(ev: &Event, kind: ThreadKind, new_id: &str) -> Event {
 
     if out.event_type == EventType::State {
         if let Some(s) = out.new_state.clone() {
-            let migrated = state_machine::migrate_legacy_state(kind, &s).to_string();
+            let migrated = event::migrate_legacy_state(kind, &s).to_string();
             if migrated != s {
                 out.new_state = Some(migrated);
             }

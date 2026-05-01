@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
 
+use super::event;
 use super::event::{Event, EventType, ThreadKind};
 use super::policy::{self, Policy};
-use super::state_machine;
 use super::thread::{NodeLookup, ThreadState};
 
 #[derive(Debug, Clone, Default)]
@@ -180,7 +180,7 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
     lines.push(format!("**kind:**     {}", state.kind));
     lines.push(format!("**status:**   {}", state.status));
     if let Some(policy) = &options.policy {
-        let targets = state_machine::valid_targets(state.lifecycle(), &state.status);
+        let targets = event::valid_targets(state.lifecycle(), &state.status);
         if !targets.is_empty() {
             let mut target_parts: Vec<String> = Vec::new();
             for target in &targets {
@@ -340,7 +340,7 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
             ));
             for convo in &conversations {
                 let root = convo[0];
-                let status = node_status(root);
+                let status = root.status();
                 lines.push(format!(
                     "  {} {} [{}] {} — {}",
                     short_oid(&root.node_id),
@@ -354,7 +354,7 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
             lines.push(format!("conversations: {}", conversations.len()));
             for convo in &conversations {
                 let root = convo[0];
-                let status = node_status(root);
+                let status = root.status();
                 lines.push(format!(
                     "  {} {} [{}] {}",
                     short_oid(&root.node_id),
@@ -427,7 +427,7 @@ pub fn render_show_with_options(state: &ThreadState, options: &ShowOptions) -> S
 pub fn render_next_actions(state: &ThreadState, policy: &Policy) -> String {
     let mut lines: Vec<String> = Vec::new();
 
-    let targets = state_machine::valid_targets(state.lifecycle(), &state.status);
+    let targets = event::valid_targets(state.lifecycle(), &state.status);
     if targets.is_empty() {
         lines.push("  next: (no transitions available)".to_string());
     } else {
@@ -489,7 +489,7 @@ pub fn render_what_next(state: &ThreadState, policy: &Policy) -> String {
     lines.push(format!("{} ({})", state.id, state.status));
     lines.push(String::new());
 
-    let targets = state_machine::valid_targets(state.lifecycle(), &state.status);
+    let targets = event::valid_targets(state.lifecycle(), &state.status);
     if targets.is_empty() {
         lines.push("valid transitions: (none)".to_string());
     } else {
@@ -610,7 +610,7 @@ pub fn render_node_show(lookup: &NodeLookup) -> String {
         lookup.thread_id, lookup.thread_title
     ));
     lines.push(format!("**kind:**     {}", lookup.thread_kind));
-    lines.push(format!("**status:**   {}", node_status(node)));
+    lines.push(format!("**status:**   {}", node.status()));
     lines.push(format!(
         "**created:**  {}",
         node.created_at.format("%Y-%m-%dT%H:%M:%SZ")
@@ -683,18 +683,6 @@ fn event_detail(event: &Event) -> String {
             _ => String::new(),
         },
         _ => String::new(),
-    }
-}
-
-fn node_status(node: &super::node::Node) -> &'static str {
-    if node.retracted {
-        "retracted"
-    } else if node.incorporated {
-        "incorporated"
-    } else if node.resolved {
-        "resolved"
-    } else {
-        "open"
     }
 }
 

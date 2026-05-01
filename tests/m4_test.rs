@@ -6,8 +6,8 @@ use chrono::{TimeZone, Utc};
 use git_forum::internal::clock::FixedClock;
 use git_forum::internal::create;
 use git_forum::internal::event::{NodeType, ThreadKind};
+use git_forum::internal::evidence;
 use git_forum::internal::evidence::EvidenceKind;
-use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::show;
 use git_forum::internal::thread;
@@ -52,7 +52,7 @@ fn add_evidence_appears_in_thread_state() {
     let (_repo, git) = setup();
     let thread_id = make_thread(&git);
 
-    evidence_ops::add_evidence(
+    evidence::add_evidence(
         &git,
         &thread_id,
         EvidenceKind::Benchmark,
@@ -76,7 +76,7 @@ fn evidence_id_is_populated_from_commit_sha() {
     let thread_id = make_thread(&git);
     let revision = make_real_commit(&git);
 
-    let commit_sha = evidence_ops::add_evidence(
+    let commit_sha = evidence::add_evidence(
         &git,
         &thread_id,
         EvidenceKind::Commit,
@@ -97,7 +97,7 @@ fn commit_evidence_rejects_invalid_revision() {
     let (_repo, git) = setup();
     let thread_id = make_thread(&git);
 
-    let err = evidence_ops::add_evidence(
+    let err = evidence::add_evidence(
         &git,
         &thread_id,
         EvidenceKind::Commit,
@@ -118,7 +118,7 @@ fn show_includes_evidence_section() {
     let (_repo, git) = setup();
     let thread_id = make_thread(&git);
 
-    evidence_ops::add_evidence(
+    evidence::add_evidence(
         &git,
         &thread_id,
         EvidenceKind::Benchmark,
@@ -155,7 +155,7 @@ fn add_thread_link_appears_in_thread_state() {
     )
     .unwrap();
 
-    evidence_ops::add_thread_link(
+    evidence::add_thread_link(
         &git,
         &thread_id,
         &target_id,
@@ -186,7 +186,7 @@ fn show_includes_links_section() {
     )
     .unwrap();
 
-    evidence_ops::add_thread_link(
+    evidence::add_thread_link(
         &git,
         &thread_id,
         &target_id,
@@ -230,7 +230,7 @@ fn node_show_includes_parent_thread_links() {
     )
     .unwrap();
 
-    evidence_ops::add_thread_link(
+    evidence::add_thread_link(
         &git,
         &thread_id,
         &target_id,

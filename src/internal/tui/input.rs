@@ -14,7 +14,6 @@ use crate::internal::index;
 use crate::internal::reindex;
 
 use super::copy_to_clipboard;
-use super::perf::Perf;
 use super::state::{
     apply_node_status_action, auto_link_candidates, link_relation_labels, link_target_kind_labels,
     link_target_kind_values, node_type_labels, node_type_values, open_node_detail,
@@ -35,7 +34,6 @@ pub(super) fn handle_key(
     git: &GitOps,
     conn: &rusqlite::Connection,
     db_path: &Path,
-    perf: &mut Perf,
 ) -> ForumResult<bool> {
     // Ctrl-C always quits
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
@@ -84,7 +82,7 @@ pub(super) fn handle_key(
                     }
                     KeyCode::Enter => {
                         if let Some(id) = app.selected_thread_id() {
-                            open_thread_detail(app, git, &id, None, perf)?;
+                            open_thread_detail(app, git, &id, None)?;
                         }
                     }
                     _ => {}
@@ -132,7 +130,7 @@ pub(super) fn handle_key(
             KeyCode::Char('r') => {
                 let selected = app.selected_node_id();
                 reindex::run_reindex(git, db_path)?;
-                open_thread_detail(app, git, &thread_id, selected.as_deref(), perf)?;
+                open_thread_detail(app, git, &thread_id, selected.as_deref())?;
             }
             KeyCode::Char('e') => {
                 app.pending_external_edit = Some(thread_id.clone());
@@ -154,7 +152,7 @@ pub(super) fn handle_key(
         },
         View::NodeDetail { thread_id, node_id } => match key.code {
             KeyCode::Char('q') | KeyCode::Esc => {
-                open_thread_detail(app, git, &thread_id, Some(&node_id), perf)?;
+                open_thread_detail(app, git, &thread_id, Some(&node_id))?;
             }
             KeyCode::Char('y') => {
                 let yank = format!("@{node_id}");
@@ -219,19 +217,19 @@ pub(super) fn handle_key(
             _ => {}
         },
         View::CreateThread => {
-            handle_create_thread_key(app, key, git, conn, db_path, perf)?;
+            handle_create_thread_key(app, key, git, conn, db_path)?;
         }
         View::EditThreadBody => {
             handle_edit_thread_body_key(app, key)?;
         }
         View::CreateNode { thread_id } => {
-            handle_create_node_key(app, key, git, conn, db_path, &thread_id, perf)?;
+            handle_create_node_key(app, key, git, conn, db_path, &thread_id)?;
         }
         View::EditNodeBody { thread_id } => {
             handle_edit_node_body_key(app, key, &thread_id)?;
         }
         View::CreateLink { thread_id, origin } => {
-            handle_create_link_key(app, key, git, &thread_id, &origin, perf)?;
+            handle_create_link_key(app, key, git, &thread_id, &origin)?;
         }
     }
     Ok(false)
@@ -242,7 +240,6 @@ pub(super) fn handle_key(
 pub(super) fn confirm_discard_action(
     app: &mut App,
     git: &super::GitOps,
-    perf: &mut Perf,
 ) -> crate::internal::error::ForumResult<()> {
     match app.view.clone() {
         View::CreateThread => {
@@ -252,11 +249,11 @@ pub(super) fn confirm_discard_action(
         }
         View::CreateNode { thread_id } => {
             app.node_form.body.clear();
-            open_thread_detail(app, git, &thread_id, None, perf)?;
+            open_thread_detail(app, git, &thread_id, None)?;
         }
         View::CreateLink { thread_id, origin } => {
             app.link_form.manual_target.clear();
-            super::state::return_from_link_form(app, git, &thread_id, &origin, perf)?;
+            super::state::return_from_link_form(app, git, &thread_id, &origin)?;
         }
         _ => {}
     }
@@ -292,7 +289,6 @@ pub(super) fn handle_mouse(
     git: &GitOps,
     conn: &rusqlite::Connection,
     db_path: &Path,
-    perf: &mut Perf,
 ) -> ForumResult<bool> {
     match app.view.clone() {
         View::List => match mouse.kind {
@@ -329,7 +325,7 @@ pub(super) fn handle_mouse(
                             app.table_state.select(Some(index));
                             if is_double {
                                 if let Some(thread_id) = app.selected_thread_id() {
-                                    open_thread_detail(app, git, &thread_id, None, perf)?;
+                                    open_thread_detail(app, git, &thread_id, None)?;
                                 }
                             }
                         }
@@ -466,7 +462,7 @@ pub(super) fn handle_mouse(
                 {
                     let tid = thread_id.clone();
                     let selected = app.selected_node_id();
-                    open_thread_detail(app, git, &tid, selected.as_deref(), perf)?;
+                    open_thread_detail(app, git, &tid, selected.as_deref())?;
                 }
             }
             MouseEventKind::ScrollDown => {
@@ -494,7 +490,7 @@ pub(super) fn handle_mouse(
                     .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
                 {
                     app.thread_form.field = ThreadFormField::Submit;
-                    submit_create_thread(app, git, conn, db_path, perf)?;
+                    submit_create_thread(app, git, conn, db_path)?;
                 } else if let Some(area) = app.ui_rects.dropdown {
                     if let Some(index) = dropdown_item_at(area, mouse.row) {
                         let max = thread_lifecycle_labels().len();
@@ -532,7 +528,7 @@ pub(super) fn handle_mouse(
                     .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
                 {
                     app.node_form.field = NodeFormField::Submit;
-                    submit_create_node(app, git, conn, db_path, &thread_id, perf)?;
+                    submit_create_node(app, git, conn, db_path, &thread_id)?;
                 } else if let Some(area) = app.ui_rects.dropdown {
                     if let Some(index) = dropdown_item_at(area, mouse.row) {
                         let max = node_type_labels().len();
@@ -566,7 +562,7 @@ pub(super) fn handle_mouse(
                     .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
                 {
                     app.link_form.field = LinkFormField::Submit;
-                    submit_create_link(app, git, &thread_id, &origin, perf)?;
+                    submit_create_link(app, git, &thread_id, &origin)?;
                 } else if let Some(area) = app.ui_rects.dropdown {
                     if let Some(index) = dropdown_item_at(area, mouse.row) {
                         match app.link_form.field {
@@ -695,7 +691,6 @@ pub(super) fn handle_create_thread_key(
     git: &GitOps,
     conn: &rusqlite::Connection,
     db_path: &Path,
-    perf: &mut Perf,
 ) -> ForumResult<()> {
     match key.code {
         KeyCode::Esc => {
@@ -745,7 +740,7 @@ pub(super) fn handle_create_thread_key(
         },
         KeyCode::Enter => match app.thread_form.field {
             ThreadFormField::Body => app.view = View::EditThreadBody,
-            ThreadFormField::Submit => submit_create_thread(app, git, conn, db_path, perf)?,
+            ThreadFormField::Submit => submit_create_thread(app, git, conn, db_path)?,
             ThreadFormField::Lifecycle | ThreadFormField::Tags | ThreadFormField::Title => {}
         },
         _ => {}
@@ -790,14 +785,13 @@ pub(super) fn handle_create_node_key(
     conn: &rusqlite::Connection,
     db_path: &Path,
     thread_id: &str,
-    perf: &mut Perf,
 ) -> ForumResult<()> {
     match key.code {
         KeyCode::Esc => {
             if app.has_unsaved_form_input() {
                 app.confirm_discard = true;
             } else {
-                open_thread_detail(app, git, thread_id, None, perf)?;
+                open_thread_detail(app, git, thread_id, None)?;
             }
         }
         KeyCode::Tab => {
@@ -824,7 +818,7 @@ pub(super) fn handle_create_node_key(
                     thread_id: thread_id.to_string(),
                 };
             } else if app.node_form.field == NodeFormField::Submit {
-                submit_create_node(app, git, conn, db_path, thread_id, perf)?;
+                submit_create_node(app, git, conn, db_path, thread_id)?;
             }
         }
         _ => {}
@@ -873,14 +867,13 @@ pub(super) fn handle_create_link_key(
     git: &GitOps,
     thread_id: &str,
     origin: &LinkOrigin,
-    perf: &mut Perf,
 ) -> ForumResult<()> {
     match key.code {
         KeyCode::Esc => {
             if app.has_unsaved_form_input() {
                 app.confirm_discard = true;
             } else {
-                super::state::return_from_link_form(app, git, thread_id, origin, perf)?;
+                super::state::return_from_link_form(app, git, thread_id, origin)?;
             }
         }
         KeyCode::Tab => {
@@ -948,7 +941,7 @@ pub(super) fn handle_create_link_key(
         }
         KeyCode::Enter => {
             if app.link_form.field == LinkFormField::Submit {
-                submit_create_link(app, git, thread_id, origin, perf)?;
+                submit_create_link(app, git, thread_id, origin)?;
             }
         }
         _ => {}

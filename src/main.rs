@@ -15,8 +15,8 @@ use git_forum::internal::editor;
 use git_forum::internal::error::ForumError;
 use git_forum::internal::event;
 use git_forum::internal::event::{NodeType, ThreadKind};
+use git_forum::internal::evidence;
 use git_forum::internal::evidence::EvidenceKind;
-use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::github;
 use git_forum::internal::github_export;
@@ -2524,7 +2524,7 @@ fn main() -> Result<(), ForumError> {
                         })?;
                         for target in &link_to {
                             let resolved_target = resolve_tid(&git, target)?;
-                            evidence_ops::add_thread_link(
+                            evidence::add_thread_link(
                                 &git,
                                 &thread_id,
                                 &resolved_target,
@@ -2589,7 +2589,7 @@ fn main() -> Result<(), ForumError> {
                 let violations = operation_check::check_evidence(&policy, &state.status);
                 apply_operation_checks(&violations, force, policy.checks.strict)?;
                 for ref_target in &ref_targets {
-                    let commit_sha = evidence_ops::add_evidence(
+                    let commit_sha = evidence::add_evidence(
                         &git,
                         &thread_id,
                         kind.clone(),
@@ -2616,14 +2616,7 @@ fn main() -> Result<(), ForumError> {
             let thread_id = resolve_tid(&git, &thread_id)?;
             let target_thread_id = resolve_tid(&git, &target_thread_id)?;
             let actor = resolve_actor(as_actor, &git);
-            evidence_ops::add_thread_link(
-                &git,
-                &thread_id,
-                &target_thread_id,
-                &rel,
-                &actor,
-                &clock,
-            )?;
+            evidence::add_thread_link(&git, &thread_id, &target_thread_id, &rel, &actor, &clock)?;
             println!("{thread_id} -> {target_thread_id} ({rel})");
         }
 
@@ -3061,7 +3054,7 @@ fn run_thread_cmd(
                 })?;
                 for target in &link_to {
                     let resolved_target = resolve_tid(&git, target)?;
-                    evidence_ops::add_thread_link(
+                    evidence::add_thread_link(
                         &git,
                         &thread_id,
                         &resolved_target,
@@ -3072,7 +3065,7 @@ fn run_thread_cmd(
                 }
             }
             if let Some(sha) = commit_ref {
-                evidence_ops::add_evidence(
+                evidence::add_evidence(
                     &git,
                     &thread_id,
                     EvidenceKind::Commit,
@@ -3085,7 +3078,7 @@ fn run_thread_cmd(
             // --from-thread: link new→old (supersedes), old→new (superseded-by),
             // auto-deprecate only when source is RFC and target is RFC
             if let Some((source_id, source_kind)) = source_thread {
-                evidence_ops::add_thread_link(
+                evidence::add_thread_link(
                     &git,
                     &thread_id,
                     &source_id,
@@ -3093,7 +3086,7 @@ fn run_thread_cmd(
                     &actor,
                     clock,
                 )?;
-                evidence_ops::add_thread_link(
+                evidence::add_thread_link(
                     &git,
                     &source_id,
                     &thread_id,
@@ -3376,7 +3369,7 @@ fn run_state_shorthand(
             .ok_or_else(|| ForumError::Config("--rel is required when --link-to is used".into()))?;
         for target in link_to {
             let resolved_target = resolve_tid(&git, target)?;
-            evidence_ops::add_thread_link(&git, thread_id, &resolved_target, rel, &actor, clock)?;
+            evidence::add_thread_link(&git, thread_id, &resolved_target, rel, &actor, clock)?;
         }
     }
     if let Ok(state) = thread::replay_thread(&git, thread_id) {
@@ -3447,12 +3440,12 @@ fn thread_matches_filters(
 
 fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
     match kind {
-        "ask" | "issue" => Ok(ThreadKind::Issue),
+        "ask" => Ok(ThreadKind::Issue),
         "rfc" => Ok(ThreadKind::Rfc),
         "dec" => Ok(ThreadKind::Dec),
-        "job" | "task" => Ok(ThreadKind::Task),
+        "job" => Ok(ThreadKind::Task),
         other => Err(ForumError::Config(format!(
-            "unknown kind '{other}'; valid: ask, rfc, dec, job (aliases: issue, task)"
+            "unknown kind '{other}'; valid: ask, rfc, dec, job"
         ))),
     }
 }
@@ -3496,12 +3489,12 @@ fn terminal_state_date(state: &thread::ThreadState) -> Option<chrono::DateTime<c
 fn parse_thread_kind_filter(kind: Option<&str>) -> Result<Option<ThreadKind>, ForumError> {
     match kind {
         None => Ok(None),
-        Some("ask") | Some("issue") => Ok(Some(ThreadKind::Issue)),
+        Some("ask") => Ok(Some(ThreadKind::Issue)),
         Some("rfc") => Ok(Some(ThreadKind::Rfc)),
         Some("dec") => Ok(Some(ThreadKind::Dec)),
-        Some("job") | Some("task") => Ok(Some(ThreadKind::Task)),
+        Some("job") => Ok(Some(ThreadKind::Task)),
         Some(other) => Err(ForumError::Config(format!(
-            "unknown kind '{other}'; valid: ask, rfc, dec, job (aliases: issue, task)"
+            "unknown kind '{other}'; valid: ask, rfc, dec, job"
         ))),
     }
 }

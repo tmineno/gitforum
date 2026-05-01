@@ -35,7 +35,7 @@ fn extract_created_id(output: &std::process::Output) -> String {
 }
 
 fn setup_issue(repo_path: &std::path::Path) -> String {
-    let out = run(repo_path, &["new", "issue", "Test issue"]);
+    let out = run(repo_path, &["new", "ask", "Test issue"]);
     assert!(out.status.success(), "failed to create issue");
     extract_created_id(&out)
 }

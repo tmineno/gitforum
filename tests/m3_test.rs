@@ -5,8 +5,8 @@ use git_forum::internal::clock::{Clock, FixedClock};
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
 use git_forum::internal::event::{self, Event, EventType, NodeType, ThreadKind};
+use git_forum::internal::evidence;
 use git_forum::internal::evidence::EvidenceKind;
-use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::policy::{GuardEntry, GuardRule, Policy};
@@ -1009,7 +1009,7 @@ fn change_state_issue_close_passes_with_commit_evidence() {
     assert!(commit_out.status.success());
 
     // Add commit evidence
-    evidence_ops::add_evidence(
+    evidence::add_evidence(
         &git,
         &thread_id,
         EvidenceKind::Commit,
@@ -1332,7 +1332,7 @@ fn from_thread_creates_new_rfc_with_links_and_deprecates_source() {
     .unwrap();
 
     // Add links: new supersedes source, source superseded-by new
-    evidence_ops::add_thread_link(
+    evidence::add_thread_link(
         &git,
         &new_id,
         &source_id,
@@ -1341,7 +1341,7 @@ fn from_thread_creates_new_rfc_with_links_and_deprecates_source() {
         &fixed_clock(),
     )
     .unwrap();
-    evidence_ops::add_thread_link(
+    evidence::add_thread_link(
         &git,
         &source_id,
         &new_id,

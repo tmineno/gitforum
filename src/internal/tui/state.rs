@@ -6,7 +6,7 @@ use crate::internal::clock::SystemClock;
 use crate::internal::create;
 use crate::internal::error::ForumResult;
 use crate::internal::event::{self, Lifecycle, NodeType, ThreadKind};
-use crate::internal::evidence_ops;
+use crate::internal::evidence;
 use crate::internal::git_ops::GitOps;
 use crate::internal::index::{self, ThreadRow};
 use crate::internal::node::Node;
@@ -16,7 +16,6 @@ use crate::internal::show;
 use crate::internal::thread;
 use crate::internal::write_ops;
 
-use super::perf::Perf;
 use super::{App, LinkOrigin, LinkTargetKind, NodeStatusAction, TreeEntry, View};
 
 pub(super) fn open_thread_detail(
@@ -24,28 +23,10 @@ pub(super) fn open_thread_detail(
     git: &GitOps,
     thread_id: &str,
     selected_node_id: Option<&str>,
-    perf: &mut Perf,
 ) -> ForumResult<()> {
-    // Resolve the tip SHA for cache lookup and change detection
     let ref_name = format!("refs/forum/threads/{thread_id}");
     let tip_sha = git.resolve_ref(&ref_name)?.unwrap_or_default();
-
-    // Try the replay cache first
-    let state = if let Some(cached) = app.replay_cache.get(thread_id, &tip_sha) {
-        perf.record(
-            "replay_thread_cached",
-            Some(thread_id),
-            std::time::Duration::ZERO,
-        );
-        cached.clone()
-    } else {
-        let t = Instant::now();
-        let replayed = thread::replay_thread(git, thread_id)?;
-        perf.record("replay_thread", Some(thread_id), t.elapsed());
-        app.replay_cache
-            .insert(thread_id.to_string(), tip_sha.clone(), replayed.clone());
-        replayed
-    };
+    let state = thread::replay_thread(git, thread_id)?;
 
     app.thread_title = state.title.clone();
     app.thread_lifecycle = Some(state.lifecycle().as_str().to_string());
@@ -121,7 +102,6 @@ pub(super) fn submit_create_thread(
     git: &GitOps,
     conn: &rusqlite::Connection,
     db_path: &Path,
-    perf: &mut Perf,
 ) -> ForumResult<()> {
     let title = app.thread_form.title.trim();
     if title.is_empty() {
@@ -138,7 +118,6 @@ pub(super) fn submit_create_thread(
     };
     app.thread_form.tag_error = None;
 
-    let t = Instant::now();
     let actor = actor::current_actor(git, git.default_actor());
     let clock = SystemClock;
     let lifecycle = thread_lifecycle_values()[app.thread_form.lifecycle_index];
@@ -160,11 +139,10 @@ pub(super) fn submit_create_thread(
     }
     reindex::run_reindex(git, db_path)?;
     app.threads = index::list_threads(conn)?;
-    perf.record("submit_create", Some(&thread_id), t.elapsed());
     if let Some(pos) = app.threads.iter().position(|row| row.id == thread_id) {
         app.table_state.select(Some(pos));
     }
-    open_thread_detail(app, git, &thread_id, None, perf)
+    open_thread_detail(app, git, &thread_id, None)
 }
 
 pub(super) fn submit_create_node(
@@ -173,22 +151,19 @@ pub(super) fn submit_create_node(
     conn: &rusqlite::Connection,
     db_path: &Path,
     thread_id: &str,
-    perf: &mut Perf,
 ) -> ForumResult<()> {
     let body = app.node_form.body.trim();
     if body.is_empty() {
         return Ok(());
     }
 
-    let t = Instant::now();
     let actor = actor::current_actor(git, git.default_actor());
     let clock = SystemClock;
     let node_type = node_type_values()[app.node_form.node_type_index];
     let node_id = write_ops::say_node(git, thread_id, node_type, body, &actor, &clock, None)?;
     reindex::run_reindex(git, db_path)?;
     app.threads = index::list_threads(conn)?;
-    perf.record("submit_create", Some(thread_id), t.elapsed());
-    open_thread_detail(app, git, thread_id, Some(&node_id), perf)
+    open_thread_detail(app, git, thread_id, Some(&node_id))
 }
 
 pub(super) fn submit_create_link(
@@ -196,7 +171,6 @@ pub(super) fn submit_create_link(
     git: &GitOps,
     thread_id: &str,
     origin: &LinkOrigin,
-    perf: &mut Perf,
 ) -> ForumResult<()> {
     let Some(target_thread_id) = selected_link_target(app, thread_id) else {
         return Ok(());
@@ -205,8 +179,8 @@ pub(super) fn submit_create_link(
     let actor = actor::current_actor(git, git.default_actor());
     let clock = SystemClock;
     let relation = link_relation_labels()[app.link_form.relation_index];
-    evidence_ops::add_thread_link(git, thread_id, &target_thread_id, relation, &actor, &clock)?;
-    return_from_link_form(app, git, thread_id, origin, perf)
+    evidence::add_thread_link(git, thread_id, &target_thread_id, relation, &actor, &clock)?;
+    return_from_link_form(app, git, thread_id, origin)
 }
 
 pub(super) fn return_from_link_form(
@@ -214,11 +188,10 @@ pub(super) fn return_from_link_form(
     git: &GitOps,
     thread_id: &str,
     origin: &LinkOrigin,
-    perf: &mut Perf,
 ) -> ForumResult<()> {
     match origin {
         LinkOrigin::ThreadDetail { selected_node_id } => {
-            open_thread_detail(app, git, thread_id, selected_node_id.as_deref(), perf)
+            open_thread_detail(app, git, thread_id, selected_node_id.as_deref())
         }
         LinkOrigin::NodeDetail { node_id } => open_node_detail(app, git, thread_id, node_id),
     }
@@ -471,15 +444,8 @@ pub(super) fn selected_link_target_label(app: &App, source_thread_id: &str) -> S
 
 /// Incremental list refresh: compare git ref SHAs against the SQLite index and
 /// only replay threads whose SHA has changed. Returns true if any changes were made.
-fn incremental_refresh(
-    git: &GitOps,
-    conn: &rusqlite::Connection,
-    perf: &mut Perf,
-) -> ForumResult<bool> {
-    let t = Instant::now();
+fn incremental_refresh(git: &GitOps, conn: &rusqlite::Connection) -> ForumResult<bool> {
     let current_refs = git.list_refs_with_shas(refs::THREADS_PREFIX)?;
-    perf.record("incremental_ref_scan", None, t.elapsed());
-
     let stored_shas = index::thread_tip_shas(conn)?;
 
     // Build map of current thread_id -> ref tip SHA
@@ -500,9 +466,7 @@ fn incremental_refresh(
             None => true,
         };
         if needs_update {
-            let rt = Instant::now();
             if let Ok(state) = thread::replay_thread(git, thread_id) {
-                perf.record("replay_thread", Some(thread_id), rt.elapsed());
                 let _ = index::upsert_thread(conn, &state)
                     .and_then(|_| index::replace_nodes_for_thread(conn, &state))
                     .and_then(|_| index::replace_evidence_for_thread(conn, &state));
@@ -528,15 +492,11 @@ pub(super) fn auto_refresh(
     git: &GitOps,
     conn: &rusqlite::Connection,
     _db_path: &Path,
-    perf: &mut Perf,
 ) -> ForumResult<()> {
     match &app.view {
         View::ThreadDetail(thread_id) => {
             let ref_name = format!("refs/forum/threads/{thread_id}");
-            let t = Instant::now();
-            let resolved = git.resolve_ref(&ref_name);
-            perf.record("resolve_ref", Some(thread_id), t.elapsed());
-            if let Ok(Some(current_sha)) = resolved {
+            if let Ok(Some(current_sha)) = git.resolve_ref(&ref_name) {
                 let changed = app
                     .thread_tip_sha
                     .as_ref()
@@ -544,16 +504,13 @@ pub(super) fn auto_refresh(
                 if changed {
                     let selected = app.selected_node_id();
                     let thread_id = thread_id.clone();
-                    open_thread_detail(app, git, &thread_id, selected.as_deref(), perf)?;
+                    open_thread_detail(app, git, &thread_id, selected.as_deref())?;
                 }
             }
         }
         View::NodeDetail { thread_id, node_id } => {
             let ref_name = format!("refs/forum/threads/{thread_id}");
-            let t = Instant::now();
-            let resolved = git.resolve_ref(&ref_name);
-            perf.record("resolve_ref", Some(thread_id), t.elapsed());
-            if let Ok(Some(current_sha)) = resolved {
+            if let Ok(Some(current_sha)) = git.resolve_ref(&ref_name) {
                 let changed = app
                     .thread_tip_sha
                     .as_ref()
@@ -567,9 +524,7 @@ pub(super) fn auto_refresh(
             }
         }
         View::List => {
-            let t = Instant::now();
-            let changed = incremental_refresh(git, conn, perf)?;
-            perf.record("list_refresh", None, t.elapsed());
+            let changed = incremental_refresh(git, conn)?;
             if changed {
                 let threads = index::list_threads(conn)?;
                 let sel = app.table_state.selected().unwrap_or(0);
