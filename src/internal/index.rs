@@ -90,7 +90,14 @@ fn ensure_schema(conn: &Connection) -> ForumResult<()> {
             kind            TEXT NOT NULL,
             ref_target      TEXT NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_evidence_ref ON evidence(ref_target);",
+        CREATE INDEX IF NOT EXISTS idx_evidence_ref ON evidence(ref_target);
+        CREATE TABLE IF NOT EXISTS links (
+            from_thread_id  TEXT NOT NULL,
+            to_thread_id    TEXT NOT NULL,
+            rel             TEXT NOT NULL,
+            PRIMARY KEY (from_thread_id, to_thread_id, rel)
+        );
+        CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_thread_id, rel);",
     )
     .map_err(|e| ForumError::Repo(e.to_string()))?;
     ensure_thread_branch_column(conn)?;
@@ -152,6 +159,8 @@ pub fn clear_all(conn: &Connection) -> ForumResult<()> {
     conn.execute("DELETE FROM evidence", [])
         .map_err(|e| ForumError::Repo(e.to_string()))?;
     conn.execute("DELETE FROM nodes", [])
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+    conn.execute("DELETE FROM links", [])
         .map_err(|e| ForumError::Repo(e.to_string()))?;
     conn.execute("DELETE FROM threads", [])
         .map_err(|e| ForumError::Repo(e.to_string()))?;
@@ -264,6 +273,137 @@ pub fn replace_evidence_for_thread(conn: &Connection, state: &ThreadState) -> Fo
     Ok(())
 }
 
+/// Replace indexed link rows for a replayed ThreadState.
+///
+/// Preconditions: `conn` is open with schema applied.
+/// Postconditions: link rows where from_thread_id == state.id reflect the thread's current
+///   forward link set (state.links). Each link's `to_thread_id` is canonicalized to the
+///   bare-token form when the legacy form is found via the deterministic migrate mapping
+///   (per Track C migrate, SPEC-2.0 §10.1) — so that incoming-link queries against the
+///   canonical thread ID match links that pre-date the migration.
+/// Failure modes: ForumError::Repo on SQL error.
+/// Side effects: deletes and inserts link rows for one thread.
+pub fn replace_links_for_thread(conn: &Connection, state: &ThreadState) -> ForumResult<()> {
+    conn.execute(
+        "DELETE FROM links WHERE from_thread_id = ?1",
+        params![state.id],
+    )
+    .map_err(|e| ForumError::Repo(e.to_string()))?;
+
+    let known_ids: std::collections::HashSet<String> = thread_tip_shas(conn)?.into_keys().collect();
+
+    let mut stmt = conn
+        .prepare(
+            "INSERT OR REPLACE INTO links
+             (from_thread_id, to_thread_id, rel)
+             VALUES (?1, ?2, ?3)",
+        )
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+
+    for link in &state.links {
+        let canonical = canonicalize_link_target(&link.target_thread_id, &known_ids);
+        stmt.execute(params![state.id, canonical, link.rel,])
+            .map_err(|e| ForumError::Repo(e.to_string()))?;
+    }
+    Ok(())
+}
+
+/// Map a link target ID to its canonical thread ID when possible.
+///
+/// Link events serialize the target ID in whatever form the author typed at
+/// commit time — frequently the legacy `KIND-XXXXXXXX` form for events that
+/// pre-date the Track C migration. The reverse-link index is queried against
+/// the canonical bare-token ID, so we normalize at write time using the
+/// migrator's deterministic mapping (`migrate::bare_token_for`) — but only
+/// when the resulting canonical token is observably a real thread, so we
+/// don't rewrite targets that point at threads outside this repo.
+fn canonicalize_link_target(target: &str, known_ids: &std::collections::HashSet<String>) -> String {
+    if known_ids.contains(target) {
+        return target.to_string();
+    }
+    let canonical = super::migrate::bare_token_for(target);
+    if canonical != target && known_ids.contains(&canonical) {
+        canonical
+    } else {
+        target.to_string()
+    }
+}
+
+/// An incoming link row: a thread that links to the queried thread.
+#[derive(Debug, Clone)]
+pub struct IncomingLink {
+    pub from_thread_id: String,
+    pub rel: String,
+}
+
+/// Return threads that link to `to_thread_id`, optionally filtered by relation.
+///
+/// Preconditions: `conn` is open with schema applied.
+/// Postconditions: returns matching incoming-link rows ordered by from_thread_id.
+/// Failure modes: ForumError::Repo on SQL error.
+/// Side effects: none. This is the primary read for `show --tree` (one indexed lookup).
+pub fn find_incoming_links(
+    conn: &Connection,
+    to_thread_id: &str,
+    rel: Option<&str>,
+) -> ForumResult<Vec<IncomingLink>> {
+    let map_row = |row: &rusqlite::Row<'_>| {
+        Ok(IncomingLink {
+            from_thread_id: row.get(0)?,
+            rel: row.get(1)?,
+        })
+    };
+    let mut out = Vec::new();
+    if let Some(r) = rel {
+        let mut stmt = conn
+            .prepare(
+                "SELECT from_thread_id, rel FROM links
+                 WHERE to_thread_id = ?1 AND rel = ?2
+                 ORDER BY from_thread_id",
+            )
+            .map_err(|e| ForumError::Repo(e.to_string()))?;
+        let iter = stmt
+            .query_map(params![to_thread_id, r], map_row)
+            .map_err(|e| ForumError::Repo(e.to_string()))?;
+        for row in iter {
+            out.push(row.map_err(|e| ForumError::Repo(e.to_string()))?);
+        }
+    } else {
+        let mut stmt = conn
+            .prepare(
+                "SELECT from_thread_id, rel FROM links
+                 WHERE to_thread_id = ?1
+                 ORDER BY from_thread_id, rel",
+            )
+            .map_err(|e| ForumError::Repo(e.to_string()))?;
+        let iter = stmt
+            .query_map(params![to_thread_id], map_row)
+            .map_err(|e| ForumError::Repo(e.to_string()))?;
+        for row in iter {
+            out.push(row.map_err(|e| ForumError::Repo(e.to_string()))?);
+        }
+    }
+    Ok(out)
+}
+
+/// Return one indexed thread row by ID, if present.
+///
+/// Preconditions: `conn` is open with schema applied.
+/// Postconditions: returns Some(row) if a thread with `id` exists; None otherwise.
+/// Failure modes: ForumError::Repo on SQL error.
+/// Side effects: none.
+pub fn get_thread(conn: &Connection, id: &str) -> ForumResult<Option<ThreadRow>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, kind, status, title, body, branch, created_at, created_by,
+                    open_objections, open_actions, has_summary, tip_sha, coalesce(updated_at, '')
+             FROM threads WHERE id = ?1",
+        )
+        .map_err(|e| ForumError::Repo(e.to_string()))?;
+    let mut rows = collect_rows(&mut stmt, params![id])?;
+    Ok(rows.pop())
+}
+
 /// Return all thread rows ordered by ID.
 ///
 /// Preconditions: `conn` is open with schema applied.
@@ -310,6 +450,11 @@ pub fn delete_thread(conn: &Connection, thread_id: &str) -> ForumResult<()> {
     .map_err(|e| ForumError::Repo(e.to_string()))?;
     conn.execute("DELETE FROM nodes WHERE thread_id = ?1", params![thread_id])
         .map_err(|e| ForumError::Repo(e.to_string()))?;
+    conn.execute(
+        "DELETE FROM links WHERE from_thread_id = ?1",
+        params![thread_id],
+    )
+    .map_err(|e| ForumError::Repo(e.to_string()))?;
     conn.execute("DELETE FROM threads WHERE id = ?1", params![thread_id])
         .map_err(|e| ForumError::Repo(e.to_string()))?;
     Ok(())
@@ -653,6 +798,110 @@ mod tests {
             find_threads_by_evidence_ref(&conn, &EvidenceKind::External, "https://example.com")
                 .unwrap();
         assert!(hits.is_empty());
+    }
+
+    fn make_state_with_links(
+        id: &str,
+        links: Vec<crate::internal::thread::ThreadLink>,
+    ) -> ThreadState {
+        let mut state = make_state(id);
+        state.links = links;
+        state
+    }
+
+    #[test]
+    fn replace_links_and_query_incoming() {
+        use crate::internal::thread::ThreadLink;
+        let conn = in_memory();
+
+        // Two threads link to RFC-PARENT with `implements`; one links with `relates-to`.
+        let child1 = make_state_with_links(
+            "TASK-CHILD1",
+            vec![ThreadLink {
+                target_thread_id: "RFC-PARENT".into(),
+                rel: "implements".into(),
+            }],
+        );
+        let child2 = make_state_with_links(
+            "TASK-CHILD2",
+            vec![ThreadLink {
+                target_thread_id: "RFC-PARENT".into(),
+                rel: "implements".into(),
+            }],
+        );
+        let sibling = make_state_with_links(
+            "DEC-SIBLING",
+            vec![ThreadLink {
+                target_thread_id: "RFC-PARENT".into(),
+                rel: "relates-to".into(),
+            }],
+        );
+        for s in [&child1, &child2, &sibling] {
+            upsert_thread(&conn, s).unwrap();
+            replace_links_for_thread(&conn, s).unwrap();
+        }
+
+        let implements = find_incoming_links(&conn, "RFC-PARENT", Some("implements")).unwrap();
+        assert_eq!(implements.len(), 2);
+        let from_ids: Vec<&str> = implements
+            .iter()
+            .map(|l| l.from_thread_id.as_str())
+            .collect();
+        assert_eq!(from_ids, vec!["TASK-CHILD1", "TASK-CHILD2"]);
+
+        let all = find_incoming_links(&conn, "RFC-PARENT", None).unwrap();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn replace_links_overwrites_old_entries() {
+        use crate::internal::thread::ThreadLink;
+        let conn = in_memory();
+        let state1 = make_state_with_links(
+            "TASK-A",
+            vec![ThreadLink {
+                target_thread_id: "RFC-OLD".into(),
+                rel: "implements".into(),
+            }],
+        );
+        upsert_thread(&conn, &state1).unwrap();
+        replace_links_for_thread(&conn, &state1).unwrap();
+
+        // Re-replay with a different link target — old row must be removed.
+        let state2 = make_state_with_links(
+            "TASK-A",
+            vec![ThreadLink {
+                target_thread_id: "RFC-NEW".into(),
+                rel: "implements".into(),
+            }],
+        );
+        replace_links_for_thread(&conn, &state2).unwrap();
+
+        assert!(find_incoming_links(&conn, "RFC-OLD", None)
+            .unwrap()
+            .is_empty());
+        let new_hits = find_incoming_links(&conn, "RFC-NEW", Some("implements")).unwrap();
+        assert_eq!(new_hits.len(), 1);
+        assert_eq!(new_hits[0].from_thread_id, "TASK-A");
+    }
+
+    #[test]
+    fn delete_thread_clears_links() {
+        use crate::internal::thread::ThreadLink;
+        let conn = in_memory();
+        let state = make_state_with_links(
+            "TASK-DEL",
+            vec![ThreadLink {
+                target_thread_id: "RFC-X".into(),
+                rel: "implements".into(),
+            }],
+        );
+        upsert_thread(&conn, &state).unwrap();
+        replace_links_for_thread(&conn, &state).unwrap();
+        delete_thread(&conn, "TASK-DEL").unwrap();
+        assert!(find_incoming_links(&conn, "RFC-X", None)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

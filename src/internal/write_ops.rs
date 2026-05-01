@@ -282,11 +282,18 @@ mod facet_set_tests {
         tempfile::TempDir,
     ) {
         let dir = tempfile::tempdir().unwrap();
+        // Clear inherited GIT_* env vars so this `git init` actually creates
+        // a repo at `dir.path()` instead of inheriting the parent's GIT_DIR
+        // (e.g. when these tests run inside a pre-commit hook). Mirrors
+        // tests/support/repo.rs::TestRepo.
         std::process::Command::new("git")
             .args(["init", "--quiet"])
             .current_dir(dir.path())
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
             .output()
             .unwrap();
         let paths = crate::internal::config::RepoPaths::from_repo_root(dir.path());

@@ -21,6 +21,10 @@ pub struct VerifyReport {
     /// Guard violations for milestone states reachable via intermediate transitions.
     /// Each entry is (from_state, to_state, path_description, violations).
     pub lookahead: Vec<LookaheadEntry>,
+    /// SPEC-2.0 §9.4 advisory: informational notes about the state of threads
+    /// linked from the verified thread. Strictly informational — the
+    /// verification result above is computed only from the named thread.
+    pub linked_advisories: Vec<LinkedAdvisory>,
 }
 
 #[derive(Debug)]
@@ -31,6 +35,20 @@ pub struct LookaheadEntry {
     pub path: String,
     /// Guard violations that would block this transition
     pub violations: Vec<GuardViolation>,
+}
+
+/// Advisory line about a thread linked from the verified thread.
+///
+/// Informational only (per CORE-VALUE.md "Advisories"). Generated only when
+/// the linked thread's state is observably "not yet done" — to surface the
+/// likely reader question without ever blocking the verification.
+#[derive(Debug, Clone)]
+pub struct LinkedAdvisory {
+    pub linked_thread_id: String,
+    pub linked_kind: ThreadKind,
+    pub linked_status: String,
+    pub rel: String,
+    pub message: String,
 }
 
 impl VerifyReport {
@@ -55,11 +73,52 @@ pub fn verify_thread(git: &GitOps, thread_id: &str, p: &Policy) -> ForumResult<V
     // Lookahead: check guards for milestone states reachable via intermediate transitions
     let lookahead = build_lookahead(state.kind, &state.status, &state, p);
 
+    // Advisory: surface state of linked threads (strictly informational).
+    let linked_advisories = build_linked_advisories(git, &state);
+
     Ok(VerifyReport {
         thread_id: thread_id.to_string(),
         violations,
         lookahead,
+        linked_advisories,
     })
+}
+
+/// Walk the verified thread's forward links one hop, replay each linked
+/// thread's tip ref, and emit an advisory if it isn't yet `done`.
+///
+/// This is intentionally read-only and best-effort: a missing or unreplayable
+/// linked thread is silently skipped, not surfaced as a verify error. Link
+/// target IDs that pre-date the Track C migration are recorded in the legacy
+/// `KIND-XXXXXXXX` form; we resolve those to canonical bare-token form before
+/// replay so the advisory works on migrated repos.
+///
+/// The guard preflight result (above) is the verification's authoritative
+/// answer; these lines exist only to make the cross-thread context visible
+/// without gating anything.
+fn build_linked_advisories(git: &GitOps, state: &thread::ThreadState) -> Vec<LinkedAdvisory> {
+    let mut out = Vec::new();
+    for link in &state.links {
+        let canonical = thread::resolve_thread_id(git, &link.target_thread_id)
+            .unwrap_or_else(|_| link.target_thread_id.clone());
+        let Ok(linked) = thread::replay_thread(git, &canonical) else {
+            continue;
+        };
+        if normalize_state_name(&linked.status) == "done" {
+            continue;
+        }
+        out.push(LinkedAdvisory {
+            linked_thread_id: linked.id.clone(),
+            linked_kind: linked.kind,
+            linked_status: linked.status.clone(),
+            rel: link.rel.clone(),
+            message: format!(
+                "linked {} {} ({}) is not yet `done` — informational only",
+                linked.kind, linked.id, linked.status
+            ),
+        });
+    }
+    out
 }
 
 /// The forward target state for preflight purposes (the milestone terminal,

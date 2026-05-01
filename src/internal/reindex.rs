@@ -26,6 +26,11 @@ pub fn run_reindex(git: &GitOps, db_path: &Path) -> ForumResult<ReindexReport> {
     let mut threads_replayed = Vec::new();
     let mut errors = Vec::new();
 
+    // Pass 1: upsert all thread rows (and per-thread nodes/evidence). This
+    // populates the threads table so that pass 2 can canonicalize link
+    // targets against the full set of known thread IDs (Track G reverse-link
+    // index needs the parent to be upserted before children's links can be
+    // resolved).
     for id in &ids {
         match thread::replay_thread(git, id) {
             Ok(state) => {
@@ -39,6 +44,14 @@ pub fn run_reindex(git: &GitOps, db_path: &Path) -> ForumResult<ReindexReport> {
                 }
             }
             Err(e) => errors.push((id.clone(), e)),
+        }
+    }
+
+    // Pass 2: write link rows. Done after pass 1 so canonicalization in
+    // `replace_links_for_thread` sees every thread that has been upserted.
+    for state in &threads_replayed {
+        if let Err(e) = index::replace_links_for_thread(&conn, state) {
+            errors.push((state.id.clone(), e));
         }
     }
 

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use clap::{CommandFactory, Parser, Subcommand};
 use git_forum::internal::actor;
 use git_forum::internal::branch_ops;
+use git_forum::internal::brief;
 use git_forum::internal::clock::SystemClock;
 use git_forum::internal::config;
 use git_forum::internal::config::RepoPaths;
@@ -411,6 +412,10 @@ enum Commands {
         /// Omit the timeline section
         #[arg(long)]
         no_timeline: bool,
+        /// Advisory: list direct incoming `implements` children (one hop, no recursion).
+        /// Cross-thread display only — never gates an operation.
+        #[arg(long)]
+        tree: bool,
     },
     /// Show event timeline for a thread
     Log {
@@ -437,6 +442,17 @@ enum Commands {
     },
     /// Show unresolved items for a thread
     Status { thread_id: String },
+    /// Read-only single-thread digest (RFC-5wf2v8hv).
+    ///
+    /// Reads only the named thread's events. Outgoing-link summary is grouped
+    /// by relation; incoming counts come from the SQLite reverse-link index.
+    /// Never reads linked threads' bodies, titles, or states.
+    Brief {
+        thread_id: String,
+        /// Emit a stable v1 JSON object instead of plaintext.
+        #[arg(long)]
+        json: bool,
+    },
     /// Node sub-commands
     Node {
         #[command(subcommand)]
@@ -1401,6 +1417,12 @@ fn main() -> Result<(), ForumError> {
                 }
             }
 
+            // Cross-thread advisories (SPEC-2.0 §B.6) — informational only,
+            // do not affect exit status per CORE-VALUE.md "Advisories".
+            for advisory in &report.advisories {
+                println!("[ADV ] {advisory}");
+            }
+
             // Summary line
             println!();
             if fail_count == 0 && warn_count == 0 {
@@ -1964,12 +1986,16 @@ fn main() -> Result<(), ForumError> {
             what_next,
             compact,
             no_timeline,
+            tree,
         } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             let thread_id = resolve_tid(&git, &thread_id)?;
             let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
             let state = thread::replay_thread(&git, &thread_id)?;
-            if what_next {
+            if tree {
+                let children = collect_implements_children(&git, &paths, &thread_id)?;
+                print!("{}", show::render_tree(&state, &children));
+            } else if what_next {
                 print!("{}", show::render_what_next(&state, &policy));
             } else {
                 print!(
@@ -2541,6 +2567,21 @@ fn main() -> Result<(), ForumError> {
             }
         }
 
+        Commands::Brief { thread_id, json } => {
+            let (git, paths) = discover_repo_with_init_warning()?;
+            let thread_id = resolve_tid(&git, &thread_id)?;
+            let state = thread::replay_thread(&git, &thread_id)?;
+            let incoming = read_incoming_link_counts(&paths, &thread_id);
+            if json {
+                let payload = brief::build_json(&state, &incoming);
+                let s = serde_json::to_string_pretty(&payload)
+                    .map_err(|e| ForumError::Repo(e.to_string()))?;
+                println!("{s}");
+            } else {
+                print!("{}", brief::render_plaintext(&state, &incoming));
+            }
+        }
+
         Commands::Verify { thread_id } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             let thread_id = resolve_tid(&git, &thread_id)?;
@@ -2564,6 +2605,9 @@ fn main() -> Result<(), ForumError> {
                 for v in &entry.violations {
                     println!("    [{}] {}", v.rule, v.reason);
                 }
+            }
+            for adv in &report.linked_advisories {
+                println!("  advisory: {}", adv.message);
             }
             if !report.passed() {
                 std::process::exit(1);
@@ -3794,6 +3838,112 @@ fn print_import_plan(plan: &github_import::ImportPlan) {
 /// Wraps `thread::resolve_thread_id` for use from CLI command handlers.
 fn resolve_tid(git: &GitOps, user_input: &str) -> Result<String, ForumError> {
     thread::resolve_thread_id(git, user_input)
+}
+
+/// Collect direct incoming `--rel implements` children of a thread for the
+/// `show --tree` advisory.
+///
+/// Reads the SQLite reverse-link index for child IDs (single indexed lookup),
+/// then replays each child's tip ref to get its lifecycle/status/title. One
+/// hop only — does not recurse, does not include other relations. Per
+/// SPEC-2.0 §2.1 and CORE-VALUE.md "Advisories", the result is informational
+/// and never gates an operation.
+///
+/// If the index is missing or stale (e.g. before the first reindex on an
+/// upgraded repo), falls back to scanning thread refs directly so the
+/// advisory still works.
+fn collect_implements_children(
+    git: &GitOps,
+    paths: &config::RepoPaths,
+    parent_thread_id: &str,
+) -> Result<Vec<show::TreeChild>, ForumError> {
+    let db_path = paths.git_forum.join("index.db");
+    let child_ids: Vec<String> = if db_path.is_file() {
+        match index::open_db(&db_path) {
+            Ok(conn) => index::find_incoming_links(&conn, parent_thread_id, Some("implements"))?
+                .into_iter()
+                .map(|l| l.from_thread_id)
+                .collect(),
+            Err(_) => fallback_scan_implements(git, parent_thread_id)?,
+        }
+    } else {
+        fallback_scan_implements(git, parent_thread_id)?
+    };
+
+    let mut out = Vec::with_capacity(child_ids.len());
+    for id in child_ids {
+        match thread::replay_thread(git, &id) {
+            Ok(child_state) => out.push(show::TreeChild {
+                id: child_state.id.clone(),
+                title: child_state.title.clone(),
+                lifecycle_label: child_state.lifecycle().as_str().to_string(),
+                status: child_state.status.clone(),
+            }),
+            Err(_) => {
+                // Skip unreplayable children rather than aborting the
+                // advisory — staleness in the reverse-link index is recoverable
+                // by `git forum reindex`.
+                continue;
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Read incoming-link counts grouped by relation for `brief`.
+///
+/// Returns an empty `IncomingLinkCounts` (not an error) when the SQLite index
+/// is missing — `brief` is read-only and per RFC-5wf2v8hv MUST NOT open other
+/// threads' refs to compute these counts. A stale or absent index just means
+/// the in= line shows `0`; `git forum reindex` rebuilds it.
+fn read_incoming_link_counts(
+    paths: &config::RepoPaths,
+    thread_id: &str,
+) -> brief::IncomingLinkCounts {
+    let db_path = paths.git_forum.join("index.db");
+    if !db_path.is_file() {
+        return brief::IncomingLinkCounts::default();
+    }
+    let Ok(conn) = index::open_db(&db_path) else {
+        return brief::IncomingLinkCounts::default();
+    };
+    let Ok(rows) = index::find_incoming_links(&conn, thread_id, None) else {
+        return brief::IncomingLinkCounts::default();
+    };
+    let mut counts = brief::IncomingLinkCounts::default();
+    for row in rows {
+        *counts.by_rel.entry(row.rel).or_insert(0) += 1;
+    }
+    counts
+}
+
+/// Fallback for `show --tree` when the SQLite index is missing/unreadable:
+/// list all thread refs and replay each to find the ones whose forward links
+/// include `(parent_thread_id, implements)`. O(N) on thread count — only used
+/// as a safety net so the advisory never silently fails.
+fn fallback_scan_implements(
+    git: &GitOps,
+    parent_thread_id: &str,
+) -> Result<Vec<String>, ForumError> {
+    let ids = thread::list_thread_ids(git)?;
+    let mut out = Vec::new();
+    for id in ids {
+        if id == parent_thread_id {
+            continue;
+        }
+        let Ok(state) = thread::replay_thread(git, &id) else {
+            continue;
+        };
+        if state
+            .links
+            .iter()
+            .any(|l| l.target_thread_id == parent_thread_id && l.rel == "implements")
+        {
+            out.push(state.id);
+        }
+    }
+    out.sort();
+    Ok(out)
 }
 
 fn print_export_plan(plan: &github_export::ExportPlan) {

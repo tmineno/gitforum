@@ -12,6 +12,8 @@ git forum show <ID>                                Show thread details
 git forum show <ID> --what-next                    Show valid next actions
 git forum show <ID> --compact                      Compact single-line view
 git forum show <ID> --no-timeline                  Omit timeline from output
+git forum show <ID> --tree                         List direct incoming `implements` children (advisory)
+git forum brief <ID> [--json]                      Read-only single-thread digest (RFC-5wf2v8hv)
 git forum log <ID>                                 Show event timeline for a thread
 git forum log <ID> --reverse                       Show newest events first
 git forum log <ID> -n <N>                          Limit to last N events
