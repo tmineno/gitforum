@@ -1,8 +1,8 @@
 use super::error::ForumResult;
 use super::event::ThreadKind;
+use super::event::{self, normalize_state_name};
 use super::git_ops::GitOps;
 use super::policy::{self, GuardViolation, Policy};
-use super::state_machine::{self, normalize_state_name};
 use super::thread;
 
 /// Result of a preflight check (`git forum verify`).
@@ -104,7 +104,7 @@ pub fn build_lookahead(
     let target = milestone_target(kind);
 
     // Find the path from current state to the milestone target
-    let path = match state_machine::find_path(kind.lifecycle(), current_status, target) {
+    let path = match event::find_path(kind.lifecycle(), current_status, target) {
         Some(p) if p.len() >= 2 => p, // Need at least 2 steps (otherwise it's direct)
         _ => return vec![],
     };

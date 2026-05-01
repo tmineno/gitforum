@@ -1,7 +1,5 @@
-mod cache;
 mod input;
 mod markdown;
-pub(crate) mod perf;
 mod persist;
 pub(crate) mod render;
 mod state;
@@ -25,9 +23,7 @@ use super::git_ops::GitOps;
 use super::index::{self, ThreadRow};
 use super::node::Node;
 
-use cache::ReplayCache;
 use input::{handle_key, handle_mouse};
-use perf::Perf;
 use render::render;
 
 /// Number of lines/rows to scroll per PageUp/PageDown press.
@@ -344,8 +340,6 @@ pub struct App {
     /// threads (no `facet_set` event) this is the §2.3.3 conventional tag.
     thread_tags: Vec<String>,
     thread_status: String,
-    /// LRU cache for replayed thread states (RFC-0017 Phase 1).
-    replay_cache: ReplayCache,
     /// Error flash message displayed as an overlay, dismissed on next keypress.
     pub(crate) error_flash: Option<ErrorFlash>,
     /// Brief info flash (e.g. "Copied: RFC-0025"), dismissed on next keypress.
@@ -415,7 +409,6 @@ impl App {
             thread_lifecycle: None,
             thread_tags: Vec::new(),
             thread_status: String::new(),
-            replay_cache: ReplayCache::new(),
             error_flash: None,
             info_flash: None,
             confirm_discard: false,
@@ -905,7 +898,6 @@ const AUTO_REFRESH_INTERVAL_MS: u128 = 2000;
 pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> ForumResult<()> {
     let threads = load_threads(git, db_path)?;
     let conn = index::open_db(db_path)?;
-    let mut perf = Perf::new();
 
     let mut app = App::new(threads);
 
@@ -917,7 +909,7 @@ pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> For
 
     if let Some(thread_id) = initial_thread_id {
         // CLI argument takes precedence over persisted view
-        state::open_thread_detail(&mut app, git, thread_id, None, &mut perf)?;
+        state::open_thread_detail(&mut app, git, thread_id, None)?;
     } else if let Some(ref saved) = persisted {
         // Restore persisted view if thread/node still exist
         let thread_exists = saved
@@ -927,7 +919,7 @@ pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> For
         match saved.view.as_str() {
             "thread" if thread_exists => {
                 let tid = saved.thread_id.as_ref().unwrap();
-                if state::open_thread_detail(&mut app, git, tid, None, &mut perf).is_ok() {
+                if state::open_thread_detail(&mut app, git, tid, None).is_ok() {
                     app.thread_scroll = saved.thread_scroll;
                     app.tree_fullscreen = saved.tree_fullscreen;
                     for nid in &saved.collapsed {
@@ -960,7 +952,7 @@ pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> For
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_app(&mut terminal, &mut app, git, &conn, db_path, &mut perf);
+    let result = run_app(&mut terminal, &mut app, git, &conn, db_path);
 
     disable_raw_mode().ok();
     execute!(
@@ -971,7 +963,6 @@ pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> For
     .ok();
     terminal.show_cursor().ok();
 
-    perf.finish();
     result
 }
 
@@ -1040,7 +1031,6 @@ fn handle_external_edit<B: Backend>(
     app: &mut App,
     git: &GitOps,
     db_path: &Path,
-    perf: &mut Perf,
     thread_id: &str,
 ) -> ForumResult<()>
 where
@@ -1092,7 +1082,7 @@ where
 
     reindex::run_reindex(git, db_path)?;
     let selected = app.selected_node_id();
-    state::open_thread_detail(app, git, thread_id, selected.as_deref(), perf)?;
+    state::open_thread_detail(app, git, thread_id, selected.as_deref())?;
     app.info_flash = Some("Body revised".into());
     Ok(())
 }
@@ -1127,33 +1117,24 @@ pub(crate) fn run_app<B: Backend>(
     git: &GitOps,
     conn: &rusqlite::Connection,
     db_path: &Path,
-    perf: &mut Perf,
 ) -> ForumResult<()>
 where
     B::Error: Into<std::io::Error>,
 {
-    let mut input_start: Option<Instant> = None;
     loop {
-        let draw_start = Instant::now();
         terminal
             .draw(|f| render(f, app))
             .map_err(|e| -> std::io::Error { e.into() })?;
-        perf.record("render_frame", None, draw_start.elapsed());
-
-        if let Some(t) = input_start.take() {
-            perf.record("event_poll_to_render", None, t.elapsed());
-        }
 
         // Auto-refresh: check if the viewed thread has changed
         if app.last_refresh.elapsed().as_millis() >= AUTO_REFRESH_INTERVAL_MS {
-            auto_refresh(app, git, conn, db_path, perf)?;
+            auto_refresh(app, git, conn, db_path)?;
             app.last_refresh = Instant::now();
         }
 
         if event::poll(std::time::Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key) => {
-                    input_start = Some(Instant::now());
                     // Dismiss info flash on any keypress
                     app.info_flash = None;
                     // If a discard confirmation is showing, handle y/n
@@ -1161,7 +1142,7 @@ where
                         app.confirm_discard = false;
                         if key.code == KeyCode::Char('y') || key.code == KeyCode::Char('Y') {
                             // Perform the discard: reset form and navigate away
-                            match input::confirm_discard_action(app, git, perf) {
+                            match input::confirm_discard_action(app, git) {
                                 Ok(()) => {}
                                 Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
                             }
@@ -1174,7 +1155,7 @@ where
                         app.error_flash = None;
                         continue;
                     }
-                    match handle_key(app, key, git, conn, db_path, perf) {
+                    match handle_key(app, key, git, conn, db_path) {
                         Ok(true) => {
                             persist::save_state(app, db_path);
                             return Ok(());
@@ -1184,14 +1165,13 @@ where
                     }
                     // Handle pending external editor request (terminal suspend required)
                     if let Some(thread_id) = app.pending_external_edit.take() {
-                        match handle_external_edit(terminal, app, git, db_path, perf, &thread_id) {
+                        match handle_external_edit(terminal, app, git, db_path, &thread_id) {
                             Ok(()) => {}
                             Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
                         }
                     }
                 }
                 Event::Mouse(mouse) => {
-                    input_start = Some(Instant::now());
                     // Dismiss info flash on any click
                     app.info_flash = None;
                     // If an error flash is showing, dismiss it on any click
@@ -1199,7 +1179,7 @@ where
                         app.error_flash = None;
                         continue;
                     }
-                    match handle_mouse(app, mouse, git, conn, db_path, perf) {
+                    match handle_mouse(app, mouse, git, conn, db_path) {
                         Ok(true) => {
                             persist::save_state(app, db_path);
                             return Ok(());
@@ -1380,7 +1360,6 @@ mod tests {
             &git,
             &conn,
             &db_path,
-            &mut Perf::disabled(),
         )
         .unwrap();
 
@@ -1412,12 +1391,11 @@ mod tests {
             area.x + 2,
             area.y + 2,
         );
-        let mut perf = Perf::disabled();
         // First click selects
-        handle_mouse(&mut app, click, &git, &conn, &db_path, &mut perf).unwrap();
+        handle_mouse(&mut app, click, &git, &conn, &db_path).unwrap();
         assert_eq!(app.view, View::List);
         // Second click (same position, quick) opens
-        handle_mouse(&mut app, click, &git, &conn, &db_path, &mut perf).unwrap();
+        handle_mouse(&mut app, click, &git, &conn, &db_path).unwrap();
         assert_eq!(app.view, View::ThreadDetail(created_id));
     }
 
@@ -1442,14 +1420,12 @@ mod tests {
             header_rect.x + 1,
             header_rect.y,
         );
-        let mut perf = Perf::disabled();
         handle_mouse(
             &mut app,
             click,
             &GitOps::new(std::path::PathBuf::from("/")),
             &rusqlite::Connection::open_in_memory().unwrap(),
             std::path::Path::new("/tmp/test.db"),
-            &mut perf,
         )
         .unwrap();
 
@@ -1466,7 +1442,6 @@ mod tests {
             &GitOps::new(std::path::PathBuf::from("/")),
             &rusqlite::Connection::open_in_memory().unwrap(),
             std::path::Path::new("/tmp/test.db"),
-            &mut perf,
         )
         .unwrap();
         assert!(!app.sort_ascending);
@@ -1531,7 +1506,6 @@ mod tests {
             &git,
             &conn,
             dir.path(),
-            &mut Perf::disabled(),
         )
         .unwrap();
 
@@ -1723,7 +1697,6 @@ mod tests {
             &git,
             &conn,
             dir.path(),
-            &mut Perf::disabled(),
         )
         .unwrap();
     }
@@ -1739,7 +1712,6 @@ mod tests {
             &conn,
             dir.path(),
             "RFC-0001",
-            &mut Perf::disabled(),
         )
         .unwrap();
     }
@@ -1830,7 +1802,7 @@ mod tests {
         app.thread_form.title = "Created in TUI".into();
         app.thread_form.body = "Body from TUI".into();
 
-        submit_create_thread(&mut app, &git, &conn, &db_path, &mut Perf::disabled()).unwrap();
+        submit_create_thread(&mut app, &git, &conn, &db_path).unwrap();
 
         match &app.view {
             View::ThreadDetail(id) => {
@@ -1863,7 +1835,6 @@ mod tests {
             &git,
             &conn,
             &db_path,
-            &mut Perf::disabled(),
         )
         .unwrap();
 
@@ -1896,8 +1867,7 @@ mod tests {
         reindex::run_reindex(&git, &db_path).unwrap();
 
         let mut app = App::new(index::list_threads(&conn).unwrap());
-        let mut perf = Perf::disabled();
-        open_thread_detail(&mut app, &git, &thread_id, None, &mut perf).unwrap();
+        open_thread_detail(&mut app, &git, &thread_id, None).unwrap();
         app.begin_create_node(&thread_id);
         app.node_form.node_type_index = 1;
         app.node_form.body = "Node from TUI\nwith more detail".into();
@@ -1909,7 +1879,6 @@ mod tests {
             &conn,
             &db_path,
             &thread_id,
-            &mut perf,
         )
         .unwrap();
 
@@ -1948,8 +1917,7 @@ mod tests {
         reindex::run_reindex(&git, &db_path).unwrap();
 
         let mut app = App::new(index::list_threads(&conn).unwrap());
-        let mut perf = Perf::disabled();
-        open_thread_detail(&mut app, &git, &source_id, None, &mut perf).unwrap();
+        open_thread_detail(&mut app, &git, &source_id, None).unwrap();
         app.begin_create_link_from_thread(&source_id);
         app.link_form.field = LinkFormField::Submit;
 
@@ -1961,7 +1929,6 @@ mod tests {
             &LinkOrigin::ThreadDetail {
                 selected_node_id: None,
             },
-            &mut perf,
         )
         .unwrap();
 
@@ -2025,7 +1992,6 @@ mod tests {
             &LinkOrigin::NodeDetail {
                 node_id: node_id.clone(),
             },
-            &mut Perf::disabled(),
         )
         .unwrap();
 
@@ -2373,8 +2339,7 @@ mod tests {
         reindex::run_reindex(&git, &db_path).unwrap();
 
         let mut app = App::new(Vec::new());
-        let mut perf = Perf::disabled();
-        open_thread_detail(&mut app, &git, &thread_id, None, &mut perf).unwrap();
+        open_thread_detail(&mut app, &git, &thread_id, None).unwrap();
 
         // App-side derivation: legacy RFC → lifecycle=proposal, tags=[cross-cutting].
         assert_eq!(app.thread_lifecycle.as_deref(), Some("proposal"));
@@ -2412,7 +2377,7 @@ mod tests {
         app.thread_form.lifecycle_index = 1;
         app.thread_form.tags = "bug".into();
         app.thread_form.title = "fix the bug".into();
-        submit_create_thread(&mut app, &git, &conn, &db_path, &mut Perf::disabled()).unwrap();
+        submit_create_thread(&mut app, &git, &conn, &db_path).unwrap();
 
         let rows = index::list_threads(&conn).unwrap();
         assert_eq!(rows.len(), 1);
@@ -2444,7 +2409,7 @@ mod tests {
         app.thread_form.lifecycle_index = 1; // execution
         app.thread_form.tags = "bug, urgent".into();
         app.thread_form.title = "two-tag bug".into();
-        submit_create_thread(&mut app, &git, &conn, &db_path, &mut Perf::disabled()).unwrap();
+        submit_create_thread(&mut app, &git, &conn, &db_path).unwrap();
 
         let rows = index::list_threads(&conn).unwrap();
         assert_eq!(rows.len(), 1);
@@ -2466,7 +2431,7 @@ mod tests {
         app.thread_form.lifecycle_index = 1;
         app.thread_form.tags = "BadTag".into(); // uppercase rejected by §2.3.5
         app.thread_form.title = "should not be created".into();
-        submit_create_thread(&mut app, &git, &conn, &db_path, &mut Perf::disabled()).unwrap();
+        submit_create_thread(&mut app, &git, &conn, &db_path).unwrap();
 
         assert!(app.thread_form.tag_error.is_some());
         let rows = index::list_threads(&conn).unwrap();
@@ -2492,8 +2457,7 @@ mod tests {
         reindex::run_reindex(&git, &db_path).unwrap();
 
         let mut app = App::new(index::list_threads(&conn).unwrap());
-        let mut perf = Perf::disabled();
-        open_thread_detail(&mut app, &git, &thread_id, None, &mut perf).unwrap();
+        open_thread_detail(&mut app, &git, &thread_id, None).unwrap();
         app.begin_create_node(&thread_id);
         // Default selection is index 0 → Comment.
         app.node_form.body = "default-typed reply".into();
@@ -2505,7 +2469,6 @@ mod tests {
             &conn,
             &db_path,
             &thread_id,
-            &mut perf,
         )
         .unwrap();
 

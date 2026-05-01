@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use super::error::{ForumError, ForumResult};
+use super::event;
 use super::event::{Lifecycle, NodeType};
 use super::evidence::EvidenceKind;
-use super::state_machine;
 use super::thread::ThreadState;
 
 /// SPEC-2.0 §7.1 — boolean predicate over `lifecycle=...` and `tag=...`
@@ -594,7 +594,7 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
     // SPEC-2.0 §3.1: known states are the union of the unified 2.0 graph
     // plus the 1.x state names that the boundary normalizer recognizes
     // (so existing kind-keyed policy.toml fixtures still pass lint).
-    let all_states: std::collections::HashSet<&str> = state_machine::UNIFIED_TRANSITIONS
+    let all_states: std::collections::HashSet<&str> = event::UNIFIED_TRANSITIONS
         .iter()
         .flat_map(|(from, to)| [*from, *to])
         .chain([
@@ -673,7 +673,7 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
         if let FacetPredicate::Lifecycle(lifecycle) = &predicate {
             if all_states.contains(from)
                 && all_states.contains(to)
-                && !state_machine::is_valid_transition(*lifecycle, from, to)
+                && !event::is_valid_transition(*lifecycle, from, to)
             {
                 diags.push(LintDiag {
                     level: LintLevel::Warn,
@@ -696,7 +696,7 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
         // to disambiguate per §7.1) or warn when it applies to none.
         let matching_lifecycles: Vec<&str> = all_lifecycles
             .iter()
-            .filter(|l| state_machine::is_valid_transition(**l, from, to))
+            .filter(|l| event::is_valid_transition(**l, from, to))
             .map(|l| l.as_str())
             .collect();
         if matching_lifecycles.len() > 1 {
@@ -862,7 +862,7 @@ pub const TERMINAL_STATES: &[&str] = &[
 /// active work happens). Derived from the unified graph filtered by
 /// the lifecycle's allowed-state set.
 fn non_terminal_states(lifecycle: Lifecycle) -> Vec<&'static str> {
-    let mut states: std::collections::BTreeSet<&str> = state_machine::UNIFIED_TRANSITIONS
+    let mut states: std::collections::BTreeSet<&str> = event::UNIFIED_TRANSITIONS
         .iter()
         .flat_map(|(from, to)| [*from, *to])
         .filter(|s| lifecycle.allows_state(s) && !TERMINAL_STATES.contains(s))
@@ -964,7 +964,7 @@ fn scan_at_least_one_summary_warnings(path: &std::path::Path, text: &str) -> Vec
 }
 
 /// Normalize the `from->to` portion of a guard transition string to 2.0
-/// state names (per `state_machine::normalize_state_name`). Trims
+/// state names (per `event::normalize_state_name`). Trims
 /// surrounding whitespace so guards written with spaces around the `:`
 /// separator (`lifecycle=X : from->to`) match query strings produced by
 /// the state machine.
@@ -973,8 +973,8 @@ fn normalize_transition_str(transition: &str) -> String {
     if let Some((from, to)) = trimmed.split_once("->") {
         format!(
             "{}->{}",
-            state_machine::normalize_state_name(from.trim()),
-            state_machine::normalize_state_name(to.trim()),
+            event::normalize_state_name(from.trim()),
+            event::normalize_state_name(to.trim()),
         )
     } else {
         trimmed.to_string()

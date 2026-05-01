@@ -8,7 +8,7 @@ use git_forum::internal::clock::StepClock;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
 use git_forum::internal::event::NodeType;
-use git_forum::internal::evidence_ops;
+use git_forum::internal::evidence;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id_alloc;
 use git_forum::internal::init;
@@ -307,7 +307,7 @@ fn phase_implementation(
         .filter(|l| l.from_thread_ref == "ASK-0001")
     {
         let agent = agent_by_name(agents, &link.actor);
-        evidence_ops::add_thread_link(
+        evidence::add_thread_link(
             &agent.git,
             &issue_0001,
             &rfcs.rfc_0001,
@@ -361,7 +361,7 @@ fn phase_implementation(
         .filter(|l| l.from_thread_ref == "ASK-0002")
     {
         let agent = agent_by_name(agents, &link.actor);
-        evidence_ops::add_thread_link(
+        evidence::add_thread_link(
             &agent.git,
             &issue_0002,
             &rfcs.rfc_0001,
@@ -434,7 +434,7 @@ fn phase_implementation(
     // Add evidence from scenario
     for ev in phase.evidence.iter().filter(|e| e.thread_ref == "ASK-0003") {
         let agent = agent_by_name(agents, &ev.actor);
-        evidence_ops::add_evidence(
+        evidence::add_evidence(
             &agent.git,
             &issue_0003,
             ev.kind.clone(),

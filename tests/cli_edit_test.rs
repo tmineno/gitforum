@@ -70,7 +70,7 @@ fn edit_flag_creates_thread() {
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
         .env("GIT_FORUM_EDITOR_FORCE", "1")
-        .args(["new", "issue", "Edit test", "--edit"])
+        .args(["new", "ask", "Edit test", "--edit"])
         .output()
         .expect("failed to run");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -166,7 +166,7 @@ fn edit_conflicts_with_body_flag() {
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
         .env("GIT_FORUM_EDITOR_FORCE", "1")
-        .args(["new", "issue", "Test", "--edit", "--body", "direct"])
+        .args(["new", "ask", "Test", "--edit", "--body", "direct"])
         .output()
         .expect("failed to run");
     assert!(
@@ -218,7 +218,7 @@ fn edit_empty_body_aborts() {
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
         .env("GIT_FORUM_EDITOR_FORCE", "1")
-        .args(["new", "issue", "Empty test", "--edit"])
+        .args(["new", "ask", "Empty test", "--edit"])
         .output()
         .expect("failed to run");
     assert!(
@@ -245,7 +245,7 @@ fn edit_strips_comment_lines() {
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
         .env("GIT_FORUM_EDITOR_FORCE", "1")
-        .args(["new", "issue", "Comment test", "--edit"])
+        .args(["new", "ask", "Comment test", "--edit"])
         .output()
         .expect("failed to run");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -275,7 +275,7 @@ fn edit_uses_visual_env_var() {
         .env("VISUAL", &visual_editor)
         .env("EDITOR", "false") // would fail if used
         .env("GIT_FORUM_EDITOR_FORCE", "1")
-        .args(["new", "issue", "Visual test", "--edit"])
+        .args(["new", "ask", "Visual test", "--edit"])
         .output()
         .expect("failed to run");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -334,7 +334,7 @@ fn edit_rejects_non_interactive_stdin() {
         .env("EDITOR", "false")
         .env_remove("VISUAL")
         .env_remove("GIT_FORUM_EDITOR_FORCE")
-        .args(["new", "issue", "Non-interactive test", "--edit"])
+        .args(["new", "ask", "Non-interactive test", "--edit"])
         .output()
         .expect("failed to run");
 

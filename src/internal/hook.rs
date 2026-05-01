@@ -41,12 +41,20 @@ pub struct FixIndexResult {
     pub warnings: Vec<(String, String)>,
 }
 
-/// Repair missing blob references in the git index.
+/// Repair missing blob references in the git index AND in HEAD's tree.
 ///
-/// Iterates every staged entry via `git ls-files --stage`. For each entry
-/// whose blob object is absent, re-hashes the working-tree copy to recreate
-/// it and force-updates the index entry.  Entries with no working-tree file
-/// are reported as warnings.
+/// Two passes:
+/// 1. Iterate the staged index via `git ls-files --stage` and re-hash any
+///    entry whose blob is missing (using the working-tree copy).
+/// 2. Iterate HEAD's tree via `git ls-tree -r HEAD` and stage a re-add for
+///    any entry whose blob is missing. This handles the case where HEAD
+///    itself references a pruned blob — the next commit will then carry
+///    the repair into a new tree.
+///
+/// HEAD-tree corruption is the failure mode that breaks the pre-commit
+/// framework's `git diff --diff-filter=A` startup probe before any user
+/// hook runs, so detecting and staging it here gives the user a one-step
+/// recovery (`git-forum hook fix-index && git commit --no-verify`).
 ///
 /// Also runs `git worktree prune` first to clean up stale worktree metadata
 /// that could cause GC to skip dead worktree indices.
@@ -54,10 +62,11 @@ pub fn fix_index_blobs(git: &GitOps) -> ForumResult<FixIndexResult> {
     // Prune stale worktrees so GC doesn't skip dead indices
     let _ = git.run(&["worktree", "prune"]);
 
-    let output = git.run(&["ls-files", "--stage"])?;
     let mut fixed = Vec::new();
     let mut warnings = Vec::new();
 
+    // Pass 1: index entries
+    let output = git.run(&["ls-files", "--stage"])?;
     for line in output.lines() {
         if line.is_empty() {
             continue;
@@ -72,7 +81,6 @@ pub fn fix_index_blobs(git: &GitOps) -> ForumResult<FixIndexResult> {
         }
         let sha = fields[1];
 
-        // Check if blob exists
         if git.run(&["cat-file", "-e", sha]).is_err() {
             let full_path = git.root().join(path);
             if full_path.is_file() {
@@ -81,6 +89,40 @@ pub fn fix_index_blobs(git: &GitOps) -> ForumResult<FixIndexResult> {
                 fixed.push((path.to_string(), sha.to_string()));
             } else {
                 warnings.push((path.to_string(), sha.to_string()));
+            }
+        }
+    }
+
+    // Pass 2: HEAD-tree entries (only if HEAD exists)
+    if git.run(&["rev-parse", "--verify", "HEAD"]).is_ok() {
+        let head_tree = git.run(&["ls-tree", "-r", "HEAD"]).unwrap_or_default();
+        for line in head_tree.lines() {
+            if line.is_empty() {
+                continue;
+            }
+            // Format: "100644 blob <sha>\t<path>"
+            let Some((mode_type_sha, path)) = line.split_once('\t') else {
+                continue;
+            };
+            let fields: Vec<&str> = mode_type_sha.split_whitespace().collect();
+            if fields.len() < 3 || fields[1] != "blob" {
+                continue;
+            }
+            let sha = fields[2];
+
+            if git.run(&["cat-file", "-e", sha]).is_err() {
+                // Skip if pass 1 already staged a repair for this path.
+                if fixed.iter().any(|(p, _)| p == path) {
+                    continue;
+                }
+                let full_path = git.root().join(path);
+                if full_path.is_file() {
+                    let _ = git.run(&["update-index", "--force-remove", path]);
+                    git.run(&["add", path])?;
+                    fixed.push((path.to_string(), sha.to_string()));
+                } else {
+                    warnings.push((path.to_string(), sha.to_string()));
+                }
             }
         }
     }
@@ -761,6 +803,57 @@ mod tests {
                 let status = git.run(&["status", "--porcelain"]).unwrap_or_default();
                 !status.contains("hello.txt")
             }
+        );
+    }
+
+    #[test]
+    fn fix_index_repairs_missing_head_tree_blob() {
+        // The pre-commit framework's startup probe (`git diff
+        // --diff-filter=A --name-only -z`) crashes if HEAD's tree references
+        // a pruned blob, killing the commit before any user hook can repair
+        // it. fix_index_blobs handles this by re-staging the affected path
+        // so the next commit lands a fresh blob.
+        let (dir, git) = init_test_repo();
+        let file = dir.path().join("hello.txt");
+        fs::write(&file, "v1").unwrap();
+        git_cmd(dir.path())
+            .args(["add", "hello.txt"])
+            .output()
+            .expect("git add");
+        git_cmd(dir.path())
+            .args(["commit", "-m", "v1"])
+            .output()
+            .expect("git commit");
+
+        let output = git_cmd(dir.path())
+            .args(["ls-tree", "-r", "HEAD"])
+            .output()
+            .expect("ls-tree");
+        let ls_line = String::from_utf8_lossy(&output.stdout);
+        let head_sha: &str = ls_line.split_whitespace().nth(2).unwrap();
+
+        // Prune the blob from HEAD's tree (working file unchanged).
+        let obj_file = dir
+            .path()
+            .join(".git/objects")
+            .join(&head_sha[..2])
+            .join(&head_sha[2..]);
+        fs::remove_file(&obj_file).unwrap();
+
+        // Confirm the corruption: ls-tree against HEAD now fails to read the blob.
+        assert!(git.run(&["cat-file", "-e", head_sha]).is_err());
+
+        let result = fix_index_blobs(&git).unwrap();
+        assert_eq!(result.fixed.len(), 1, "expected one HEAD-tree repair");
+        assert_eq!(result.fixed[0].0, "hello.txt");
+        assert!(result.warnings.is_empty());
+
+        // The repair stages a fresh blob so a follow-up commit will heal HEAD.
+        let staged = git.run(&["ls-files", "--stage", "hello.txt"]).unwrap();
+        let staged_sha: &str = staged.split_whitespace().nth(1).unwrap();
+        assert!(
+            git.run(&["cat-file", "-e", staged_sha]).is_ok(),
+            "staged blob must exist after repair"
         );
     }
 }

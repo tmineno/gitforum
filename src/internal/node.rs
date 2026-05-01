@@ -36,4 +36,19 @@ impl Node {
     pub fn is_open(&self) -> bool {
         !self.resolved && !self.retracted && !self.incorporated
     }
+
+    /// Display label for the node's lifecycle state. Single source of truth
+    /// for the `retracted | incorporated | resolved | open` cascade used by
+    /// replay, the index, and rendering.
+    pub fn status(&self) -> &'static str {
+        if self.retracted {
+            "retracted"
+        } else if self.incorporated {
+            "incorporated"
+        } else if self.resolved {
+            "resolved"
+        } else {
+            "open"
+        }
+    }
 }

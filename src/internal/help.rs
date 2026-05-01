@@ -1,5 +1,5 @@
+use super::event;
 use super::event::Lifecycle;
-use super::state_machine;
 
 /// Node type taxonomy for --help-llm.
 pub fn node_type_taxonomy() -> String {
@@ -85,7 +85,7 @@ pub fn state_transition_map() -> String {
             lifecycle.initial_state()
         ));
         out.push_str("| From | To |\n|------|----|\n");
-        for (from, to) in state_machine::UNIFIED_TRANSITIONS {
+        for (from, to) in event::UNIFIED_TRANSITIONS {
             if lifecycle.allows_state(from) && lifecycle.allows_state(to) {
                 out.push_str(&format!("| {from} | {to} |\n"));
             }

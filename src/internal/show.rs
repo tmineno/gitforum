@@ -2,9 +2,8 @@
 //! `shortlog`, and search results. Per RFC-lmr3wfcm Track E, the thread-detail
 //! renderers all collapse to a single [`render_show`] driven by [`ShowOptions`].
 
-use super::event::Lifecycle;
+use super::event::{self, Lifecycle, UNIFIED_TRANSITIONS};
 use super::policy::{self, Policy};
-use super::state_machine::{self, UNIFIED_TRANSITIONS};
 use super::thread::{NodeLookup, ThreadState};
 use super::timeline;
 
@@ -373,7 +372,7 @@ fn push_conversations(lines: &mut Vec<String>, state: &ThreadState, compact: boo
 /// Build the `**next:**` line shown under the status field. Returns `None` if
 /// the current state has no outgoing transitions.
 fn next_states_line(state: &ThreadState, policy: &Policy) -> Option<String> {
-    let targets = state_machine::valid_targets(state.lifecycle(), &state.status);
+    let targets = event::valid_targets(state.lifecycle(), &state.status);
     if targets.is_empty() {
         return None;
     }
@@ -460,7 +459,7 @@ fn render_what_next_block(state: &ThreadState, policy: &Policy) -> String {
     lines.push(format!("{} ({})", state.id, state.status));
     lines.push(String::new());
 
-    let targets = state_machine::valid_targets(state.lifecycle(), &state.status);
+    let targets = event::valid_targets(state.lifecycle(), &state.status);
     if targets.is_empty() {
         lines.push("valid transitions: (none)".to_string());
     } else {
@@ -569,7 +568,7 @@ fn op_check_lines(state: &ThreadState, policy: &Policy) -> Vec<String> {
 fn render_action_hint(state: &ThreadState, policy: &Policy) -> String {
     let mut lines: Vec<String> = Vec::new();
 
-    let targets = state_machine::valid_targets(state.lifecycle(), &state.status);
+    let targets = event::valid_targets(state.lifecycle(), &state.status);
     if targets.is_empty() {
         lines.push("  next: (no transitions available)".to_string());
     } else {

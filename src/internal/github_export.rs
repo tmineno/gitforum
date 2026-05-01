@@ -7,8 +7,8 @@
 
 use super::clock::Clock;
 use super::error::{ForumError, ForumResult};
+use super::evidence;
 use super::evidence::EvidenceKind;
-use super::evidence_ops;
 use super::git_ops::GitOps;
 use super::github;
 use super::node::Node;
@@ -152,7 +152,7 @@ pub fn export_issue(
     }
 
     // Store external evidence on thread for dedup
-    evidence_ops::add_evidence(
+    evidence::add_evidence(
         git,
         thread_id,
         EvidenceKind::External,

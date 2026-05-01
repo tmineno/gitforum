@@ -5,8 +5,8 @@ use git_forum::internal::clock::FixedClock;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
 use git_forum::internal::event::{NodeType, ThreadKind};
+use git_forum::internal::evidence;
 use git_forum::internal::evidence::EvidenceKind;
-use git_forum::internal::evidence_ops;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::github_export;
 use git_forum::internal::github_import;
@@ -46,7 +46,7 @@ fn find_existing_import_with_matching_evidence() {
     let clock = fixed_clock();
     let thread_id =
         create::create_thread(&git, ThreadKind::Issue, "Bug", None, "human/alice", &clock).unwrap();
-    evidence_ops::add_evidence(
+    evidence::add_evidence(
         &git,
         &thread_id,
         EvidenceKind::External,
@@ -68,7 +68,7 @@ fn find_existing_import_no_match_different_url() {
     let clock = fixed_clock();
     let thread_id =
         create::create_thread(&git, ThreadKind::Issue, "Bug", None, "human/alice", &clock).unwrap();
-    evidence_ops::add_evidence(
+    evidence::add_evidence(
         &git,
         &thread_id,
         EvidenceKind::External,
@@ -102,7 +102,7 @@ fn find_existing_export_with_github_evidence() {
     let clock = fixed_clock();
     let thread_id =
         create::create_thread(&git, ThreadKind::Issue, "Bug", None, "human/alice", &clock).unwrap();
-    evidence_ops::add_evidence(
+    evidence::add_evidence(
         &git,
         &thread_id,
         EvidenceKind::External,
@@ -126,7 +126,7 @@ fn find_existing_export_ignores_non_github_evidence() {
     let clock = fixed_clock();
     let thread_id =
         create::create_thread(&git, ThreadKind::Issue, "Bug", None, "human/alice", &clock).unwrap();
-    evidence_ops::add_evidence(
+    evidence::add_evidence(
         &git,
         &thread_id,
         EvidenceKind::External,
