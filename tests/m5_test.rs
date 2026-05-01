@@ -184,7 +184,7 @@ fn search_empty_returns_no_match_message_via_render() {
 
     let conn = index::open_db(&db_path).unwrap();
     let results = index::search_threads(&conn, "zzznomatch").unwrap();
-    let out = git_forum::internal::show::render_search_results(&results);
+    let out = git_forum::internal::ls::render_search_results(&results);
     assert_eq!(out, "no threads found\n");
 }
 

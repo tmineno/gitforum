@@ -906,7 +906,7 @@ fn show_dec_includes_kind() {
     let (_repo, git, _paths) = setup();
     let id = make_dec(&git);
     let state = thread::replay_thread(&git, &id).unwrap();
-    let output = show::render_show(&state, false);
+    let output = show::render_show(&state, &show::ShowOptions::default());
     assert!(output.contains("**kind:**     dec"));
     assert!(output.contains("**status:**   open"));
 }
@@ -916,7 +916,7 @@ fn show_task_includes_kind() {
     let (_repo, git, _paths) = setup();
     let id = make_task(&git);
     let state = thread::replay_thread(&git, &id).unwrap();
-    let output = show::render_show(&state, false);
+    let output = show::render_show(&state, &show::ShowOptions::default());
     assert!(output.contains("**kind:**     task"));
     assert!(output.contains("**status:**   open"));
 }

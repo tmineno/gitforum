@@ -698,7 +698,7 @@ fn show_includes_open_objections_section() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    let out = show::render_show(&state, false);
+    let out = show::render_show(&state, &show::ShowOptions::default());
 
     assert!(out.contains("**open objections:** 1"));
     assert!(out.contains("Concern about performance."));
@@ -721,7 +721,7 @@ fn show_includes_latest_summary_section() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    let out = show::render_show(&state, false);
+    let out = show::render_show(&state, &show::ShowOptions::default());
 
     assert!(out.contains("latest summary:"));
     assert!(out.contains("This is the consensus."));
@@ -733,7 +733,7 @@ fn show_no_extra_sections_when_no_nodes() {
     let thread_id = make_rfc(&git);
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    let out = show::render_show(&state, false);
+    let out = show::render_show(&state, &show::ShowOptions::default());
 
     assert!(!out.contains("open objections:"));
     assert!(!out.contains("open actions:"));
@@ -757,7 +757,7 @@ fn show_timeline_includes_say_events() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    let out = show::render_show(&state, false);
+    let out = show::render_show(&state, &show::ShowOptions::default());
 
     assert!(out.contains(&node_id[..node_id.len().min(16)]));
     // SPEC-2.0 §2.5 / §9.3: legacy `claim` writes are canonicalized to
@@ -798,7 +798,7 @@ fn find_node_returns_current_body_and_history() {
     assert_eq!(lookup.node.body, "What is this object?");
     assert_eq!(lookup.events.len(), 2);
 
-    let out = show::render_node_show(&lookup);
+    let out = show::render_node_show(&lookup, &show::ShowOptions::default());
     assert!(out.contains("What is this object?"));
     assert!(out.contains("What is this?"));
     assert!(out.contains(&node_id[..node_id.len().min(16)]));
@@ -1766,6 +1766,6 @@ fn state_change_with_comment_attaches_body_no_summary_node() {
 
     // Timeline should show the comment in the state event detail
     // (state name normalizes to 2.0 `done`).
-    let out = show::render_show(&state, false);
+    let out = show::render_show(&state, &show::ShowOptions::default());
     assert!(out.contains("done — closing because resolved"));
 }

@@ -8,6 +8,7 @@ use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id_alloc;
 use git_forum::internal::init;
+use git_forum::internal::ls;
 use git_forum::internal::show;
 use git_forum::internal::thread;
 use git_forum::internal::write_ops;
@@ -271,7 +272,7 @@ fn ls_shows_all_kinds() {
         states.push(thread::replay_thread(&git, id).unwrap());
     }
     let refs: Vec<&thread::ThreadState> = states.iter().collect();
-    let out = show::render_ls(&refs);
+    let out = ls::render_ls(&refs);
     assert!(out.contains(&ask_id));
     assert!(out.contains(&rfc_id));
     assert!(out.contains("Bug"));
@@ -308,7 +309,7 @@ fn ls_filtered_by_kind() {
         }
     }
     let refs: Vec<&thread::ThreadState> = rfc_states.iter().collect();
-    let out = show::render_ls(&refs);
+    let out = ls::render_ls(&refs);
     assert!(out.contains(&rfc_id));
     assert!(out.contains("Proposal"));
 }
@@ -328,7 +329,7 @@ fn show_contains_all_required_fields() {
     )
     .unwrap();
     let state = thread::replay_thread(&git, &id).unwrap();
-    let out = show::render_show(&state, false);
+    let out = show::render_show(&state, &show::ShowOptions::default());
 
     assert!(out.contains(&id), "missing thread id");
     assert!(out.contains("Test RFC"), "missing title");
@@ -372,8 +373,8 @@ fn show_replay_consistency() {
     let state1 = thread::replay_thread(&git, &id).unwrap();
     let state2 = thread::replay_thread(&git, &id).unwrap();
     assert_eq!(
-        show::render_show(&state1, false),
-        show::render_show(&state2, false)
+        show::render_show(&state1, &show::ShowOptions::default()),
+        show::render_show(&state2, &show::ShowOptions::default())
     );
 }
 
@@ -390,7 +391,7 @@ fn show_snapshot_contains_expected_fields() {
     )
     .unwrap();
     let state = thread::replay_thread(&git, &id).unwrap();
-    let out = show::render_show(&state, false);
+    let out = show::render_show(&state, &show::ShowOptions::default());
 
     assert!(out.contains(&id));
     assert!(out.contains("Test RFC"));

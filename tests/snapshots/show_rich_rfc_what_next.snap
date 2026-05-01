@@ -1,0 +1,13 @@
+RFC-a1b2c3d4 (under-review)
+
+valid transitions: done, rejected
+
+guard check (under-review -> done): PASS
+guard check (under-review -> rejected): PASS
+
+open objections: 1
+open actions:    0
+nodes:           2
+evidence:        0
+links:           0
+has summary:     yes

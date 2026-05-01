@@ -130,7 +130,7 @@ fn show_includes_evidence_section() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    let out = show::render_show(&state, false);
+    let out = show::render_show(&state, &show::ShowOptions::default());
     assert!(out.contains("evidence: 1"));
     assert!(out.contains("benchmark"));
     assert!(out.contains("bench/result.csv"));
@@ -197,7 +197,7 @@ fn show_includes_links_section() {
     .unwrap();
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    let out = show::render_show(&state, false);
+    let out = show::render_show(&state, &show::ShowOptions::default());
     assert!(out.contains("links: 1"));
     assert!(out.contains(&target_id));
     assert!(out.contains("implements"));
@@ -241,7 +241,7 @@ fn node_show_includes_parent_thread_links() {
     .unwrap();
 
     let lookup = thread::find_node(&git, &node_id).unwrap();
-    let out = show::render_node_show(&lookup);
+    let out = show::render_node_show(&lookup, &show::ShowOptions::default());
     assert!(out.contains("### thread links (1)"));
     assert!(out.contains(&target_id));
     assert!(out.contains("implements"));

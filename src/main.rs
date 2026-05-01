@@ -24,6 +24,7 @@ use git_forum::internal::github_import;
 use git_forum::internal::hook;
 use git_forum::internal::index;
 use git_forum::internal::init;
+use git_forum::internal::ls;
 use git_forum::internal::operation_check;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::purge;
@@ -33,6 +34,7 @@ use git_forum::internal::repair;
 use git_forum::internal::show;
 use git_forum::internal::state_change;
 use git_forum::internal::thread;
+use git_forum::internal::timeline;
 use git_forum::internal::tui as forum_tui;
 use git_forum::internal::verify;
 use git_forum::internal::write_ops;
@@ -1451,7 +1453,7 @@ fn main() -> Result<(), ForumError> {
             // migrate to the canonical vocabulary.
             let translated = translate_legacy_kind_query(&query);
             let results = index::search_threads(&conn, &translated)?;
-            print!("{}", show::render_search_results(&results));
+            print!("{}", ls::render_search_results(&results));
         }
 
         Commands::Tui { thread_id } => {
@@ -1813,7 +1815,7 @@ fn main() -> Result<(), ForumError> {
                 .iter()
                 .filter(|s| status.as_deref().is_none_or(|st| s.status == st))
                 .collect();
-            print!("{}", show::render_ls(&filtered));
+            print!("{}", ls::render_ls(&filtered));
         }
 
         Commands::Shortlog { since, kind } => {
@@ -1830,7 +1832,7 @@ fn main() -> Result<(), ForumError> {
                     }
                 }
             }
-            print!("{}", show::render_shortlog(&entries));
+            print!("{}", ls::render_shortlog(&entries));
         }
 
         Commands::Show {
@@ -1843,21 +1845,23 @@ fn main() -> Result<(), ForumError> {
             let thread_id = resolve_tid(&git, &thread_id)?;
             let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
             let state = thread::replay_thread(&git, &thread_id)?;
-            if what_next {
-                print!("{}", show::render_what_next(&state, &policy));
+            let mode = if what_next {
+                show::ShowMode::WhatNext
             } else {
-                print!(
-                    "{}",
-                    show::render_show_with_options(
-                        &state,
-                        &show::ShowOptions {
-                            compact,
-                            no_timeline,
-                            policy: Some(policy),
-                        }
-                    )
-                );
-            }
+                show::ShowMode::Full
+            };
+            print!(
+                "{}",
+                show::render_show(
+                    &state,
+                    &show::ShowOptions {
+                        compact,
+                        no_timeline,
+                        policy: Some(policy),
+                        mode,
+                    }
+                )
+            );
         }
 
         Commands::Log {
@@ -1911,20 +1915,17 @@ fn main() -> Result<(), ForumError> {
                 events.retain(|e| e.created_at >= since_dt);
             }
             if let Some(ref type_str) = event_type {
-                events.retain(|e| show::event_display_type(e) == *type_str);
+                events.retain(|e| timeline::event_display_type(e) == *type_str);
             }
-            let widths = show::timeline_widths_refs(&events);
-            println!("{}", show::format_timeline_header(&widths));
             let len = events.len();
             let skip = last.map(|n| len.saturating_sub(n)).unwrap_or(0);
-            if reverse {
-                for event in events.iter().rev().take(len - skip) {
-                    println!("{}", show::format_timeline_entry(event, &widths, false));
-                }
+            let selected: Vec<&event::Event> = if reverse {
+                events.iter().rev().take(len - skip).copied().collect()
             } else {
-                for event in events.iter().skip(skip) {
-                    println!("{}", show::format_timeline_entry(event, &widths, false));
-                }
+                events.iter().skip(skip).copied().collect()
+            };
+            for line in timeline::render_markdown_refs(&selected) {
+                println!("{line}");
             }
         }
 
@@ -1940,14 +1941,26 @@ fn main() -> Result<(), ForumError> {
             let (git, _paths) = discover_repo_with_init_warning()?;
             let thread_id = resolve_tid(&git, &thread_id)?;
             let state = thread::replay_thread(&git, &thread_id)?;
-            print!("{}", show::render_status(&state));
+            print!(
+                "{}",
+                show::render_show(
+                    &state,
+                    &show::ShowOptions {
+                        mode: show::ShowMode::Status,
+                        ..show::ShowOptions::default()
+                    }
+                )
+            );
         }
 
         Commands::Node { cmd } => match cmd {
             NodeCmd::Show { node_id } => {
                 let (git, _paths) = discover_repo_with_init_warning()?;
                 let lookup = thread::find_node(&git, &node_id)?;
-                print!("{}", show::render_node_show(&lookup));
+                print!(
+                    "{}",
+                    show::render_node_show(&lookup, &show::ShowOptions::default())
+                );
             }
             NodeCmd::Add {
                 thread_id,
@@ -2409,7 +2422,17 @@ fn main() -> Result<(), ForumError> {
                         }
                     }
                     if let Ok(state) = thread::replay_thread(&git, &thread_id) {
-                        eprintln!("{}", show::render_next_actions(&state, &policy));
+                        eprintln!(
+                            "{}",
+                            show::render_show(
+                                &state,
+                                &show::ShowOptions {
+                                    mode: show::ShowMode::ActionHint,
+                                    policy: Some(policy.clone()),
+                                    ..show::ShowOptions::default()
+                                }
+                            )
+                        );
                     }
                 }
             }
@@ -2809,7 +2832,17 @@ fn run_shorthand_say(
     )?;
     println!("Added {node_type} {}", show::short_oid(&node_id));
     if let Ok(state) = thread::replay_thread(&git, thread_id) {
-        eprintln!("{}", show::render_next_actions(&state, &policy));
+        eprintln!(
+            "{}",
+            show::render_show(
+                &state,
+                &show::ShowOptions {
+                    mode: show::ShowMode::ActionHint,
+                    policy: Some(policy.clone()),
+                    ..show::ShowOptions::default()
+                }
+            )
+        );
     }
     Ok(())
 }
@@ -3144,7 +3177,17 @@ fn run_state_shorthand(
         }
     }
     if let Ok(state) = thread::replay_thread(&git, thread_id) {
-        eprintln!("{}", show::render_next_actions(&state, &policy));
+        eprintln!(
+            "{}",
+            show::render_show(
+                &state,
+                &show::ShowOptions {
+                    mode: show::ShowMode::ActionHint,
+                    policy: Some(policy.clone()),
+                    ..show::ShowOptions::default()
+                }
+            )
+        );
     }
     Ok(())
 }

@@ -2,6 +2,7 @@ mod support;
 
 use chrono::TimeZone;
 use git_forum::internal::event::{Event, EventType, NodeType, ThreadKind};
+use git_forum::internal::ls;
 use git_forum::internal::node::Node;
 use git_forum::internal::show;
 use git_forum::internal::thread::{NodeLookup, ThreadLink, ThreadState};
@@ -109,22 +110,56 @@ fn rich_state() -> ThreadState {
 #[test]
 fn show_basic_rfc() {
     let state = base_state();
-    let out = show::render_show(&state, false);
+    let out = show::render_show(&state, &show::ShowOptions::default());
     assert_snapshot("show_basic_rfc", &out);
 }
 
 #[test]
 fn show_rich_rfc() {
     let state = rich_state();
-    let out = show::render_show(&state, false);
+    let out = show::render_show(&state, &show::ShowOptions::default());
     assert_snapshot("show_rich_rfc", &out);
 }
 
 #[test]
 fn show_rich_rfc_compact() {
     let state = rich_state();
-    let out = show::render_show(&state, true);
+    let out = show::render_show(
+        &state,
+        &show::ShowOptions {
+            compact: true,
+            ..show::ShowOptions::default()
+        },
+    );
     assert_snapshot("show_rich_rfc_compact", &out);
+}
+
+#[test]
+fn show_rich_rfc_no_timeline() {
+    let state = rich_state();
+    let out = show::render_show(
+        &state,
+        &show::ShowOptions {
+            no_timeline: true,
+            ..show::ShowOptions::default()
+        },
+    );
+    assert_snapshot("show_rich_rfc_no_timeline", &out);
+}
+
+#[test]
+fn show_rich_rfc_what_next() {
+    let state = rich_state();
+    let policy = git_forum::internal::policy::Policy::default();
+    let out = show::render_show(
+        &state,
+        &show::ShowOptions {
+            mode: show::ShowMode::WhatNext,
+            policy: Some(policy),
+            ..show::ShowOptions::default()
+        },
+    );
+    assert_snapshot("show_rich_rfc_what_next", &out);
 }
 
 // ---- node show ----
@@ -160,7 +195,7 @@ fn node_show_question() {
             ..Event::default()
         }],
     };
-    let out = show::render_node_show(&lookup);
+    let out = show::render_node_show(&lookup, &show::ShowOptions::default());
     assert_snapshot("node_show_question", &out);
 }
 
@@ -168,7 +203,7 @@ fn node_show_question() {
 
 #[test]
 fn ls_empty() {
-    let out = show::render_ls(&[]);
+    let out = ls::render_ls(&[]);
     assert_snapshot("ls_empty", &out);
 }
 
@@ -181,7 +216,7 @@ fn ls_two_threads() {
     s2.title = "Implement trait backend".into();
     s2.status = "open".into();
     s2.branch = Some("feat/parser".into());
-    let out = show::render_ls(&[&s1, &s2]);
+    let out = ls::render_ls(&[&s1, &s2]);
     assert_snapshot("ls_two_threads", &out);
 }
 
@@ -190,6 +225,12 @@ fn ls_two_threads() {
 #[test]
 fn status_with_objection() {
     let state = rich_state();
-    let out = show::render_status(&state);
+    let out = show::render_show(
+        &state,
+        &show::ShowOptions {
+            mode: show::ShowMode::Status,
+            ..show::ShowOptions::default()
+        },
+    );
     assert_snapshot("status_with_objection", &out);
 }
