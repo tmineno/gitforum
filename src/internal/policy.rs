@@ -803,7 +803,64 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
         }
     }
 
+    // @ltojzq9l: warn when an allow-list carries 1.x state names without
+    // their 2.0 canonical equivalents. Stored thread state is always
+    // canonical (per state_change), so a legacy-only entry is dead weight
+    // even after runtime normalization — surfaces as user-visible drift.
+    lint_legacy_state_names(
+        &mut diags,
+        "evidence_rules.allow_evidence",
+        policy
+            .evidence_rules
+            .as_ref()
+            .map(|r| r.allow_evidence.as_slice())
+            .unwrap_or(&[]),
+    );
+    if let Some(revise) = &policy.revise_rules {
+        lint_legacy_state_names(
+            &mut diags,
+            "revise_rules.allow_body_revise",
+            &revise.allow_body_revise,
+        );
+        lint_legacy_state_names(
+            &mut diags,
+            "revise_rules.allow_node_revise",
+            &revise.allow_node_revise,
+        );
+    }
+    let node_rules_keys: Vec<String> = policy.node_rules.keys().cloned().collect();
+    lint_legacy_state_names(&mut diags, "node_rules", &node_rules_keys);
+
     diags
+}
+
+/// SPEC-2.0 §3.1.1 / @ltojzq9l: state-name allow-lists in policy should
+/// use 2.0 canonical names. A legacy 1.x name (`under-review`,
+/// `reviewing`, `closed`, `accepted`, `pending`, `designing`,
+/// `implementing`, `proposed`) without its canonical sibling produces
+/// drift between the policy display and stored state — runtime
+/// tolerates the mismatch (operation_check::allow_list_contains) but
+/// users still read confusing hints. Warn at lint time so the drift is
+/// visible before runtime.
+fn lint_legacy_state_names(diags: &mut Vec<LintDiag>, location: &str, entries: &[String]) {
+    use std::collections::HashSet;
+    let listed: HashSet<&str> = entries.iter().map(|s| s.as_str()).collect();
+    for entry in entries {
+        let canon = event::normalize_state_name(entry.as_str());
+        if canon != entry.as_str() && !listed.contains(canon) {
+            // entry is a legacy name AND its 2.0 form isn't also listed.
+            diags.push(LintDiag {
+                level: LintLevel::Warn,
+                message: format!(
+                    "{location}: legacy 1.x state name {entry:?}; \
+                     replace with the 2.0 canonical {canon:?} \
+                     (or list both during migration). State events store \
+                     canonical names, so the legacy entry alone produces \
+                     contradictory error hints in operation checks."
+                ),
+            });
+        }
+    }
 }
 
 fn lint_state_list(
@@ -1148,6 +1205,65 @@ mod tests {
         assert!(
             warnings.is_empty(),
             "expected no warnings; got: {warnings:?}"
+        );
+    }
+
+    // @ltojzq9l: lint warns when an allow-list entry uses a 1.x name
+    // without listing its 2.0 canonical sibling.
+    #[test]
+    fn lint_flags_legacy_only_state_names_in_allow_lists() {
+        let policy = Policy {
+            evidence_rules: Some(EvidenceRules {
+                allow_evidence: vec!["under-review".into(), "reviewing".into()],
+            }),
+            revise_rules: Some(ReviseRules {
+                allow_body_revise: vec!["pending".into()],
+                allow_node_revise: vec!["closed".into()],
+            }),
+            ..Default::default()
+        };
+        let diags = lint_policy(&policy);
+        let messages: Vec<&str> = diags.iter().map(|d| d.message.as_str()).collect();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("evidence_rules.allow_evidence") && m.contains("under-review")),
+            "expected legacy-name warning for under-review; got: {messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("revise_rules.allow_body_revise") && m.contains("pending")),
+            "expected legacy-name warning for pending; got: {messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("revise_rules.allow_node_revise") && m.contains("closed")),
+            "expected legacy-name warning for closed; got: {messages:?}"
+        );
+    }
+
+    // @ltojzq9l: a policy with both 1.x and 2.0 names listed during
+    // migration should not warn — the canonical form is present, the
+    // 1.x name is dual-tolerance scaffolding.
+    #[test]
+    fn lint_does_not_flag_legacy_names_when_canonical_is_also_listed() {
+        let policy = Policy {
+            evidence_rules: Some(EvidenceRules {
+                allow_evidence: vec!["reviewing".into(), "review".into()],
+            }),
+            ..Default::default()
+        };
+        let diags = lint_policy(&policy);
+        let legacy_warnings: Vec<&str> = diags
+            .iter()
+            .filter(|d| d.message.contains("legacy 1.x state name"))
+            .map(|d| d.message.as_str())
+            .collect();
+        assert!(
+            legacy_warnings.is_empty(),
+            "did not expect legacy-name warnings when canonical is listed; got: {legacy_warnings:?}"
         );
     }
 
