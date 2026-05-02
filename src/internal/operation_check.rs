@@ -15,6 +15,23 @@ fn allow_list_contains(allow: &[String], status: &str) -> bool {
         .any(|s| normalize_state_name(s.as_str()) == target)
 }
 
+/// Render a policy allow-list for human-readable error hints, using 2.0
+/// canonical state names with deduplication. Without this, hints can
+/// echo a legacy-only allow-list and read as "evidence not allowed in
+/// state 'review'; allowed in: ..., reviewing, ..." — which lists the
+/// user's current state under a different name and reads as
+/// self-contradictory.
+fn render_allow_list_for_hint(allow: &[String]) -> String {
+    let mut seen: Vec<&str> = Vec::new();
+    for entry in allow {
+        let canonical = normalize_state_name(entry.as_str());
+        if !seen.contains(&canonical) {
+            seen.push(canonical);
+        }
+    }
+    seen.join(", ")
+}
+
 /// SPEC-2.0 §7.2 / RFC-nm3d31yk Track D — table-driven dispatch over the
 /// four operation check kinds. Each variant carries the context the
 /// corresponding rule-table lookup needs.
@@ -177,12 +194,12 @@ fn check_say_inner(policy: &Policy, status: &str, node_type: NodeType) -> Vec<Op
             violations.push(OperationViolation {
                 severity: Severity::Error,
                 rule: "node_type_restricted".into(),
-                reason: format!("{node_type} nodes are not allowed in state '{status}'"),
+                reason: format!("{node_type} nodes are not allowed in state '{target}'"),
                 hint: if allowed.is_empty() {
-                    Some(format!("no node types are allowed in state '{status}'"))
+                    Some(format!("no node types are allowed in state '{target}'"))
                 } else {
                     let allowed_str: Vec<String> = allowed.iter().map(|n| n.to_string()).collect();
-                    Some(format!("allowed in '{status}': {}", allowed_str.join(", ")))
+                    Some(format!("allowed in '{target}': {}", allowed_str.join(", ")))
                 },
                 fix_command: None,
             });
@@ -218,13 +235,14 @@ fn check_revise_inner(policy: &Policy, status: &str, is_body: bool) -> Vec<Opera
 
     if !allow_list_contains(allowed, status) {
         let target = if is_body { "body" } else { "node" };
+        let canonical_status = normalize_state_name(status);
         violations.push(OperationViolation {
             severity: Severity::Error,
             rule: "revise_restricted".into(),
-            reason: format!("{target} revision is not allowed in state '{status}'"),
+            reason: format!("{target} revision is not allowed in state '{canonical_status}'"),
             hint: Some(format!(
                 "{target} revision is allowed in: {}",
-                allowed.join(", ")
+                render_allow_list_for_hint(allowed)
             )),
             fix_command: None,
         });
@@ -250,13 +268,14 @@ fn check_evidence_inner(policy: &Policy, status: &str) -> Vec<OperationViolation
     }
 
     if !allow_list_contains(&rules.allow_evidence, status) {
+        let canonical_status = normalize_state_name(status);
         violations.push(OperationViolation {
             severity: Severity::Error,
             rule: "evidence_restricted".into(),
-            reason: format!("evidence is not allowed in state '{status}'"),
+            reason: format!("evidence is not allowed in state '{canonical_status}'"),
             hint: Some(format!(
                 "evidence is allowed in: {}",
-                rules.allow_evidence.join(", ")
+                render_allow_list_for_hint(&rules.allow_evidence)
             )),
             fix_command: None,
         });
@@ -658,6 +677,58 @@ mod tests {
         // Reverse: 1.x policy lookup against 2.0 status that has no equivalent
         // should still block.
         assert_eq!(check_evidence(&policy, "rejected").len(), 1);
+    }
+
+    // Regression for @ltojzq9l: a default policy using only 2.0
+    // canonical state names must allow evidence in `review` for an
+    // execution-lifecycle thread (issue/task) without needing the
+    // legacy "reviewing" entry as well.
+    #[test]
+    fn check_evidence_canonical_policy_canonical_status_no_friction() {
+        let policy = Policy {
+            evidence_rules: Some(super::super::policy::EvidenceRules {
+                allow_evidence: vec![
+                    "draft".into(),
+                    "open".into(),
+                    "working".into(),
+                    "review".into(),
+                    "done".into(),
+                    "rejected".into(),
+                    "deprecated".into(),
+                ],
+            }),
+            ..Default::default()
+        };
+        assert!(check_evidence(&policy, "review").is_empty());
+        assert!(check_evidence(&policy, "working").is_empty());
+        assert!(check_evidence(&policy, "done").is_empty());
+    }
+
+    // Regression for @ltojzq9l: error hints normalize the listed
+    // policy entries to 2.0 canonical so the user never reads a
+    // contradictory "evidence not allowed in 'review'; allowed in
+    // ..., reviewing, ..." message.
+    #[test]
+    fn check_evidence_hint_lists_canonical_state_names() {
+        let policy = Policy {
+            evidence_rules: Some(super::super::policy::EvidenceRules {
+                allow_evidence: vec!["under-review".into(), "reviewing".into()],
+            }),
+            ..Default::default()
+        };
+        // "rejected" is not in the policy and not equivalent to anything
+        // listed, so it should produce a violation we can inspect.
+        let violations = check_evidence(&policy, "rejected");
+        assert_eq!(violations.len(), 1);
+        let hint = violations[0].hint.as_ref().unwrap();
+        // Normalized, both entries collapse to "review".
+        assert!(
+            hint.contains("review") && !hint.contains("reviewing"),
+            "hint should list canonical 2.0 names; got: {hint}"
+        );
+        // Violation message uses the canonical form of the offending
+        // status so it doesn't conflict with the hint vocabulary.
+        assert!(violations[0].reason.contains("'rejected'"));
     }
 
     #[test]
