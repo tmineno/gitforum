@@ -5,31 +5,26 @@ use super::event::Lifecycle;
 pub fn node_type_taxonomy() -> String {
     r#"# Node Type Taxonomy
 
+ADR-006 collapses 10 node types into 4 by protocol effect. The 2.0 model is:
+
 | Type | Purpose | Resolvable |
 |------|---------|------------|
-| claim | Assert a fact or position | no |
-| question | Ask for clarification or information | no |
+| comment | Free-form prose (claims, questions, summaries, risks, reviews, alternatives, assumptions all live here) | no |
 | objection | Raise a blocking concern (must be resolved before acceptance) | yes |
-| evidence | Reference supporting data (distinct from evidence attachment) | no |
-| summary | Consensus digest — what the thread concludes | no |
+| approval | Record approval, typically via `--approve <actor>` on a state transition | no |
 | action | A task to be completed (must be resolved before closing) | yes |
-| risk | Flag a potential problem or uncertainty | no |
-| review | Holistic analysis of the entire thread | no |
-| alternative | Record a considered alternative approach | no |
-| assumption | Record an assumption the design depends on | no |
 
 ## When to use each
 
-- **claim**: single assertions ("We should use trait objects")
-- **question**: requests for info ("What is the migration plan?")
-- **objection**: blocking issues ("Benchmarks are missing") — blocks acceptance until resolved
-- **evidence**: discussion about evidence ("See benchmark results in bench/")
-- **summary**: the human-readable conclusion; required before RFC acceptance
-- **action**: tasks to track ("Add div-by-zero guard") — blocks issue close until resolved
-- **risk**: non-blocking concerns ("Floating-point precision may diverge")
-- **review**: overall thread analysis, distinct from claim (single point) and summary (consensus)
-- **alternative**: documents what was *not* chosen and why (especially in DEC threads)
-- **assumption**: surfaces hidden dependencies that may invalidate the decision if they change
+- **comment**: any prose contribution. Authors who need the rhetorical distinction
+  the 1.x types provided express it in the body (e.g. start with `Q:`, `Decision:`,
+  `Risk:`, `Alternative:`).
+- **objection**: blocking issues ("Benchmarks are missing") — gates the
+  `no_open_objections` guard until resolved.
+- **approval**: surfaces a `--approve <actor>` decision; counted by the
+  `one_human_approval` guard.
+- **action**: tasks to track ("Add div-by-zero guard") — must be resolved before
+  the thread can move to a terminal state.
 
 ## Canonical form
 
@@ -37,38 +32,34 @@ pub fn node_type_taxonomy() -> String {
 git forum node add <THREAD> --type <TYPE> "body"
 ```
 
-This works for all 10 node types. All accept a positional body argument, --body, --body-file,
---edit, --reply-to, and --as. Priority: positional > --body > --body-file.
-Pass "-" as the positional body to read from stdin (e.g. `echo "body" | git forum claim ASK-0001 --body -`).
---edit opens $VISUAL / $EDITOR / vi for interactive composition (requires a TTY; conflicts with body args).
-In scripts or agent workflows, use --body, --body-file, or --body - instead of --edit.
+Accepts positional body, --body, --body-file, --edit, --reply-to, and --as.
+Priority: positional > --body > --body-file. Pass "-" to read from stdin.
+--edit opens $VISUAL / $EDITOR / vi (requires a TTY; conflicts with body args).
+In scripts or agent workflows, use --body, --body-file, or --body - instead.
 
-## Shorthand commands (2.0 canonical + deprecated aliases)
+## Shorthand commands
 
 ```
-git forum comment <THREAD> "body"       # canonical 2.0 (node add --type comment)
+git forum comment   <THREAD> "body"     # node add --type comment
 git forum objection <THREAD> "body"     # node add --type objection
-git forum action <THREAD> "body"        # node add --type action
+git forum action    <THREAD> "body"     # node add --type action
 ```
 
-The following shorthands are deprecated aliases for `comment` (ADR-006 / SPEC-2.0 §2.5);
-they still work in 2.0 but emit a deprecation warning and will be removed in 3.0:
+Approvals are not added directly; pass `--approve <actor>` on a state transition
+(e.g. `git forum accept <ID> --approve human/alice`).
 
-```
-git forum claim, question, summary, risk, review  # deprecated → comment
-```
+## Deprecated 1.x aliases
 
-Authors who relied on the rhetorical distinction express it in the body
-(e.g. start with `Q:`, `Decision:`, `Risk:`).
-
-alternative and assumption have no shorthand — use `node add --type <TYPE>` for these
-(also deprecated to `comment` in 2.0 migration; see ADR-006).
+The 1.x shorthands `claim`, `question`, `summary`, `risk`, `review` still work
+but emit a deprecation warning and write a `comment` node with `legacy_subtype`
+preserved (per ADR-006). They will be removed in 3.0. `alternative` and
+`assumption` have no shorthand — they are also collapsed to `comment`.
 
 ## Reading a node's full body
 
-`git forum node show <NODE_ID>` prints the full node body, type, actor, timestamp, and parent
-thread context. Accepts full IDs or unique prefixes (8+ chars). Use this to read long review or
-objection text that is truncated in the timeline.
+`git forum node show <NODE_ID>` prints the full node body, type, actor, timestamp,
+and parent thread context. Accepts full IDs or unique prefixes (8+ chars). Use
+this to read long objection or comment text truncated in the timeline.
 "#
     .to_string()
 }

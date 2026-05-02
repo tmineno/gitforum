@@ -280,16 +280,16 @@ and requires an interactive terminal; in scripts or agent workflows, use `--body
 ### Inline nodes at creation
 
 Thread creation accepts inline node flags that are appended immediately after the thread is
-created. `--objection` and `--action` create canonical 2.0 node types. The 1.x flags
-`--claim`, `--question`, `--summary`, `--risk` continue to work for one minor release with a
-deprecation warning; under the hood each writes a `comment` node with `legacy_subtype`
+created. `--comment`, `--objection`, and `--action` create canonical 2.0 node types. The 1.x
+flags `--claim`, `--question`, `--summary`, `--risk` continue to work for one minor release
+with a deprecation warning; under the hood each writes a `comment` node with `legacy_subtype`
 preserved (ADR-006). Each flag may be repeated:
 
 ```bash
 git forum new rfc "Caching layer" --body "Goal and constraints." \
-  --claim "LRU eviction with 10-min TTL" \
-  --action "Benchmark cache hit ratio" \
-  --risk  "Memory pressure under load"
+  --comment "LRU eviction with 10-min TTL" \
+  --action  "Benchmark cache hit ratio" \
+  --comment "Memory pressure may be a concern under load"
 ```
 
 This is equivalent to running `new rfc` followed by separate `comment` and `action` commands.
