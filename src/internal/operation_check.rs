@@ -1,5 +1,19 @@
-use super::event::{Lifecycle, NodeType};
+use super::event::{normalize_state_name, Lifecycle, NodeType};
 use super::policy::Policy;
+
+/// State-name allow-list match that tolerates 1.x↔2.0 name mismatches.
+///
+/// State events store 2.0 canonical names (per `state_change`), but
+/// user policies may still carry 1.x names (`under-review`, `reviewing`,
+/// `closed`, `accepted`, `implementing`, `designing`, `pending`).
+/// Normalizing both sides via `normalize_state_name` lets either form
+/// in the policy match either form on the live thread.
+fn allow_list_contains(allow: &[String], status: &str) -> bool {
+    let target = normalize_state_name(status);
+    allow
+        .iter()
+        .any(|s| normalize_state_name(s.as_str()) == target)
+}
 
 /// SPEC-2.0 §7.2 / RFC-nm3d31yk Track D — table-driven dispatch over the
 /// four operation check kinds. Each variant carries the context the
@@ -153,7 +167,12 @@ fn check_say_inner(policy: &Policy, status: &str, node_type: NodeType) -> Vec<Op
         return violations;
     }
 
-    if let Some(allowed) = policy.node_rules.get(status) {
+    let target = normalize_state_name(status);
+    let matched = policy
+        .node_rules
+        .iter()
+        .find(|(key, _)| normalize_state_name(key.as_str()) == target);
+    if let Some((_, allowed)) = matched {
         if !allowed.contains(&node_type) {
             violations.push(OperationViolation {
                 severity: Severity::Error,
@@ -197,7 +216,7 @@ fn check_revise_inner(policy: &Policy, status: &str, is_body: bool) -> Vec<Opera
         return violations;
     }
 
-    if !allowed.iter().any(|s| s == status) {
+    if !allow_list_contains(allowed, status) {
         let target = if is_body { "body" } else { "node" };
         violations.push(OperationViolation {
             severity: Severity::Error,
@@ -230,7 +249,7 @@ fn check_evidence_inner(policy: &Policy, status: &str) -> Vec<OperationViolation
         return violations;
     }
 
-    if !rules.allow_evidence.iter().any(|s| s == status) {
+    if !allow_list_contains(&rules.allow_evidence, status) {
         violations.push(OperationViolation {
             severity: Severity::Error,
             rule: "evidence_restricted".into(),
@@ -618,6 +637,42 @@ mod tests {
         let violations = check_evidence(&policy, "accepted");
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].severity, Severity::Error);
+    }
+
+    // Regression: state events store 2.0 canonical names ("review",
+    // "done", "working"), but legacy policies may carry 1.x names
+    // ("under-review", "reviewing", "closed", "implementing"). Both
+    // sides of the allow-list comparison must normalize.
+    #[test]
+    fn check_evidence_matches_across_1x_2x_state_names() {
+        let policy = Policy {
+            evidence_rules: Some(super::super::policy::EvidenceRules {
+                allow_evidence: vec!["under-review".into(), "reviewing".into(), "closed".into()],
+            }),
+            ..Default::default()
+        };
+        // 2.0 thread.status = "review" against 1.x policy entries.
+        assert!(check_evidence(&policy, "review").is_empty());
+        // 2.0 thread.status = "done" against 1.x "closed".
+        assert!(check_evidence(&policy, "done").is_empty());
+        // Reverse: 1.x policy lookup against 2.0 status that has no equivalent
+        // should still block.
+        assert_eq!(check_evidence(&policy, "rejected").len(), 1);
+    }
+
+    #[test]
+    fn check_revise_matches_across_1x_2x_state_names() {
+        let policy = Policy {
+            revise_rules: Some(super::super::policy::ReviseRules {
+                allow_body_revise: vec!["implementing".into(), "designing".into()],
+                allow_node_revise: vec!["reviewing".into()],
+            }),
+            ..Default::default()
+        };
+        // 2.0 "working" matches 1.x "implementing"/"designing".
+        assert!(check_revise(&policy, "working", true).is_empty());
+        // 2.0 "review" matches 1.x "reviewing".
+        assert!(check_revise(&policy, "review", false).is_empty());
     }
 
     #[test]
