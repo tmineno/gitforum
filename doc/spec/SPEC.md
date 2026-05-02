@@ -537,7 +537,7 @@ Missing policy file or missing sections apply no restrictions (`#[serde(default)
 - **Guard evaluation**: enforced on `state` command and evaluated as a read-only preflight by `verify`.
 - **Operation checks**: enforced on `new`, node commands (`claim`, `question`, etc.), `revise`,
   and `evidence add`. All write commands accept `--force` to bypass warning-level violations.
-  See `doc/spec/operation-checks.md` for details.
+  See `doc/spec/SPEC-2.0.md` §7.2 for the current operation-check model.
 
 ## 8. Concurrency
 
