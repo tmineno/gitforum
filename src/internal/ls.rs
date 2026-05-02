@@ -4,26 +4,34 @@
 
 use chrono::{DateTime, Utc};
 
-use super::event::ThreadKind;
+use super::event::Lifecycle;
 use super::index::SearchRow;
 use super::show::short_oid;
 use super::thread::ThreadState;
 
 /// Render search results from the local index.
+///
+/// Phase 3: lifecycle and tags are real index columns; surface them as
+/// the canonical 2.0 axes here too, mirroring `render_ls`.
 pub fn render_search_results(rows: &[SearchRow]) -> String {
     if rows.is_empty() {
         return "no threads found\n".into();
     }
     let mut lines: Vec<String> = Vec::new();
     lines.push(format!(
-        "{:<12}  {:<10}  {:<14}  {}",
-        "ID", "KIND", "STATUS", "TITLE"
+        "{:<12}  {:<10}  {:<14}  {:<14}  {}",
+        "ID", "LIFECYCLE", "STATUS", "TAGS", "TITLE"
     ));
-    lines.push("-".repeat(60));
+    lines.push("-".repeat(72));
     for r in rows {
+        let tags = if r.thread.tags.is_empty() {
+            "-".to_string()
+        } else {
+            r.thread.tags.join(",")
+        };
         lines.push(format!(
-            "{:<12}  {:<10}  {:<14}  {}",
-            r.thread.id, r.thread.kind, r.thread.status, r.thread.title
+            "{:<12}  {:<10}  {:<14}  {:<14}  {}",
+            r.thread.id, r.thread.lifecycle, r.thread.status, tags, r.thread.title
         ));
         for hit in &r.node_hits {
             lines.push(format!(
@@ -41,8 +49,10 @@ pub fn render_search_results(rows: &[SearchRow]) -> String {
 
 /// Render `git forum ls` output for a list of threads.
 ///
-/// Output columns: ID, KIND, STATUS, BRANCH, CREATED, UPDATED, TITLE.
-/// Deterministic when thread IDs and statuses are deterministic.
+/// Phase 2b: classification axes are LIFECYCLE + TAGS, not KIND. Output
+/// columns: ID, LIFECYCLE, STATUS, TAGS, BRANCH, CREATED, UPDATED, TITLE.
+/// Deterministic when thread IDs, statuses, and tag insertion order are
+/// deterministic.
 pub fn render_ls(states: &[&ThreadState]) -> String {
     if states.is_empty() {
         return "no threads found\n".into();
@@ -53,18 +63,24 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
         .max()
         .unwrap_or(12)
         .clamp(12, 20);
-    let kind_width = states
+    let lifecycle_width = states
         .iter()
-        .map(|s| s.kind.to_string().len())
+        .map(|s| s.lifecycle.as_str().len())
         .max()
         .unwrap_or(10)
-        .clamp(10, 16);
+        .clamp(10, 12);
     let status_width = states
         .iter()
-        .map(|s| s.status.len())
+        .map(|s| s.status.as_str().len())
         .max()
         .unwrap_or(14)
-        .clamp(14, 20);
+        .clamp(10, 16);
+    let tags_width = states
+        .iter()
+        .map(|s| join_tags(&s.tags).len())
+        .max()
+        .unwrap_or(8)
+        .clamp(8, 30);
     let branch_width = states
         .iter()
         .map(|s| s.branch.as_deref().unwrap_or("-").len())
@@ -72,12 +88,13 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
         .unwrap_or(12)
         .clamp(12, 30);
     let date_width = 16;
-    let fixed_cols = id_width + kind_width + status_width + branch_width + date_width * 2 + 14;
+    let fixed_cols =
+        id_width + lifecycle_width + status_width + tags_width + branch_width + date_width * 2 + 16;
     let title_max = title_max_for(fixed_cols);
     let mut lines: Vec<String> = Vec::new();
     lines.push(format!(
-        "{:<id_width$}  {:<kind_width$}  {:<status_width$}  {:<branch_width$}  {:<date_width$}  {:<date_width$}  {}",
-        "ID", "KIND", "STATUS", "BRANCH", "CREATED", "UPDATED", "TITLE"
+        "{:<id_width$}  {:<lifecycle_width$}  {:<status_width$}  {:<tags_width$}  {:<branch_width$}  {:<date_width$}  {:<date_width$}  {}",
+        "ID", "LIFECYCLE", "STATUS", "TAGS", "BRANCH", "CREATED", "UPDATED", "TITLE"
     ));
     lines.push("-".repeat(fixed_cols));
     for s in states {
@@ -88,11 +105,13 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
             .map(|e| e.created_at.format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_else(|| "-".into());
         let title = truncate_with_ellipsis(&s.title, title_max);
+        let tags = join_tags(&s.tags);
         lines.push(format!(
-            "{:<id_width$}  {:<kind_width$}  {:<status_width$}  {:<branch_width$}  {:<date_width$}  {:<date_width$}  {}",
+            "{:<id_width$}  {:<lifecycle_width$}  {:<status_width$}  {:<tags_width$}  {:<branch_width$}  {:<date_width$}  {:<date_width$}  {}",
             s.id,
-            s.kind.to_string(),
+            s.lifecycle.as_str(),
             s.status,
+            truncate_with_ellipsis(&tags, tags_width),
             s.branch.as_deref().unwrap_or("-"),
             created,
             updated,
@@ -103,21 +122,27 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
     lines.join("\n")
 }
 
+/// Render a thread's tag list for column display: comma-joined or `-`.
+fn join_tags(tags: &[String]) -> String {
+    if tags.is_empty() {
+        "-".into()
+    } else {
+        tags.join(",")
+    }
+}
+
 pub fn render_shortlog(entries: &[(&ThreadState, DateTime<Utc>)]) -> String {
     if entries.is_empty() {
         return "no threads reached terminal state in the given period\n".into();
     }
-    let kind_order = [
-        ThreadKind::Issue,
-        ThreadKind::Rfc,
-        ThreadKind::Dec,
-        ThreadKind::Task,
-    ];
+    // Phase 2b: group by lifecycle, not kind. The three lifecycles are
+    // listed in spec-canonical order (proposal -> execution -> record).
+    let lifecycle_order = [Lifecycle::Proposal, Lifecycle::Execution, Lifecycle::Record];
     let mut lines: Vec<String> = Vec::new();
-    for kind in &kind_order {
+    for lifecycle in &lifecycle_order {
         let mut group: Vec<(&ThreadState, DateTime<Utc>)> = entries
             .iter()
-            .filter(|(s, _)| s.kind == *kind)
+            .filter(|(s, _)| s.lifecycle == *lifecycle)
             .copied()
             .collect();
         if group.is_empty() {
@@ -130,7 +155,7 @@ pub fn render_shortlog(entries: &[(&ThreadState, DateTime<Utc>)]) -> String {
         if !lines.is_empty() {
             lines.push(String::new());
         }
-        lines.push(format!("## {} ({count} {thread_word})", kind));
+        lines.push(format!("## {} ({count} {thread_word})", lifecycle));
 
         let id_width = group
             .iter()
@@ -140,7 +165,7 @@ pub fn render_shortlog(entries: &[(&ThreadState, DateTime<Utc>)]) -> String {
             .clamp(12, 20);
         let status_width = group
             .iter()
-            .map(|(s, _)| s.status.len())
+            .map(|(s, _)| s.status.as_str().len())
             .max()
             .unwrap_or(10)
             .clamp(10, 16);
@@ -197,7 +222,7 @@ fn preview_one_line(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::event::{Event, EventType, ThreadKind};
+    use crate::internal::event::{Event, EventType, Lifecycle, ThreadKind, ThreadStatus};
     use chrono::TimeZone;
 
     fn t() -> chrono::DateTime<chrono::Utc> {
@@ -210,7 +235,7 @@ mod tests {
             kind: ThreadKind::Rfc,
             title: "Test RFC".into(),
             body: Some("Thread body".into()),
-            status: "draft".into(),
+            status: ThreadStatus::Draft,
             created_at: t(),
             created_by: "human/alice".into(),
             events: vec![Event {
@@ -234,12 +259,16 @@ mod tests {
 
     #[test]
     fn ls_contains_all_threads() {
+        // Phase 2b: lifecycle replaces kind as the column.
         let mut s = fixed_state();
         s.branch = Some("feat/parser".into());
+        s.lifecycle = Lifecycle::Proposal; // kind=Rfc would derive this anyway
         let out = render_ls(&[&s]);
+        assert!(out.contains("LIFECYCLE"));
+        assert!(out.contains("TAGS"));
         assert!(out.contains("BRANCH"));
         assert!(out.contains("RFC-0001"));
-        assert!(out.contains("rfc"));
+        assert!(out.contains("proposal"));
         assert!(out.contains("draft"));
         assert!(out.contains("feat/parser"));
         assert!(out.contains("Test RFC"));

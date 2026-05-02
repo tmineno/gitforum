@@ -74,8 +74,10 @@ pub(super) fn display_thread_id(thread_id: &str) -> String {
 }
 
 /// SPEC-2.0 §2.3.3: the conventional tag set a 1.x kind would emit if it
-/// were created today via the kind preset. Used as the display fallback for
-/// unmigrated threads that have no `facet_set` event in their chain.
+/// were created today via the kind preset. Used by `tui/state.rs` to seed
+/// the thread-detail tag panel for unmigrated threads (no `facet_set` and
+/// no replayed tags); migrated threads use [`row_tags`] which now reads
+/// from the real `thread_tags` column.
 pub(super) fn conventional_tags_for_kind(kind: ThreadKind) -> Vec<String> {
     match kind {
         ThreadKind::Rfc => vec!["cross-cutting".to_string()],
@@ -85,9 +87,14 @@ pub(super) fn conventional_tags_for_kind(kind: ThreadKind) -> Vec<String> {
     }
 }
 
-/// Lifecycle string for a `ThreadRow` — derived from `kind` since the index
-/// schema is still pre-Track-B (no lifecycle column).
+/// Lifecycle string for a `ThreadRow`. Phase 3: reads the real `lifecycle`
+/// column (no longer kind-derived). Falls back to a kind-based guess when
+/// the column is empty (defensive — schema NOT NULL DEFAULT 'execution'
+/// makes this branch unreachable for v2 indexes).
 pub(super) fn row_lifecycle(row: &ThreadRow) -> String {
+    if !row.lifecycle.is_empty() {
+        return row.lifecycle.clone();
+    }
     match row.kind.as_str() {
         "rfc" => "proposal".to_string(),
         "dec" => "record".to_string(),
@@ -95,9 +102,17 @@ pub(super) fn row_lifecycle(row: &ThreadRow) -> String {
     }
 }
 
-/// Display tags for a `ThreadRow` — falls back to §2.3.3 conventional tag
-/// since the index schema doesn't yet carry the replayed tag set.
+/// Display tags for a `ThreadRow`. Phase 3: reads the real `thread_tags`
+/// rows (joined into `ThreadRow.tags`). For rows with no replayed tags
+/// AND no explicit `facet_set`, falls back to the kind-conventional set
+/// so unmigrated 1.x threads still display familiar labels.
 pub(super) fn row_tags(row: &ThreadRow) -> Vec<String> {
+    if !row.tags.is_empty() {
+        return row.tags.clone();
+    }
+    if row.lifecycle_explicit {
+        return Vec::new();
+    }
     match row.kind.as_str() {
         "rfc" => vec!["cross-cutting".to_string()],
         "issue" => vec!["bug".to_string()],

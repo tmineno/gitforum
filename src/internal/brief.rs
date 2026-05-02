@@ -73,7 +73,7 @@ pub struct LinkCount {
 /// Output shape matches the example in RFC-5wf2v8hv body. Deterministic given
 /// deterministic input.
 pub fn render_plaintext(state: &ThreadState, incoming: &IncomingLinkCounts) -> String {
-    let lifecycle = state.lifecycle().as_str();
+    let lifecycle = state.lifecycle.as_str();
     let tags_disp = if state.tags.is_empty() {
         "-".to_string()
     } else {
@@ -133,9 +133,9 @@ pub fn build_json(state: &ThreadState, incoming: &IncomingLinkCounts) -> BriefJs
     BriefJson {
         id: state.id.clone(),
         title: state.title.clone(),
-        lifecycle: state.lifecycle().as_str().to_string(),
+        lifecycle: state.lifecycle.as_str().to_string(),
         tags: state.tags.clone(),
-        status: state.status.clone(),
+        status: state.status.to_string(),
         created_at: state.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
         created_by: state.created_by.clone(),
         branch: state.branch.clone(),
@@ -254,18 +254,22 @@ fn single_line(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::event::ThreadKind;
+    use crate::internal::event::{Lifecycle, ThreadKind, ThreadStatus};
     use crate::internal::node::Node;
     use crate::internal::thread::ThreadLink;
     use chrono::{TimeZone, Utc};
 
     fn make_state() -> ThreadState {
+        // Phase 2c: lifecycle is now an independent field (no longer derived
+        // from kind on read), so test fixtures must set it explicitly to
+        // match the kind-implied value.
         let t = Utc.with_ymd_and_hms(2026, 4, 30, 12, 0, 0).unwrap();
         ThreadState {
             id: "RFC-x9k2".into(),
             kind: ThreadKind::Rfc,
             title: "Replace LIKE scan with FTS5".into(),
-            status: "done".into(),
+            status: ThreadStatus::Done,
+            lifecycle: Lifecycle::Proposal,
             created_at: t,
             created_by: "ai/claude".into(),
             tags: vec!["cross-cutting".into()],
@@ -298,7 +302,7 @@ mod tests {
             id: "TASK-123".into(),
             kind: ThreadKind::Task,
             title: "Lonely task".into(),
-            status: "open".into(),
+            status: ThreadStatus::Open,
             created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             created_by: "human/alice".into(),
             ..Default::default()
@@ -338,7 +342,7 @@ mod tests {
             id: "RFC-1".into(),
             kind: ThreadKind::Rfc,
             title: "T".into(),
-            status: "draft".into(),
+            status: ThreadStatus::Draft,
             created_at: Utc::now(),
             created_by: "ai/x".into(),
             nodes: vec![

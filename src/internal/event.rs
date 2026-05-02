@@ -101,6 +101,105 @@ impl std::fmt::Display for ThreadKind {
     }
 }
 
+/// SPEC-2.0 §3.1 — the canonical 2.0 state set across every lifecycle.
+///
+/// Phase 2a (Finding 1 follow-up): the in-memory representation of a
+/// thread's status. Storage (`Event.new_state: Option<String>`) stays
+/// String-typed for compatibility with 1.x event chains and forward
+/// flexibility; this enum is the read-side type after `parse_lenient`
+/// has folded 1.x synonyms (`closed`, `proposed`, …) onto canonical
+/// 2.0 names.
+///
+/// Per-lifecycle reachability is enforced by [`Lifecycle::allows_state`];
+/// this enum is intentionally lifecycle-agnostic so legacy chains whose
+/// state names predate the 2.0 split can still be replayed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ThreadStatus {
+    Draft,
+    #[default]
+    Open,
+    Working,
+    Review,
+    Done,
+    Rejected,
+    Withdrawn,
+    Deprecated,
+}
+
+impl ThreadStatus {
+    /// Canonical 2.0 names only — does NOT accept 1.x synonyms.
+    /// Use [`parse_lenient`](Self::parse_lenient) for inputs that may
+    /// carry pre-2.0 names (`closed`, `proposed`, etc.).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "draft" => Some(Self::Draft),
+            "open" => Some(Self::Open),
+            "working" => Some(Self::Working),
+            "review" => Some(Self::Review),
+            "done" => Some(Self::Done),
+            "rejected" => Some(Self::Rejected),
+            "withdrawn" => Some(Self::Withdrawn),
+            "deprecated" => Some(Self::Deprecated),
+            _ => None,
+        }
+    }
+
+    /// Accepts canonical 2.0 names AND 1.x synonyms by routing through
+    /// [`normalize_state_name`]. The lenient `apply_event` path uses this
+    /// so legacy event chains keep replaying.
+    pub fn parse_lenient(s: &str) -> Option<Self> {
+        Self::parse(normalize_state_name(s))
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Open => "open",
+            Self::Working => "working",
+            Self::Review => "review",
+            Self::Done => "done",
+            Self::Rejected => "rejected",
+            Self::Withdrawn => "withdrawn",
+            Self::Deprecated => "deprecated",
+        }
+    }
+}
+
+impl std::fmt::Display for ThreadStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Delegate to &str's Display so format-spec padding (`{:<width$}`)
+        // and precision rules behave identically to a plain string.
+        std::fmt::Display::fmt(self.as_str(), f)
+    }
+}
+
+// Ergonomic comparisons against string literals — keeps test assertions
+// like `assert_eq!(state.status, "draft")` readable without forcing every
+// test module to import `ThreadStatus`. The 1.x lenient mapping is
+// intentionally NOT applied here: comparison is exact against the canonical
+// 2.0 name. Callers that want lenient semantics use
+// `ThreadStatus::parse_lenient(s) == Some(state.status)`.
+impl PartialEq<&str> for ThreadStatus {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+impl PartialEq<ThreadStatus> for &str {
+    fn eq(&self, other: &ThreadStatus) -> bool {
+        *self == other.as_str()
+    }
+}
+impl PartialEq<str> for ThreadStatus {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+impl PartialEq<ThreadStatus> for str {
+    fn eq(&self, other: &ThreadStatus) -> bool {
+        self == other.as_str()
+    }
+}
+
 /// SPEC-2.0 §2.3.1 — the sole required facet, gates the unified state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -796,6 +895,22 @@ pub fn load_thread_events(git: &GitOps, thread_id: &str) -> ForumResult<Vec<Even
     Ok(events)
 }
 
+/// Returns `true` when the thread ref's bottom (oldest) commit cannot be
+/// parsed as a valid `event.json`. Used by `doctor` and `prune-orphans` to
+/// distinguish a structurally empty ref (manually-created Git ref under
+/// `refs/forum/threads/`, or a history that lost its create event) from
+/// mid-chain corruption that points at real damage to a once-valid thread.
+///
+/// An empty ref (no commits) is also reported as orphan.
+pub fn is_orphan_ref(git: &GitOps, thread_id: &str) -> ForumResult<bool> {
+    let ref_name = refs::thread_ref(thread_id);
+    let shas = git.rev_list(&ref_name)?;
+    let Some(oldest) = shas.last() else {
+        return Ok(true);
+    };
+    Ok(read_event(git, oldest).is_err())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1128,6 +1243,82 @@ mod tests {
         assert_eq!(Lifecycle::Proposal.initial_state(), "draft");
         assert_eq!(Lifecycle::Execution.initial_state(), "open");
         assert_eq!(Lifecycle::Record.initial_state(), "open");
+    }
+
+    // ---- ThreadStatus (Phase 2a: typed status) ----
+
+    #[test]
+    fn thread_status_parse_canonical_round_trip() {
+        for s in [
+            "draft",
+            "open",
+            "working",
+            "review",
+            "done",
+            "rejected",
+            "withdrawn",
+            "deprecated",
+        ] {
+            let parsed = ThreadStatus::parse(s).expect(s);
+            assert_eq!(parsed.as_str(), s);
+        }
+    }
+
+    #[test]
+    fn thread_status_parse_strict_rejects_legacy() {
+        // 1.x synonyms must NOT pass strict parse — that channel is
+        // reserved for write-side rejection of unknown values.
+        assert_eq!(ThreadStatus::parse("closed"), None);
+        assert_eq!(ThreadStatus::parse("proposed"), None);
+        assert_eq!(ThreadStatus::parse("under-review"), None);
+    }
+
+    #[test]
+    fn thread_status_parse_lenient_folds_legacy() {
+        assert_eq!(
+            ThreadStatus::parse_lenient("closed"),
+            Some(ThreadStatus::Done)
+        );
+        assert_eq!(
+            ThreadStatus::parse_lenient("accepted"),
+            Some(ThreadStatus::Done)
+        );
+        assert_eq!(
+            ThreadStatus::parse_lenient("proposed"),
+            Some(ThreadStatus::Open)
+        );
+        assert_eq!(
+            ThreadStatus::parse_lenient("under-review"),
+            Some(ThreadStatus::Review)
+        );
+        assert_eq!(
+            ThreadStatus::parse_lenient("reviewing"),
+            Some(ThreadStatus::Review)
+        );
+        assert_eq!(
+            ThreadStatus::parse_lenient("designing"),
+            Some(ThreadStatus::Working)
+        );
+        assert_eq!(
+            ThreadStatus::parse_lenient("implementing"),
+            Some(ThreadStatus::Working)
+        );
+        assert_eq!(
+            ThreadStatus::parse_lenient("pending"),
+            Some(ThreadStatus::Working)
+        );
+    }
+
+    #[test]
+    fn thread_status_parse_lenient_unknown_is_none() {
+        assert_eq!(ThreadStatus::parse_lenient("garbage"), None);
+        assert_eq!(ThreadStatus::parse_lenient(""), None);
+    }
+
+    #[test]
+    fn thread_status_display_matches_as_str() {
+        assert_eq!(format!("{}", ThreadStatus::Done), "done");
+        assert_eq!(format!("{}", ThreadStatus::Withdrawn), "withdrawn");
     }
 
     #[test]

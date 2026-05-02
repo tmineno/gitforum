@@ -29,10 +29,10 @@ pub(super) fn open_thread_detail(
     let state = thread::replay_thread(git, thread_id)?;
 
     app.thread_title = state.title.clone();
-    app.thread_lifecycle = Some(state.lifecycle().as_str().to_string());
+    app.thread_lifecycle = Some(state.lifecycle.as_str().to_string());
     // SPEC-2.0 §2.3.3: unmigrated 1.x threads (no facet_set) display the
     // conventional tag derived from kind; migrated threads use replayed tags.
-    app.thread_tags = if state.lifecycle.is_none() && state.tags.is_empty() {
+    app.thread_tags = if !state.lifecycle_explicit && state.tags.is_empty() {
         super::render::conventional_tags_for_kind(state.kind)
     } else {
         state.tags.clone()

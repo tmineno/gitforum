@@ -397,9 +397,13 @@ fn canonical_thread_new_with_lifecycle_and_tag() {
     let git = GitOps::new(repo.path().to_path_buf());
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(
-        state.lifecycle.as_deref(),
-        Some("execution"),
+        state.lifecycle,
+        git_forum::internal::event::Lifecycle::Execution,
         "facet_set should persist execution lifecycle"
+    );
+    assert!(
+        state.lifecycle_explicit,
+        "explicit facet_set must flip lifecycle_explicit"
     );
     assert!(
         state.tags.contains(&"migration".to_string()),

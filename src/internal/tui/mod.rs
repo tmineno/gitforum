@@ -1216,9 +1216,17 @@ mod tests {
     use input::handle_create_link_key;
 
     fn make_row(id: &str, kind: &str, status: &str, title: &str) -> ThreadRow {
+        let lifecycle = match kind {
+            "rfc" => "proposal",
+            "dec" => "record",
+            _ => "execution",
+        };
         ThreadRow {
             id: id.into(),
             kind: kind.into(),
+            lifecycle: lifecycle.into(),
+            lifecycle_explicit: false,
+            tags: Vec::new(),
             status: status.into(),
             title: title.into(),
             body: None,
@@ -2046,7 +2054,7 @@ mod tests {
             NodeStatusAction::Resolve,
         )
         .unwrap();
-        assert!(app.node_detail_text.contains("**status:**   resolved"));
+        assert!(app.node_detail_text.contains("**status:**    resolved"));
 
         apply_node_status_action(
             &mut app,
@@ -2056,7 +2064,7 @@ mod tests {
             NodeStatusAction::Reopen,
         )
         .unwrap();
-        assert!(app.node_detail_text.contains("**status:**   open"));
+        assert!(app.node_detail_text.contains("**status:**    open"));
 
         apply_node_status_action(
             &mut app,
@@ -2066,7 +2074,7 @@ mod tests {
             NodeStatusAction::Retract,
         )
         .unwrap();
-        assert!(app.node_detail_text.contains("**status:**   retracted"));
+        assert!(app.node_detail_text.contains("**status:**    retracted"));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 mod support;
 
 use chrono::TimeZone;
-use git_forum::internal::event::{Event, EventType, NodeType, ThreadKind};
+use git_forum::internal::event::{Event, EventType, Lifecycle, NodeType, ThreadKind, ThreadStatus};
 use git_forum::internal::ls;
 use git_forum::internal::node::Node;
 use git_forum::internal::show;
@@ -36,9 +36,13 @@ fn base_state() -> ThreadState {
     ThreadState {
         id: "RFC-a1b2c3d4".into(),
         kind: ThreadKind::Rfc,
+        // Phase 2c: keep lifecycle aligned with kind so the snapshot's
+        // proposal-flavored state-machine transitions don't pick up
+        // execution lifecycle's `working` state by default.
+        lifecycle: Lifecycle::Proposal,
         title: "Test RFC".into(),
         body: Some("Initial thread body.".into()),
-        status: "draft".into(),
+        status: ThreadStatus::Draft,
         created_at: t,
         created_by: "human/alice".into(),
         events: vec![Event {
@@ -60,7 +64,8 @@ fn rich_state() -> ThreadState {
     let t2 = t + chrono::Duration::hours(1);
     let t3 = t + chrono::Duration::hours(2);
     let mut state = base_state();
-    state.status = "under-review".into();
+    // Lenient parse so 1.x-flavored fixture data still produces a valid 2.0 status.
+    state.status = ThreadStatus::parse_lenient("under-review").unwrap();
     state.branch = Some("feat/solver".into());
     state.nodes = vec![
         Node {
@@ -171,6 +176,10 @@ fn node_show_question() {
         thread_id: "RFC-a1b2c3d4".into(),
         thread_title: "Test RFC".into(),
         thread_kind: ThreadKind::Rfc,
+        // Phase 2b: NodeLookup carries the parent's lifecycle / tags so
+        // `node show` can display the canonical 2.0 axes.
+        thread_lifecycle: Lifecycle::Proposal,
+        thread_tags: vec!["cross-cutting".into()],
         node: Node {
             node_id: "node-0001".into(),
             node_type: NodeType::Question,
@@ -213,8 +222,11 @@ fn ls_two_threads() {
     let mut s2 = base_state();
     s2.id = "ASK-e5f6a7b8".into();
     s2.kind = ThreadKind::Issue;
+    // Phase 2b: keep lifecycle aligned when changing kind on a fixture.
+    s2.lifecycle = Lifecycle::Execution;
+    s2.tags = vec!["bug".into()];
     s2.title = "Implement trait backend".into();
-    s2.status = "open".into();
+    s2.status = ThreadStatus::Open;
     s2.branch = Some("feat/parser".into());
     let out = ls::render_ls(&[&s1, &s2]);
     assert_snapshot("ls_two_threads", &out);

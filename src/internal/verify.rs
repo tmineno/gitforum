@@ -65,13 +65,13 @@ impl VerifyReport {
 /// Side effects: none (read-only).
 pub fn verify_thread(git: &GitOps, thread_id: &str, p: &Policy) -> ForumResult<VerifyReport> {
     let state = thread::replay_thread(git, thread_id)?;
-    let violations = match forward_target(state.kind, &state.status) {
-        Some(to) => policy::check_guards(p, &state, &state.status, to),
+    let violations = match forward_target(state.kind, state.status.as_str()) {
+        Some(to) => policy::check_guards(p, &state, state.status.as_str(), to),
         None => vec![],
     };
 
     // Lookahead: check guards for milestone states reachable via intermediate transitions
-    let lookahead = build_lookahead(state.kind, &state.status, &state, p);
+    let lookahead = build_lookahead(state.kind, state.status.as_str(), &state, p);
 
     // Advisory: surface state of linked threads (strictly informational).
     let linked_advisories = build_linked_advisories(git, &state);
@@ -104,13 +104,13 @@ fn build_linked_advisories(git: &GitOps, state: &thread::ThreadState) -> Vec<Lin
         let Ok(linked) = thread::replay_thread(git, &canonical) else {
             continue;
         };
-        if normalize_state_name(&linked.status) == "done" {
+        if linked.status == event::ThreadStatus::Done {
             continue;
         }
         out.push(LinkedAdvisory {
             linked_thread_id: linked.id.clone(),
             linked_kind: linked.kind,
-            linked_status: linked.status.clone(),
+            linked_status: linked.status.to_string(),
             rel: link.rel.clone(),
             message: format!(
                 "linked {} {} ({}) is not yet `done` — informational only",

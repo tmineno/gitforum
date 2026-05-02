@@ -28,7 +28,7 @@ impl FacetPredicate {
     pub fn matches(&self, state: &ThreadState) -> bool {
         match self {
             Self::Always => true,
-            Self::Lifecycle(l) => state.lifecycle() == *l,
+            Self::Lifecycle(l) => state.lifecycle == *l,
             Self::Tag(t) => state.tags.iter().any(|s| s == t),
             Self::And(a, b) => a.matches(state) && b.matches(state),
             Self::Or(a, b) => a.matches(state) || b.matches(state),
@@ -1178,8 +1178,12 @@ mod tests {
     }
 
     fn state_for(kind: ThreadKind) -> ThreadState {
+        // Phase 2c: keep `lifecycle` consistent with `kind` so policy
+        // predicates that key on lifecycle (lifecycle=proposal, etc.)
+        // see the value the kind would have implied pre-Phase-2c.
         ThreadState {
             kind,
+            lifecycle: kind.lifecycle(),
             ..Default::default()
         }
     }

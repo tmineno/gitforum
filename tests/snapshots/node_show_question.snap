@@ -1,10 +1,11 @@
 ## node-0001 question
 
-**thread:**   RFC-a1b2c3d4 Test RFC
-**kind:**     rfc
-**status:**   open
-**created:**  2026-01-01T00:00:00Z
-**by:**       ai/reviewer
+**thread:**    RFC-a1b2c3d4 Test RFC
+**lifecycle:** proposal
+**tags:**      cross-cutting
+**status:**    open
+**created:**   2026-01-01T00:00:00Z
+**by:**        ai/reviewer
 
 ---
 

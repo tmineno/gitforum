@@ -1,9 +1,9 @@
-RFC-a1b2c3d4 (under-review)
+RFC-a1b2c3d4 (review)
 
 valid transitions: done, rejected
 
-guard check (under-review -> done): PASS
-guard check (under-review -> rejected): PASS
+guard check (review -> done): PASS
+guard check (review -> rejected): PASS
 
 open objections: 1
 open actions:    0

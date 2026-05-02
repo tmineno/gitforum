@@ -31,7 +31,8 @@ fn replay_thread_from_git() {
     assert_eq!(state.id, tid);
     assert_eq!(state.kind, ThreadKind::Rfc);
     assert_eq!(state.title, "Test RFC");
-    assert_eq!(state.status, "proposed");
+    // Phase 2a: 1.x "proposed" is folded to canonical 2.0 "open" by parse_lenient.
+    assert_eq!(state.status, "open");
     assert_eq!(state.created_by, "human/alice");
     assert_eq!(state.events.len(), 2);
 }

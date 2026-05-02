@@ -45,11 +45,13 @@ const GROUPED_HELP: &str = "\
 These are common git-forum commands:
 
 setup and repo health
-   init        Initialize a git-forum repository
-   doctor      Diagnose repo health (config, index, refs)
-   repair      Detect and fix thread ID conflicts with a remote
-   reindex     Rebuild local index from Git refs
-   migrate     Rewrite a 1.x repo to the 2.0 storage format
+   init               Initialize a git-forum repository
+   doctor             Diagnose repo health (config, index, refs)
+   repair             Detect and fix thread ID conflicts with a remote
+   reindex            Rebuild local index from Git refs
+   prune-orphans      Delete thread refs that have no valid create event
+   prune-stale-events Drop events whose target_node_id references a vanished node
+   migrate            Rewrite a 1.x repo to the 2.0 storage format
 
 create and browse threads
    new         Create a new thread via kind preset (rfc/dec/task/issue/bug)
@@ -137,9 +139,27 @@ enum Commands {
         /// Show all checks including passing ones
         #[arg(long, short)]
         verbose: bool,
+        /// Surface every silent replay no-op (unknown target node, etc.) as FAIL.
+        /// Intended for migration verification and CI gates; default doctor stays
+        /// lenient so historical write-side mistakes don't fail every run.
+        #[arg(long)]
+        strict: bool,
     },
     /// Rebuild local index from Git refs
     Reindex,
+    /// Delete thread refs whose oldest commit is not a valid event.json
+    PruneOrphans {
+        /// Actually delete the orphan refs (default is dry-run preview)
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Drop events whose target_node_id references a vanished node.
+    /// Surfaces of `git forum doctor --strict` that aren't ref-level damage.
+    PruneStaleEvents {
+        /// Actually rewrite affected thread chains (default is dry-run preview)
+        #[arg(long)]
+        apply: bool,
+    },
     /// Migrate a 1.x repo to the 2.0 storage format (ADR-004 / SPEC-2.0 §10)
     Migrate {
         /// Report planned changes without writing anything
@@ -1206,9 +1226,13 @@ fn main() -> Result<(), ForumError> {
             hook::install_all_hooks(&git, false)?;
         }
 
-        Commands::Doctor { verbose } => {
+        Commands::Doctor { verbose, strict } => {
             let (git, paths) = discover_repo_with_init_warning()?;
-            let report = doctor::run_doctor(&git, &paths)?;
+            let report = if strict {
+                doctor::run_doctor_strict(&git, &paths)?
+            } else {
+                doctor::run_doctor(&git, &paths)?
+            };
 
             // Separate replay checks from non-replay checks
             let mut replay_ok = 0u32;
@@ -1306,6 +1330,71 @@ fn main() -> Result<(), ForumError> {
             );
             for (id, err) in &report.errors {
                 eprintln!("  error: {id}: {err}");
+            }
+        }
+
+        Commands::PruneOrphans { apply } => {
+            let (git, paths) = discover_repo_with_init_warning()?;
+            let orphans = git_forum::internal::prune::scan(&git)?;
+            if orphans.is_empty() {
+                println!("No orphan thread refs found.");
+                return Ok(());
+            }
+            println!("Orphan thread refs ({}):", orphans.len());
+            for orphan in &orphans {
+                println!("  {} ({})", orphan.ref_name, orphan.thread_id);
+            }
+            if !apply {
+                println!("\nDry run — re-run with --apply to delete these refs.");
+                return Ok(());
+            }
+            git_forum::internal::prune::delete(&git, &orphans)?;
+            println!("\nDeleted {} orphan ref(s).", orphans.len());
+            // Stale rows remain in the index until the operator runs reindex;
+            // mention it inline so they don't have to remember.
+            let db_path = paths.git_forum.join("index.db");
+            if db_path.exists() {
+                println!("hint: run `git forum reindex` to drop stale index rows.");
+            }
+        }
+
+        Commands::PruneStaleEvents { apply } => {
+            let (git, paths) = discover_repo_with_init_warning()?;
+            let plans = git_forum::internal::prune::scan_stale_events(&git)?;
+            if plans.is_empty() {
+                println!("No stale-target events found.");
+                return Ok(());
+            }
+            let total_threads = plans.len();
+            let total_events: usize = plans.iter().map(|p| p.events_to_drop.len()).sum();
+            let total_targets: usize = plans.iter().map(|p| p.orphan_target_count).sum();
+            println!(
+                "Stale-target events: {total_events} event(s) across {total_threads} thread(s) (referencing {total_targets} vanished node(s))"
+            );
+            for plan in &plans {
+                println!(
+                    "  {}: drop {} event(s) ({} orphan target(s))",
+                    plan.thread_id,
+                    plan.events_to_drop.len(),
+                    plan.orphan_target_count
+                );
+                for sha in &plan.events_to_drop {
+                    println!("    - {sha}");
+                }
+            }
+            if !apply {
+                println!(
+                    "\nDry run — re-run with --apply to rewrite these threads. Backup: refs/forum/threads/* are local-only on this clone."
+                );
+                return Ok(());
+            }
+            let dropped = git_forum::internal::prune::apply_stale_event_plans(&git, &plans)?;
+            println!("\nDropped {dropped} event(s) from {total_threads} thread(s).");
+            let db_path = paths.git_forum.join("index.db");
+            if db_path.exists() {
+                println!(
+                    "hint: run `git forum reindex` to refresh index rows for affected threads."
+                );
             }
         }
 
@@ -1848,7 +1937,7 @@ fn main() -> Result<(), ForumError> {
             let states = list_thread_states(&git, kind_filter, branch.as_deref())?;
             let filtered: Vec<&thread::ThreadState> = states
                 .iter()
-                .filter(|s| status.as_deref().is_none_or(|st| s.status == st))
+                .filter(|s| status.as_deref().is_none_or(|st| s.status.as_str() == st))
                 .collect();
             print!("{}", ls::render_ls(&filtered));
         }
@@ -2327,7 +2416,7 @@ fn main() -> Result<(), ForumError> {
                 new_type.parse().map_err(ForumError::Config)?;
 
             let state = thread::replay_thread(&git, &thread_id)?;
-            let violations = operation_check::check_revise(&policy, &state.status, false);
+            let violations = operation_check::check_revise(&policy, state.status.as_str(), false);
             apply_operation_checks(&violations, force, policy.checks.strict)?;
 
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
@@ -2560,7 +2649,7 @@ fn main() -> Result<(), ForumError> {
                 let actor = resolve_actor(as_actor, &git);
                 let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
                 let state = thread::replay_thread(&git, &thread_id)?;
-                let violations = operation_check::check_evidence(&policy, &state.status);
+                let violations = operation_check::check_evidence(&policy, state.status.as_str());
                 apply_operation_checks(&violations, force, policy.checks.strict)?;
                 for ref_target in &ref_targets {
                     let commit_sha = evidence::add_evidence(
@@ -2767,7 +2856,7 @@ fn run_revise_cmd(
             )?;
 
             let state = thread::replay_thread(&git, &thread_id)?;
-            let violations = operation_check::check_revise(&policy, &state.status, true);
+            let violations = operation_check::check_revise(&policy, state.status.as_str(), true);
             apply_operation_checks(&violations, force, policy.checks.strict)?;
 
             write_ops::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
@@ -2795,7 +2884,7 @@ fn run_revise_cmd(
             )?;
 
             let state = thread::replay_thread(&git, &thread_id)?;
-            let violations = operation_check::check_revise(&policy, &state.status, false);
+            let violations = operation_check::check_revise(&policy, state.status.as_str(), false);
             apply_operation_checks(&violations, force, policy.checks.strict)?;
 
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
@@ -2838,7 +2927,7 @@ fn run_revise_dispatch(
             )?;
 
             let state = thread::replay_thread(&git, &thread_id)?;
-            let violations = operation_check::check_revise(&policy, &state.status, true);
+            let violations = operation_check::check_revise(&policy, state.status.as_str(), true);
             apply_operation_checks(&violations, force, policy.checks.strict)?;
 
             write_ops::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
@@ -2890,7 +2979,7 @@ fn run_shorthand_say(
 
     // Operation check: is this node type allowed in the current state?
     let state = thread::replay_thread(&git, thread_id)?;
-    let violations = operation_check::check_say(&policy, &state.status, node_type);
+    let violations = operation_check::check_say(&policy, state.status.as_str(), node_type);
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
     let resolved_reply = resolve_reply_to(&git, thread_id, reply_to.as_deref())?;
@@ -2993,7 +3082,7 @@ fn run_canonical_thread_new(
         // SPEC-2.0 §9.3 lifecycle-keyed restatement of 1.x §9.2: an
         // execution thread cannot supersede a proposal. Use
         // `link --rel implements` instead.
-        if source.lifecycle() == Lifecycle::Proposal && lifecycle == Lifecycle::Execution {
+        if source.lifecycle == Lifecycle::Proposal && lifecycle == Lifecycle::Execution {
             return Err(ForumError::Config(
                 "cannot create an execution thread --from-thread a proposal thread; \
                      an execution thread does not supersede a proposal. \
@@ -3003,7 +3092,7 @@ fn run_canonical_thread_new(
         }
         let t = title.unwrap_or_else(|| format!("v2: {}", source.title));
         let b = resolve_thread_body(body, body_file, edit, &edit_hint)?.or(source.body.clone());
-        (t, b, None, Some((source_id.clone(), source.lifecycle())))
+        (t, b, None, Some((source_id.clone(), source.lifecycle)))
     } else if let Some(rev) = from_commit {
         let commit_sha = git.resolve_commit(&rev)?;
         let msg = git.run(&["log", "-1", "--format=%B", &commit_sha])?;
@@ -3211,7 +3300,7 @@ fn run_state_shorthand(
     // Replay once up front to resolve the lifecycle facet — the §9.3 table
     // is keyed on lifecycle, not the legacy `kind` field.
     let pre_state = thread::replay_thread(&git, thread_id)?;
-    let target = shorthand_target_for_lifecycle(new_state, pre_state.lifecycle())?;
+    let target = shorthand_target_for_lifecycle(new_state, pre_state.lifecycle)?;
     let options = state_change::StateChangeOptions {
         resolve_open_actions,
         comment: comment.map(|s| s.to_string()),
@@ -3333,7 +3422,7 @@ fn thread_matches_filters(
 ) -> bool {
     kind.is_none_or(|kind| state.kind == kind)
         && branch.is_none_or(|branch| state.branch.as_deref() == Some(branch))
-        && status.is_none_or(|status| state.status == status)
+        && status.is_none_or(|status| state.status.as_str() == status)
 }
 
 /// SPEC-2.0 §9.1 kind preset table: the single source of truth that maps a
@@ -3478,7 +3567,7 @@ fn terminal_state_date(state: &thread::ThreadState) -> Option<chrono::DateTime<c
     // terminal status (handles reopen-then-close scenarios correctly).
     state.events.iter().rev().find_map(|e| {
         if e.event_type == git_forum::internal::event::EventType::State
-            && e.new_state.as_deref() == Some(&state.status)
+            && e.new_state.as_deref() == Some(state.status.as_str())
         {
             Some(e.created_at)
         } else {
@@ -3547,10 +3636,12 @@ fn run_bulk_state_change(
         // otherwise `state bulk --to closed` against a thread already in
         // canonical `done` would fall through to validation and error.
         let canonical_target = git_forum::internal::event::normalize_state_name(new_state);
-        if git_forum::internal::event::normalize_state_name(&state.status) == canonical_target {
+        if git_forum::internal::event::normalize_state_name(state.status.as_str())
+            == canonical_target
+        {
             outcomes.push(BulkStateOutcome {
                 thread_id,
-                from_state: state.status.clone(),
+                from_state: state.status.to_string(),
                 to_state: new_state.to_string(),
                 ok: true,
                 dry_run,
@@ -3584,7 +3675,7 @@ fn run_bulk_state_change(
                     ) {
                         outcomes.push(BulkStateOutcome {
                             thread_id,
-                            from_state: state.status,
+                            from_state: state.status.to_string(),
                             to_state: new_state.to_string(),
                             ok: false,
                             dry_run,
@@ -3604,7 +3695,7 @@ fn run_bulk_state_change(
             }
             Err(err) => outcomes.push(BulkStateOutcome {
                 thread_id,
-                from_state: state.status,
+                from_state: state.status.to_string(),
                 to_state: new_state.to_string(),
                 ok: false,
                 dry_run,
@@ -3849,8 +3940,8 @@ fn collect_implements_children(
             Ok(child_state) => out.push(show::TreeChild {
                 id: child_state.id.clone(),
                 title: child_state.title.clone(),
-                lifecycle_label: child_state.lifecycle().as_str().to_string(),
-                status: child_state.status.clone(),
+                lifecycle_label: child_state.lifecycle.as_str().to_string(),
+                status: child_state.status.to_string(),
             }),
             Err(_) => {
                 // Skip unreplayable children rather than aborting the
