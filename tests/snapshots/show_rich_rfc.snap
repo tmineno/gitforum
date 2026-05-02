@@ -1,10 +1,10 @@
 ## RFC-a1b2c3d4 Test RFC
 
-**kind:**     rfc
-**status:**   review
-**created:**  2026-01-01T00:00:00Z
-**by:**       human/alice
-**branch:**   feat/solver
+**lifecycle:** proposal
+**status:**    review
+**created:**   2026-01-01T00:00:00Z
+**by:**        human/alice
+**branch:**    feat/solver
 
 ---
 

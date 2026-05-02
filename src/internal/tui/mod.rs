@@ -2046,7 +2046,7 @@ mod tests {
             NodeStatusAction::Resolve,
         )
         .unwrap();
-        assert!(app.node_detail_text.contains("**status:**   resolved"));
+        assert!(app.node_detail_text.contains("**status:**    resolved"));
 
         apply_node_status_action(
             &mut app,
@@ -2056,7 +2056,7 @@ mod tests {
             NodeStatusAction::Reopen,
         )
         .unwrap();
-        assert!(app.node_detail_text.contains("**status:**   open"));
+        assert!(app.node_detail_text.contains("**status:**    open"));
 
         apply_node_status_action(
             &mut app,
@@ -2066,7 +2066,7 @@ mod tests {
             NodeStatusAction::Retract,
         )
         .unwrap();
-        assert!(app.node_detail_text.contains("**status:**   retracted"));
+        assert!(app.node_detail_text.contains("**status:**    retracted"));
     }
 
     #[test]

@@ -77,18 +77,22 @@ pub fn render_node_show(lookup: &NodeLookup, options: &ShowOptions) -> String {
     ));
     lines.push(String::new());
     lines.push(format!(
-        "**thread:**   {} {}",
+        "**thread:**    {} {}",
         lookup.thread_id, lookup.thread_title
     ));
-    lines.push(format!("**kind:**     {}", lookup.thread_kind));
-    lines.push(format!("**status:**   {}", node_status(node)));
+    // Phase 2b: lifecycle + tags, not kind.
+    lines.push(format!("**lifecycle:** {}", lookup.thread_lifecycle));
+    if !lookup.thread_tags.is_empty() {
+        lines.push(format!("**tags:**      {}", lookup.thread_tags.join(", ")));
+    }
+    lines.push(format!("**status:**    {}", node_status(node)));
     lines.push(format!(
-        "**created:**  {}",
+        "**created:**   {}",
         node.created_at.format("%Y-%m-%dT%H:%M:%SZ")
     ));
-    lines.push(format!("**by:**       {}", node.actor));
+    lines.push(format!("**by:**        {}", node.actor));
     if let Some(ref parent_id) = node.reply_to {
-        lines.push(format!("**reply-to:** {}", short_oid(parent_id)));
+        lines.push(format!("**reply-to:**  {}", short_oid(parent_id)));
     }
     lines.push(String::new());
     lines.push("---".into());
@@ -129,8 +133,15 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
 
     lines.push(format!("## {} {}", state.id, state.title));
     lines.push(String::new());
-    lines.push(format!("**kind:**     {}", state.kind));
-    lines.push(format!("**status:**   {}", state.status));
+    // Phase 2b (Finding 1): lifecycle + tags are the canonical 2.0
+    // classification axis. The legacy `kind` field stays in storage for
+    // backward compatibility (per ADR-002) but is no longer surfaced as
+    // a primary display label.
+    lines.push(format!("**lifecycle:** {}", state.lifecycle));
+    if !state.tags.is_empty() {
+        lines.push(format!("**tags:**      {}", state.tags.join(", ")));
+    }
+    lines.push(format!("**status:**    {}", state.status));
     if let Some(policy) = &options.policy {
         if let Some(line) = next_states_line(state, policy) {
             lines.push(line);
@@ -143,12 +154,12 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
         }
     }
     lines.push(format!(
-        "**created:**  {}",
+        "**created:**   {}",
         state.created_at.format("%Y-%m-%dT%H:%M:%SZ")
     ));
-    lines.push(format!("**by:**       {}", state.created_by));
+    lines.push(format!("**by:**        {}", state.created_by));
     if let Some(branch) = &state.branch {
-        lines.push(format!("**branch:**   {}", branch));
+        lines.push(format!("**branch:**    {}", branch));
     }
     if let Some(body) = &state.body {
         lines.push(String::new());

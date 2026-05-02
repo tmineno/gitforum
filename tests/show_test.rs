@@ -33,7 +33,8 @@ fn show_contains_all_required_fields() {
 
     assert!(out.contains(&id), "missing thread id");
     assert!(out.contains("Test RFC"), "missing title");
-    assert!(out.contains("rfc"), "missing kind");
+    // Phase 2b: lifecycle replaces kind on the show header.
+    assert!(out.contains("proposal"), "missing lifecycle");
     assert!(out.contains("draft"), "missing status");
     assert!(out.contains("human/alice"), "missing actor");
     assert!(out.contains("---"), "missing body separator");
@@ -95,7 +96,8 @@ fn show_snapshot_contains_expected_fields() {
 
     assert!(out.contains(&id));
     assert!(out.contains("Test RFC"));
-    assert!(out.contains("rfc"));
+    // Phase 2b: lifecycle is the canonical axis on the show header.
+    assert!(out.contains("proposal"));
     assert!(out.contains("draft"));
     assert!(out.contains("Initial thread body."));
     assert!(out.contains("human/alice"));
@@ -280,22 +282,27 @@ fn show_tree_lists_only_implements_children_not_other_relations() {
 
 // ---- DEC / TASK rendering ----
 
+// Phase 2b: `kind` is no longer a primary display label; lifecycle
+// (record / execution) is. The DEC and TASK kind labels still drive
+// `git forum new <kind>` (per ADR-002), but `show` surfaces the
+// lifecycle that kind maps to.
+
 #[test]
-fn show_dec_includes_kind() {
+fn show_dec_renders_record_lifecycle() {
     let (_repo, git, _paths) = setup();
     let id = make_dec(&git);
     let state = thread::replay_thread(&git, &id).unwrap();
     let output = show::render_show(&state, &show::ShowOptions::default());
-    assert!(output.contains("**kind:**     dec"));
-    assert!(output.contains("**status:**   open"));
+    assert!(output.contains("**lifecycle:** record"));
+    assert!(output.contains("**status:**    open"));
 }
 
 #[test]
-fn show_task_includes_kind() {
+fn show_task_renders_execution_lifecycle() {
     let (_repo, git, _paths) = setup();
     let id = make_task(&git);
     let state = thread::replay_thread(&git, &id).unwrap();
     let output = show::render_show(&state, &show::ShowOptions::default());
-    assert!(output.contains("**kind:**     task"));
-    assert!(output.contains("**status:**   open"));
+    assert!(output.contains("**lifecycle:** execution"));
+    assert!(output.contains("**status:**    open"));
 }

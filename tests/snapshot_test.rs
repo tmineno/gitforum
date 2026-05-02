@@ -176,6 +176,10 @@ fn node_show_question() {
         thread_id: "RFC-a1b2c3d4".into(),
         thread_title: "Test RFC".into(),
         thread_kind: ThreadKind::Rfc,
+        // Phase 2b: NodeLookup carries the parent's lifecycle / tags so
+        // `node show` can display the canonical 2.0 axes.
+        thread_lifecycle: Lifecycle::Proposal,
+        thread_tags: vec!["cross-cutting".into()],
         node: Node {
             node_id: "node-0001".into(),
             node_type: NodeType::Question,
@@ -218,6 +222,9 @@ fn ls_two_threads() {
     let mut s2 = base_state();
     s2.id = "ASK-e5f6a7b8".into();
     s2.kind = ThreadKind::Issue;
+    // Phase 2b: keep lifecycle aligned when changing kind on a fixture.
+    s2.lifecycle = Lifecycle::Execution;
+    s2.tags = vec!["bug".into()];
     s2.title = "Implement trait backend".into();
     s2.status = ThreadStatus::Open;
     s2.branch = Some("feat/parser".into());

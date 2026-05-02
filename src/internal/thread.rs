@@ -73,7 +73,13 @@ pub struct ThreadState {
 pub struct NodeLookup {
     pub thread_id: String,
     pub thread_title: String,
+    /// Phase 2b: kept on the lookup struct for storage compatibility,
+    /// but no longer surfaced as the primary display label by `node show`.
     pub thread_kind: ThreadKind,
+    /// Phase 2b: the canonical 2.0 classification axis. Populated from
+    /// the parent thread's [`ThreadState::lifecycle`].
+    pub thread_lifecycle: Lifecycle,
+    pub thread_tags: Vec<String>,
     pub node: Node,
     pub links: Vec<ThreadLink>,
     pub events: Vec<Event>,
@@ -781,6 +787,8 @@ fn build_node_lookup(state: &ThreadState, node: &Node) -> NodeLookup {
         thread_id: state.id.clone(),
         thread_title: state.title.clone(),
         thread_kind: state.kind,
+        thread_lifecycle: state.lifecycle,
+        thread_tags: state.tags.clone(),
         node: node.clone(),
         links: state.links.clone(),
         events,
