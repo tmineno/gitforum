@@ -448,3 +448,202 @@ fn body_section_case_insensitive() {
     );
     assert!(violations.is_empty());
 }
+
+// ---- DEC / TASK creation rules ----
+
+#[test]
+fn dec_create_requires_body() {
+    let dec_policy = Policy {
+        creation_rules: {
+            let mut m = HashMap::new();
+            m.insert(
+                "record".into(),
+                LifecycleCreationRules {
+                    base: CreationRules {
+                        required_body: true,
+                        body_sections: vec!["Context".into(), "Decision".into()],
+                    },
+                    tag: HashMap::new(),
+                },
+            );
+            m
+        },
+        ..Default::default()
+    };
+    let violations =
+        operation_check::check_create(&dec_policy, Lifecycle::Record, &[], "Test", None);
+    assert!(violations.iter().any(|v| v.severity == Severity::Error));
+}
+
+#[test]
+fn dec_create_missing_sections_warns() {
+    let dec_policy = Policy {
+        creation_rules: {
+            let mut m = HashMap::new();
+            m.insert(
+                "record".into(),
+                LifecycleCreationRules {
+                    base: CreationRules {
+                        required_body: true,
+                        body_sections: vec![
+                            "Context".into(),
+                            "Decision".into(),
+                            "Rationale".into(),
+                            "Impact".into(),
+                        ],
+                    },
+                    tag: HashMap::new(),
+                },
+            );
+            m
+        },
+        ..Default::default()
+    };
+    let violations = operation_check::check_create(
+        &dec_policy,
+        Lifecycle::Record,
+        &[],
+        "Test",
+        Some("## Context\nSome context\n## Decision\nUse Redis"),
+    );
+    let errors: Vec<_> = violations
+        .iter()
+        .filter(|v| v.severity == Severity::Error)
+        .collect();
+    let warnings: Vec<_> = violations
+        .iter()
+        .filter(|v| v.severity == Severity::Warning)
+        .collect();
+    assert!(errors.is_empty());
+    assert!(!warnings.is_empty());
+}
+
+#[test]
+fn task_create_no_body_succeeds() {
+    let task_policy = Policy {
+        creation_rules: {
+            let mut m = HashMap::new();
+            m.insert(
+                "execution".into(),
+                LifecycleCreationRules {
+                    base: CreationRules::default(),
+                    tag: {
+                        let mut t = HashMap::new();
+                        t.insert(
+                            "task".into(),
+                            CreationRules {
+                                required_body: false,
+                                body_sections: vec![
+                                    "Background".into(),
+                                    "Acceptance criteria".into(),
+                                ],
+                            },
+                        );
+                        t
+                    },
+                },
+            );
+            m
+        },
+        ..Default::default()
+    };
+    let violations = operation_check::check_create(
+        &task_policy,
+        Lifecycle::Execution,
+        &["task".into()],
+        "Test",
+        None,
+    );
+    assert!(violations.is_empty());
+}
+
+#[test]
+fn task_create_with_body_missing_sections_warns() {
+    let task_policy = Policy {
+        creation_rules: {
+            let mut m = HashMap::new();
+            m.insert(
+                "execution".into(),
+                LifecycleCreationRules {
+                    base: CreationRules::default(),
+                    tag: {
+                        let mut t = HashMap::new();
+                        t.insert(
+                            "task".into(),
+                            CreationRules {
+                                required_body: false,
+                                body_sections: vec![
+                                    "Background".into(),
+                                    "Acceptance criteria".into(),
+                                    "Exceptions".into(),
+                                ],
+                            },
+                        );
+                        t
+                    },
+                },
+            );
+            m
+        },
+        ..Default::default()
+    };
+    let violations = operation_check::check_create(
+        &task_policy,
+        Lifecycle::Execution,
+        &["task".into()],
+        "Test",
+        Some("## Background\nSome background"),
+    );
+    let errors: Vec<_> = violations
+        .iter()
+        .filter(|v| v.severity == Severity::Error)
+        .collect();
+    let warnings: Vec<_> = violations
+        .iter()
+        .filter(|v| v.severity == Severity::Warning)
+        .collect();
+    assert!(errors.is_empty());
+    assert!(!warnings.is_empty());
+}
+
+// ---- DEC / TASK revise rules ----
+
+#[test]
+fn body_revise_dec_accepted_blocked() {
+    let policy = Policy {
+        revise_rules: Some(ReviseRules {
+            allow_body_revise: vec![
+                "draft".into(),
+                "proposed".into(),
+                "open".into(),
+                "pending".into(),
+                "designing".into(),
+                "implementing".into(),
+            ],
+            allow_node_revise: vec![],
+        }),
+        ..Default::default()
+    };
+    let violations = operation_check::check_revise(&policy, "accepted", true);
+    assert!(violations.iter().any(|v| v.severity == Severity::Error));
+}
+
+#[test]
+fn body_revise_task_designing_allowed() {
+    let policy = Policy {
+        revise_rules: Some(ReviseRules {
+            allow_body_revise: vec![
+                "draft".into(),
+                "proposed".into(),
+                "open".into(),
+                "pending".into(),
+                "designing".into(),
+                "implementing".into(),
+            ],
+            allow_node_revise: vec![],
+        }),
+        ..Default::default()
+    };
+    let violations = operation_check::check_revise(&policy, "designing", true);
+    assert!(violations.is_empty());
+}

@@ -43,6 +43,48 @@ fn make_rfc(git: &GitOps) -> String {
     .unwrap()
 }
 
+fn make_dec(git: &GitOps) -> String {
+    create::create_thread(
+        git,
+        ThreadKind::Dec,
+        "Test DEC",
+        Some(
+            "## Context\nSome context\n## Decision\nUse Redis\n## Rationale\nFast\n## Impact\nNone",
+        ),
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap()
+}
+
+fn make_task(git: &GitOps) -> String {
+    create::create_thread(
+        git,
+        ThreadKind::Task,
+        "Test TASK",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap()
+}
+
+fn dec_guard_policy() -> Policy {
+    make_policy(vec![GuardEntry {
+        on: "proposed->accepted".into(),
+        requires: vec![GuardRule::NoOpenObjections],
+        ..Default::default()
+    }])
+}
+
+fn task_guard_policy() -> Policy {
+    make_policy(vec![GuardEntry {
+        on: "reviewing->closed".into(),
+        requires: vec![GuardRule::NoOpenActions],
+        ..Default::default()
+    }])
+}
+
 fn make_policy(guards: Vec<GuardEntry>) -> Policy {
     let mut p = Policy {
         guards,
@@ -165,4 +207,71 @@ fn verify_reports_open_action_violation_for_issue_close() {
         .violations
         .iter()
         .any(|v| v.rule == "no_open_actions"));
+}
+
+// ---- DEC / TASK ----
+
+#[test]
+fn verify_dec_proposed_checks_accepted() {
+    let (_repo, git, _paths) = setup();
+    let id = make_dec(&git);
+    write_ops::say_node(
+        &git,
+        &id,
+        NodeType::Objection,
+        "Missing rationale",
+        "human/bob",
+        &fixed_clock(),
+        None,
+    )
+    .unwrap();
+    let report = verify::verify_thread(&git, &id, &dec_guard_policy()).unwrap();
+    assert!(!report.passed());
+    assert!(report
+        .violations
+        .iter()
+        .any(|v| v.rule == "no_open_objections"));
+}
+
+#[test]
+fn verify_task_reviewing_checks_closed() {
+    let (_repo, git, _paths) = setup();
+    let id = make_task(&git);
+    for target in &["working", "review"] {
+        state_change::change_state(
+            &git,
+            &id,
+            target,
+            &[],
+            "human/alice",
+            &fixed_clock(),
+            &empty_policy(),
+            state_change::StateChangeOptions::default(),
+        )
+        .unwrap();
+    }
+    write_ops::say_node(
+        &git,
+        &id,
+        NodeType::Action,
+        "Write tests",
+        "human/alice",
+        &fixed_clock(),
+        None,
+    )
+    .unwrap();
+    let report = verify::verify_thread(&git, &id, &task_guard_policy()).unwrap();
+    assert!(!report.passed());
+    assert!(report
+        .violations
+        .iter()
+        .any(|v| v.rule == "no_open_actions"));
+}
+
+#[test]
+fn verify_task_open_passes_trivially() {
+    let (_repo, git, _paths) = setup();
+    let id = make_task(&git);
+    let report = verify::verify_thread(&git, &id, &task_guard_policy()).unwrap();
+    assert!(report.passed());
 }

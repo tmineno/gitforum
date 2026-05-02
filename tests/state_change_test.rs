@@ -46,6 +46,48 @@ fn make_rfc(git: &GitOps) -> String {
     .unwrap()
 }
 
+fn make_dec(git: &GitOps) -> String {
+    create::create_thread(
+        git,
+        ThreadKind::Dec,
+        "Test DEC",
+        Some(
+            "## Context\nSome context\n## Decision\nUse Redis\n## Rationale\nFast\n## Impact\nNone",
+        ),
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap()
+}
+
+fn make_task(git: &GitOps) -> String {
+    create::create_thread(
+        git,
+        ThreadKind::Task,
+        "Test TASK",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap()
+}
+
+fn dec_guard_policy() -> Policy {
+    make_policy(vec![GuardEntry {
+        on: "proposed->accepted".into(),
+        requires: vec![GuardRule::NoOpenObjections],
+        ..Default::default()
+    }])
+}
+
+fn task_guard_policy() -> Policy {
+    make_policy(vec![GuardEntry {
+        on: "reviewing->closed".into(),
+        requires: vec![GuardRule::NoOpenActions],
+        ..Default::default()
+    }])
+}
+
 fn make_policy(guards: Vec<GuardEntry>) -> Policy {
     let mut p = Policy {
         guards,
@@ -1012,4 +1054,451 @@ fn state_change_with_comment_attaches_body_no_summary_node() {
         &git_forum::internal::show::ShowOptions::default(),
     );
     assert!(out.contains("done — closing because resolved"));
+}
+
+// ---- DEC lifecycle ----
+
+#[test]
+fn dec_create_sets_proposed_state() {
+    let (_repo, git, _paths) = setup();
+    let id = make_dec(&git);
+    let state = thread::replay_thread(&git, &id).unwrap();
+    assert_eq!(state.status, "open");
+    assert_eq!(state.kind, ThreadKind::Dec);
+    // SPEC-2.0 §6.2: kind is on the Create event, not the ID.
+    assert!(git_forum::internal::id_alloc::is_bare_token(&id));
+}
+
+#[test]
+fn dec_proposed_to_accepted() {
+    let (_repo, git, _paths) = setup();
+    let id = make_dec(&git);
+    state_change::change_state(
+        &git,
+        &id,
+        "accepted",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    let state = thread::replay_thread(&git, &id).unwrap();
+    assert_eq!(state.status, "done");
+}
+
+#[test]
+fn dec_proposed_to_rejected() {
+    let (_repo, git, _paths) = setup();
+    let id = make_dec(&git);
+    state_change::change_state(
+        &git,
+        &id,
+        "rejected",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    let state = thread::replay_thread(&git, &id).unwrap();
+    assert_eq!(state.status, "rejected");
+}
+
+#[test]
+fn dec_proposed_to_deprecated() {
+    let (_repo, git, _paths) = setup();
+    let id = make_dec(&git);
+    // Unified §3.1: open (was proposed) cannot directly deprecate; the only
+    // edges into `deprecated` are from `done` and `rejected`. Walk via
+    // accepted (= done).
+    state_change::change_state(
+        &git,
+        &id,
+        "accepted",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    state_change::change_state(
+        &git,
+        &id,
+        "deprecated",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    let state = thread::replay_thread(&git, &id).unwrap();
+    assert_eq!(state.status, "deprecated");
+}
+
+#[test]
+fn dec_accepted_to_deprecated() {
+    let (_repo, git, _paths) = setup();
+    let id = make_dec(&git);
+    state_change::change_state(
+        &git,
+        &id,
+        "accepted",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    state_change::change_state(
+        &git,
+        &id,
+        "deprecated",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    let state = thread::replay_thread(&git, &id).unwrap();
+    assert_eq!(state.status, "deprecated");
+}
+
+#[test]
+fn dec_rejected_to_deprecated() {
+    let (_repo, git, _paths) = setup();
+    let id = make_dec(&git);
+    state_change::change_state(
+        &git,
+        &id,
+        "rejected",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    state_change::change_state(
+        &git,
+        &id,
+        "deprecated",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    let state = thread::replay_thread(&git, &id).unwrap();
+    assert_eq!(state.status, "deprecated");
+}
+
+#[test]
+fn dec_proposed_to_pending_is_invalid() {
+    // SPEC-2.0 §3.1.1: record lifecycle excludes `working` (and 1.x
+    // `pending` normalizes to working). DEC threads cannot enter the
+    // working state.
+    let (_repo, git, _paths) = setup();
+    let id = make_dec(&git);
+    let result = state_change::change_state(
+        &git,
+        &id,
+        "pending",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    );
+    let err = result.unwrap_err();
+    // SPEC-2.0 §13: destination state not in record lifecycle's allowed
+    // set is reported as LifecycleStateMismatch.
+    assert!(
+        matches!(
+            err,
+            git_forum::internal::error::ForumError::LifecycleStateMismatch(_),
+        ),
+        "expected LifecycleStateMismatch, got {err:?}",
+    );
+}
+
+#[test]
+fn dec_proposed_to_accepted_blocked_by_objection() {
+    let (_repo, git, _paths) = setup();
+    let id = make_dec(&git);
+    write_ops::say_node(
+        &git,
+        &id,
+        NodeType::Objection,
+        "Missing benchmarks",
+        "human/bob",
+        &fixed_clock(),
+        None,
+    )
+    .unwrap();
+    let result = state_change::change_state(
+        &git,
+        &id,
+        "accepted",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &dec_guard_policy(),
+        state_change::StateChangeOptions::default(),
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("no_open_objections"));
+}
+
+// ---- TASK lifecycle ----
+
+#[test]
+fn task_create_sets_open_state() {
+    let (_repo, git, _paths) = setup();
+    let id = make_task(&git);
+    let state = thread::replay_thread(&git, &id).unwrap();
+    assert_eq!(state.status, "open");
+    assert_eq!(state.kind, ThreadKind::Task);
+    assert!(git_forum::internal::id_alloc::is_bare_token(&id));
+}
+
+#[test]
+fn task_full_lifecycle() {
+    let (_repo, git, _paths) = setup();
+    let id = make_task(&git);
+    // Unified §3.1: task lifecycle (execution) folds 1.x designing /
+    // implementing into a single `working` state, so the full path is
+    // open → working → review → done. (1.x `closed` normalizes to `done`.)
+    for target in &["working", "review", "closed"] {
+        state_change::change_state(
+            &git,
+            &id,
+            target,
+            &[],
+            "human/alice",
+            &fixed_clock(),
+            &empty_policy(),
+            state_change::StateChangeOptions::default(),
+        )
+        .unwrap();
+    }
+    let state = thread::replay_thread(&git, &id).unwrap();
+    assert_eq!(state.status, "done");
+}
+
+#[test]
+fn task_fast_track_open_to_closed() {
+    let (_repo, git, _paths) = setup();
+    let id = make_task(&git);
+    state_change::change_state(
+        &git,
+        &id,
+        "closed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    let state = thread::replay_thread(&git, &id).unwrap();
+    assert_eq!(state.status, "done");
+}
+
+// 1.x had separate `designing` / `implementing` states inside Task; both
+// fold to `working` in the unified §3.1 graph, so the back-transition
+// from implementing to designing is no longer expressible. The remaining
+// back-transition coverage runs review → working below.
+
+#[test]
+fn task_back_transition_review_to_working() {
+    let (_repo, git, _paths) = setup();
+    let id = make_task(&git);
+    for target in &["working", "review"] {
+        state_change::change_state(
+            &git,
+            &id,
+            target,
+            &[],
+            "human/alice",
+            &fixed_clock(),
+            &empty_policy(),
+            state_change::StateChangeOptions::default(),
+        )
+        .unwrap();
+    }
+    state_change::change_state(
+        &git,
+        &id,
+        "working",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    let state = thread::replay_thread(&git, &id).unwrap();
+    assert_eq!(state.status, "working");
+}
+
+#[test]
+fn task_invalid_open_to_deprecated() {
+    // Unified §3.1 has no open→deprecated edge (deprecated is reachable
+    // only from done / rejected).
+    let (_repo, git, _paths) = setup();
+    let id = make_task(&git);
+    let result = state_change::change_state(
+        &git,
+        &id,
+        "deprecated",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn task_invalid_review_to_draft() {
+    // Execution lifecycle excludes `draft`; the equivalent invalid edge
+    // for execution is review→draft.
+    let (_repo, git, _paths) = setup();
+    let id = make_task(&git);
+    for target in &["working", "review"] {
+        state_change::change_state(
+            &git,
+            &id,
+            target,
+            &[],
+            "human/alice",
+            &fixed_clock(),
+            &empty_policy(),
+            state_change::StateChangeOptions::default(),
+        )
+        .unwrap();
+    }
+    let result = state_change::change_state(
+        &git,
+        &id,
+        "draft",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn task_reopen_from_closed() {
+    let (_repo, git, _paths) = setup();
+    let id = make_task(&git);
+    state_change::change_state(
+        &git,
+        &id,
+        "closed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    state_change::change_state(
+        &git,
+        &id,
+        "open",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    let state = thread::replay_thread(&git, &id).unwrap();
+    assert_eq!(state.status, "open");
+}
+
+#[test]
+fn task_reopen_from_rejected() {
+    let (_repo, git, _paths) = setup();
+    let id = make_task(&git);
+    state_change::change_state(
+        &git,
+        &id,
+        "rejected",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    state_change::change_state(
+        &git,
+        &id,
+        "open",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .unwrap();
+    let state = thread::replay_thread(&git, &id).unwrap();
+    assert_eq!(state.status, "open");
+}
+
+#[test]
+fn task_reviewing_to_closed_blocked_by_actions() {
+    let (_repo, git, _paths) = setup();
+    let id = make_task(&git);
+    for target in &["working", "review"] {
+        state_change::change_state(
+            &git,
+            &id,
+            target,
+            &[],
+            "human/alice",
+            &fixed_clock(),
+            &empty_policy(),
+            state_change::StateChangeOptions::default(),
+        )
+        .unwrap();
+    }
+    write_ops::say_node(
+        &git,
+        &id,
+        NodeType::Action,
+        "Add tests",
+        "human/alice",
+        &fixed_clock(),
+        None,
+    )
+    .unwrap();
+    let result = state_change::change_state(
+        &git,
+        &id,
+        "closed",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &task_guard_policy(),
+        state_change::StateChangeOptions::default(),
+    );
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("no_open_actions"));
 }

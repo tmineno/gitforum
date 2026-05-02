@@ -42,6 +42,32 @@ fn make_rfc(git: &GitOps) -> String {
     .unwrap()
 }
 
+fn make_dec(git: &GitOps) -> String {
+    create::create_thread(
+        git,
+        ThreadKind::Dec,
+        "Test DEC",
+        Some(
+            "## Context\nSome context\n## Decision\nUse Redis\n## Rationale\nFast\n## Impact\nNone",
+        ),
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap()
+}
+
+fn make_task(git: &GitOps) -> String {
+    create::create_thread(
+        git,
+        ThreadKind::Task,
+        "Test TASK",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap()
+}
+
 #[test]
 fn show_contains_all_required_fields() {
     let (_repo, git, _paths) = setup();
@@ -215,4 +241,26 @@ fn show_timeline_includes_say_events() {
     // should encode it in the body (e.g. "Claim:" prefix).
     assert!(out.contains("comment"));
     assert!(out.contains("This is important."));
+}
+
+// ---- DEC / TASK rendering ----
+
+#[test]
+fn show_dec_includes_kind() {
+    let (_repo, git, _paths) = setup();
+    let id = make_dec(&git);
+    let state = thread::replay_thread(&git, &id).unwrap();
+    let output = show::render_show(&state, &show::ShowOptions::default());
+    assert!(output.contains("**kind:**     dec"));
+    assert!(output.contains("**status:**   open"));
+}
+
+#[test]
+fn show_task_includes_kind() {
+    let (_repo, git, _paths) = setup();
+    let id = make_task(&git);
+    let state = thread::replay_thread(&git, &id).unwrap();
+    let output = show::render_show(&state, &show::ShowOptions::default());
+    assert!(output.contains("**kind:**     task"));
+    assert!(output.contains("**status:**   open"));
 }

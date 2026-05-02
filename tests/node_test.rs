@@ -43,6 +43,32 @@ fn make_rfc(git: &GitOps) -> String {
     .unwrap()
 }
 
+fn make_dec(git: &GitOps) -> String {
+    create::create_thread(
+        git,
+        ThreadKind::Dec,
+        "Test DEC",
+        Some(
+            "## Context\nSome context\n## Decision\nUse Redis\n## Rationale\nFast\n## Impact\nNone",
+        ),
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap()
+}
+
+fn make_task(git: &GitOps) -> String {
+    create::create_thread(
+        git,
+        ThreadKind::Task,
+        "Test TASK",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap()
+}
+
 // ---- say / canonicalization ----
 
 #[test]
@@ -492,4 +518,56 @@ fn resolve_node_id_in_thread_scopes_prefix_lookup() {
 
     let resolved = thread::resolve_node_id_in_thread(&git, &first_thread_id, "deadbeef").unwrap();
     assert_eq!(resolved, "deadbeef11111111111111111111111111111111");
+}
+
+// ---- DEC / TASK rhetorical types ----
+
+#[test]
+fn node_add_alternative() {
+    let (_repo, git, _paths) = setup();
+    let id = make_dec(&git);
+    let node_id = write_ops::say_node(
+        &git,
+        &id,
+        NodeType::Alternative,
+        "Use Memcached instead",
+        "human/alice",
+        &fixed_clock(),
+        None,
+    )
+    .unwrap();
+    let state = thread::replay_thread(&git, &id).unwrap();
+    assert_eq!(state.nodes.len(), 1);
+    assert_eq!(state.nodes[0].node_id, node_id);
+    // SPEC-2.0 §2.5: `Alternative` is a legacy rhetorical type that
+    // canonicalizes to `Comment` on write; the label is preserved.
+    assert_eq!(state.nodes[0].node_type, NodeType::Comment);
+    assert_eq!(
+        state.nodes[0].legacy_subtype.as_deref(),
+        Some("alternative")
+    );
+    assert_eq!(state.nodes[0].body, "Use Memcached instead");
+}
+
+#[test]
+fn node_add_assumption() {
+    let (_repo, git, _paths) = setup();
+    let id = make_task(&git);
+    let node_id = write_ops::say_node(
+        &git,
+        &id,
+        NodeType::Assumption,
+        "Redis cluster is available in prod",
+        "human/alice",
+        &fixed_clock(),
+        None,
+    )
+    .unwrap();
+    let state = thread::replay_thread(&git, &id).unwrap();
+    assert_eq!(state.nodes.len(), 1);
+    assert_eq!(state.nodes[0].node_id, node_id);
+    // SPEC-2.0 §2.5: `Assumption` canonicalizes to `Comment` on write.
+    assert_eq!(state.nodes[0].node_type, NodeType::Comment);
+    assert_eq!(state.nodes[0].legacy_subtype.as_deref(), Some("assumption"));
+    assert_eq!(state.nodes[0].body, "Redis cluster is available in prod");
 }

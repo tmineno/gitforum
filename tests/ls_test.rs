@@ -28,6 +28,32 @@ fn fixed_clock() -> FixedClock {
     }
 }
 
+fn make_dec(git: &GitOps) -> String {
+    create::create_thread(
+        git,
+        ThreadKind::Dec,
+        "Test DEC",
+        Some(
+            "## Context\nSome context\n## Decision\nUse Redis\n## Rationale\nFast\n## Impact\nNone",
+        ),
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap()
+}
+
+fn make_task(git: &GitOps) -> String {
+    create::create_thread(
+        git,
+        ThreadKind::Task,
+        "Test TASK",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap()
+}
+
 #[test]
 fn ls_shows_all_kinds() {
     let (_repo, git, _paths) = setup();
@@ -95,4 +121,37 @@ fn ls_filtered_by_kind() {
     let out = ls::render_ls(&refs);
     assert!(out.contains(&rfc_id));
     assert!(out.contains("Proposal"));
+}
+
+// ---- Kind filter (DEC / TASK) ----
+
+#[test]
+fn ls_filters_by_dec_kind() {
+    let (_repo, git, _paths) = setup();
+    make_dec(&git);
+    make_task(&git);
+    let ids = thread::list_thread_ids(&git).unwrap();
+    let all: Vec<_> = ids
+        .iter()
+        .map(|id| thread::replay_thread(&git, id).unwrap())
+        .collect();
+    let decs: Vec<_> = all.iter().filter(|s| s.kind == ThreadKind::Dec).collect();
+    let tasks: Vec<_> = all.iter().filter(|s| s.kind == ThreadKind::Task).collect();
+    assert_eq!(decs.len(), 1);
+    assert_eq!(tasks.len(), 1);
+}
+
+#[test]
+fn ls_filters_by_task_kind() {
+    let (_repo, git, _paths) = setup();
+    make_task(&git);
+    make_task(&git);
+    make_dec(&git);
+    let ids = thread::list_thread_ids(&git).unwrap();
+    let all: Vec<_> = ids
+        .iter()
+        .map(|id| thread::replay_thread(&git, id).unwrap())
+        .collect();
+    let tasks: Vec<_> = all.iter().filter(|s| s.kind == ThreadKind::Task).collect();
+    assert_eq!(tasks.len(), 2);
 }
