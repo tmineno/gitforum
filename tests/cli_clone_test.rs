@@ -110,7 +110,13 @@ fn init_fetches_forum_refs_from_remote() {
         &["update-ref", "refs/forum/threads/ASK-0001", &commit],
     );
 
-    // Clone with --no-hardlinks (simulates non-local clone)
+    // Clone with --no-hardlinks (simulates non-local clone).
+    //
+    // current_dir + env_remove are critical: when run from a pre-commit hook,
+    // `GIT_INDEX_FILE=.git/index` is inherited as a relative path. Without
+    // current_dir, git would resolve it relative to the test process's cwd
+    // (the worktree being committed) and clone-time index updates would
+    // *overwrite the worktree's own index*, corrupting the parent commit.
     let clone_dir = tempfile::TempDir::new().unwrap();
     let clone_path = clone_dir.path().join("cloned");
     let status = Command::new("git")
@@ -120,7 +126,11 @@ fn init_fetches_forum_refs_from_remote() {
             &upstream.path().to_string_lossy(),
             &clone_path.to_string_lossy(),
         ])
+        .current_dir(clone_dir.path())
         .envs(isolation_env())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .expect("git clone failed");
     assert!(status.status.success(), "clone failed");
@@ -152,31 +162,41 @@ fn init_fetches_forum_refs_from_remote() {
 fn doctor_warns_on_missing_refspec() {
     let repo = support::repo::TestRepo::new();
 
-    // Init first (adds refspec)
+    // Init first (adds refspec).
     git(
         repo.path(),
         &["remote", "add", "origin", "https://example.com/repo.git"],
     );
-    git_forum_cmd(repo.path(), &["init"]);
+    let init_out = git_forum_cmd(repo.path(), &["init"]);
+    assert!(
+        init_out.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&init_out.stderr)
+    );
 
-    // Remove the refspec
-    let unset_output = Command::new("git")
-        .args([
+    // Remove the refspec via the `git()` helper so GIT_DIR / GIT_WORK_TREE /
+    // GIT_INDEX_FILE inherited from a hook context (e.g. pre-commit) are
+    // stripped — otherwise the unset can silently target the wrong repo.
+    // `--unset-all` is robust against the (unlikely) case where the refspec
+    // got added more than once.
+    git(
+        repo.path(),
+        &[
             "config",
-            "--unset",
+            "--unset-all",
             "remote.origin.fetch",
             r"\+refs/forum/\*:refs/forum/\*",
-        ])
-        .current_dir(repo.path())
-        .envs(isolation_env())
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .output()
-        .expect("unset failed");
+        ],
+    );
+
+    // Verify the unset actually took effect — turns any silent failure into a
+    // loud assertion here instead of a confusing miscount in doctor's output.
+    let remaining = git(repo.path(), &["config", "--get-all", "remote.origin.fetch"]);
     assert!(
-        unset_output.status.success(),
-        "git config --unset failed: {}",
-        String::from_utf8_lossy(&unset_output.stderr)
+        !remaining
+            .lines()
+            .any(|l| l.trim() == "+refs/forum/*:refs/forum/*"),
+        "forum refspec should be unset before invoking doctor; remaining:\n{remaining}"
     );
 
     // Run doctor

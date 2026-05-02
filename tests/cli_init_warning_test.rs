@@ -47,39 +47,40 @@ fn ls_does_not_warn_after_init() {
 fn ls_does_not_warn_when_forum_refs_exist_without_init() {
     let repo = support::repo::TestRepo::new();
 
-    // Create a dummy commit and point a forum thread ref at it (without calling init).
-    let tree_hash = Command::new("git")
-        .args(["hash-object", "-t", "tree", "/dev/null"])
-        .current_dir(repo.path())
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .output()
-        .expect("hash-object failed");
-    let tree = String::from_utf8(tree_hash.stdout)
-        .unwrap()
-        .trim()
-        .to_string();
+    // Strip GIT_* env vars (GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE) inherited
+    // from a hook context — otherwise `commit-tree` / `update-ref` can target
+    // the wrong index/dir and silently produce garbage refs. Assert exit
+    // status on every step so any failure surfaces here, not as a confusing
+    // assertion downstream.
+    let run_git = |args: &[&str]| -> std::process::Output {
+        Command::new("git")
+            .args(args)
+            .current_dir(repo.path())
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .output()
+            .unwrap_or_else(|e| panic!("git {args:?} failed to spawn: {e}"))
+    };
+    let stdout_of = |out: &std::process::Output, args: &[&str]| -> String {
+        assert!(
+            out.status.success(),
+            "git {args:?} exited {}: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout.clone()).unwrap().trim().into()
+    };
 
-    let commit_hash = Command::new("git")
-        .args(["commit-tree", &tree, "-m", "dummy event"])
-        .current_dir(repo.path())
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .output()
-        .expect("commit-tree failed");
-    let commit = String::from_utf8(commit_hash.stdout)
-        .unwrap()
-        .trim()
-        .to_string();
+    let args = &["hash-object", "-t", "tree", "/dev/null"];
+    let tree = stdout_of(&run_git(args), args);
 
-    let update = Command::new("git")
-        .args(["update-ref", "refs/forum/threads/ASK-0001", &commit])
-        .current_dir(repo.path())
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .output()
-        .expect("update-ref failed");
-    assert!(update.status.success());
+    let args = &["commit-tree", &tree, "-m", "dummy event"];
+    let commit = stdout_of(&run_git(args), args);
+
+    let args = &["update-ref", "refs/forum/threads/ASK-0001", &commit];
+    let update = run_git(args);
+    assert!(update.status.success(), "update-ref failed");
 
     // ls should NOT warn — forum refs exist.
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
