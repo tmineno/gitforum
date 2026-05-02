@@ -951,6 +951,12 @@ fn scan_at_least_one_summary_warnings(path: &std::path::Path, text: &str) -> Vec
     let display = path.display();
     let mut warnings = Vec::new();
     for (idx, line) in text.lines().enumerate() {
+        // Skip TOML comment lines: users may leave a deprecation note
+        // ("# at_least_one_summary was removed per ADR-006") and that is
+        // not the predicate firing.
+        if line.trim_start().starts_with('#') {
+            continue;
+        }
         if line.contains("at_least_one_summary") {
             warnings.push(format!(
                 "{display}:{lineno}: predicate `at_least_one_summary` is removed (ADR-006); \
@@ -1128,6 +1134,21 @@ mod tests {
         assert!(warnings[0].contains(".forum/policy.toml:3"));
         assert!(warnings[0].contains("at_least_one_summary"));
         assert!(warnings[0].contains("removed"));
+    }
+
+    #[test]
+    fn at_least_one_summary_scanner_ignores_comment_lines() {
+        // A deprecation note in a TOML comment is not the predicate
+        // firing — users should be able to leave such notes without
+        // tripping the scanner.
+        let path = std::path::Path::new(".forum/policy.toml");
+        let toml = "# Per ADR-006, at_least_one_summary is removed.\n\
+                    [[guards]]\non = \"x->y\"\nrequires = [\"no_open_objections\"]\n";
+        let warnings = scan_at_least_one_summary_warnings(path, toml);
+        assert!(
+            warnings.is_empty(),
+            "expected no warnings; got: {warnings:?}"
+        );
     }
 
     #[test]

@@ -5,7 +5,9 @@
 
 [[guards]]
 on = "under-review->accepted"
-requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
+# Per ADR-006, the `at_least_one_summary` predicate is removed.
+# Body-section completeness is enforced via [creation_rules.proposal] body_sections.
+requires = ["one_human_approval", "no_open_objections"]
 
 [[guards]]
 on = "open->closed"
