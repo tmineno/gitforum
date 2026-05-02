@@ -9,11 +9,12 @@ use chrono::{TimeZone, Utc};
 use git_forum::internal::clock::FixedClock;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
-use git_forum::internal::event::ThreadKind;
+use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::show;
 use git_forum::internal::thread;
+use git_forum::internal::write_ops;
 
 fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
     let repo = support::repo::TestRepo::new();
@@ -27,6 +28,18 @@ fn fixed_clock() -> FixedClock {
     FixedClock {
         instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
     }
+}
+
+fn make_rfc(git: &GitOps) -> String {
+    create::create_thread(
+        git,
+        ThreadKind::Rfc,
+        "Test RFC",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -114,4 +127,92 @@ fn show_snapshot_contains_expected_fields() {
     assert!(out.contains("human/alice"));
     assert!(out.contains("2026-01-01T00:00:00Z"));
     assert!(out.contains("create"));
+}
+
+// ---- show with nodes ----
+
+#[test]
+fn show_includes_open_objections_section() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+
+    write_ops::say_node(
+        &git,
+        &thread_id,
+        NodeType::Objection,
+        "Concern about performance.",
+        "human/bob",
+        &fixed_clock(),
+        None,
+    )
+    .unwrap();
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    let out = show::render_show(&state, &show::ShowOptions::default());
+
+    assert!(out.contains("**open objections:** 1"));
+    assert!(out.contains("Concern about performance."));
+}
+
+#[test]
+fn show_includes_latest_summary_section() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+
+    write_ops::say_node(
+        &git,
+        &thread_id,
+        NodeType::Summary,
+        "This is the consensus.",
+        "human/alice",
+        &fixed_clock(),
+        None,
+    )
+    .unwrap();
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    let out = show::render_show(&state, &show::ShowOptions::default());
+
+    assert!(out.contains("latest summary:"));
+    assert!(out.contains("This is the consensus."));
+}
+
+#[test]
+fn show_no_extra_sections_when_no_nodes() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    let out = show::render_show(&state, &show::ShowOptions::default());
+
+    assert!(!out.contains("open objections:"));
+    assert!(!out.contains("open actions:"));
+    assert!(!out.contains("latest summary:"));
+}
+
+#[test]
+fn show_timeline_includes_say_events() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = make_rfc(&git);
+
+    let node_id = write_ops::say_node(
+        &git,
+        &thread_id,
+        NodeType::Claim,
+        "This is important.",
+        "human/alice",
+        &fixed_clock(),
+        None,
+    )
+    .unwrap();
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    let out = show::render_show(&state, &show::ShowOptions::default());
+
+    assert!(out.contains(&node_id[..node_id.len().min(16)]));
+    // SPEC-2.0 §2.5 / §9.3: legacy `claim` writes are canonicalized to
+    // `comment`. Authors who want to preserve a rhetorical distinction
+    // should encode it in the body (e.g. "Claim:" prefix).
+    assert!(out.contains("comment"));
+    assert!(out.contains("This is important."));
 }
