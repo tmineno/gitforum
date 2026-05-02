@@ -8,38 +8,17 @@ mod support;
 
 use std::fs;
 
-use chrono::{TimeZone, Utc};
-use git_forum::internal::clock::FixedClock;
-use git_forum::internal::create;
-use git_forum::internal::event::ThreadKind;
 use git_forum::internal::evidence;
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::show;
 use git_forum::internal::thread;
 
+use support::forum::{fixed_clock, make_rfc as make_thread, setup_no_init as setup_with_paths};
+
 fn setup() -> (support::repo::TestRepo, GitOps) {
-    let repo = support::repo::TestRepo::new();
-    let git = GitOps::new(repo.path().to_path_buf());
+    let (repo, git, _paths) = setup_with_paths();
     (repo, git)
-}
-
-fn fixed_clock() -> FixedClock {
-    FixedClock {
-        instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-    }
-}
-
-fn make_thread(git: &GitOps) -> String {
-    create::create_thread(
-        git,
-        ThreadKind::Rfc,
-        "Test RFC",
-        None,
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap()
 }
 
 fn make_real_commit(git: &GitOps) -> String {

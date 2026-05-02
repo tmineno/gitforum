@@ -2,6 +2,7 @@ pub mod agent_adapter;
 pub mod claude_adapter;
 pub mod clock;
 pub mod env;
+pub mod forum;
 pub mod ids;
 pub mod repo;
 pub mod report;

@@ -4,55 +4,12 @@
 
 mod support;
 
-use chrono::{TimeZone, Utc};
-use git_forum::internal::clock::FixedClock;
-use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
 use git_forum::internal::event::ThreadKind;
-use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::init;
 use git_forum::internal::ls;
 use git_forum::internal::thread;
 
-fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
-    let repo = support::repo::TestRepo::new();
-    let git = GitOps::new(repo.path().to_path_buf());
-    let paths = RepoPaths::from_repo_root(repo.path());
-    init::init_forum(&paths).unwrap();
-    (repo, git, paths)
-}
-
-fn fixed_clock() -> FixedClock {
-    FixedClock {
-        instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-    }
-}
-
-fn make_dec(git: &GitOps) -> String {
-    create::create_thread(
-        git,
-        ThreadKind::Dec,
-        "Test DEC",
-        Some(
-            "## Context\nSome context\n## Decision\nUse Redis\n## Rationale\nFast\n## Impact\nNone",
-        ),
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap()
-}
-
-fn make_task(git: &GitOps) -> String {
-    create::create_thread(
-        git,
-        ThreadKind::Task,
-        "Test TASK",
-        None,
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap()
-}
+use support::forum::{fixed_clock, make_dec, make_task, setup};
 
 #[test]
 fn ls_shows_all_kinds() {

@@ -5,136 +5,18 @@
 
 mod support;
 
-use chrono::{TimeZone, Utc};
-use git_forum::internal::clock::FixedClock;
-use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
 use git_forum::internal::event::{NodeType, ThreadKind};
-use git_forum::internal::evidence;
-use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::init;
 use git_forum::internal::policy::{GuardEntry, GuardRule, Policy};
 use git_forum::internal::state_change;
-use git_forum::internal::thread;
 use git_forum::internal::verify;
 use git_forum::internal::write_ops;
 
-fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
-    let repo = support::repo::TestRepo::new();
-    let git = GitOps::new(repo.path().to_path_buf());
-    let paths = RepoPaths::from_repo_root(repo.path());
-    init::init_forum(&paths).unwrap();
-    (repo, git, paths)
-}
-
-fn fixed_clock() -> FixedClock {
-    FixedClock {
-        instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-    }
-}
-
-fn make_rfc(git: &GitOps) -> String {
-    create::create_thread(
-        git,
-        ThreadKind::Rfc,
-        "Test RFC",
-        None,
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap()
-}
-
-fn make_dec(git: &GitOps) -> String {
-    create::create_thread(
-        git,
-        ThreadKind::Dec,
-        "Test DEC",
-        Some(
-            "## Context\nSome context\n## Decision\nUse Redis\n## Rationale\nFast\n## Impact\nNone",
-        ),
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap()
-}
-
-fn make_task(git: &GitOps) -> String {
-    create::create_thread(
-        git,
-        ThreadKind::Task,
-        "Test TASK",
-        None,
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap()
-}
-
-fn dec_guard_policy() -> Policy {
-    make_policy(vec![GuardEntry {
-        on: "proposed->accepted".into(),
-        requires: vec![GuardRule::NoOpenObjections],
-        ..Default::default()
-    }])
-}
-
-fn task_guard_policy() -> Policy {
-    make_policy(vec![GuardEntry {
-        on: "reviewing->closed".into(),
-        requires: vec![GuardRule::NoOpenActions],
-        ..Default::default()
-    }])
-}
-
-fn make_policy(guards: Vec<GuardEntry>) -> Policy {
-    let mut p = Policy {
-        guards,
-        ..Default::default()
-    };
-    p.resolve_guard_scopes();
-    p
-}
-
-fn policy_with_guards() -> Policy {
-    make_policy(vec![GuardEntry {
-        on: "under-review->accepted".into(),
-        requires: vec![GuardRule::NoOpenObjections, GuardRule::OneHumanApproval],
-        ..Default::default()
-    }])
-}
-
-fn empty_policy() -> Policy {
-    Policy {
-        guards: vec![],
-        ..Default::default()
-    }
-}
-
-fn move_rfc_to_under_review(git: &GitOps, thread_id: &str) {
-    state_change::change_state(
-        git,
-        thread_id,
-        "proposed",
-        &[],
-        "human/alice",
-        &fixed_clock(),
-        &empty_policy(),
-        state_change::StateChangeOptions::default(),
-    )
-    .unwrap();
-    state_change::change_state(
-        git,
-        thread_id,
-        "under-review",
-        &[],
-        "human/alice",
-        &fixed_clock(),
-        &empty_policy(),
-        state_change::StateChangeOptions::default(),
-    )
-    .unwrap();
-}
+use support::forum::{
+    dec_guard_policy, drive_to_done, empty_policy, fixed_clock, link_thread, make_dec, make_policy,
+    make_rfc, make_task, make_thread, move_rfc_to_under_review, policy_with_under_review_guards,
+    setup, task_guard_policy,
+};
 
 #[test]
 fn verify_passes_no_guards_configured() {
@@ -165,7 +47,8 @@ fn verify_reports_open_objection_violation() {
     )
     .unwrap();
 
-    let report = verify::verify_thread(&git, &thread_id, &policy_with_guards()).unwrap();
+    let report =
+        verify::verify_thread(&git, &thread_id, &policy_with_under_review_guards()).unwrap();
     assert!(!report.passed());
     assert!(report
         .violations
@@ -280,50 +163,13 @@ fn verify_task_open_passes_trivially() {
 
 // ---- Linked-thread advisory (Track G) ----
 
-fn make_thread_kind(git: &GitOps, kind: ThreadKind, title: &str) -> String {
-    create::create_thread(git, kind, title, None, "human/alice", &fixed_clock()).unwrap()
-}
-
-fn link_thread(git: &GitOps, from: &str, to: &str, rel: &str) {
-    evidence::add_thread_link(git, from, to, rel, "human/alice", &fixed_clock()).unwrap();
-}
-
-/// Walk a thread to its terminal `done` state along the shortest valid
-/// path. Lifecycles vary in how many intermediate states stand between
-/// the initial state and `done`; the state machine guards reject
-/// multi-hop calls, so this helper steps through one at a time.
-fn drive_to_done(git: &GitOps, policy: &Policy, thread_id: &str) {
-    use git_forum::internal::event;
-    loop {
-        let state = thread::replay_thread(git, thread_id).unwrap();
-        if event::normalize_state_name(&state.status) == "done" {
-            break;
-        }
-        let lifecycle = state.lifecycle();
-        let path = event::find_path(lifecycle, &state.status, "done")
-            .unwrap_or_else(|| panic!("no path to done from {} for {:?}", state.status, lifecycle));
-        let next = path.first().expect("path is empty but state != done");
-        state_change::change_state(
-            git,
-            thread_id,
-            next,
-            &[],
-            "human/alice",
-            &fixed_clock(),
-            policy,
-            state_change::StateChangeOptions::default(),
-        )
-        .unwrap();
-    }
-}
-
 #[test]
 fn verify_surfaces_linked_thread_advisory_when_target_not_done() {
     let (_repo, git, paths) = setup();
     let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
 
-    let task = make_thread_kind(&git, ThreadKind::Task, "Implementing task");
-    let rfc = make_thread_kind(&git, ThreadKind::Rfc, "Parent RFC");
+    let task = make_thread(&git, ThreadKind::Task, "Implementing task");
+    let rfc = make_thread(&git, ThreadKind::Rfc, "Parent RFC");
     link_thread(&git, &task, &rfc, "implements");
 
     let report = verify::verify_thread(&git, &task, &policy).unwrap();
@@ -344,8 +190,8 @@ fn verify_omits_advisory_when_linked_thread_is_done() {
     let (_repo, git, paths) = setup();
     let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
 
-    let task = make_thread_kind(&git, ThreadKind::Task, "Implementing task");
-    let rfc = make_thread_kind(&git, ThreadKind::Rfc, "Parent RFC");
+    let task = make_thread(&git, ThreadKind::Task, "Implementing task");
+    let rfc = make_thread(&git, ThreadKind::Rfc, "Parent RFC");
     link_thread(&git, &task, &rfc, "implements");
 
     drive_to_done(&git, &policy, &rfc);

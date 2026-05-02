@@ -5,42 +5,13 @@
 
 mod support;
 
-use chrono::{TimeZone, Utc};
-use git_forum::internal::config::{CommitIdentity, RepoPaths};
-use git_forum::internal::event::{self, Event, EventType, ThreadKind};
-use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::id_alloc;
+use git_forum::internal::config::CommitIdentity;
+use git_forum::internal::event::{self, ThreadKind};
 use git_forum::internal::init;
 
-fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
-    let repo = support::repo::TestRepo::new();
-    let git = GitOps::new(repo.path().to_path_buf());
-    let paths = RepoPaths::from_repo_root(repo.path());
-    (repo, git, paths)
-}
-
-fn test_thread_id(kind: ThreadKind, seed: u8) -> String {
-    id_alloc::alloc_thread_id_with_nonce(
-        kind,
-        "human/alice",
-        "test",
-        "2026-01-01T00:00:00Z",
-        &[seed, seed, seed, seed, seed, seed, seed, seed],
-    )
-}
-
-fn sample_create(thread_id: &str, kind: ThreadKind, title: &str) -> Event {
-    Event {
-        event_id: "evt-0001".into(),
-        thread_id: thread_id.into(),
-        event_type: EventType::Create,
-        created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-        actor: "human/alice".into(),
-        title: Some(title.into()),
-        kind: Some(kind),
-        ..Event::default()
-    }
-}
+use support::forum::{
+    sample_create_event as sample_create, setup_no_init as setup, test_thread_id,
+};
 
 fn commit_author_name(repo_path: &std::path::Path, sha: &str) -> String {
     let output = std::process::Command::new("git")

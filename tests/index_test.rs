@@ -8,57 +8,19 @@ mod support;
 
 use chrono::{TimeZone, Utc};
 use git_forum::internal::clock::FixedClock;
-use git_forum::internal::config::RepoPaths;
-use git_forum::internal::create;
-use git_forum::internal::event::{self, Event, EventType, NodeType, ThreadKind};
+use git_forum::internal::event::{self, NodeType, ThreadKind};
 use git_forum::internal::evidence;
 use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::id_alloc;
 use git_forum::internal::index;
 use git_forum::internal::init;
 use git_forum::internal::reindex;
 use git_forum::internal::tui;
 use git_forum::internal::write_ops;
 
-fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
-    let repo = support::repo::TestRepo::new();
-    let git = GitOps::new(repo.path().to_path_buf());
-    let paths = RepoPaths::from_repo_root(repo.path());
-    (repo, git, paths)
-}
-
-fn fixed_clock() -> FixedClock {
-    FixedClock {
-        instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-    }
-}
-
-fn test_thread_id(kind: ThreadKind, seed: u8) -> String {
-    id_alloc::alloc_thread_id_with_nonce(
-        kind,
-        "human/alice",
-        "test",
-        "2026-01-01T00:00:00Z",
-        &[seed, seed, seed, seed, seed, seed, seed, seed],
-    )
-}
-
-fn sample_create(thread_id: &str, kind: ThreadKind, title: &str) -> Event {
-    Event {
-        event_id: "evt-0001".into(),
-        thread_id: thread_id.into(),
-        event_type: EventType::Create,
-        created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-        actor: "human/alice".into(),
-        title: Some(title.into()),
-        kind: Some(kind),
-        ..Event::default()
-    }
-}
-
-fn make_thread(git: &GitOps, kind: ThreadKind, title: &str) -> String {
-    create::create_thread(git, kind, title, None, "human/alice", &fixed_clock()).unwrap()
-}
+use support::forum::{
+    fixed_clock, make_thread, sample_create_event as sample_create, setup_no_init as setup,
+    test_thread_id,
+};
 
 fn add_node(git: &GitOps, thread_id: &str, node_type: NodeType, body: &str) {
     write_ops::say_node(

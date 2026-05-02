@@ -4,50 +4,12 @@
 
 mod support;
 
-use chrono::{TimeZone, Utc};
 use git_forum::internal::brief;
-use git_forum::internal::clock::FixedClock;
-use git_forum::internal::config::RepoPaths;
-use git_forum::internal::create;
 use git_forum::internal::event::ThreadKind;
-use git_forum::internal::evidence;
-use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::index;
-use git_forum::internal::init;
-use git_forum::internal::reindex;
 use git_forum::internal::thread;
 
-fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
-    let repo = support::repo::TestRepo::new();
-    let git = GitOps::new(repo.path().to_path_buf());
-    let paths = RepoPaths::from_repo_root(repo.path());
-    init::init_forum(&paths).unwrap();
-    (repo, git, paths)
-}
-
-fn fixed_clock() -> FixedClock {
-    FixedClock {
-        instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-    }
-}
-
-fn make_thread(git: &GitOps, kind: ThreadKind, title: &str) -> String {
-    create::create_thread(git, kind, title, None, "human/alice", &fixed_clock()).unwrap()
-}
-
-fn link(git: &GitOps, from: &str, to: &str, rel: &str) {
-    evidence::add_thread_link(git, from, to, rel, "human/alice", &fixed_clock()).unwrap();
-}
-
-fn build_index(git: &GitOps, paths: &RepoPaths) {
-    let db_path = paths.git_forum.join("index.db");
-    reindex::run_reindex(git, &db_path).unwrap();
-}
-
-fn open_index(paths: &RepoPaths) -> rusqlite::Connection {
-    let db_path = paths.git_forum.join("index.db");
-    index::open_db(&db_path).unwrap()
-}
+use support::forum::{build_index, link_thread as link, make_thread, open_index, setup};
 
 #[test]
 fn brief_does_not_name_linked_threads_titles_or_states() {

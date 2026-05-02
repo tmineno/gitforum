@@ -6,138 +6,20 @@
 
 mod support;
 
-use chrono::{TimeZone, Utc};
-use git_forum::internal::clock::{Clock, FixedClock};
-use git_forum::internal::config::RepoPaths;
+use git_forum::internal::clock::Clock;
 use git_forum::internal::create;
 use git_forum::internal::event::{self, Event, EventType, NodeType, ThreadKind};
 use git_forum::internal::evidence;
 use git_forum::internal::evidence::EvidenceKind;
-use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::init;
 use git_forum::internal::policy::{GuardEntry, GuardRule, Policy};
 use git_forum::internal::state_change;
 use git_forum::internal::thread;
 use git_forum::internal::write_ops;
 
-fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
-    let repo = support::repo::TestRepo::new();
-    let git = GitOps::new(repo.path().to_path_buf());
-    let paths = RepoPaths::from_repo_root(repo.path());
-    init::init_forum(&paths).unwrap();
-    (repo, git, paths)
-}
-
-fn fixed_clock() -> FixedClock {
-    FixedClock {
-        instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-    }
-}
-
-fn make_rfc(git: &GitOps) -> String {
-    create::create_thread(
-        git,
-        ThreadKind::Rfc,
-        "Test RFC",
-        None,
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap()
-}
-
-fn make_dec(git: &GitOps) -> String {
-    create::create_thread(
-        git,
-        ThreadKind::Dec,
-        "Test DEC",
-        Some(
-            "## Context\nSome context\n## Decision\nUse Redis\n## Rationale\nFast\n## Impact\nNone",
-        ),
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap()
-}
-
-fn make_task(git: &GitOps) -> String {
-    create::create_thread(
-        git,
-        ThreadKind::Task,
-        "Test TASK",
-        None,
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap()
-}
-
-fn dec_guard_policy() -> Policy {
-    make_policy(vec![GuardEntry {
-        on: "proposed->accepted".into(),
-        requires: vec![GuardRule::NoOpenObjections],
-        ..Default::default()
-    }])
-}
-
-fn task_guard_policy() -> Policy {
-    make_policy(vec![GuardEntry {
-        on: "reviewing->closed".into(),
-        requires: vec![GuardRule::NoOpenActions],
-        ..Default::default()
-    }])
-}
-
-fn make_policy(guards: Vec<GuardEntry>) -> Policy {
-    let mut p = Policy {
-        guards,
-        ..Default::default()
-    };
-    p.resolve_guard_scopes();
-    p
-}
-
-fn policy_with_guards() -> Policy {
-    // ADR-006: `AtLeastOneSummary` removed in 2.0; remaining guards
-    // exercise the same review→done transition.
-    make_policy(vec![GuardEntry {
-        on: "under-review->accepted".into(),
-        requires: vec![GuardRule::NoOpenObjections, GuardRule::OneHumanApproval],
-        ..Default::default()
-    }])
-}
-
-fn empty_policy() -> Policy {
-    Policy {
-        guards: vec![],
-        ..Default::default()
-    }
-}
-
-fn move_rfc_to_under_review(git: &GitOps, thread_id: &str) {
-    state_change::change_state(
-        git,
-        thread_id,
-        "proposed",
-        &[],
-        "human/alice",
-        &fixed_clock(),
-        &empty_policy(),
-        state_change::StateChangeOptions::default(),
-    )
-    .unwrap();
-    state_change::change_state(
-        git,
-        thread_id,
-        "under-review",
-        &[],
-        "human/alice",
-        &fixed_clock(),
-        &empty_policy(),
-        state_change::StateChangeOptions::default(),
-    )
-    .unwrap();
-}
+use support::forum::{
+    dec_guard_policy, empty_policy, fixed_clock, make_dec, make_policy, make_rfc, make_task,
+    move_rfc_to_under_review, policy_with_under_review_guards, setup, task_guard_policy,
+};
 
 // ---- Transitions ----
 
@@ -258,7 +140,7 @@ fn change_state_passes_all_guards() {
         &["human/alice".to_string()],
         "human/alice",
         &fixed_clock(),
-        &policy_with_guards(),
+        &policy_with_under_review_guards(),
         state_change::StateChangeOptions::default(),
     )
     .unwrap();

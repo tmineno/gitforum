@@ -6,38 +6,20 @@
 
 mod support;
 
-use chrono::{TimeZone, Utc};
-use git_forum::internal::clock::FixedClock;
 use git_forum::internal::create;
 use git_forum::internal::event::{NodeType, ThreadKind};
-use git_forum::internal::evidence;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::show;
 use git_forum::internal::thread;
 use git_forum::internal::write_ops;
 
+use support::forum::{
+    fixed_clock, link_thread, make_rfc as make_thread, setup_no_init as setup_with_paths,
+};
+
 fn setup() -> (support::repo::TestRepo, GitOps) {
-    let repo = support::repo::TestRepo::new();
-    let git = GitOps::new(repo.path().to_path_buf());
+    let (repo, git, _paths) = setup_with_paths();
     (repo, git)
-}
-
-fn fixed_clock() -> FixedClock {
-    FixedClock {
-        instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-    }
-}
-
-fn make_thread(git: &GitOps) -> String {
-    create::create_thread(
-        git,
-        ThreadKind::Rfc,
-        "Test RFC",
-        None,
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap()
 }
 
 #[test]
@@ -55,15 +37,7 @@ fn add_thread_link_appears_in_thread_state() {
     )
     .unwrap();
 
-    evidence::add_thread_link(
-        &git,
-        &thread_id,
-        &target_id,
-        "implements",
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap();
+    link_thread(&git, &thread_id, &target_id, "implements");
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(state.links.len(), 1);
@@ -86,15 +60,7 @@ fn show_includes_links_section() {
     )
     .unwrap();
 
-    evidence::add_thread_link(
-        &git,
-        &thread_id,
-        &target_id,
-        "implements",
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap();
+    link_thread(&git, &thread_id, &target_id, "implements");
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     let out = show::render_show(&state, &show::ShowOptions::default());
@@ -130,15 +96,7 @@ fn node_show_includes_parent_thread_links() {
     )
     .unwrap();
 
-    evidence::add_thread_link(
-        &git,
-        &thread_id,
-        &target_id,
-        "implements",
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap();
+    link_thread(&git, &thread_id, &target_id, "implements");
 
     let lookup = thread::find_node(&git, &node_id).unwrap();
     let out = show::render_node_show(&lookup, &show::ShowOptions::default());
