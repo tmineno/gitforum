@@ -164,7 +164,6 @@ The following capabilities are implemented and tested in the 2.0 surface (or car
 
 - Git worktree support with auto-init via post-checkout hook
 - Snapshot and integration test infrastructure
-- E2E multi-agent test harness with Claude Code adapter and worktree-per-actor setup
 
 ## Open issues
 

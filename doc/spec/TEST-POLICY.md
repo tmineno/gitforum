@@ -39,11 +39,7 @@ Every file directly under `tests/` belongs to exactly one of:
 4. **Output goldens** — `snapshot_test.rs` (singular). Fixtures live in
    `tests/snapshots/`.
 
-5. **End-to-end scenarios** — `e2e_<scenario>_test.rs`. Drives a full
-   multi-actor workflow. Current members: `e2e_multiagent_test.rs`,
-   `e2e_live_agent_test.rs`.
-
-6. **Shared support** — `tests/support/` only.
+5. **Shared support** — `tests/support/` only.
 
 ## Naming rules
 
