@@ -10,8 +10,11 @@ use git_forum::internal::clock::FixedClock;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
 use git_forum::internal::event::{NodeType, ThreadKind};
+use git_forum::internal::evidence;
 use git_forum::internal::git_ops::GitOps;
+use git_forum::internal::index;
 use git_forum::internal::init;
+use git_forum::internal::reindex;
 use git_forum::internal::show;
 use git_forum::internal::thread;
 use git_forum::internal::write_ops;
@@ -241,6 +244,93 @@ fn show_timeline_includes_say_events() {
     // should encode it in the body (e.g. "Claim:" prefix).
     assert!(out.contains("comment"));
     assert!(out.contains("This is important."));
+}
+
+// ---- show --tree advisory ----
+
+#[test]
+fn show_tree_lists_only_implements_children_not_other_relations() {
+    // SPEC-2.0 §2.1 / §B.4: `show --tree` lists only `--rel implements`
+    // children, never other relations.
+    let (_repo, git, paths) = setup();
+
+    let parent = create::create_thread(
+        &git,
+        ThreadKind::Rfc,
+        "Parent RFC",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+    let impl_child = create::create_thread(
+        &git,
+        ThreadKind::Task,
+        "Implementing task",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+    let related_sibling = create::create_thread(
+        &git,
+        ThreadKind::Dec,
+        "Related decision",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
+    evidence::add_thread_link(
+        &git,
+        &impl_child,
+        &parent,
+        "implements",
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+    evidence::add_thread_link(
+        &git,
+        &related_sibling,
+        &parent,
+        "relates-to",
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
+    let db_path = paths.git_forum.join("index.db");
+    reindex::run_reindex(&git, &db_path).unwrap();
+
+    let conn = index::open_db(&db_path).unwrap();
+    let rows = index::find_incoming_links(&conn, &parent, Some("implements")).unwrap();
+
+    let parent_state = thread::replay_thread(&git, &parent).unwrap();
+    let mut children = Vec::new();
+    for row in &rows {
+        let s = thread::replay_thread(&git, &row.from_thread_id).unwrap();
+        children.push(show::TreeChild {
+            id: s.id.clone(),
+            title: s.title.clone(),
+            lifecycle_label: s.lifecycle().as_str().to_string(),
+            status: s.status.clone(),
+        });
+    }
+
+    let out = show::render_tree(&parent_state, &children);
+
+    assert!(
+        out.contains(&impl_child),
+        "expected implements child in tree output:\n{out}"
+    );
+    assert!(out.contains("Implementing task"));
+    assert!(
+        !out.contains(&related_sibling),
+        "relates-to sibling leaked into --tree output:\n{out}"
+    );
+    assert!(!out.contains("Related decision"));
 }
 
 // ---- DEC / TASK rendering ----

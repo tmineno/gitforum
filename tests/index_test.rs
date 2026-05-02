@@ -11,6 +11,7 @@ use git_forum::internal::clock::FixedClock;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
 use git_forum::internal::event::{self, Event, EventType, NodeType, ThreadKind};
+use git_forum::internal::evidence;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id_alloc;
 use git_forum::internal::index;
@@ -234,6 +235,49 @@ fn search_empty_returns_no_match_message_via_render() {
     let results = index::search_threads(&conn, "zzznomatch").unwrap();
     let out = git_forum::internal::ls::render_search_results(&results);
     assert_eq!(out, "no threads found\n");
+}
+
+// ---- Reverse-link queries (Track G advisory layer) ----
+
+#[test]
+fn find_incoming_links_does_not_recurse() {
+    // SPEC-2.0 §2.1: the reverse-link index returns one-hop incoming
+    // links only — a grandchild that implements the child must not
+    // appear under the parent's incoming-`implements` query. This is
+    // what makes `show --tree` a single-hop advisory.
+    let (_repo, git, paths) = setup();
+    init::init_forum(&paths).unwrap();
+
+    let parent = make_thread(&git, ThreadKind::Rfc, "Parent RFC");
+    let child = make_thread(&git, ThreadKind::Task, "Direct child");
+    let grandchild = make_thread(&git, ThreadKind::Task, "Grandchild");
+
+    evidence::add_thread_link(
+        &git,
+        &child,
+        &parent,
+        "implements",
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+    evidence::add_thread_link(
+        &git,
+        &grandchild,
+        &child,
+        "implements",
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
+    let db_path = paths.git_forum.join("index.db");
+    reindex::run_reindex(&git, &db_path).unwrap();
+
+    let conn = index::open_db(&db_path).unwrap();
+    let rows = index::find_incoming_links(&conn, &parent, Some("implements")).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].from_thread_id, child);
 }
 
 // ---- TUI startup reindex ----

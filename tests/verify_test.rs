@@ -10,10 +10,12 @@ use git_forum::internal::clock::FixedClock;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
 use git_forum::internal::event::{NodeType, ThreadKind};
+use git_forum::internal::evidence;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::policy::{GuardEntry, GuardRule, Policy};
 use git_forum::internal::state_change;
+use git_forum::internal::thread;
 use git_forum::internal::verify;
 use git_forum::internal::write_ops;
 
@@ -274,4 +276,84 @@ fn verify_task_open_passes_trivially() {
     let id = make_task(&git);
     let report = verify::verify_thread(&git, &id, &task_guard_policy()).unwrap();
     assert!(report.passed());
+}
+
+// ---- Linked-thread advisory (Track G) ----
+
+fn make_thread_kind(git: &GitOps, kind: ThreadKind, title: &str) -> String {
+    create::create_thread(git, kind, title, None, "human/alice", &fixed_clock()).unwrap()
+}
+
+fn link_thread(git: &GitOps, from: &str, to: &str, rel: &str) {
+    evidence::add_thread_link(git, from, to, rel, "human/alice", &fixed_clock()).unwrap();
+}
+
+/// Walk a thread to its terminal `done` state along the shortest valid
+/// path. Lifecycles vary in how many intermediate states stand between
+/// the initial state and `done`; the state machine guards reject
+/// multi-hop calls, so this helper steps through one at a time.
+fn drive_to_done(git: &GitOps, policy: &Policy, thread_id: &str) {
+    use git_forum::internal::event;
+    loop {
+        let state = thread::replay_thread(git, thread_id).unwrap();
+        if event::normalize_state_name(&state.status) == "done" {
+            break;
+        }
+        let lifecycle = state.lifecycle();
+        let path = event::find_path(lifecycle, &state.status, "done")
+            .unwrap_or_else(|| panic!("no path to done from {} for {:?}", state.status, lifecycle));
+        let next = path.first().expect("path is empty but state != done");
+        state_change::change_state(
+            git,
+            thread_id,
+            next,
+            &[],
+            "human/alice",
+            &fixed_clock(),
+            policy,
+            state_change::StateChangeOptions::default(),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn verify_surfaces_linked_thread_advisory_when_target_not_done() {
+    let (_repo, git, paths) = setup();
+    let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
+
+    let task = make_thread_kind(&git, ThreadKind::Task, "Implementing task");
+    let rfc = make_thread_kind(&git, ThreadKind::Rfc, "Parent RFC");
+    link_thread(&git, &task, &rfc, "implements");
+
+    let report = verify::verify_thread(&git, &task, &policy).unwrap();
+
+    // Per SPEC-2.0 §9.4, the verify advisory is informational. The verify
+    // result for the named thread is decided by single-thread guards only.
+    assert!(
+        !report.linked_advisories.is_empty(),
+        "expected at least one linked-thread advisory"
+    );
+    let adv = &report.linked_advisories[0];
+    assert_eq!(adv.linked_thread_id, rfc);
+    assert!(adv.message.contains("not yet `done`"));
+}
+
+#[test]
+fn verify_omits_advisory_when_linked_thread_is_done() {
+    let (_repo, git, paths) = setup();
+    let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
+
+    let task = make_thread_kind(&git, ThreadKind::Task, "Implementing task");
+    let rfc = make_thread_kind(&git, ThreadKind::Rfc, "Parent RFC");
+    link_thread(&git, &task, &rfc, "implements");
+
+    drive_to_done(&git, &policy, &rfc);
+
+    let report = verify::verify_thread(&git, &task, &policy).unwrap();
+    assert!(
+        report.linked_advisories.is_empty(),
+        "advisory should not fire when linked thread is `done`: {:?}",
+        report.linked_advisories
+    );
 }
