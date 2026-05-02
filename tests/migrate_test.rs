@@ -366,7 +366,16 @@ fn migrate_is_idempotent_on_second_run() {
 #[test]
 fn migrate_policy_warns_on_at_least_one_summary() {
     let (_repo, git, paths) = setup();
-    // Default policy.toml shipped by init contains the predicate.
+    // The 2.0 default policy no longer contains the predicate (per ADR-006
+    // and @ltojzq9l), so write a legacy 1.x policy explicitly to verify
+    // that build_plan still surfaces the deprecation warning when one
+    // shows up in user-authored policies.
+    let legacy_policy = r#"
+[[guards]]
+on = "under-review->accepted"
+requires = ["one_human_approval", "at_least_one_summary"]
+"#;
+    std::fs::write(paths.dot_forum.join("policy.toml"), legacy_policy).unwrap();
     let plan = migrate::build_plan(&git, &paths).unwrap();
     assert!(
         plan.policy_warnings

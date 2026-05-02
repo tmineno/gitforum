@@ -1368,7 +1368,8 @@ mod tests {
             toml::from_str(include_str!("../../tests/fixtures/policy_default.toml")).unwrap();
         let out = render_policy_show(&policy);
         assert!(out.contains("guards:"));
-        assert!(out.contains("under-review->accepted:"));
+        // 2.0 canonical guard transition (per @ltojzq9l).
+        assert!(out.contains("review->done:"));
         assert!(out.contains("creation_rules:"));
         assert!(out.contains("checks:"));
     }

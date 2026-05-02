@@ -10,24 +10,16 @@ const DEFAULT_POLICY: &str = r#"# git-forum default policy
 #   1. Transition guards — conditions that must be met before a state change.
 #   2. Operation checks  — rules about what is allowed in each state.
 #
-# Transitions without a kind prefix are GLOBAL — "open->closed" applies to
-# every kind that has both states (issue AND task).
+# Per SPEC-2.0 §3.1, all state names are 2.0 canonical: draft, open,
+# working, review, done, rejected, withdrawn, deprecated. Legacy 1.x
+# names (proposed, under-review, accepted, closed, pending, designing,
+# implementing, reviewing) are accepted at load time but produce a
+# migration warning; they are normalized internally.
 #
-# Kind-scoped guards (optional prefix):
-#   on = "dec:proposed->accepted"   — only applies to DEC threads
-#   on = "proposed->accepted"       — applies to all kinds with this transition
-#
-# When both a scoped and unscoped guard match, both apply (union semantics).
-# If you need different rules per kind, use kind-scoped keys.
-#
-# State names per thread kind:
-#   issue: open, pending, closed, rejected
-#   rfc:   draft, proposed, under-review, accepted, rejected, deprecated
-#   dec:   proposed, accepted, rejected, deprecated
-#   task:  open, designing, implementing, reviewing, closed, rejected
-#
-# Shared states: "rejected" appears in all kinds; "open"/"closed" in issue
-# and task; "proposed"/"accepted"/"deprecated" in rfc and dec.
+# Per-lifecycle reachable states (SPEC-2.0 §3.1.1):
+#   proposal  (RFC):       draft, open, review, done, rejected, withdrawn, deprecated
+#   execution (issue/task): open, working, review, done, rejected, withdrawn
+#   record    (DEC):       open, done, rejected, withdrawn, deprecated
 
 # ═══════════════════════════════════════════════════════════════════════
 # 1. TRANSITION GUARDS
@@ -38,33 +30,38 @@ const DEFAULT_POLICY: &str = r#"# git-forum default policy
 # A guard violation is always an error — the transition is blocked.
 # This is different from operation checks (below), which can be warnings.
 #
+# Lifecycle-scoped guards use the SPEC-2.0 §7.1 facet predicate syntax:
+#   on = "lifecycle=proposal : review->done"   — only matches RFC threads
+#   on = "review->done"                         — matches all lifecycles
+#   on = "lifecycle=execution AND tag=bug : open->done"
+#
+# When both a scoped and unscoped guard match, both apply (union semantics).
+#
 # Available guard rules:
-#   no_open_objections  — all objection nodes must be resolved/retracted
-#   no_open_actions     — all action nodes must be resolved/retracted
-#   one_human_approval  — at least one recorded human/… actor approval required
+#   no_open_objections   — all objection nodes must be resolved/retracted
+#   no_open_actions      — all action nodes must be resolved/retracted
+#   one_human_approval   — at least one recorded human/… actor approval required
 #   has_commit_evidence  — thread must have commit-type evidence attached
-# (`at_least_one_summary` was removed in 2.0 per ADR-006; require a
-#  non-empty `body_sections` entry on creation_rules instead.)
 
 [[guards]]
-on = "under-review->accepted"
+on = "lifecycle=proposal : review->done"
 requires = ["one_human_approval", "no_open_objections"]
 
 [[guards]]
-on = "open->closed"
+on = "lifecycle=execution : open->done"
 requires = ["no_open_actions"]
 
 [[guards]]
-on = "proposed->accepted"
+on = "lifecycle=execution : review->done"
+requires = ["no_open_actions"]
+
+[[guards]]
+on = "lifecycle=record : open->done"
 requires = ["no_open_objections"]
 
-[[guards]]
-on = "reviewing->closed"
-requires = ["no_open_actions"]
-
-# Uncomment to require commit evidence before closing issues:
+# Uncomment to require commit evidence before closing execution threads:
 # [[guards]]
-# on = "open->closed"
+# on = "lifecycle=execution : open->done"
 # requires = ["has_commit_evidence"]
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -76,9 +73,9 @@ requires = ["no_open_actions"]
 #   strict = false (default) — violations are WARNINGS; use --force to bypass
 #   strict = true            — violations are ERRORS; operation is blocked
 #
-# State names in operation checks (node_rules, revise_rules, evidence_rules)
-# are matched globally, just like guard transitions. A state name like
-# "closed" applies to any thread kind that uses that state.
+# State names in operation checks are 2.0 canonical (above). The runtime
+# tolerates 1.x names on either side of the comparison so legacy policies
+# keep working, but defaults use the canonical vocabulary.
 
 [checks]
 strict = false
@@ -102,25 +99,27 @@ required_body = false
 body_sections = ["Background", "Acceptance criteria", "Exceptions"]
 
 # Node rules: which node types are allowed in each state.
-# State names are global — "rejected" affects issue, rfc, dec, and task.
 # No restrictions by default — all node types allowed in all states.
 # Uncomment to restrict node types in terminal states:
 # [node_rules]
-# "accepted" = []
-# "closed" = []
+# "done" = []
 # "rejected" = []
 # "deprecated" = []
+# "withdrawn" = []
 
 # Revise rules: in which states body/node revision is allowed.
-# State names listed here are global across all thread kinds.
+# Body revision is intentionally narrower than node revision — once a
+# thread is under formal review (or working), the body should be stable.
 [revise_rules]
-allow_body_revise = ["draft", "proposed", "open", "pending", "designing", "implementing"]
-allow_node_revise = ["draft", "proposed", "under-review", "open", "pending", "designing", "implementing", "reviewing"]
+allow_body_revise = ["draft", "open", "working"]
+allow_node_revise = ["draft", "open", "working", "review"]
 
 # Evidence rules: in which states evidence can be attached.
-# State names listed here are global across all thread kinds.
+# An empty list (or omitting [evidence_rules] entirely) means evidence
+# is allowed in every state. Listed here for documentation; users can
+# narrow it if needed.
 [evidence_rules]
-allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "designing", "implementing", "reviewing", "closed", "accepted", "rejected", "deprecated"]
+allow_evidence = ["draft", "open", "working", "review", "done", "rejected", "deprecated"]
 "#;
 
 const DEFAULT_ACTORS: &str = r#"# git-forum actors
@@ -245,12 +244,12 @@ mod tests {
         let policy: Policy =
             toml::from_str(DEFAULT_POLICY).expect("DEFAULT_POLICY must be valid TOML");
 
-        // Guards
+        // Guards (2.0 canonical with lifecycle facets, per @ltojzq9l).
         assert_eq!(policy.guards.len(), 4);
-        assert_eq!(policy.guards[0].on, "under-review->accepted");
-        assert_eq!(policy.guards[1].on, "open->closed");
-        assert_eq!(policy.guards[2].on, "proposed->accepted");
-        assert_eq!(policy.guards[3].on, "reviewing->closed");
+        assert_eq!(policy.guards[0].on, "lifecycle=proposal : review->done");
+        assert_eq!(policy.guards[1].on, "lifecycle=execution : open->done");
+        assert_eq!(policy.guards[2].on, "lifecycle=execution : review->done");
+        assert_eq!(policy.guards[3].on, "lifecycle=record : open->done");
 
         // Checks config
         assert!(!policy.checks.strict);
@@ -300,48 +299,24 @@ mod tests {
         // Node rules — empty by default (no restrictions)
         assert!(policy.node_rules.is_empty());
 
-        // Revise rules
+        // Revise rules (2.0 canonical, per @ltojzq9l).
         let revise = policy.revise_rules.expect("revise_rules must exist");
-        assert_eq!(
-            revise.allow_body_revise,
-            vec![
-                "draft",
-                "proposed",
-                "open",
-                "pending",
-                "designing",
-                "implementing"
-            ]
-        );
+        assert_eq!(revise.allow_body_revise, vec!["draft", "open", "working"]);
         assert_eq!(
             revise.allow_node_revise,
-            vec![
-                "draft",
-                "proposed",
-                "under-review",
-                "open",
-                "pending",
-                "designing",
-                "implementing",
-                "reviewing"
-            ]
+            vec!["draft", "open", "working", "review"]
         );
 
-        // Evidence rules
+        // Evidence rules (2.0 canonical).
         let evidence = policy.evidence_rules.expect("evidence_rules must exist");
         assert_eq!(
             evidence.allow_evidence,
             vec![
                 "draft",
-                "proposed",
-                "under-review",
                 "open",
-                "pending",
-                "designing",
-                "implementing",
-                "reviewing",
-                "closed",
-                "accepted",
+                "working",
+                "review",
+                "done",
                 "rejected",
                 "deprecated"
             ]

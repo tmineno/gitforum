@@ -1444,11 +1444,28 @@ fn fast_track_emits_separate_events_per_step() {
 
 #[test]
 fn fast_track_stops_on_guard_failure() {
-    let (_repo, git, paths) = setup();
+    let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
 
-    // Add an open action — fails the no_open_actions guard on the
-    // `open->closed` (normalized to open→done) edge in the default policy.
+    // Construct a policy that requires no_open_actions on the proposal
+    // lifecycle's open→done edge specifically (the default policy
+    // post-@ltojzq9l only enforces no_open_actions on execution
+    // lifecycle, so we need an explicit guard here to test that
+    // fast_track stops mid-walk on a guard failure).
+    let mut custom_policy: Policy = toml::from_str(
+        r#"
+[[guards]]
+on = "lifecycle=proposal : open->done"
+requires = ["no_open_actions"]
+"#,
+    )
+    .unwrap();
+    // Policy::load runs resolve_guard_scopes to populate the
+    // facet-predicate and normalized-transition fields; toml::from_str
+    // alone does not.
+    let _ = custom_policy.resolve_guard_scopes();
+
+    // Add an open action — fails the no_open_actions guard above.
     // Under unified §3.1, fast_track to `accepted` walks draft→open→done,
     // so this guard fires on the second step.
     write_ops::say_node(
@@ -1462,7 +1479,6 @@ fn fast_track_stops_on_guard_failure() {
     )
     .unwrap();
 
-    let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap();
     let result = state_change::fast_track_state(
         &git,
         &thread_id,
@@ -1470,7 +1486,7 @@ fn fast_track_stops_on_guard_failure() {
         &["human/alice".to_string()],
         "human/alice",
         &fixed_clock(),
-        &policy,
+        &custom_policy,
         state_change::StateChangeOptions::default(),
     );
 
