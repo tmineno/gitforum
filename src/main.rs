@@ -176,14 +176,32 @@ enum Commands {
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
-    /// Detect and fix thread ID conflicts with a remote
+    /// Detect and fix thread ID conflicts with a remote, or repair
+    /// historical workflow violations (#uu9wxn1d) via append-only
+    /// corrective `state` events.
     Repair {
-        /// Remote to compare against
+        /// Remote to compare against (default mode: ID conflict repair)
         #[arg(long, default_value = "origin")]
         remote: String,
         /// Show what would be repaired without modifying
         #[arg(long)]
         dry_run: bool,
+        /// Switch to workflow-violation repair mode (#uu9wxn1d): scan
+        /// every thread for `InvalidTransition` strict-replay issues
+        /// and append corrective `state` events to bring each chain
+        /// onto a legal terminal path. Always defaults to a dry-run
+        /// preview; pair with `--apply` to write events.
+        #[arg(long = "workflow-violations")]
+        workflow_violations: bool,
+        /// Write the corrective events (with `--workflow-violations`).
+        /// Without `--apply`, the command prints the per-thread plan
+        /// and exits without modifying any refs.
+        #[arg(long, requires = "workflow_violations")]
+        apply: bool,
+        /// Override the actor recorded on the corrective events. By
+        /// default the local config's actor is used.
+        #[arg(long = "as", value_name = "ACTOR", requires = "workflow_violations")]
+        as_actor: Option<String>,
     },
     /// Purge event content from git history (hard-delete)
     Purge {
@@ -1409,32 +1427,44 @@ fn main() -> Result<(), ForumError> {
             let _ = outcome;
         }
 
-        Commands::Repair { remote, dry_run } => {
-            let (git, paths) = discover_repo_with_init_warning()?;
-            let report = repair::repair_conflicts(&git, &remote, dry_run)?;
-            if report.reallocated.is_empty() {
-                println!("No thread ID conflicts found with remote '{remote}'");
-            } else if dry_run {
-                println!("Found {} conflict(s):", report.reallocated.len());
-                for (old_id, _) in &report.reallocated {
-                    println!("  {old_id}");
-                }
-                println!("\nRun without --dry-run to re-allocate conflicting thread IDs");
+        Commands::Repair {
+            remote,
+            dry_run,
+            workflow_violations,
+            apply,
+            as_actor,
+        } => {
+            if workflow_violations {
+                git_forum::internal::commands::repair_workflow::run_workflow_repair(
+                    apply, as_actor, &clock,
+                )?;
             } else {
-                for (old_id, new_id) in &report.reallocated {
-                    println!("Reallocated {old_id} -> {new_id}");
-                }
-                // Reindex if index exists
-                let db_path = paths.git_forum.join("index.db");
-                if db_path.exists() {
-                    if let Err(e) = reindex::run_reindex(&git, &db_path) {
-                        eprintln!("warning: reindex failed: {e}");
+                let (git, paths) = discover_repo_with_init_warning()?;
+                let report = repair::repair_conflicts(&git, &remote, dry_run)?;
+                if report.reallocated.is_empty() {
+                    println!("No thread ID conflicts found with remote '{remote}'");
+                } else if dry_run {
+                    println!("Found {} conflict(s):", report.reallocated.len());
+                    for (old_id, _) in &report.reallocated {
+                        println!("  {old_id}");
                     }
+                    println!("\nRun without --dry-run to re-allocate conflicting thread IDs");
+                } else {
+                    for (old_id, new_id) in &report.reallocated {
+                        println!("Reallocated {old_id} -> {new_id}");
+                    }
+                    // Reindex if index exists
+                    let db_path = paths.git_forum.join("index.db");
+                    if db_path.exists() {
+                        if let Err(e) = reindex::run_reindex(&git, &db_path) {
+                            eprintln!("warning: reindex failed: {e}");
+                        }
+                    }
+                    println!("\nYou can now push with: git push");
                 }
-                println!("\nYou can now push with: git push");
-            }
-            for err in &report.errors {
-                eprintln!("warning: {err}");
+                for err in &report.errors {
+                    eprintln!("warning: {err}");
+                }
             }
         }
 

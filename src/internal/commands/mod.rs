@@ -10,6 +10,7 @@
 
 pub mod bulk;
 pub mod node_bulk;
+pub mod repair_workflow;
 pub mod revise;
 pub mod shared;
 pub mod shorthand_say;

@@ -147,7 +147,27 @@ pub fn replay_strict(events: &[Event]) -> ForumResult<(ThreadState, Vec<StrictRe
     replay_with_issues(events)
 }
 
+/// Like [`replay_strict`] but skips the post-pass that suppresses
+/// `InvalidTransition` issues whose chain tail has self-healed.
+///
+/// Used by the workflow-repair tool (#uu9wxn1d) to recover the offending
+/// event id even on chains that the public `replay_strict` would have
+/// reported as clean. Read-side callers (doctor, search, display) want
+/// the suppressed view; only the repair tool needs the raw stream.
+pub fn replay_strict_unsuppressed(
+    events: &[Event],
+) -> ForumResult<(ThreadState, Vec<StrictReplayIssue>)> {
+    replay_with_issues_inner(events, /* suppress_self_healed = */ false)
+}
+
 fn replay_with_issues(events: &[Event]) -> ForumResult<(ThreadState, Vec<StrictReplayIssue>)> {
+    replay_with_issues_inner(events, true)
+}
+
+fn replay_with_issues_inner(
+    events: &[Event],
+    suppress_self_healed: bool,
+) -> ForumResult<(ThreadState, Vec<StrictReplayIssue>)> {
     let first = events
         .first()
         .ok_or_else(|| ForumError::StateMachine("no events to replay".into()))?;
@@ -197,7 +217,85 @@ fn replay_with_issues(events: &[Event]) -> ForumResult<(ThreadState, Vec<StrictR
     for ev in &events[1..] {
         apply_event(&mut state, ev, &mut issues)?;
     }
+    if suppress_self_healed {
+        suppress_self_healed_invalid_transitions(events, &state, &mut issues);
+    }
     Ok((state, issues))
+}
+
+/// SPEC-2.0 §3.1 / #uu9wxn1d: drop `InvalidTransition` issues whose offending
+/// event has been "self-healed" by a subsequent legal corrective sequence.
+///
+/// A self-heal is recognised when:
+/// 1. The chain's final terminal status equals the issue's `to` (the visible
+///    state the operator intended).
+/// 2. After the offending event, every subsequent `state` event is on a legal
+///    edge for the lifecycle.
+/// 3. The running state visits at least one non-`to` state and walks back to
+///    `to` via legal edges (i.e. the corrective tail is non-trivial).
+///
+/// Without (3), a chain that simply stops at the offending event would
+/// trivially pass — we want to require an explicit operator-emitted
+/// corrective sequence (the pattern `state open` → `state rejected` for the
+/// `draft → rejected` case). Threads whose terminal sits on a sink state
+/// (`withdrawn` in proposal lifecycle) cannot self-heal via append-only
+/// because no legal outgoing edge exists; those issues remain reported.
+fn suppress_self_healed_invalid_transitions(
+    events: &[Event],
+    state: &ThreadState,
+    issues: &mut Vec<StrictReplayIssue>,
+) {
+    issues.retain(|issue| {
+        let StrictReplayIssue::InvalidTransition {
+            event_id,
+            to: target,
+            ..
+        } = issue
+        else {
+            return true;
+        };
+        if state.status.as_str() != target {
+            return true;
+        }
+        let Some(idx) = events.iter().position(|e| &e.event_id == event_id) else {
+            return true;
+        };
+        !is_self_healed_after(&events[idx + 1..], state.lifecycle, target)
+    });
+}
+
+fn is_self_healed_after(tail: &[Event], lifecycle: super::event::Lifecycle, target: &str) -> bool {
+    let Some(target_status) = ThreadStatus::parse_lenient(target) else {
+        return false;
+    };
+    let mut running = target_status;
+    let mut left_target = false;
+    for ev in tail {
+        if ev.event_type != EventType::State {
+            continue;
+        }
+        let Some(name) = ev.new_state.as_deref() else {
+            continue;
+        };
+        let Some(parsed) = ThreadStatus::parse_lenient(name) else {
+            return false;
+        };
+        if parsed == running {
+            continue;
+        }
+        if !super::workflow::SPEC.is_valid_transition(lifecycle, running.as_str(), parsed.as_str())
+        {
+            return false;
+        }
+        running = parsed;
+        if running.as_str() != target {
+            left_target = true;
+        }
+        if left_target && running.as_str() == target {
+            return true;
+        }
+    }
+    false
 }
 
 fn apply_event(
@@ -1424,6 +1522,100 @@ mod tests {
         ];
         let (_, issues) = replay_strict(&events).unwrap();
         assert!(issues.is_empty(), "idempotent re-state: {issues:?}");
+    }
+
+    #[test]
+    fn replay_strict_self_heal_suppresses_invalid_transition_after_corrective_tail() {
+        // SPEC-2.0 §3.1 / #uu9wxn1d: a thread that hit `draft → rejected`
+        // (illegal on proposal) and was repaired by appending
+        // `state open` then `state rejected` should not surface the
+        // InvalidTransition issue — the corrective tail walks back to
+        // the visible terminal status (`rejected`) via legal edges.
+        let mut bad = make_state("RFC-0001", "rejected");
+        bad.event_id = "evt-bad".into();
+        let mut fix1 = make_state("RFC-0001", "open");
+        fix1.event_id = "evt-fix1".into();
+        let mut fix2 = make_state("RFC-0001", "rejected");
+        fix2.event_id = "evt-fix2".into();
+        let events = vec![
+            make_create("RFC-0001", ThreadKind::Rfc, "T"),
+            bad,
+            fix1,
+            fix2,
+        ];
+        let (state, issues) = replay_strict(&events).unwrap();
+        assert_eq!(state.status, ThreadStatus::Rejected);
+        assert!(
+            !issues
+                .iter()
+                .any(|i| matches!(i, StrictReplayIssue::InvalidTransition { .. })),
+            "self-healed chain must not surface InvalidTransition: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn replay_strict_no_self_heal_without_corrective_tail() {
+        // Regression guard: a chain that ends at the offending event with
+        // no corrective tail must STILL surface the InvalidTransition.
+        let mut bad = make_state("RFC-0001", "rejected");
+        bad.event_id = "evt-bad".into();
+        let events = vec![make_create("RFC-0001", ThreadKind::Rfc, "T"), bad];
+        let (_, issues) = replay_strict(&events).unwrap();
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, StrictReplayIssue::InvalidTransition { .. })),
+            "no corrective tail → issue must remain: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn replay_strict_no_self_heal_when_terminal_status_differs() {
+        // If the chain's terminal status differs from the issue's `to`,
+        // no self-heal — the operator's visible state isn't what the
+        // illegal event aimed at.
+        let mut bad = make_state("RFC-0001", "rejected");
+        bad.event_id = "evt-bad".into();
+        let mut fix1 = make_state("RFC-0001", "open");
+        fix1.event_id = "evt-fix1".into();
+        // Terminal = open, not rejected.
+        let events = vec![make_create("RFC-0001", ThreadKind::Rfc, "T"), bad, fix1];
+        let (state, issues) = replay_strict(&events).unwrap();
+        assert_eq!(state.status, ThreadStatus::Open);
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, StrictReplayIssue::InvalidTransition { .. })),
+            "terminal mismatch → issue must remain: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn replay_strict_review_to_withdrawn_cannot_self_heal() {
+        // `withdrawn` is a sink in proposal lifecycle (no outgoing legal
+        // edges). A `review → withdrawn` violation cannot be self-healed
+        // via append-only — the corrective walk would need an outgoing
+        // edge from withdrawn that doesn't exist. Issue must remain.
+        let mut intake = make_state("RFC-0001", "open");
+        intake.event_id = "evt-intake".into();
+        let mut review = make_state("RFC-0001", "review");
+        review.event_id = "evt-review".into();
+        let mut bad = make_state("RFC-0001", "withdrawn");
+        bad.event_id = "evt-bad".into();
+        let events = vec![
+            make_create("RFC-0001", ThreadKind::Rfc, "T"),
+            intake,
+            review,
+            bad,
+        ];
+        let (state, issues) = replay_strict(&events).unwrap();
+        assert_eq!(state.status, ThreadStatus::Withdrawn);
+        assert!(
+            issues
+                .iter()
+                .any(|i| matches!(i, StrictReplayIssue::InvalidTransition { .. })),
+            "Category B (review→withdrawn) cannot self-heal: {issues:?}"
+        );
     }
 
     #[test]

@@ -32,6 +32,7 @@ pub mod purge;
 pub mod refs;
 pub mod reindex;
 pub mod repair;
+pub mod repair_workflow;
 pub mod show;
 pub mod state_change;
 pub mod thread;
