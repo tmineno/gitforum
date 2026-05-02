@@ -85,6 +85,34 @@ fn init_is_idempotent() {
     assert!(paths.dot_forum.join("policy.toml").exists());
 }
 
+// Regression test for @96u6zxmc / ADR-007. The committed rfc.md had
+// drifted to the 1-line `# {title}` stub while the (now-removed) inline
+// constant carried the multi-section scaffold. This test pins the seed
+// content so the drift cannot silently return.
+#[test]
+fn init_writes_non_trivial_rfc_template() {
+    let (_repo, _git, paths) = setup();
+    init::init_forum(&paths).unwrap();
+
+    let rfc = std::fs::read_to_string(paths.dot_forum.join("templates").join("rfc.md")).unwrap();
+    for section in ["## Goal", "## Non-goals", "## Context", "## Proposal"] {
+        assert!(
+            rfc.contains(section),
+            "rfc template missing `{section}` section; contents:\n{rfc}"
+        );
+    }
+}
+
+#[test]
+fn init_local_only_skips_shared_forum_content() {
+    let (_repo, _git, paths) = setup();
+    init::init_forum_local(&paths).unwrap();
+
+    assert!(paths.git_forum.join("logs").is_dir());
+    assert!(!paths.dot_forum.join("policy.toml").exists());
+    assert!(!paths.dot_forum.join("templates").join("rfc.md").exists());
+}
+
 // ---- Event storage tests ----
 
 #[test]

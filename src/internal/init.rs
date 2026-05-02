@@ -132,44 +132,25 @@ const DEFAULT_ACTORS: &str = r#"# git-forum actors
 # display_name = "Alice"
 "#;
 
-const TEMPLATE_ISSUE: &str = "# {title}\n";
-const TEMPLATE_RFC: &str = "\
-# {title}
+// Template bodies are embedded from the tracked .forum/templates/*.md
+// files (single source of truth, ADR-007). The same physical file backs
+// both git-forum's own forum and the seed written to user repos by
+// `git forum init`.
+const TEMPLATE_ISSUE: &str = include_str!("../../.forum/templates/issue.md");
+const TEMPLATE_RFC: &str = include_str!("../../.forum/templates/rfc.md");
+const TEMPLATE_DEC: &str = include_str!("../../.forum/templates/dec.md");
+const TEMPLATE_TASK: &str = include_str!("../../.forum/templates/task.md");
 
-## Goal
-
-## Non-goals
-
-## Context
-
-## Proposal
-";
-const TEMPLATE_DEC: &str = "\
-# {title}
-
-## Context
-
-## Decision
-
-## Rationale
-
-## Impact
-";
-const TEMPLATE_TASK: &str = "\
-# {title}
-
-## Background
-
-## Acceptance criteria
-
-## Exceptions
-";
-
-/// Initialize `.forum/` and `.git/forum/` structure.
+/// Full first-time init of `.forum/` and `.git/forum/` structure.
 ///
-/// Idempotent: skips files that already exist.
+/// Writes shared config and templates under `.forum/`, plus the
+/// per-worktree state under `.git/forum/`. Idempotent: skips files that
+/// already exist. Used by `git forum init`.
+///
+/// For per-worktree first-touch (e.g. the post-checkout hook on a new
+/// worktree), use [`init_forum_local`] instead — `worktree-init` must not
+/// re-seed shared `.forum/` content (ADR-007).
 pub fn init_forum(paths: &RepoPaths) -> ForumResult<()> {
-    // .forum/ shared config
     let templates_dir = paths.dot_forum.join("templates");
     fs::create_dir_all(&templates_dir)?;
 
@@ -180,10 +161,18 @@ pub fn init_forum(paths: &RepoPaths) -> ForumResult<()> {
     write_if_missing(&templates_dir.join("dec.md"), TEMPLATE_DEC)?;
     write_if_missing(&templates_dir.join("task.md"), TEMPLATE_TASK)?;
 
-    // .git/forum/ local-only data
+    init_forum_local(paths)
+}
+
+/// Per-worktree init: writes only `.git/forum/` content and the local
+/// git alias. Does not touch `.forum/`.
+///
+/// Used by the `worktree-init` post-checkout hook so a fresh worktree
+/// gets its per-clone state without overwriting or seeding any tracked
+/// shared content (ADR-007).
+pub fn init_forum_local(paths: &RepoPaths) -> ForumResult<()> {
     fs::create_dir_all(paths.git_forum.join("logs"))?;
 
-    // Set up a local git alias so `git forum --help` works correctly
     if let Some(repo_root) = paths.dot_forum.parent() {
         let _ = std::process::Command::new("git")
             .args(["config", "--local", "alias.forum", "!git-forum"])

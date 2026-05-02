@@ -2611,7 +2611,10 @@ fn main() -> Result<(), ForumError> {
                     let git_dir = git.git_dir()?;
                     let paths = RepoPaths::from_repo_root_and_git_dir(git.root(), &git_dir);
                     if !paths.git_forum.join("logs").is_dir() {
-                        init::init_forum(&paths)?;
+                        // Per ADR-007: worktree-init writes only .git/forum/
+                        // local state. Tracked .forum/ content arrives via
+                        // checkout, never via this hook.
+                        init::init_forum_local(&paths)?;
                         let local_toml_path = paths.git_forum.join("local.toml");
                         if !local_toml_path.exists() {
                             let default_actor = actor::actor_from_git_config(&git);
