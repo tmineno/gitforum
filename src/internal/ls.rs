@@ -10,20 +10,28 @@ use super::show::short_oid;
 use super::thread::ThreadState;
 
 /// Render search results from the local index.
+///
+/// Phase 3: lifecycle and tags are real index columns; surface them as
+/// the canonical 2.0 axes here too, mirroring `render_ls`.
 pub fn render_search_results(rows: &[SearchRow]) -> String {
     if rows.is_empty() {
         return "no threads found\n".into();
     }
     let mut lines: Vec<String> = Vec::new();
     lines.push(format!(
-        "{:<12}  {:<10}  {:<14}  {}",
-        "ID", "KIND", "STATUS", "TITLE"
+        "{:<12}  {:<10}  {:<14}  {:<14}  {}",
+        "ID", "LIFECYCLE", "STATUS", "TAGS", "TITLE"
     ));
-    lines.push("-".repeat(60));
+    lines.push("-".repeat(72));
     for r in rows {
+        let tags = if r.thread.tags.is_empty() {
+            "-".to_string()
+        } else {
+            r.thread.tags.join(",")
+        };
         lines.push(format!(
-            "{:<12}  {:<10}  {:<14}  {}",
-            r.thread.id, r.thread.kind, r.thread.status, r.thread.title
+            "{:<12}  {:<10}  {:<14}  {:<14}  {}",
+            r.thread.id, r.thread.lifecycle, r.thread.status, tags, r.thread.title
         ));
         for hit in &r.node_hits {
             lines.push(format!(

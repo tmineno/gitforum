@@ -1216,9 +1216,17 @@ mod tests {
     use input::handle_create_link_key;
 
     fn make_row(id: &str, kind: &str, status: &str, title: &str) -> ThreadRow {
+        let lifecycle = match kind {
+            "rfc" => "proposal",
+            "dec" => "record",
+            _ => "execution",
+        };
         ThreadRow {
             id: id.into(),
             kind: kind.into(),
+            lifecycle: lifecycle.into(),
+            lifecycle_explicit: false,
+            tags: Vec::new(),
             status: status.into(),
             title: title.into(),
             body: None,

@@ -369,9 +369,20 @@ markdown_mode = true
     use crate::internal::index::ThreadRow;
 
     fn make_thread_row(id: &str, kind: &str) -> ThreadRow {
+        // Phase 3: ThreadRow gained lifecycle/lifecycle_explicit/tags
+        // columns. Tests inherit a kind-derived lifecycle so the rest
+        // of this fixture stays kind-flavoured.
+        let lifecycle = match kind {
+            "rfc" => "proposal",
+            "dec" => "record",
+            _ => "execution",
+        };
         ThreadRow {
             id: id.to_string(),
             kind: kind.to_string(),
+            lifecycle: lifecycle.to_string(),
+            lifecycle_explicit: false,
+            tags: Vec::new(),
             status: "open".to_string(),
             title: format!("Thread {id}"),
             body: None,
