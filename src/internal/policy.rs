@@ -612,7 +612,7 @@ pub fn lint_policy(policy: &Policy) -> Vec<LintDiag> {
     // SPEC-2.0 §3.1: known states are the union of the unified 2.0 graph
     // plus the 1.x state names that the boundary normalizer recognizes
     // (so existing kind-keyed policy.toml fixtures still pass lint).
-    let all_states: std::collections::HashSet<&str> = event::UNIFIED_TRANSITIONS
+    let all_states: std::collections::HashSet<&str> = event::unified_transitions()
         .iter()
         .flat_map(|(from, to)| [*from, *to])
         .chain([
@@ -937,7 +937,7 @@ pub const TERMINAL_STATES: &[&str] = &[
 /// active work happens). Derived from the unified graph filtered by
 /// the lifecycle's allowed-state set.
 fn non_terminal_states(lifecycle: Lifecycle) -> Vec<&'static str> {
-    let mut states: std::collections::BTreeSet<&str> = event::UNIFIED_TRANSITIONS
+    let mut states: std::collections::BTreeSet<&str> = event::unified_transitions()
         .iter()
         .flat_map(|(from, to)| [*from, *to])
         .filter(|s| lifecycle.allows_state(s) && !TERMINAL_STATES.contains(s))

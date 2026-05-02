@@ -2,10 +2,11 @@
 //! `shortlog`, and search results. Per RFC-lmr3wfcm Track E, the thread-detail
 //! renderers all collapse to a single [`render_show`] driven by [`ShowOptions`].
 
-use super::event::{self, Lifecycle, UNIFIED_TRANSITIONS};
+use super::event::{self, Lifecycle};
 use super::policy::{self, Policy};
 use super::thread::{NodeLookup, ThreadState};
 use super::timeline;
+use super::workflow::SPEC;
 
 // ============================================================
 //  Public surface — ShowOptions and the unified entry point
@@ -647,7 +648,7 @@ fn lifecycle_spine(lifecycle: Lifecycle) -> &'static [&'static str] {
 
 /// Render a compact Unicode state diagram for `lifecycle` with `current`
 /// highlighted in `[brackets]`. Forward edges use `→`; branch edges use
-/// `├→` / `└→`. Driven entirely by [`UNIFIED_TRANSITIONS`] filtered by the
+/// `├→` / `└→`. Driven entirely by `WorkflowSpec::unified_transitions()` filtered by the
 /// lifecycle's allowed states (§3.1).
 pub fn render_state_diagram(lifecycle: Lifecycle, current: &str) -> Vec<String> {
     let spine = lifecycle_spine(lifecycle);
@@ -664,7 +665,8 @@ pub fn render_state_diagram(lifecycle: Lifecycle, current: &str) -> Vec<String> 
     lines.push(format!("  {}", spine_parts.join(" → ")));
 
     for &src in spine {
-        let branches: Vec<&str> = UNIFIED_TRANSITIONS
+        let branches: Vec<&str> = SPEC
+            .unified_transitions()
             .iter()
             .filter_map(|&(s, d)| {
                 (s == src && lifecycle.allows_state(d) && !is_spine_edge(spine, s, d)).then_some(d)
@@ -685,7 +687,7 @@ pub fn render_state_diagram(lifecycle: Lifecycle, current: &str) -> Vec<String> 
     }
 
     // Branches whose source is not on the spine (e.g. rejected → open).
-    for &(src, dst) in UNIFIED_TRANSITIONS {
+    for &(src, dst) in SPEC.unified_transitions() {
         if !lifecycle.allows_state(src) || !lifecycle.allows_state(dst) {
             continue;
         }

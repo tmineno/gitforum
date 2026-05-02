@@ -5,6 +5,7 @@ use super::error::{ForumError, ForumResult};
 use super::evidence::Evidence;
 use super::git_ops::GitOps;
 use super::refs;
+use super::workflow::SPEC;
 
 /// Approval mechanism (legacy SPEC.md §7.7).
 ///
@@ -81,12 +82,11 @@ impl ThreadKind {
     /// SPEC-2.0 §2.3.3: each 1.x kind maps to a canonical lifecycle facet.
     /// Used to derive `lifecycle` for legacy threads with no `facet_set`
     /// event in their chain.
+    ///
+    /// Routes through [`SPEC::kind_lifecycle`](super::workflow::WorkflowSpec::kind_lifecycle),
+    /// which sources from the kind preset table.
     pub fn lifecycle(self) -> Lifecycle {
-        match self {
-            Self::Issue | Self::Task => Lifecycle::Execution,
-            Self::Rfc => Lifecycle::Proposal,
-            Self::Dec => Lifecycle::Record,
-        }
+        SPEC.kind_lifecycle(self)
     }
 }
 
@@ -271,38 +271,16 @@ impl Lifecycle {
 
     /// SPEC-2.0 §3.1.1 — initial state per lifecycle.
     pub fn initial_state(self) -> &'static str {
-        match self {
-            Self::Proposal => "draft",
-            Self::Execution | Self::Record => "open",
-        }
+        SPEC.initial_state(self)
     }
 
     /// SPEC-2.0 §3.1.1 — states reachable for this lifecycle.
     pub fn allowed_states(self) -> &'static [&'static str] {
-        match self {
-            Self::Proposal => &[
-                "draft",
-                "open",
-                "review",
-                "done",
-                "rejected",
-                "withdrawn",
-                "deprecated",
-            ],
-            Self::Execution => &[
-                "open",
-                "working",
-                "review",
-                "done",
-                "rejected",
-                "deprecated",
-            ],
-            Self::Record => &["open", "done", "rejected", "deprecated"],
-        }
+        SPEC.allowed_states(self)
     }
 
     pub fn allows_state(self, state: &str) -> bool {
-        self.allowed_states().contains(&state)
+        SPEC.allows_state(self, state)
     }
 }
 
@@ -310,126 +288,46 @@ impl Lifecycle {
 ///
 /// Every edge any lifecycle might need; `Lifecycle::allowed_states` (§3.1.1)
 /// filters reachability per thread. State names are 2.0 canonical.
-pub const UNIFIED_TRANSITIONS: &[(&str, &str)] = &[
-    ("draft", "open"),
-    ("draft", "withdrawn"),
-    ("open", "working"),
-    ("open", "review"),
-    ("open", "done"),
-    ("open", "rejected"),
-    ("open", "withdrawn"),
-    ("working", "review"),
-    ("working", "done"),
-    ("working", "rejected"),
-    ("review", "done"),
-    ("review", "working"),
-    ("review", "rejected"),
-    ("done", "open"),
-    ("rejected", "open"),
-    ("done", "deprecated"),
-    ("rejected", "deprecated"),
-];
+///
+/// Re-exported from [`workflow::WorkflowSpec::unified_transitions`] for
+/// callers that iterate the raw edge list (state-diagram rendering,
+/// policy lint).
+pub fn unified_transitions() -> &'static [(&'static str, &'static str)] {
+    SPEC.unified_transitions()
+}
 
 /// SPEC-2.0 §3.1.2 — pure text-level normalization of 1.x state names to 2.0.
 ///
-/// `designing` and `implementing` both fold to `working`; this is lossy on
-/// the 1.x→2.0 direction and intentional per the spec. Withdrawn passes
-/// through (it's a 2.0-valid state name); kind-aware adjustments for
-/// withdrawn-execution / withdrawn-record live in [`migrate_legacy_state`].
+/// Thin wrapper over [`SPEC::normalize_state_name`](super::workflow::WorkflowSpec::normalize_state_name);
+/// the alias table lives in `workflow.rs`.
 pub fn normalize_state_name(s: &str) -> &str {
-    match s {
-        "proposed" => "open",
-        "under-review" | "reviewing" => "review",
-        "accepted" | "closed" => "done",
-        "pending" | "designing" | "implementing" => "working",
-        _ => s,
-    }
+    SPEC.normalize_state_name(s)
 }
 
 /// SPEC-2.0 §3.1.1 / §3.1.2 — kind-aware migration of a 1.x state name to a
-/// 2.0 state in the lifecycle's allowed set. Composes
-/// [`normalize_state_name`] with one further per-lifecycle trim:
-/// execution/record lifecycles do not allow `withdrawn`, so legacy
-/// `withdrawn` Issue/Task/Dec threads remap to `rejected` (closest 2.0
-/// semantic — work was abandoned without being deprecated).
+/// 2.0 state in the lifecycle's allowed set.
+///
+/// Thin wrapper over [`SPEC::migrate_legacy_state`](super::workflow::WorkflowSpec::migrate_legacy_state).
 pub fn migrate_legacy_state(kind: ThreadKind, state: &str) -> &str {
-    let normalized = normalize_state_name(state);
-    if normalized == "withdrawn" && !kind.lifecycle().allows_state("withdrawn") {
-        "rejected"
-    } else {
-        normalized
-    }
+    SPEC.migrate_legacy_state(kind, state)
 }
 
-/// Find the shortest path from `from` to `to` via BFS over the unified
-/// transition graph, restricted to states allowed for `lifecycle`.
-///
-/// Inputs may be 1.x state names; they are normalized internally so legacy
-/// callers (CLI shorthands, replay of pre-2.0 events) keep working.
+/// Shortest path from `from` to `to` for `lifecycle`. Thin wrapper over
+/// [`SPEC::find_path`](super::workflow::WorkflowSpec::find_path).
 pub fn find_path(lifecycle: Lifecycle, from: &str, to: &str) -> Option<Vec<&'static str>> {
-    use std::collections::VecDeque;
-    let from = normalize_state_name(from);
-    let to = normalize_state_name(to);
-    if from == to {
-        return Some(vec![]);
-    }
-    if !lifecycle.allows_state(to) {
-        return None;
-    }
-    let mut queue: VecDeque<(&str, Vec<&'static str>)> = VecDeque::new();
-    let mut visited: Vec<&str> = vec![from];
-
-    for &(src, dst) in UNIFIED_TRANSITIONS {
-        if src == from && lifecycle.allows_state(dst) {
-            if dst == to {
-                return Some(vec![dst]);
-            }
-            visited.push(dst);
-            queue.push_back((dst, vec![dst]));
-        }
-    }
-
-    while let Some((current, path)) = queue.pop_front() {
-        for &(src, dst) in UNIFIED_TRANSITIONS {
-            if src == current && lifecycle.allows_state(dst) && !visited.contains(&dst) {
-                let mut new_path = path.clone();
-                new_path.push(dst);
-                if dst == to {
-                    return Some(new_path);
-                }
-                visited.push(dst);
-                queue.push_back((dst, new_path));
-            }
-        }
-    }
-    None
+    SPEC.find_path(lifecycle, from, to)
 }
 
-/// Whether `from -> to` is a valid edge for the given lifecycle.
-///
-/// Inputs may be 1.x state names; they are normalized internally. Both
-/// endpoints must be in the lifecycle's allowed set (§3.1.1) and the edge
-/// must exist in the unified §3.1 graph.
+/// Whether `from -> to` is a valid edge for the given lifecycle. Thin
+/// wrapper over [`SPEC::is_valid_transition`](super::workflow::WorkflowSpec::is_valid_transition).
 pub fn is_valid_transition(lifecycle: Lifecycle, from: &str, to: &str) -> bool {
-    let from = normalize_state_name(from);
-    let to = normalize_state_name(to);
-    lifecycle.allows_state(from)
-        && lifecycle.allows_state(to)
-        && UNIFIED_TRANSITIONS
-            .iter()
-            .any(|&(s, d)| s == from && d == to)
+    SPEC.is_valid_transition(lifecycle, from, to)
 }
 
-/// Destination states reachable in one step from `from` for the given lifecycle.
-///
-/// Returns 2.0 state names. The input may be a 1.x state name; it is
-/// normalized internally.
+/// Destination states reachable in one step from `from` for `lifecycle`.
+/// Thin wrapper over [`SPEC::valid_targets`](super::workflow::WorkflowSpec::valid_targets).
 pub fn valid_targets(lifecycle: Lifecycle, from: &str) -> Vec<&'static str> {
-    let from = normalize_state_name(from);
-    UNIFIED_TRANSITIONS
-        .iter()
-        .filter_map(|&(s, d)| (s == from && lifecycle.allows_state(d)).then_some(d))
-        .collect()
+    SPEC.valid_targets(lifecycle, from)
 }
 
 impl std::fmt::Display for Lifecycle {

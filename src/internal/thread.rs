@@ -210,7 +210,29 @@ fn apply_event(
         EventType::State => {
             match event.new_state.as_deref() {
                 Some(name) => match ThreadStatus::parse_lenient(name) {
-                    Some(parsed) => state.status = parsed,
+                    Some(parsed) => {
+                        // SPEC-2.0 §3.1 (P0 #34ith16h): strict mode flags
+                        // an illegal `from -> to` for the thread's
+                        // lifecycle on the per-lifecycle filtered graph.
+                        // Lenient mode applies the new status regardless
+                        // so legacy chains keep replaying.
+                        let from = state.status;
+                        if from != parsed
+                            && !super::workflow::SPEC.is_valid_transition(
+                                state.lifecycle,
+                                from.as_str(),
+                                parsed.as_str(),
+                            )
+                        {
+                            issues.push(StrictReplayIssue::InvalidTransition {
+                                event_id: event.event_id.clone(),
+                                from: from.as_str().to_string(),
+                                to: parsed.as_str().to_string(),
+                                lifecycle: state.lifecycle.as_str().to_string(),
+                            });
+                        }
+                        state.status = parsed;
+                    }
                     // Lenient: keep the prior status. Strict mode surfaces
                     // the unparseable value below.
                     None => issues.push(StrictReplayIssue::InvalidStateValue {
@@ -1319,6 +1341,89 @@ mod tests {
             issues.as_slice(),
             [StrictReplayIssue::MissingRequiredField { field, .. }] if *field == "new_state"
         ));
+    }
+
+    #[test]
+    fn replay_strict_flags_illegal_transition_for_lifecycle() {
+        // SPEC-2.0 §3.1 / P0 #34ith16h: strict replay must surface a
+        // state event whose `from -> to` edge is missing from the
+        // per-lifecycle transition graph.
+        //
+        // Setup: an RFC (proposal lifecycle) starts at `draft`, goes to
+        // `done`, then attempts `done -> review`. The `done -> review`
+        // edge does not exist for any lifecycle; lenient replay applies
+        // it anyway, strict surfaces the legality miss.
+        let mut state_event = make_state("RFC-0001", "review");
+        state_event.event_id = "evt-illegal".into();
+        let events = vec![
+            make_create("RFC-0001", ThreadKind::Rfc, "T"),
+            make_state("RFC-0001", "open"),
+            make_state("RFC-0001", "done"),
+            state_event,
+        ];
+        let (final_state, issues) = replay_strict(&events).unwrap();
+        // Lenient semantic preserved: the new status was applied.
+        assert_eq!(final_state.status, ThreadStatus::Review);
+        assert!(
+            issues.iter().any(|i| matches!(
+                i,
+                StrictReplayIssue::InvalidTransition {
+                    event_id, from, to, lifecycle
+                } if event_id == "evt-illegal"
+                    && from == "done"
+                    && to == "review"
+                    && lifecycle == "proposal"
+            )),
+            "expected an InvalidTransition issue, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn replay_strict_clean_for_legal_transition() {
+        // Regression guard: a legal transition (open -> review on
+        // proposal) must NOT emit InvalidTransition.
+        let events = vec![
+            make_create("RFC-0001", ThreadKind::Rfc, "T"),
+            make_state("RFC-0001", "open"),
+            make_state("RFC-0001", "review"),
+        ];
+        let (_, issues) = replay_strict(&events).unwrap();
+        assert!(
+            !issues
+                .iter()
+                .any(|i| matches!(i, StrictReplayIssue::InvalidTransition { .. })),
+            "legal transition should not flag: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn replay_strict_legacy_state_synonyms_remain_legal() {
+        // Lenient compatibility: a 1.x state name that normalizes onto a
+        // canonical 2.0 transition must NOT trip InvalidTransition.
+        // Here `proposed` (=> open) follows `draft` on a proposal — a
+        // legal edge.
+        let events = vec![
+            make_create("RFC-0001", ThreadKind::Rfc, "T"),
+            make_state("RFC-0001", "proposed"),
+            make_state("RFC-0001", "under-review"),
+        ];
+        let (_, issues) = replay_strict(&events).unwrap();
+        assert!(
+            issues.is_empty(),
+            "1.x synonyms on a legal path should not flag: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn replay_strict_idempotent_state_does_not_flag() {
+        // No-op transitions (status unchanged) skip the legality check —
+        // a state event that re-asserts the current status is benign.
+        let events = vec![
+            make_create("RFC-0001", ThreadKind::Rfc, "T"),
+            make_state("RFC-0001", "draft"),
+        ];
+        let (_, issues) = replay_strict(&events).unwrap();
+        assert!(issues.is_empty(), "idempotent re-state: {issues:?}");
     }
 
     #[test]

@@ -38,4 +38,5 @@ pub mod timeline;
 pub mod tui;
 pub mod validate;
 pub mod verify;
+pub mod workflow;
 pub mod write_ops;

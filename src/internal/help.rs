@@ -76,7 +76,7 @@ pub fn state_transition_map() -> String {
             lifecycle.initial_state()
         ));
         out.push_str("| From | To |\n|------|----|\n");
-        for (from, to) in event::UNIFIED_TRANSITIONS {
+        for (from, to) in event::unified_transitions() {
             if lifecycle.allows_state(from) && lifecycle.allows_state(to) {
                 out.push_str(&format!("| {from} | {to} |\n"));
             }

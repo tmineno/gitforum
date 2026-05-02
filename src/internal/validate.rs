@@ -10,7 +10,7 @@
 //! discards but [`thread::replay_strict`] returns alongside the materialized
 //! state.
 //!
-//! Today's checks (Phase-1 scope):
+//! Today's checks:
 //! - `Edit` / `Retract` / `Resolve` / `Reopen` / `Retype` targeting an unknown
 //!   `target_node_id` (lenient: silently no-op; strict: reported).
 //! - Required-field gaps per event type (lenient: silently no-op via `if let`;
@@ -20,6 +20,9 @@
 //!   stays first-wins but reports the attempted reset).
 //! - `facet_set` carrying a `lifecycle` value outside `proposal | execution |
 //!   record`.
+//! - `state` events whose `from -> to` edge is not legal for the thread's
+//!   lifecycle (P0 #34ith16h). Lenient replay still applies any
+//!   `parse_lenient`-able state, so legacy chains keep replaying.
 
 use super::event::EventType;
 
@@ -58,6 +61,18 @@ pub enum StrictReplayIssue {
     /// [`ThreadStatus::parse_lenient`](super::event::ThreadStatus::parse_lenient)).
     /// Lenient replay leaves the prior status untouched; strict mode flags it.
     InvalidStateValue { event_id: String, value: String },
+    /// SPEC-2.0 §3.1 — a `state` event's `from -> to` edge is not legal
+    /// for the thread's lifecycle (P0 #34ith16h). The endpoints parse
+    /// (and so do not surface as [`Self::InvalidStateValue`]) but the
+    /// edge is missing from the per-lifecycle filtered transition graph.
+    /// Lenient replay applies the new state regardless; strict mode
+    /// surfaces the legality miss.
+    InvalidTransition {
+        event_id: String,
+        from: String,
+        to: String,
+        lifecycle: String,
+    },
 }
 
 impl std::fmt::Display for StrictReplayIssue {
@@ -94,6 +109,15 @@ impl std::fmt::Display for StrictReplayIssue {
             Self::InvalidStateValue { event_id, value } => write!(
                 f,
                 "state event {event_id} carries unparseable status '{value}' (allowed: canonical 2.0 names or recognized 1.x synonyms)"
+            ),
+            Self::InvalidTransition {
+                event_id,
+                from,
+                to,
+                lifecycle,
+            } => write!(
+                f,
+                "state event {event_id} attempted illegal transition '{from}' -> '{to}' for {lifecycle} lifecycle (SPEC-2.0 §3.1)"
             ),
         }
     }

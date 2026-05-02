@@ -446,6 +446,75 @@ fn canonical_thread_new_rejects_unknown_lifecycle() {
     );
 }
 
+/// Pin the SPEC-2.0 §9.1 preset alias table: every alias resolves to a
+/// concrete (lifecycle, tags) pair on the created thread. The user-visible
+/// contract is the canonical 2.0 axis pair; the storage `kind` is a backing
+/// detail (`Commands::New` derives it from lifecycle, not from the preset).
+///
+/// This test guards the alias data against silent divergence — adding,
+/// renaming, or re-keying an alias without updating the data table will fail
+/// here. It is intentionally placed before the `WorkflowSpec` consolidation
+/// (P0 §34ith16h) so the structural change cannot regress the contract.
+#[test]
+fn preset_aliases_resolve_to_canonical_axes() {
+    use git_forum::internal::event::Lifecycle;
+    let repo = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(repo.path());
+    init::init_forum(&paths).unwrap();
+
+    let cases: &[(&str, Lifecycle, &[&str])] = &[
+        // (alias, expected lifecycle, expected tags)
+        ("ask", Lifecycle::Execution, &["bug"]),
+        ("bug", Lifecycle::Execution, &["bug"]),
+        ("issue", Lifecycle::Execution, &["bug"]),
+        ("job", Lifecycle::Execution, &["task"]),
+        ("task", Lifecycle::Execution, &["task"]),
+        ("rfc", Lifecycle::Proposal, &["cross-cutting"]),
+        ("dec", Lifecycle::Record, &[]),
+    ];
+
+    let git = GitOps::new(repo.path().to_path_buf());
+    for &(alias, expected_lifecycle, expected_tags) in cases {
+        let title = format!("Preset alias {alias}");
+        let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+            .current_dir(repo.path())
+            // --body satisfies the default `required_body` creation rule on
+            // proposal threads. Other aliases tolerate it (the rule is
+            // lifecycle-keyed; passing a body never blocks).
+            .args(["new", alias, &title, "--body", "fixture body"])
+            .output()
+            .unwrap_or_else(|e| panic!("failed to run new {alias}: {e}"));
+        assert!(
+            output.status.success(),
+            "alias {alias} should succeed: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        let id = extract_created_id(&output);
+        let state = thread::replay_thread(&git, &id).unwrap();
+        assert_eq!(state.lifecycle, expected_lifecycle, "alias={alias} id={id}");
+        let mut got = state.tags.clone();
+        got.sort();
+        let mut want: Vec<String> = expected_tags.iter().map(|s| s.to_string()).collect();
+        want.sort();
+        assert_eq!(got, want, "alias={alias} id={id} tags");
+    }
+}
+
+/// Pin the legacy ID-prefix alias table (`ASK` ⇄ `ISSUE`, `JOB` ⇄ `TASK`).
+/// Used by hook scanning, migrate, and id_alloc to recognise pre-2.0 IDs;
+/// must keep working through any `WorkflowSpec` consolidation.
+#[test]
+fn id_prefix_aliases_resolve_to_canonical_kind() {
+    use git_forum::internal::event::ThreadKind;
+    assert_eq!(ThreadKind::from_id_prefix("ASK"), Some(ThreadKind::Issue));
+    assert_eq!(ThreadKind::from_id_prefix("ISSUE"), Some(ThreadKind::Issue));
+    assert_eq!(ThreadKind::from_id_prefix("JOB"), Some(ThreadKind::Task));
+    assert_eq!(ThreadKind::from_id_prefix("TASK"), Some(ThreadKind::Task));
+    assert_eq!(ThreadKind::from_id_prefix("RFC"), Some(ThreadKind::Rfc));
+    assert_eq!(ThreadKind::from_id_prefix("DEC"), Some(ThreadKind::Dec));
+    assert_eq!(ThreadKind::from_id_prefix("BOGUS"), None);
+}
+
 /// Track D / SPEC-2.0 §10.2: kind-prefixed subcommand groupings are removed
 /// in 2.0 and produce a hard error with a redirect to the top-level form.
 #[test]

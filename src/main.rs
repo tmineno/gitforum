@@ -1727,11 +1727,7 @@ fn main() -> Result<(), ForumError> {
             let preset = preset_lookup(&kind).ok_or_else(|| {
                 ForumError::Config(format!(
                     "unknown kind '{kind}'; valid presets: {}",
-                    KIND_PRESETS
-                        .iter()
-                        .map(|p| p.name)
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    valid_preset_names(),
                 ))
             })?;
             run_canonical_thread_new(
@@ -3229,54 +3225,21 @@ fn run_canonical_thread_new(
 /// Resolve a state-change shorthand to a concrete target state for the
 /// thread's current lifecycle, per SPEC-2.0 §9.3.
 ///
-/// | shorthand | execution           | proposal                    | record    |
-/// |-----------|---------------------|-----------------------------|-----------|
-/// | close     | -> done             | rejected — use `accept`     | -> done   |
-/// | accept    | rejected — use `close` | -> done                  | -> done   |
-/// | propose   | rejected            | draft -> open               | rejected  |
-/// | pend      | -> working          | rejected                    | rejected  |
-/// | reject    | -> rejected         | -> rejected                 | -> rejected |
-/// | withdraw  | rejected — use `close`/`reject` | -> withdrawn   | rejected  |
-/// | deprecate | -> deprecated       | -> deprecated               | -> deprecated |
-///
-/// `open` (used by `reopen` thread-level) is allowed for every lifecycle and
-/// is delegated to the unified state machine without table consultation.
+/// Thin wrapper over [`SPEC::shorthand_target`](git_forum::internal::workflow::WorkflowSpec::shorthand_target);
+/// the §9.3 table itself lives in `workflow.rs`. This wrapper turns the
+/// typed [`ShorthandResolution`] into the CLI-shaped `ForumError`.
 fn shorthand_target_for_lifecycle(
     shorthand: &str,
     lifecycle: Lifecycle,
 ) -> Result<&'static str, ForumError> {
-    use Lifecycle::*;
-    let outcome: Result<&'static str, &'static str> = match (shorthand, lifecycle) {
-        ("closed", Execution | Record) => Ok("done"),
-        ("closed", Proposal) => Err("close is rejected on a proposal thread — use `accept`"),
-
-        ("accepted", Proposal | Record) => Ok("done"),
-        ("accepted", Execution) => Err("accept is rejected on an execution thread — use `close`"),
-
-        ("proposed", Proposal) => Ok("open"),
-        ("proposed", _) => Err("propose is only valid on proposal threads"),
-
-        ("pending", Execution) => Ok("working"),
-        ("pending", _) => Err("pend is only valid on execution threads"),
-
-        ("rejected", _) => Ok("rejected"),
-        ("deprecated", _) => Ok("deprecated"),
-
-        ("withdrawn", Proposal) => Ok("withdrawn"),
-        ("withdrawn", _) => {
-            Err("withdraw is only valid on proposal threads — use `close` or `reject`")
-        }
-
-        // Unified `open` (thread reopen) — keep a single edge for every
-        // lifecycle and let the state machine reject unreachable cases.
-        ("open", _) => Ok("open"),
-        (other, _) => {
-            return Err(ForumError::Config(format!(
-                "unknown state-change shorthand '{other}'",
-            )));
-        }
-    };
-    outcome.map_err(|hint| ForumError::Config(format!("{hint} (SPEC-2.0 §9.3)",)))
+    use git_forum::internal::workflow::ShorthandResolution::*;
+    match SPEC.shorthand_target(shorthand, lifecycle) {
+        Target(t) => Ok(t),
+        NotApplicable(hint) => Err(ForumError::Config(format!("{hint} (SPEC-2.0 §9.3)"))),
+        Unknown => Err(ForumError::Config(format!(
+            "unknown state-change shorthand '{shorthand}'",
+        ))),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3425,67 +3388,30 @@ fn thread_matches_filters(
         && status.is_none_or(|status| state.status.as_str() == status)
 }
 
-/// SPEC-2.0 §9.1 kind preset table: the single source of truth that maps a
-/// preset name (the everyday `git forum new <kind>` surface) to the storage
-/// `ThreadKind`, the canonical `lifecycle` facet, and the conventional tag
-/// set the preset attaches.
+/// SPEC-2.0 §9.1 kind preset registry — re-exported from
+/// [`internal::workflow`](git_forum::internal::workflow).
 ///
-/// Aliases (legacy 1.x names like `ask` / `job`) live alongside primary
-/// names; resolution scans `name` then `aliases` and returns the first match.
-struct KindPreset {
-    name: &'static str,
-    aliases: &'static [&'static str],
-    kind: ThreadKind,
-    lifecycle: Lifecycle,
-    tags: &'static [&'static str],
-}
-
-const KIND_PRESETS: &[KindPreset] = &[
-    KindPreset {
-        name: "rfc",
-        aliases: &[],
-        kind: ThreadKind::Rfc,
-        lifecycle: Lifecycle::Proposal,
-        tags: &["cross-cutting"],
-    },
-    KindPreset {
-        name: "dec",
-        aliases: &[],
-        kind: ThreadKind::Dec,
-        lifecycle: Lifecycle::Record,
-        tags: &[],
-    },
-    KindPreset {
-        name: "task",
-        aliases: &["job"],
-        kind: ThreadKind::Task,
-        lifecycle: Lifecycle::Execution,
-        tags: &["task"],
-    },
-    KindPreset {
-        name: "issue",
-        aliases: &["ask", "bug"],
-        kind: ThreadKind::Issue,
-        lifecycle: Lifecycle::Execution,
-        tags: &["bug"],
-    },
-];
+/// The data table itself moved to `WorkflowSpec` (#34ith16h); these
+/// type/value aliases keep the call-site spelling unchanged.
+use git_forum::internal::workflow::{KindPreset, SPEC};
 
 fn preset_lookup(name: &str) -> Option<&'static KindPreset> {
-    KIND_PRESETS
+    SPEC.preset_lookup(name)
+}
+
+fn valid_preset_names() -> String {
+    SPEC.presets()
         .iter()
-        .find(|p| p.name == name || p.aliases.contains(&name))
+        .map(|p| p.name)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
     preset_lookup(kind).map(|p| p.kind).ok_or_else(|| {
         ForumError::Config(format!(
             "unknown kind '{kind}'; valid presets: {}",
-            KIND_PRESETS
-                .iter()
-                .map(|p| p.name)
-                .collect::<Vec<_>>()
-                .join(", ")
+            valid_preset_names(),
         ))
     })
 }
