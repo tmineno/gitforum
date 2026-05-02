@@ -6,6 +6,7 @@ use super::error::{ForumError, ForumResult};
 use super::event;
 use super::event::{Lifecycle, NodeType};
 use super::evidence::EvidenceKind;
+use super::lint_emit::{self, LintEmitter};
 use super::thread::ThreadState;
 
 /// SPEC-2.0 §7.1 — boolean predicate over `lifecycle=...` and `tag=...`
@@ -301,14 +302,31 @@ impl Policy {
     /// Load and parse policy from the given path. Legacy `kind:`-scoped
     /// guards auto-rewrite to `lifecycle=` predicates; the rewrites are
     /// printed to stderr so users see the deprecation (SPEC-2.0 §10.4).
+    ///
+    /// Lint warnings are routed through the process-wide [`LintEmitter`]
+    /// (see `internal::lint_emit`), which throttles repeats and renders
+    /// paths repo-relative. Tests that need an isolated emitter call
+    /// [`Policy::load_with_emitter`] instead.
     pub fn load(path: &std::path::Path) -> ForumResult<Self> {
+        Self::load_with_emitter(path, lint_emit::current())
+    }
+
+    /// Like [`Policy::load`], but emits warnings through the supplied
+    /// emitter. Use this in tests to capture or fully suppress lint
+    /// output without touching the global emitter.
+    pub fn load_with_emitter(path: &std::path::Path, emitter: &LintEmitter) -> ForumResult<Self> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| ForumError::Config(format!("cannot read policy.toml: {e}")))?;
         // ADR-006 Consequences: scan for the removed `at_least_one_summary`
         // predicate before parsing so we can name the file + line of every
         // mention. Emit warnings irrespective of whether the parse succeeds.
-        for warning in scan_at_least_one_summary_warnings(path, &text) {
-            eprintln!("warning: {warning}");
+        for hit in scan_at_least_one_summary_warnings(&text) {
+            emitter.emit(
+                "at_least_one_summary",
+                Some(path),
+                Some(hit.line),
+                AT_LEAST_ONE_SUMMARY_BODY,
+            );
         }
         let mut policy: Self = toml::from_str(&text)
             .map_err(|e| ForumError::Config(format!("invalid policy.toml: {e}")))?;
@@ -316,10 +334,10 @@ impl Policy {
         // the predicate no longer fires (ADR-006).
         policy.strip_removed_predicates();
         for warning in policy.resolve_guard_scopes() {
-            eprintln!("warning: {warning}");
+            emitter.emit("legacy_guard_scope", Some(path), None, &warning);
         }
         for warning in policy.translate_legacy_creation_rules() {
-            eprintln!("warning: {warning}");
+            emitter.emit("legacy_creation_rules", Some(path), None, &warning);
         }
         Ok(policy)
     }
@@ -1001,12 +1019,29 @@ fn parse_guard_on(on: &str) -> Result<(FacetPredicate, String, Option<String>), 
     Ok((predicate, transition.to_string(), None))
 }
 
+/// One occurrence of the removed `at_least_one_summary` predicate.
+/// Path display is the emitter's job (see `internal::lint_emit`); the
+/// scanner only reports `(line, _)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtLeastOneSummaryHit {
+    /// 1-based line number of the offending occurrence.
+    pub line: usize,
+}
+
+/// Body of the `at_least_one_summary` deprecation warning. Lifted out of
+/// `scan_at_least_one_summary_warnings` so the file:line prefix can be
+/// formatted by the emitter and tests can assert against the body
+/// independently of path display.
+pub const AT_LEAST_ONE_SUMMARY_BODY: &str =
+    "predicate `at_least_one_summary` is removed (ADR-006); \
+     it no longer fires. Either delete the predicate or require a non-empty \
+     `body_sections` entry on the relevant `creation_rules`.";
+
 /// ADR-006 / SPEC-2.0 §7.1: scan a policy.toml text for occurrences of
-/// the removed `at_least_one_summary` predicate and produce one
-/// warning per line that mentions it, naming the source file + line.
-fn scan_at_least_one_summary_warnings(path: &std::path::Path, text: &str) -> Vec<String> {
-    let display = path.display();
-    let mut warnings = Vec::new();
+/// the removed `at_least_one_summary` predicate. Returns one hit per
+/// non-comment line that mentions the predicate.
+pub fn scan_at_least_one_summary_warnings(text: &str) -> Vec<AtLeastOneSummaryHit> {
+    let mut hits = Vec::new();
     for (idx, line) in text.lines().enumerate() {
         // Skip TOML comment lines: users may leave a deprecation note
         // ("# at_least_one_summary was removed per ADR-006") and that is
@@ -1015,15 +1050,10 @@ fn scan_at_least_one_summary_warnings(path: &std::path::Path, text: &str) -> Vec
             continue;
         }
         if line.contains("at_least_one_summary") {
-            warnings.push(format!(
-                "{display}:{lineno}: predicate `at_least_one_summary` is removed (ADR-006); \
-                 it no longer fires. Either delete the predicate or require a non-empty \
-                 `body_sections` entry on the relevant `creation_rules`.",
-                lineno = idx + 1,
-            ));
+            hits.push(AtLeastOneSummaryHit { line: idx + 1 });
         }
     }
-    warnings
+    hits
 }
 
 /// Normalize the `from->to` portion of a guard transition string to 2.0
@@ -1181,16 +1211,14 @@ mod tests {
     }
 
     #[test]
-    fn at_least_one_summary_scanner_names_file_and_line() {
-        // ADR-006: every line that mentions the removed predicate
-        // produces a warning naming source path + 1-based line number.
-        let path = std::path::Path::new(".forum/policy.toml");
+    fn at_least_one_summary_scanner_names_lines() {
+        // ADR-006: every non-comment line that mentions the removed
+        // predicate produces a hit with the 1-based line number.
         let toml = "[[guards]]\non = \"x->y\"\nrequires = [\"at_least_one_summary\"]\n";
-        let warnings = scan_at_least_one_summary_warnings(path, toml);
-        assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains(".forum/policy.toml:3"));
-        assert!(warnings[0].contains("at_least_one_summary"));
-        assert!(warnings[0].contains("removed"));
+        let hits = scan_at_least_one_summary_warnings(toml);
+        assert_eq!(hits, vec![AtLeastOneSummaryHit { line: 3 }]);
+        assert!(AT_LEAST_ONE_SUMMARY_BODY.contains("at_least_one_summary"));
+        assert!(AT_LEAST_ONE_SUMMARY_BODY.contains("removed"));
     }
 
     #[test]
@@ -1198,13 +1226,122 @@ mod tests {
         // A deprecation note in a TOML comment is not the predicate
         // firing — users should be able to leave such notes without
         // tripping the scanner.
-        let path = std::path::Path::new(".forum/policy.toml");
         let toml = "# Per ADR-006, at_least_one_summary is removed.\n\
                     [[guards]]\non = \"x->y\"\nrequires = [\"no_open_objections\"]\n";
-        let warnings = scan_at_least_one_summary_warnings(path, toml);
+        let hits = scan_at_least_one_summary_warnings(toml);
+        assert!(hits.is_empty(), "expected no hits; got: {hits:?}");
+    }
+
+    /// #6k7hq482: `Policy::load_with_emitter` must render the policy
+    /// path repo-relative when the emitter knows the repo root, so the
+    /// host-absolute path doesn't leak into stderr / forum events.
+    #[test]
+    fn load_emits_repo_relative_path_when_inside_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = dir.path().join(".forum/policy.toml");
+        std::fs::create_dir_all(policy_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &policy_path,
+            "[[guards]]\non = \"draft->open\"\nrequires = [\"at_least_one_summary\"]\n",
+        )
+        .unwrap();
+
+        let emitter = LintEmitter::new_capturing(Some(dir.path().to_path_buf()));
+        let _ = Policy::load_with_emitter(&policy_path, &emitter).unwrap();
+
+        let captured = emitter.captured().unwrap();
+        let summary_msg = captured
+            .iter()
+            .find(|m| m.contains("at_least_one_summary"))
+            .expect("expected an at_least_one_summary warning");
         assert!(
-            warnings.is_empty(),
-            "expected no warnings; got: {warnings:?}"
+            summary_msg.contains(".forum/policy.toml:3:"),
+            "expected repo-relative prefix; got: {summary_msg}"
+        );
+        assert!(
+            !summary_msg.contains(dir.path().to_str().unwrap()),
+            "absolute repo path leaked into output: {summary_msg}"
+        );
+    }
+
+    /// #6k7hq482: when the policy file lives outside the emitter's repo
+    /// root, the warning falls back to the absolute path with an
+    /// inline `(outside repo root)` note so users can see why.
+    #[test]
+    fn load_falls_back_to_absolute_path_when_outside_repo() {
+        let policy_dir = tempfile::tempdir().unwrap();
+        let other_repo = tempfile::tempdir().unwrap();
+        let policy_path = policy_dir.path().join("policy.toml");
+        std::fs::write(
+            &policy_path,
+            "[[guards]]\non = \"draft->open\"\nrequires = [\"at_least_one_summary\"]\n",
+        )
+        .unwrap();
+
+        let emitter = LintEmitter::new_capturing(Some(other_repo.path().to_path_buf()));
+        let _ = Policy::load_with_emitter(&policy_path, &emitter).unwrap();
+
+        let captured = emitter.captured().unwrap();
+        let summary_msg = captured
+            .iter()
+            .find(|m| m.contains("at_least_one_summary"))
+            .expect("expected an at_least_one_summary warning");
+        assert!(summary_msg.contains("outside repo root"));
+        assert!(summary_msg.contains(policy_path.to_str().unwrap()));
+    }
+
+    /// #6k7hq482: a second `Policy::load_with_emitter` call sharing
+    /// the same emitter must not re-emit warnings whose
+    /// `(kind, path, line)` triple already fired.
+    #[test]
+    fn load_suppresses_repeat_warnings_in_same_emitter() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = dir.path().join(".forum/policy.toml");
+        std::fs::create_dir_all(policy_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &policy_path,
+            "[[guards]]\non = \"draft->open\"\nrequires = [\"at_least_one_summary\"]\n",
+        )
+        .unwrap();
+
+        let emitter = LintEmitter::new_capturing(Some(dir.path().to_path_buf()));
+        let _ = Policy::load_with_emitter(&policy_path, &emitter).unwrap();
+        let first = emitter.captured().unwrap().len();
+        let _ = Policy::load_with_emitter(&policy_path, &emitter).unwrap();
+        let second = emitter.captured().unwrap().len();
+
+        assert!(first > 0, "first load should emit at least one warning");
+        assert_eq!(
+            first, second,
+            "second load with same emitter should not add new warnings"
+        );
+    }
+
+    /// #6k7hq482: `GIT_FORUM_LINT_VERBOSE=1` users want to see every
+    /// warning every time. The emitter's verbose mode must override
+    /// both layers of suppression.
+    #[test]
+    fn load_with_verbose_emitter_re_emits_every_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy_path = dir.path().join(".forum/policy.toml");
+        std::fs::create_dir_all(policy_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &policy_path,
+            "[[guards]]\non = \"draft->open\"\nrequires = [\"at_least_one_summary\"]\n",
+        )
+        .unwrap();
+
+        let emitter = LintEmitter::new_capturing(Some(dir.path().to_path_buf())).with_verbose(true);
+        let _ = Policy::load_with_emitter(&policy_path, &emitter).unwrap();
+        let first = emitter.captured().unwrap().len();
+        let _ = Policy::load_with_emitter(&policy_path, &emitter).unwrap();
+        let second = emitter.captured().unwrap().len();
+
+        assert!(first > 0);
+        assert_eq!(
+            second,
+            first * 2,
+            "verbose emitter should fire every call; got {first} then {second}"
         );
     }
 

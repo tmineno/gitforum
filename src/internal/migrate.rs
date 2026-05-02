@@ -38,6 +38,7 @@ use super::error::{ForumError, ForumResult};
 use super::event::{self, Event, EventType, Lifecycle, ThreadKind};
 use super::git_ops::GitOps;
 use super::id_alloc;
+use super::lint_emit::format_path_repo_relative;
 use super::refs;
 
 /// SPEC-2.0 §10: 2.0 alias entries live under `refs/forum/aliases/<old-id>`
@@ -431,15 +432,16 @@ pub fn build_plan(git: &GitOps, paths: &RepoPaths) -> ForumResult<MigrationPlan>
 
     // Policy diagnostics (warnings + planned rewrites).
     let policy_path = paths.dot_forum.join("policy.toml");
+    let repo_root = paths.dot_forum.parent();
     if policy_path.exists() {
         let text = std::fs::read_to_string(&policy_path)
             .map_err(|e| ForumError::Config(format!("cannot read policy.toml: {e}")))?;
-        plan.policy_warnings = scan_at_least_one_summary(&policy_path, &text);
+        plan.policy_warnings = scan_at_least_one_summary(&policy_path, repo_root, &text);
         plan.policy_rewrites = plan_policy_rewrites(&text);
     }
 
     // Subcommand-grouping scan.
-    plan.script_warnings = scan_subcommand_groupings(&paths.dot_forum)?;
+    plan.script_warnings = scan_subcommand_groupings(&paths.dot_forum, repo_root)?;
 
     Ok(plan)
 }
@@ -472,8 +474,11 @@ fn print_summary(outcome: &MigrationOutcome, dry_run: bool) {
 
 /// SPEC-2.0 §10.1: lines mentioning the removed `at_least_one_summary`
 /// predicate produce a warning naming the source file + line number.
-fn scan_at_least_one_summary(path: &Path, text: &str) -> Vec<String> {
-    let display = path.display();
+/// `repo_root` controls path display per #6k7hq482 — paths inside the
+/// repo render relative; outside paths fall back to absolute with an
+/// inline note.
+fn scan_at_least_one_summary(path: &Path, repo_root: Option<&Path>, text: &str) -> Vec<String> {
+    let display = format_path_repo_relative(path, repo_root);
     text.lines()
         .enumerate()
         .filter(|(_, l)| l.contains("at_least_one_summary"))
@@ -642,7 +647,14 @@ pub fn rewrite_policy_text(input: &str) -> (String, Vec<String>) {
 /// Recursively scan `.forum/` for shipped helper scripts/READMEs that
 /// invoke the kind-prefixed subcommand groupings. Each line of each match
 /// becomes a separate warning with file:line context.
-pub fn scan_subcommand_groupings(root: &Path) -> ForumResult<Vec<String>> {
+///
+/// `repo_root` controls path display per #6k7hq482 — paths inside the
+/// repo render relative; paths outside fall back to absolute with an
+/// inline `(outside repo root)` note.
+pub fn scan_subcommand_groupings(
+    root: &Path,
+    repo_root: Option<&Path>,
+) -> ForumResult<Vec<String>> {
     if !root.exists() {
         return Ok(Vec::new());
     }
@@ -674,7 +686,7 @@ pub fn scan_subcommand_groupings(root: &Path) -> ForumResult<Vec<String>> {
                         "{}:{}: legacy kind-prefixed subcommand `{form}` — \
                          use the top-level form (`git forum {} <kind>` etc.). \
                          Removed in 2.0 per SPEC-2.0 §10.2 / RFC-nm3d31yk Q1.",
-                        path.display(),
+                        format_path_repo_relative(&path, repo_root),
                         idx + 1,
                         top_level_equivalent(&form),
                     ));
@@ -956,9 +968,26 @@ requires = []
     fn scan_at_least_one_summary_names_lines() {
         let path = Path::new(".forum/policy.toml");
         let text = "[a]\nrequires = [\"at_least_one_summary\"]\n";
-        let warnings = scan_at_least_one_summary(path, text);
+        let warnings = scan_at_least_one_summary(path, None, text);
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains(".forum/policy.toml:2"));
+    }
+
+    #[test]
+    fn scan_at_least_one_summary_renders_path_repo_relative() {
+        // #6k7hq482: when the policy path is absolute and a repo root is
+        // known, the warning must strip the host-absolute prefix.
+        let root = Path::new("/tmp/repo");
+        let path = root.join(".forum/policy.toml");
+        let text = "[a]\nrequires = [\"at_least_one_summary\"]\n";
+        let warnings = scan_at_least_one_summary(&path, Some(root), text);
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].starts_with(".forum/policy.toml:2:"),
+            "expected repo-relative prefix; got: {}",
+            warnings[0]
+        );
+        assert!(!warnings[0].contains("/tmp/repo"));
     }
 
     #[test]

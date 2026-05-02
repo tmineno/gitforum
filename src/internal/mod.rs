@@ -20,6 +20,7 @@ pub mod id;
 pub mod id_alloc;
 pub mod index;
 pub mod init;
+pub mod lint_emit;
 pub mod ls;
 pub mod migrate;
 pub mod node;

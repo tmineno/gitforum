@@ -25,6 +25,7 @@ use git_forum::internal::github_import;
 use git_forum::internal::hook;
 use git_forum::internal::index;
 use git_forum::internal::init;
+use git_forum::internal::lint_emit::{self, LintEmitter};
 use git_forum::internal::ls;
 use git_forum::internal::operation_check;
 use git_forum::internal::policy::Policy;
@@ -1103,6 +1104,18 @@ fn main() -> Result<(), ForumError> {
         println!();
         std::process::exit(2);
     };
+
+    // Install the throttled lint emitter as early as possible so the
+    // first Policy::load anywhere downstream renders paths repo-relative
+    // and honours the on-disk suppression cache. Failure to discover a
+    // repo (e.g. running `git forum --help` outside a repo) is fine —
+    // we fall back to the in-memory default emitter (#6k7hq482).
+    if let Ok(git) = GitOps::discover() {
+        if let Ok(git_dir) = git.git_dir() {
+            let paths = RepoPaths::from_repo_root_and_git_dir(git.root(), &git_dir);
+            lint_emit::install(LintEmitter::new_for_paths(&paths));
+        }
+    }
 
     let clock = SystemClock;
 
