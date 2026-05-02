@@ -1118,7 +1118,6 @@ open objections: 0
 open actions:    0
 nodes:           5
 links:           2 (relates-to @a3f9b2k1, relates-to @b1c3d2e4)
-has summary:     yes
 
 $ git forum accept @x9k2 --approve human/alice --as ai/claude
 state: review -> done
@@ -1250,10 +1249,11 @@ ID        TITLE                                              TAGS              U
 @x9k2m4   Replace LIKE scan with FTS5 in search index        cross-cutting     2026-04-30
 
 $ git forum search "FTS5"
-@x9k2m4  rfc      done   Replace LIKE scan with FTS5 in search index
-@y3p7n2  task     done   Add FTS5 schema and index builder
-@z6m8r1  task     open   Switch search_threads to use the FTS5 index
-@q8w2e1  dec      done   FTS5 tokenizer: unicode61 with remove_diacritics
+ID        KIND      STATUS  TITLE
+@x9k2m4   rfc       done    Replace LIKE scan with FTS5 in search index
+@y3p7n2   task      done    Add FTS5 schema and index builder
+@z6m8r1   task      open    Switch search_threads to use the FTS5 index
+@q8w2e1   dec       done    FTS5 tokenizer: unicode61 with remove_diacritics
 
 $ git forum doctor
 forum config        OK
