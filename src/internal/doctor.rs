@@ -1,11 +1,11 @@
 use super::config::RepoPaths;
 use super::error::ForumResult;
+use super::event::normalize_state_name;
 use super::git_ops::GitOps;
 use super::hook;
 use super::index;
 use super::init;
 use super::refs;
-use super::event::normalize_state_name;
 use super::thread;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -3061,14 +3061,7 @@ fn run_canonical_thread_new(
     // restated in lifecycle terms).
     if let Some((source_id, source_lifecycle)) = source_thread {
         evidence::add_thread_link(&git, &thread_id, &source_id, "supersedes", &actor, clock)?;
-        evidence::add_thread_link(
-            &git,
-            &source_id,
-            &thread_id,
-            "superseded-by",
-            &actor,
-            clock,
-        )?;
+        evidence::add_thread_link(&git, &source_id, &thread_id, "superseded-by", &actor, clock)?;
         let proposal_supersede =
             source_lifecycle == Lifecycle::Proposal && lifecycle == Lifecycle::Proposal;
         if proposal_supersede {
