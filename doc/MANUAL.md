@@ -1,12 +1,21 @@
 # Manual
 
-> **2.0 vocabulary note.** Threads carry a `lifecycle` facet
-> (`proposal` / `execution` / `record`) and a free-form `tags` set. The 1.x
-> `kind` (`ask`/`rfc`/`dec`/`job`) lives on as an everyday preset shortcut
-> mapped to a (lifecycle, tags) pair, but the kind-prefixed *subcommand
-> groupings* (`git forum rfc new`, `git forum issue close`, etc.) were
-> removed in 2.0 — invoking them prints a hard error pointing at the
-> top-level form. See SPEC-2.0 §9 / §10.2 / ADR-002 / ADR-004.
+> **2.0 vocabulary.** A thread carries one required facet — `lifecycle`
+> (`proposal` / `execution` / `record`) — plus free-form `tags`. The four
+> 1.x kinds (`rfc`, `dec`, `task`, `issue`/`ask`/`bug`) live on as
+> top-level **presets** that produce the conventional (lifecycle, tags)
+> pair (SPEC-2.0 §9.1). Discussion uses four canonical node types —
+> `comment`, `approval`, `objection`, `action` — chosen by protocol
+> effect (SPEC-2.0 §2.5 / ADR-006). Thread states are unified across
+> lifecycles: `draft`, `open`, `working`, `review`, `done`, `rejected`,
+> `withdrawn`, `deprecated` (SPEC-2.0 §3.1). Thread IDs display as
+> `@XXXXXXXX` and store as the bare 8-char base36 token (SPEC-2.0 §6).
+>
+> The kind-prefixed *subcommand groupings* (`git forum rfc new`,
+> `git forum issue close`, etc.) were removed in 2.0 — invoking them
+> prints a hard error pointing at the top-level form. Legacy 1.x thread
+> IDs (`RFC-…`, `ASK-…`, `DEC-…`, `JOB-…`) keep resolving via the alias
+> table after `git forum migrate`.
 
 ## Quick Reference
 
@@ -14,6 +23,7 @@
 # create — kind preset (everyday)
 git forum new <kind> "Title" [--body "..."|--edit]   Create via kind preset
                                                      (rfc/dec/task/issue/bug)
+                                                     → maps to (lifecycle, tags)
 
 # create — canonical (power-user, scriptable; SPEC-2.0 §9.1)
 git forum thread new "Title" --lifecycle <L> [--tag <T>]...
@@ -21,7 +31,11 @@ git forum thread new "Title" --lifecycle <L> [--tag <T>]...
                                                      lifecycle + tags
 
 # inspect
-git forum ls [--kind <kind>]                       List threads
+git forum ls [--lifecycle <L>] [--tag <T>] [--status <S>] [--branch <B>]
+                                                   List threads
+git forum ls --kind <kind>                         Filter by preset (legacy
+                                                   alias for the equivalent
+                                                   --lifecycle/--tag pair)
 git forum show <ID>                                Show thread details
 git forum show <ID> --what-next                    Show valid next actions
 git forum show <ID> --compact                      Compact single-line view
@@ -53,7 +67,7 @@ git forum resolve <ID> <NODE_ID>                   Resolve a node
 git forum retract <ID> <NODE_ID>                   Retract a node
 git forum reopen <ID> <NODE_ID>                    Reopen a node
 
-# state (canonical + lifecycle-aware shorthands; SPEC-2.0 §9.3)
+# state (unified machine + lifecycle-aware shorthands; SPEC-2.0 §3.1 / §9.3)
 git forum state <ID> <state>                       Change thread state
 git forum state <ID> <state> --approve human/alice State change with approval
 git forum state <ID> <state> --comment "Done"      State change with comment
@@ -65,7 +79,7 @@ git forum accept <ID> --approve human/alice        proposal/record: -> done;
 git forum propose <ID>                             proposal: draft -> open
 git forum pend <ID>                                execution: -> working
 git forum reject <ID>                              any lifecycle: -> rejected
-git forum withdraw <ID>                            proposal: -> withdrawn
+git forum withdraw <ID>                            proposal: draft|open -> withdrawn
 git forum deprecate <ID>                           any lifecycle: -> deprecated
 
 # evidence & links
@@ -99,13 +113,29 @@ git forum purge --actor <ACTOR_ID>                 Purge all events by actor
 
 ## Conventions
 
-- thread kind presets (lifecycle + conventional tag): `rfc` (proposal+cross-cutting),
-  `dec` (record), `task` (execution+task; alias `job`), `issue` (execution+bug;
-  aliases `ask`, `bug`). Presets are the everyday CLI surface and are not on
-  any removal schedule (SPEC-2.0 §9.1).
-- thread IDs: opaque `KIND-XXXXXXXX` (e.g. `RFC-a7f3b2x1`) for new threads; legacy sequential `KIND-NNNN` (e.g. `ASK-0001`) also accepted. Unambiguous prefixes work (e.g. `RFC-a7f3`).
-- node IDs: printed by shorthand node commands (e.g. `claim`, `question`); canonical IDs are Git commit OIDs of the say event
-- CLI/TUI displays of node and event OIDs usually show the first 16 characters
+- thread classification — one required facet (`lifecycle`) and free-form `tags`. The four
+  kind presets emit the conventional pair:
+
+  | Preset            | `lifecycle`  | conventional tag |
+  |-------------------|--------------|------------------|
+  | `new rfc`         | `proposal`   | `cross-cutting`  |
+  | `new dec`         | `record`     | (none)           |
+  | `new task`        | `execution`  | `task`           |
+  | `new issue`/`bug` | `execution`  | `bug`            |
+
+  Presets are not on any removal schedule (SPEC-2.0 §10.2); they are the everyday surface.
+  Repositories that need other (lifecycle, tag) combinations use the canonical
+  `git forum thread new --lifecycle <L> --tag <T>...` form.
+- thread IDs:
+  - **Display form** is `@XXXXXXXX` (8 base36 chars, e.g. `@a7f3b2x1`); the `@` is shell-safe and
+    purely a display marker — every CLI position also accepts the bare token (`a7f3b2x1`).
+  - **Storage form** is the bare token under `refs/forum/threads/`.
+  - Unambiguous prefixes (≥4 chars after `@`) are accepted (e.g. `@a7f3`).
+  - Legacy 1.x IDs (`RFC-XXXXXXXX`, `ASK-NNNN`, `DEC-…`, `JOB-…`) keep resolving via the alias
+    table after `git forum migrate` (SPEC-2.0 §10.1 / §6.2).
+- node IDs: printed by node commands (e.g. `comment`, `objection`); canonical IDs are Git
+  commit OIDs of the say event.
+- CLI/TUI displays of node and event OIDs usually show the first 16 characters.
 - node IDs in CLI arguments:
   - full IDs always work
   - if there is no exact match, a unique prefix of at least 8 characters is accepted
@@ -132,37 +162,46 @@ git-forum uses a **trust-based** identity model:
 
 These trade-offs keep the tool lightweight and Git-native. Cryptographic signing of events and approvals is planned as a future extension. Until then, git-forum is best suited for teams where repository access already implies a baseline of trust.
 
-## Thread kinds
+## Picking a kind preset
 
-Before creating a thread, select the appropriate kind:
+The four presets are everyday shortcuts onto (lifecycle, tags). Pick by what kind of progression
+the work goes through:
 
-| If the work...                                    | Use   |
-|---------------------------------------------------|-------|
-| Affects multiple teams, hard to reverse            | rfc   |
-| Is a local design decision worth recording         | dec   |
-| Is an implementable unit of work with clear scope  | job   |
-| Is a bug report or feature request                 | ask   |
+| If the work...                                     | Use     | Underlying facets               |
+|----------------------------------------------------|---------|---------------------------------|
+| Affects multiple teams, hard to reverse            | `rfc`   | `proposal` + `cross-cutting`    |
+| Is a local design decision worth recording         | `dec`   | `record`                        |
+| Is an implementable unit of work with clear scope  | `task`  | `execution` + `task`            |
+| Is a bug report or a small request                 | `bug` / `issue` | `execution` + `bug`     |
 
 Rules of thumb:
-- If you are comparing alternatives → dec
-- If you are defining acceptance criteria → job
-- If you need cross-team sign-off → rfc
-- If something is broken or missing → ask
-- When in doubt between dec and rfc, start with dec — it can be escalated to an rfc later
-- When in doubt between job and ask, prefer job if you know the implementation path
 
-DEC threads should include at least one `alternative` node documenting what was not chosen.
-JOB threads should include `assumption` nodes for any dependencies the work relies on.
+- If you are comparing alternatives → `dec`.
+- If you are defining acceptance criteria → `task`.
+- If you need cross-team sign-off → `rfc`.
+- If something is broken or missing → `bug`.
+- When in doubt between `dec` and `rfc`, start with `dec` — it can be elevated to an RFC later
+  with `--from-thread`.
+- When in doubt between `task` and `bug`, prefer `task` if you know the implementation path.
 
-Use `git forum node add <ID> --type alternative "..."` and `--type assumption "..."` to create these nodes.
+For arbitrary (lifecycle, tag) combinations beyond the four presets — e.g. an
+`execution` thread tagged neither `task` nor `bug`, or a `proposal` that is not
+`cross-cutting` — use the canonical form:
 
-Agents are participants, not a separate control plane. For cross-cutting alignment, start with an RFC. For team-internal design reasoning, use a DEC. Break implementation into JOBs. Track bugs and requests as ASKs.
+```bash
+git forum thread new "Title" --lifecycle execution --tag spike
+git forum thread new "Title" --lifecycle proposal                    # no tag
+```
+
+Agents are participants, not a separate control plane. Use the same presets and the same
+canonical commands.
 
 ## Create threads
 
-### RFC
+### RFC (`lifecycle=proposal`, `tag=cross-cutting`)
 
-Use RFCs to frame work before implementation starts.
+Use RFCs to frame work before implementation starts. RFCs follow the proposal lifecycle:
+`draft → open → review → done` (or `rejected` / `withdrawn`).
 
 ```bash
 git forum new rfc "Switch solver backend to trait objects"
@@ -173,79 +212,87 @@ git forum new rfc "Switch solver backend to trait objects" --body-file ./tmp/rfc
 git forum new rfc "Switch solver backend to trait objects" --edit
 ```
 
-### DEC (Decision Record)
+### DEC (`lifecycle=record`)
 
-Use DECs to record local design decisions worth preserving. Requires a body.
+Use DECs to record local design decisions worth preserving. Records have a short lifecycle —
+`open → done` (or `rejected` / `deprecated`); they skip `working` and `review` entirely.
+Default policy requires a body with `Context` / `Decision` / `Rationale` / `Impact`.
 
 ```bash
 git forum new dec "Use Redis over Memcached" --body-file ./tmp/dec.md
-git forum node add DEC-0001 --type alternative "Memcached: simpler, but no pub/sub"
-git forum node add DEC-0001 --type assumption "Redis cluster available in prod"
-git forum state DEC-0001 accepted
+git forum comment @<dec-id> "Alternative: Memcached — simpler, but no pub/sub."
+git forum comment @<dec-id> "Assumption: Redis cluster available in prod."
+git forum close @<dec-id>                # open -> done
 ```
 
-DEC lifecycle: `proposed` → `accepted` / `rejected` → `deprecated`
+If you previously used `node add --type alternative` / `--type assumption` for DECs, those
+types are aliased to `comment` for one minor release with a deprecation warning (ADR-006);
+record the same content in a `comment` body, optionally prefixed `Alternative:` / `Assumption:`.
 
-### JOB
+### Task (`lifecycle=execution`, `tag=task`)
 
-Use JOBs for implementable work units with clear scope.
+Use tasks for implementable work units with clear scope. Default policy requires a body with
+`Background` / `Acceptance criteria` sections.
 
-> **Alias:** `task` still works as an alias for `job` in all commands.
+> **Alias:** `job` still works as an alias for `task` in all commands.
 
 ```bash
-git forum new job "Implement Redis cache client wrapper"
-git forum state JOB-0001 designing
-git forum state JOB-0001 implementing
-git forum state JOB-0001 reviewing
-git forum state JOB-0001 closed
+git forum new task "Implement Redis cache client wrapper"
+git forum pend @<task-id>                         # open -> working
+git forum state @<task-id> review                 # working -> review
+git forum close @<task-id>                        # review -> done
 
-# Fast-track for trivial jobs:
-git forum new job "Add cache-control headers"
-git forum state JOB-0002 closed
+# Fast-track for a trivial change that doesn't need a working/review pass:
+git forum new task "Add cache-control headers"
+git forum close @<task-id>                        # open -> done (allowed by execution lifecycle)
 ```
 
-JOB lifecycle: `open` → `designing` → `implementing` → `reviewing` → `closed`
-Back-transitions: `implementing` → `designing`, `reviewing` → `implementing`
-Fast-track: `open` → `closed` (for trivial jobs)
+Execution lifecycle states: `open → working → review → done` (or `rejected` / `deprecated`).
+Permissive edges (`open → done`, `working → done`) exist for trivial closes; the project's
+policy decides which path is required for which tag (SPEC-2.0 §3.1.1).
 
-### Ask
+### Bug / issue (`lifecycle=execution`, `tag=bug`)
 
-Use asks for implementation work, especially when code or a branch is involved.
+Use bugs for short observation-style execution threads — bug reports, small requests, anything
+that doesn't need a structured body up front.
 
-> **Alias:** `issue` still works as an alias for `ask` in all commands.
+> **Aliases:** `issue` and `ask` still work as aliases for `bug` in all commands.
 
 ```bash
-git forum new ask "Implement trait backend"
-git forum new ask "Implement trait backend" --body "Initial implementation checklist"
-git forum new ask "Implement trait backend" --body -
-git forum new ask "Implement trait backend" --body-file ./tmp/issue.md
-git forum new ask "Implement trait backend" --edit
-git forum new ask "Implement trait backend" --branch feat/trait-backend
-git forum new ask "Implement trait backend" \
-  --link-to RFC-0001 --rel implements
+git forum new bug "Implement trait backend"
+git forum new bug "Implement trait backend" --body "Initial implementation checklist"
+git forum new bug "Implement trait backend" --body -
+git forum new bug "Implement trait backend" --body-file ./tmp/issue.md
+git forum new bug "Implement trait backend" --edit
+git forum new bug "Implement trait backend" --branch feat/trait-backend
+git forum new bug "Implement trait backend" \
+  --link-to @<rfc-id> --rel implements
 git forum new rfc "Error handling" \
-  --claim "All errors should be typed" --action "Define error enum"
+  --comment "All errors should be typed" --action "Define error enum"
 ```
 
-`--body -` reads the initial body from standard input, so you can avoid creating a temporary file.
-`--edit` opens `$VISUAL` / `$EDITOR` / `vi` for interactive body composition. Lines starting with
-`#` are stripped. Empty content aborts the command. `--edit` conflicts with `--body` and
-`--body-file`. `--edit` requires an interactive terminal; in scripts or agent workflows, use
-`--body`, `--body-file`, or `--body -` instead.
+`--body -` reads the initial body from standard input. `--edit` opens
+`$VISUAL` / `$EDITOR` / `vi` for interactive body composition. Lines starting with `#` are
+stripped. Empty content aborts the command. `--edit` conflicts with `--body` / `--body-file`
+and requires an interactive terminal; in scripts or agent workflows, use `--body`,
+`--body-file`, or `--body -`.
 
 ### Inline nodes at creation
 
-Thread creation accepts `--claim`, `--question`, `--objection`, `--action`, `--risk`, and
-`--summary` flags to add nodes immediately after creating the thread. Each flag may be repeated:
+Thread creation accepts inline node flags that are appended immediately after the thread is
+created. `--objection` and `--action` create canonical 2.0 node types. The 1.x flags
+`--claim`, `--question`, `--summary`, `--risk` continue to work for one minor release with a
+deprecation warning; under the hood each writes a `comment` node with `legacy_subtype`
+preserved (ADR-006). Each flag may be repeated:
 
 ```bash
 git forum new rfc "Caching layer" --body "Goal and constraints." \
   --claim "LRU eviction with 10-min TTL" \
   --action "Benchmark cache hit ratio" \
-  --risk "Memory pressure under load"
+  --risk  "Memory pressure under load"
 ```
 
-This is equivalent to running `new rfc` followed by separate `claim`, `action`, and `risk` commands.
+This is equivalent to running `new rfc` followed by separate `comment` and `action` commands.
 `--branch <BRANCH>` binds the new thread to an existing Git branch.
 `--link-to <THREAD_ID> --rel <REL>` creates the thread and immediately records one or more links
 from the new thread to existing threads.
@@ -253,8 +300,8 @@ from the new thread to existing threads.
 ### Create from a commit
 
 ```bash
-git forum new ask --from-commit HEAD
-git forum new ask --from-commit abc123 --link-to RFC-0001 --rel implements
+git forum new bug --from-commit HEAD
+git forum new bug --from-commit abc123 --link-to @<rfc-id> --rel implements
 ```
 
 `--from-commit <REV>` uses the commit subject as the title, the commit body as the thread body,
@@ -263,81 +310,93 @@ and automatically adds the commit as evidence. An explicit title argument overri
 ### Create from another thread
 
 ```bash
-git forum new rfc --from-thread RFC-0003
-git forum new ask --from-thread ASK-0001
-git forum new rfc --from-thread ASK-0005 "Custom title"
+git forum new rfc --from-thread @<source-rfc-id>
+git forum new bug --from-thread @<source-bug-id>
+git forum new rfc --from-thread @<source-bug-id> "Custom title"
 ```
 
 `--from-thread <THREAD_ID>` copies the title (prefixed with `v2: `) and body from the source
 thread and creates bidirectional `supersedes` / `superseded-by` links. An explicit title argument
 overrides the default title.
 
-Behavior depends on the source and target kinds:
+Behavior depends on the source and target presets:
 
 - **RFC → new RFC**: source RFC is auto-deprecated (supersession).
-- **Ask → new ask**: source ask is unchanged (respin/split). Prints a hint to close the source.
-- **Ask → new RFC**: source ask is unchanged (elevation to formal proposal). Prints a hint to close the source.
-- **RFC → new ask**: not allowed — use `git forum link --rel implements` instead.
+- **Bug → new bug**: source bug is unchanged (respin/split). Prints a hint to close the source.
+- **Bug → new RFC**: source bug is unchanged (elevation to formal proposal). Prints a hint to close the source.
+- **RFC → new bug/task**: not allowed — use `git forum link --rel implements` instead.
 
-### List by kind
+### Filter the thread list
 
 ```bash
-git forum ls --kind ask
-git forum ls --kind ask --branch feat/trait-backend
-git forum ls --kind rfc
-git forum ls dec                                   # positional shorthand
-git forum ls job
+git forum ls --lifecycle proposal
+git forum ls --lifecycle execution --tag bug
+git forum ls --tag cross-cutting --branch feat/trait-backend
+git forum ls --kind rfc                            # legacy alias; auto-translates
+git forum ls dec                                   # positional preset shorthand
 ```
 
 The kind-prefixed *subcommand groupings* (`git forum issue ls`, `git forum rfc ls`,
 etc.) were **removed** in 2.0 (SPEC-2.0 §10.2). Invoking them prints a hard
-error pointing at the top-level form (`git forum ls --kind issue`).
-`--kind issue` / `--kind task` aliases still resolve via the preset table.
+error pointing at the top-level form (`git forum ls --lifecycle execution --tag bug`).
+`--kind` continues to resolve via the preset table for the four conventional combinations.
+
+The `ls` output column header is `LIFECYCLE`. Tags are rendered as a leading bracket prefix on
+the title cell when non-empty, e.g. `[bug] search is slow`.
 
 ## Structured discussion
 
 ### Add a node
 
-Each node type has a dedicated shorthand command.
-All node commands accept a positional body argument, `--body-file`, `--edit`, and `--as`. Pass `"-"` as the
-positional body to read from stdin. Use `--edit` to compose in `$EDITOR`.
+Discussion is recorded as four canonical typed nodes — `comment`, `approval`, `objection`,
+`action` — chosen by **protocol effect** (SPEC-2.0 §2.5):
+
+| Node type    | Protocol effect |
+|--------------|-----------------|
+| `comment`    | None — body-prose contribution. Carries questions, summaries, observations, risks, reviews, and decision rationale in body text. |
+| `approval`   | Positive — counts toward state-transition guards (e.g. `one_human_approval`). Typically appended via the `--approve <ACTOR>` flag on a state-change command. |
+| `objection`  | Negative — blocks state transitions until `resolve`d. |
+| `action`     | Obligation — creates a tracked work item that must be `resolve`d before terminal states. |
+
+`evidence` is a separate first-class concept attached via `evidence add`; it is intentionally
+outside the node taxonomy.
+
+Each canonical node type has a dedicated shorthand command. All node commands accept a
+positional body argument, `--body-file`, `--edit`, and `--as`. Pass `"-"` as the positional body
+to read from stdin. Use `--edit` to compose in `$EDITOR`.
 
 ```bash
-git forum claim RFC-0001 "Need a stable plugin-facing boundary."
-git forum question RFC-0001 "What compatibility risks remain?"
-git forum objection RFC-0001 "Benchmarks are missing."
-git forum summary RFC-0001 "Direction is sound, but migration evidence is missing."
-git forum action ASK-0001 "Add branch-local benchmark fixture."
-git forum risk ASK-0001 "Parser behavior may diverge under edge inputs."
-git forum review RFC-0001 "Overall analysis of the RFC."
-git forum objection RFC-0001 --body-file ./tmp/detailed-objection.md
-git forum claim RFC-0001 --body -
-git forum review RFC-0001 --edit
+git forum comment   @<rfc-id> "Need a stable plugin-facing boundary."
+git forum comment   @<rfc-id> "Q: what compatibility risks remain?"
+git forum objection @<rfc-id> "Benchmarks are missing."
+git forum action    @<task-id> "Add branch-local benchmark fixture."
+git forum comment   @<rfc-id> "Direction is sound; migration evidence is missing."
+git forum objection @<rfc-id> --body-file ./tmp/detailed-objection.md
+git forum comment   @<rfc-id> --body -
 ```
 
-Valid node types:
+The 1.x rhetorical types — `claim`, `question`, `summary`, `risk`, `review`, `alternative`,
+`assumption` — were collapsed into `comment` (ADR-006). For one minor release the old shorthand
+commands and `node add --type <legacy>` continue to work and emit a deprecation warning; under
+the hood they write a `comment` event with `legacy_subtype` preserved. Authors who relied on
+the rhetorical distinction express it in the body (e.g. start with `Q:`, `Decision:`,
+`Risk:`, `Alternative:`, `Assumption:`).
 
-- `claim`, `question`, `objection`, `evidence`, `summary`, `action`, `risk`, `review` — shorthand commands available
-- `alternative`, `assumption` — use `git forum node add` instead:
+To record an `approval`, use the `--approve <ACTOR>` flag on a state-change command (preferred)
+or `git forum node add <ID> --type approval`:
 
 ```bash
-git forum node add DEC-0001 --type alternative "Use Memcached instead"
-git forum node add JOB-0001 --type assumption "Redis cluster is available"
+git forum accept @<rfc-id> --approve human/alice          # appends approval + transitions
+git forum node add @<rfc-id> --type approval --as human/alice
 ```
 
-`review` is a holistic analysis of the entire thread, distinct from `claim` (single assertion) and
-`summary` (consensus digest). Reviews are informational and typically not resolvable.
+Policy guards key off `approval` nodes uniformly (e.g. `one_human_approval`).
 
-`summary` is not just another comment. In the default workflow it is the human-readable statement of
-what the thread currently concludes, what objections were addressed, and what is ready to move
-forward. The default policy therefore requires at least one `summary` before an RFC can move to
-`accepted`.
-
-On success, the command prints the node ID to stdout and a next-actions hint to stderr:
+On success, each node command prints the node ID to stdout and a next-actions hint to stderr:
 
 ```text
-Added question 6f1d2c3b4a5e67890123456789abcdef01234567
-  next: proposed, rejected
+Added comment 6f1d2c3b4a5e67890123456789abcdef01234567
+  next: review, rejected, withdrawn
   open: 1 open objection(s)
 ```
 
@@ -348,7 +407,7 @@ The hint shows valid state transitions and open items. Suppress with `2>/dev/nul
 Use `retype` to change the type of an existing node:
 
 ```bash
-git forum retype RFC-0001 6f1d2c3b --type claim
+git forum retype @<rfc-id> 6f1d2c3b --type comment
 ```
 
 The old type is recorded in the event for auditability. Accepts `--as` and `--force`.
@@ -356,53 +415,51 @@ The old type is recorded in the event for auditability. Accepts `--as` and `--fo
 ### Revise a node
 
 ```bash
-git forum revise node RFC-0001 6f1d2c3b4a5e67890123456789abcdef01234567 \
+git forum revise node @<rfc-id> 6f1d2c3b4a5e67890123456789abcdef01234567 \
   --body "What is the migration and rollback plan?"
-git forum revise node RFC-0001 6f1d2c3b \
+git forum revise node @<rfc-id> 6f1d2c3b \
   --body "What is the migration and rollback plan?"
-git forum revise node RFC-0001 6f1d2c3b --edit
+git forum revise node @<rfc-id> 6f1d2c3b --edit
 ```
 
 Use `revise node` to update an existing node when the intent is the same but the content needs
-correction. For example, revise a summary to incorporate new objections rather than adding a
-second summary node. The revision history is preserved and visible in `git forum node show`.
+correction (for example, a comment whose body is being clarified). The revision history is
+preserved and visible in `git forum node show`.
 
 ### Retract / resolve / reopen a node
 
 All three commands accept one or more node IDs:
 
 ```bash
-git forum retract RFC-0001 6f1d2c3b4a5e67890123456789abcdef01234567
-git forum resolve RFC-0001 6f1d2c3b4a5e67890123456789abcdef01234567
-git forum reopen RFC-0001 6f1d2c3b4a5e67890123456789abcdef01234567
-git forum resolve RFC-0001 6f1d2c3b
-git forum retract RFC-0001 node1 node2 node3    # retract multiple nodes
-git forum resolve RFC-0001 node1 node2          # resolve multiple nodes
+git forum retract @<rfc-id> 6f1d2c3b4a5e67890123456789abcdef01234567
+git forum resolve @<rfc-id> 6f1d2c3b4a5e67890123456789abcdef01234567
+git forum reopen  @<rfc-id> 6f1d2c3b4a5e67890123456789abcdef01234567
+git forum resolve @<rfc-id> 6f1d2c3b
+git forum retract @<rfc-id> node1 node2 node3   # retract multiple nodes
+git forum resolve @<rfc-id> node1 node2         # resolve multiple nodes
 ```
 
-- `resolve` / `reopen` are mainly for `objection` and `action`
+- `resolve` / `reopen` are mainly for `objection` and `action`.
 - `retract` is a **soft-delete**: it marks the node inactive but the original body text remains
   in git history. Anyone with repo access can read retracted content via `git log`. Do not use
   retract for removing sensitive data — there is currently no hard-delete mechanism.
 - when multiple node IDs are given, each node is processed independently; failures are reported
-  inline on stderr and the command exits non-zero if any fail
+  inline on stderr and the command exits non-zero if any fail.
 
 ### Reply to a node
 
 Use `--reply-to` to link a node as a response to an existing node:
 
 ```bash
-git forum claim RFC-0001 "Tests added, benchmark in bench/result.csv" \
+git forum comment @<rfc-id> "Tests added, benchmark in bench/result.csv" \
   --reply-to <OBJECTION_NODE_ID>
-git forum question RFC-0001 "Can you clarify X?" --reply-to <CLAIM_NODE_ID>
+git forum comment @<rfc-id> "Q: can you clarify X?" --reply-to <COMMENT_NODE_ID>
 ```
 
 `--reply-to` is accepted on all shorthand node commands. Reply chains of arbitrary depth are
 supported. `git forum show` groups reply chains into conversations for readability.
 
 ### Inspect a single node
-
-Use this when you want to inspect one node directly instead of reading the whole thread:
 
 ```bash
 git forum node show 6f1d2c3b4a5e67890123456789abcdef01234567
@@ -413,7 +470,7 @@ git forum node show 6f1d2c3b
 
 - node ID
 - the thread it belongs to
-- kind
+- type (and `legacy_subtype` for migrated 1.x nodes)
 - current state: `open`, `resolved`, `retracted`, `incorporated`
 - in reply to (if this node is a reply)
 - created_at
@@ -429,67 +486,95 @@ If a prefix is ambiguous, the command fails and prints candidate full IDs.
 ### Status
 
 ```bash
-git forum status RFC-0001
+git forum status @<rfc-id>
 ```
 
-`git forum status <THREAD_ID>` shows unresolved items grouped by type: open objections, open
-actions, and open questions.
+`git forum status <THREAD_ID>` shows unresolved items grouped by type: open objections and
+open actions.
+
+### The unified state machine
+
+A single state set replaces the four 1.x machines (SPEC-2.0 §3.1):
+
+```text
+draft   -> open | withdrawn
+open    -> working | review | done | rejected | withdrawn
+working -> review | done | rejected
+review  -> done | working | rejected
+done    -> open (reopen)  | deprecated
+rejected -> open          | deprecated
+```
+
+Per-lifecycle filters (SPEC-2.0 §3.1.1):
+
+| `lifecycle`   | Allowed states                                                   | Initial | Typical path                                |
+|---------------|------------------------------------------------------------------|---------|---------------------------------------------|
+| `proposal`    | `draft`, `open`, `review`, `done`, `rejected`, `withdrawn`, `deprecated` | `draft`   | `draft → open → review → done`             |
+| `execution`   | `open`, `working`, `review`, `done`, `rejected`, `deprecated`    | `open`    | `open → working → review → done` (task) or `open → done` (bug) |
+| `record`      | `open`, `done`, `rejected`, `deprecated`                         | `open`    | `open → done`                              |
+
+A transition whose destination is not in the lifecycle's allowed set is rejected with
+`LifecycleStateMismatch`.
 
 ### Shorthand commands
 
-State shorthands are top-level convenience aliases (verb-first):
+State shorthands are top-level convenience aliases (verb-first). Each is lifecycle-aware
+(SPEC-2.0 §9.3):
 
 ```bash
-git forum close ASK-0001
-git forum close ASK-0001 --comment "Fixed in abc123"
-git forum close ASK-0001 --link-to RFC-0001 --rel implements
-git forum close ASK-0001 --resolve-open-actions
-git forum pend ASK-0001                              # mark as pending
-git forum pend ASK-0001 --comment "Waiting on review"
-git forum state ASK-0001 open                       # thread state reopen
-git forum reject ASK-0001 --comment "Won't fix"
-git forum propose RFC-0001
-git forum accept RFC-0001 --approve human/alice
-git forum deprecate RFC-0001 --comment "Superseded by RFC-0005"
-git forum state RFC-0001 deprecated --link-to RFC-0005 --rel relates-to
+git forum close @<bug-id>                              # execution: -> done
+git forum close @<bug-id> --comment "Fixed in abc123"
+git forum close @<bug-id> --link-to @<rfc-id> --rel implements
+git forum close @<task-id> --resolve-open-actions
+git forum pend  @<task-id>                             # execution: -> working
+git forum pend  @<task-id> --comment "Waiting on review"
+git forum state @<bug-id>  open                        # reopen
+git forum reject @<bug-id> --comment "Won't fix"
+git forum propose @<rfc-id>                            # proposal: draft -> open
+git forum accept  @<rfc-id> --approve human/alice      # proposal: review -> done
+git forum withdraw @<rfc-id>                           # proposal: draft|open -> withdrawn
+git forum deprecate @<rfc-id> --comment "Superseded by @<successor-id>"
+git forum state @<rfc-id> deprecated --link-to @<successor-id> --rel relates-to
 ```
 
-Shorthand commands combine a state transition with optional `--comment` (attaches comment text to
-the state-change event's body), `--link-to` (creates links after transitioning), and `--approve`
-(records approvals).
+| Shorthand   | `lifecycle=execution` | `lifecycle=proposal`        | `lifecycle=record` |
+|-------------|-----------------------|-----------------------------|--------------------|
+| `close`     | → `done`              | (rejected: use `accept`)    | → `done`           |
+| `accept`    | (rejected: use `close`) | → `done`                  | → `done`           |
+| `propose`   | (rejected)            | → `open` (from `draft`)     | (rejected)         |
+| `pend`      | → `working`           | (rejected)                  | (rejected)         |
+| `reject`    | → `rejected`          | → `rejected`                | → `rejected`       |
+| `withdraw`  | (rejected)            | → `withdrawn` (from `draft`/`open`) | (rejected)  |
+| `deprecate` | → `deprecated`        | → `deprecated`              | → `deprecated`     |
+
+Shorthand commands combine a state transition with optional `--comment` (attaches comment text
+to the state-change event's body), `--link-to` (creates links after transitioning), and
+`--approve` (records approvals as `approval` nodes).
 
 ### Generic state command
 
 ```bash
-git forum state RFC-0001 proposed
-git forum state RFC-0001 under-review
-git forum state RFC-0001 accepted --approve human/alice
-git forum state ASK-0001 closed --resolve-open-actions
-git forum state ASK-0001 closed --comment "Done" --link-to RFC-0001 --rel implements
-git forum state bulk --to closed --branch v0.1.0
-git forum state bulk --to closed ASK-0001 ASK-0002 --dry-run
+git forum state @<rfc-id> open                                 # draft -> open
+git forum state @<rfc-id> review                               # open -> review
+git forum state @<rfc-id> done --approve human/alice
+git forum state @<task-id> done --resolve-open-actions
+git forum state @<task-id> done --comment "Done" --link-to @<rfc-id> --rel implements
+git forum state bulk --to done --branch v0.1.0
+git forum state bulk --to done @<task-1> @<task-2> --dry-run
 ```
 
-- `--approve` is recorded as an approval on the event
-- recorded approvals are not cryptographically verified in the MVP
-- `--comment` attaches comment text to the state-change event's body (visible in the timeline)
-- `--link-to` and `--rel` create thread links after the state transition
-- whether the transition succeeds depends on the state machine and policy guards
-- for RFCs, `proposed` means the author is declaring the RFC review-ready
-- for RFCs, `under-review` means active review is in progress
-- an accepted RFC is the decision record; there is no separate decision workflow in the preferred model
-- asks support `open`, `pending`, `closed`, and `rejected` states; `pending` is for
-  work-in-progress or waiting, `rejected` is for invalid or won't-fix asks, `closed` means
-  completed
-- DECs support `proposed`, `accepted`, `rejected`, and `deprecated` states
-- JOBs support `open`, `designing`, `implementing`, `reviewing`, `closed`, and `rejected` states;
-  use `git forum state JOB-0001 designing` for phase transitions
-- if policy requires `no_open_actions`, closing an ask or job with open `action` nodes fails
-- `--resolve-open-actions` is an explicit escape hatch for ask/job close; it resolves open `action`
-  nodes before writing the closing state event
+- `--approve` records an approval node on the event.
+- recorded approvals are not cryptographically verified in the MVP.
+- `--comment` attaches comment text to the state-change event's body (visible in the timeline).
+- `--link-to` and `--rel` create thread links after the state transition.
+- whether the transition succeeds depends on the unified state machine, the lifecycle filter,
+  and policy guards.
+- `--resolve-open-actions` is an explicit escape hatch for state changes that hit the
+  `no_open_actions` guard; it resolves open `action` nodes before writing the state event.
 - `state bulk` evaluates each target independently, applies successful transitions, reports
-  failures inline, and exits non-zero if any target failed
-- `state bulk --dry-run` reports what would succeed or fail without writing any events
+  failures inline, and exits non-zero if any target failed. The `--kind` filter selects threads
+  via the preset's (lifecycle, tag) pair.
+- `state bulk --dry-run` reports what would succeed or fail without writing any events.
 
 ## Search, list, show
 
@@ -497,29 +582,29 @@ git forum state bulk --to closed ASK-0001 ASK-0002 --dry-run
 
 ```bash
 git forum ls
-git forum ls --branch feat/trait-backend
-git forum show RFC-0001
-git forum show RFC-0001 --what-next
+git forum ls --lifecycle execution --tag bug --branch feat/trait-backend
+git forum show @<rfc-id>
+git forum show @<rfc-id> --what-next
 ```
 
-`git forum ls` shows `ID`, `KIND`, `STATUS`, `BRANCH`, `CREATED`, `UPDATED`, and `TITLE`.
-`--kind rfc`, `--kind ask`, `--kind dec`, or `--kind job` filters by thread kind
-(`issue` and `task` still work as aliases).
+`git forum ls` shows `ID`, `LIFECYCLE`, `STATUS`, `BRANCH`, `CREATED`, `UPDATED`, and `TITLE`.
+Tags appear as a leading bracket prefix in the title column (e.g. `[bug] …`).
+`--lifecycle` and `--tag` filter on the canonical facets; `--kind <preset>` is preserved as a
+legacy alias that resolves through the preset table.
 `--branch <BRANCH>` filters the listing to threads currently bound to that branch.
 
 ### Show thread details
 
 `git forum show <THREAD_ID>` shows:
 
-- title, kind, status
-- **next**: compact list of valid transitions with guard status (e.g. `accepted (blocked: no_open_objections), rejected, draft`)
+- title, lifecycle, tags, status
+- **next**: compact list of valid transitions with guard status (e.g. `done (blocked: no_open_objections), rejected, withdrawn`)
 - **transitions**: Unicode state diagram with current state highlighted in brackets
 - created_at, created_by, branch
 - body
 - body revisions count (if body has been revised)
 - incorporated nodes (if any)
 - open objections, open actions
-- latest summary
 - evidence, links
 - conversations (reply chains grouped by root node)
 - timeline
@@ -528,11 +613,11 @@ git forum show RFC-0001 --what-next
 rules for the current state:
 
 ```text
-RFC-0001 (under-review)
+@a7f3b2x1 (review)
 
-valid transitions: accepted, rejected, draft
+valid transitions: done, rejected, working
 
-guard check (under-review -> accepted):
+guard check (review -> done):
   [FAIL] no_open_objections -- 1 open objection(s)
 
 open objections: 1
@@ -540,11 +625,10 @@ open actions:    0
 nodes:           6
 evidence:        1
 links:           0
-has summary:     yes
 
-operation checks (state: under-review):
+operation checks (state: review):
   node types: (all allowed)
-  body revise: allowed
+  body revise: not allowed in this state
   evidence:    allowed
 ```
 
@@ -556,14 +640,14 @@ Three discoverability surfaces exist:
 
 The timeline is displayed in `date node_id event_id author type body` order.
 
-If the thread has evidence or links attached, they appear between the summary and the timeline:
+If the thread has evidence or links attached, they appear between the body and the timeline:
 
 ```text
 evidence: 1
   - a1b2c3d4  benchmark  bench/result.csv
 
 links: 1
-  - ASK-0001  implements
+  - @m2k9p4n8  implements
 ```
 
 ### Log
@@ -571,26 +655,44 @@ links: 1
 `git forum log <THREAD_ID>` shows the event timeline for a thread as a standalone command.
 
 ```bash
-git forum log RFC-0001
-git forum log RFC-0001 --reverse    # newest events first
-git forum log RFC-0001 -n 5         # last 5 events
+git forum log @<rfc-id>
+git forum log @<rfc-id> --reverse    # newest events first
+git forum log @<rfc-id> -n 5         # last 5 events
 ```
 
-This is the timeline from `git forum show` as a standalone view. `--reverse` shows newest events first. `-n N` limits to the last N events.
+This is the timeline from `git forum show` as a standalone view.
+
+### Brief
+
+```bash
+git forum brief @<rfc-id> [--json]
+```
+
+Read-only digest of one thread for AI agents and scripts that need a stable
+machine-readable surface (RFC-5wf2v8hv). **Reads only the named thread's events.** Outgoing
+links are reported as counts grouped by relation; incoming links come from the SQLite
+reverse-link index and are likewise reported as counts grouped by relation only — `brief`
+never reads a linked thread's body, title, or state.
+
+`--json` emits a stable v1 schema with `id`, `title`, `lifecycle`, `tags`, `status`,
+`created_at`, `created_by`, `branch`, `links_in`, `links_out`, `node_counts` (keyed by
+`comment` / `approval` / `objection` / `action`), `open_objections`, `open_actions`,
+`evidence_count`, and `latest_summary`.
 
 ### Search
 
 ```bash
 git forum search migration
 git forum search objection
-git forum search RFC-0001
+git forum search @<rfc-id>
+git forum search "kind:rfc"           # legacy; auto-translates to lifecycle:proposal AND tag:cross-cutting
 ```
 
 `git forum search <QUERY>` searches the local index across:
 
 - thread title
 - thread body
-- thread kind and state
+- thread lifecycle, tags, and state
 - thread ID
 - current node body
 - current node type and node ID
@@ -598,17 +700,20 @@ git forum search RFC-0001
 Results are grouped by thread. If the match came from a current node, the output includes the
 matching node under the thread row.
 
+Legacy `kind:<name>` predicates auto-translate to the equivalent `lifecycle:` / `tag:` form for
+one minor release with a deprecation warning (SPEC-2.0 §12).
+
 ## Evidence and links
 
 ### Add evidence to a thread
 
 ```bash
-git forum evidence add RFC-0001 --kind benchmark --ref bench/result.csv
-git forum evidence add ASK-0001 --kind commit --ref HEAD~1
-git forum evidence add ASK-0001 --kind commit --ref abc123def456
-git forum evidence add ASK-0001 --kind commit --ref abc123 def456 789012
-git forum evidence add ASK-0001 --kind file --ref src/lib.rs
-git forum evidence add ASK-0001 --kind test --ref tests/backend_trait.rs
+git forum evidence add @<rfc-id> --kind benchmark --ref bench/result.csv
+git forum evidence add @<task-id> --kind commit --ref HEAD~1
+git forum evidence add @<task-id> --kind commit --ref abc123def456
+git forum evidence add @<task-id> --kind commit --ref abc123 def456 789012
+git forum evidence add @<task-id> --kind file --ref src/lib.rs
+git forum evidence add @<task-id> --kind test --ref tests/backend_trait.rs
 ```
 
 `--ref` accepts multiple values in a single command. Each ref creates its own evidence event.
@@ -628,13 +733,13 @@ Evidence added (a1b2c3d4)
 
 ### Linking implementation commits
 
-After implementing work on a branch, link the commits back to the RFC or ask so that the
+After implementing work on a branch, link the commits back to the RFC or task so that the
 decision trail connects to the code:
 
 ```bash
-git forum evidence add ASK-0001 --kind commit --ref HEAD
-git forum evidence add ASK-0001 --kind test --ref tests/cache_test.rs
-git forum evidence add ASK-0001 --kind thread --ref RFC-0001
+git forum evidence add @<task-id> --kind commit --ref HEAD
+git forum evidence add @<task-id> --kind test   --ref tests/cache_test.rs
+git forum evidence add @<task-id> --kind thread --ref @<rfc-id>
 ```
 
 `--kind commit --ref` accepts any Git revision expression (SHA, branch, tag, `HEAD~1`). The
@@ -643,30 +748,31 @@ resolved commit OID is stored canonically.
 ### Link two threads
 
 ```bash
-git forum link ASK-0001 RFC-0001 --rel implements
-git forum link ASK-0002 ASK-0001 --rel depends-on
-git forum link ASK-0003 ASK-0002 --rel blocks
-git forum link RFC-0002 RFC-0001 --rel relates-to
+git forum link @<task-id> @<rfc-id>     --rel implements
+git forum link @<task-2>  @<task-1>     --rel depends-on
+git forum link @<task-3>  @<task-2>     --rel blocks
+git forum link @<rfc-2>   @<rfc-1>      --rel relates-to
 ```
 
 On success:
 
 ```text
-ASK-0001 -> RFC-0001 (implements)
+@m2k9p4n8 -> @a7f3b2x1 (implements)
 ```
 
 `--rel` is currently free-form. Common values are `implements`, `relates-to`, `depends-on`, and
-`blocks`.
+`blocks`. `git forum show <ID> --tree` walks one hop of incoming `--rel implements` references
+as an advisory display (SPEC-2.0 §2.1 / §9.1).
 
 ### Bind a thread to a Git branch
 
 ```bash
-git forum branch bind ASK-0001 feat/parser-rewrite
-git forum branch clear ASK-0001
+git forum branch bind @<task-id> feat/parser-rewrite
+git forum branch clear @<task-id>
 ```
 
-This updates the thread's `scope.branch`. It is most useful for issues that track implementation
-work on a feature branch, but the command is available for any thread kind.
+This updates the thread's `scope.branch`. It is most useful for execution threads that track
+implementation work on a feature branch, but the command is available for any thread.
 
 ## Body revision and diff
 
@@ -675,17 +781,17 @@ work on a feature branch, but the command is available for any thread kind.
 `body` is the default target for `revise` — the `body` keyword is optional:
 
 ```bash
-git forum revise RFC-0001 --body "Updated body text"
-git forum revise RFC-0001 --body-file ./tmp/body.md
-git forum revise RFC-0001 --body -
-git forum revise RFC-0001 --edit
-git forum revise body RFC-0001 --body "Updated body text"   # explicit, still works
+git forum revise @<rfc-id> --body "Updated body text"
+git forum revise @<rfc-id> --body-file ./tmp/body.md
+git forum revise @<rfc-id> --body -
+git forum revise @<rfc-id> --edit
+git forum revise body @<rfc-id> --body "Updated body text"   # explicit, still works
 ```
 
 `--incorporates` marks referenced nodes as incorporated into this revision:
 
 ```bash
-git forum revise RFC-0001 --body "Revised body" \
+git forum revise @<rfc-id> --body "Revised body" \
   --incorporates 6f1d2c3b --incorporates a1b2c3d4
 ```
 
@@ -697,9 +803,9 @@ Incorporated nodes appear as `incorporated` status in show output, distinct from
 After revising a thread body, use `diff` to see what changed between revisions:
 
 ```bash
-git forum diff RFC-0001                            # latest vs previous revision
-git forum diff RFC-0001 --rev 1                    # diff revision 0 vs 1
-git forum diff RFC-0001 --rev 0..2                 # diff revision 0 vs 2
+git forum diff @<rfc-id>                            # latest vs previous revision
+git forum diff @<rfc-id> --rev 1                    # diff revision 0 vs 1
+git forum diff @<rfc-id> --rev 0..2                 # diff revision 0 vs 2
 ```
 
 Revision numbering:
@@ -720,16 +826,16 @@ If the thread has no body revisions, an informative message is printed instead.
 ## Preflight and policy
 
 ```bash
-git forum verify RFC-0001
+git forum verify @<rfc-id>
 git forum policy show
 git forum policy lint
-git forum policy check RFC-0001 --transition under-review->accepted
+git forum policy check @<rfc-id> --transition review->done
 ```
 
-- `verify`: preflight check — tests whether the thread is ready for its next forward transition (not a history audit)
-- `policy show`: displays the loaded policy in human-readable format (guards, creation rules, operation checks, strict mode). Only shows configured sections — no synthesized defaults
-- `policy lint`: validates `.forum/policy.toml` — checks guard syntax, unknown states, invalid transitions, and warns when allow-lists miss entire thread kinds
-- `policy check`: dry-runs guard evaluation for a specific transition
+- `verify`: preflight check — tests whether the thread is ready for its next forward transition (not a history audit). May surface advisories about linked threads' states; the verification result is computed only from the named thread (SPEC-2.0 §9.4).
+- `policy show`: displays the loaded policy in human-readable format (guards, creation rules, operation checks, strict mode). Only shows configured sections — no synthesized defaults.
+- `policy lint`: validates `.forum/policy.toml` — checks guard syntax, unknown states, invalid transitions, and warns when allow-lists miss entire lifecycles.
+- `policy check`: dry-runs guard evaluation for a specific transition.
 
 ### The policy file
 
@@ -737,81 +843,104 @@ The policy file lives at `.forum/policy.toml`.
 
 It is created automatically by `git forum init`, and it controls:
 
-- **Transition guards** (`[[guards]]`): rules that must pass for a state transition.
-- **Operation checks** (`creation_rules`, `node_rules`, `revise_rules`, `evidence_rules`, `checks`): rules that validate write operations before committing events.
+- **Transition guards** (`[[guards]]`): rules that must pass for a state transition. Guard
+  scopes use a boolean facet expression over `lifecycle` and `tag=<value>` membership tests
+  (SPEC-2.0 §7.1).
+- **Operation checks** (`creation_rules.<lifecycle>[.tag.<name>]`, `node_rules`,
+  `revise_rules`, `evidence_rules`, `checks`): rules that validate write operations before
+  committing events.
 
-A full example:
+A 2.0 policy example:
 
 ```toml
+# Guards are scoped by facet expression. Unscoped guards apply to all threads
+# with the matching transition.
 [[guards]]
-on = "under-review->accepted"
-requires = ["one_human_approval", "at_least_one_summary", "no_open_objections"]
+on = "lifecycle=proposal AND tag=cross-cutting : review->done"
+requires = ["one_human_approval", "no_open_objections"]
 
 [[guards]]
-on = "open->closed"
+on = "lifecycle=execution : open->done"
 requires = ["no_open_actions"]
 
 [[guards]]
-on = "proposed->accepted"
+on = "lifecycle=execution AND tag=task : review->done"
+requires = ["no_open_actions", "has_commit_evidence"]
+
+[[guards]]
+on = "lifecycle=record : open->done"
 requires = ["no_open_objections"]
-
-[[guards]]
-on = "reviewing->closed"
-requires = ["no_open_actions"]
 
 [checks]
 strict = false
 
-[creation_rules.rfc]
+# Creation rules key off lifecycle, with optional `tag.<name>` specialization.
+# Most-specific match wins (creation_rules.execution.tag.task overrides
+# creation_rules.execution).
+[creation_rules.proposal]
+required_body = false
+
+[creation_rules.proposal.tag.cross-cutting]
 required_body = true
 body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
 
-[creation_rules.ask]
+[creation_rules.execution]
 required_body = false
-body_sections = []
 
-[creation_rules.dec]
+[creation_rules.execution.tag.task]
+required_body = true
+body_sections = ["Background", "Acceptance criteria"]
+
+[creation_rules.record]
 required_body = true
 body_sections = ["Context", "Decision", "Rationale", "Impact"]
 
-[creation_rules.job]
-required_body = false
-body_sections = ["Background", "Acceptance criteria", "Exceptions"]
-
 [revise_rules]
-allow_body_revise = ["draft", "proposed", "open", "pending", "designing", "implementing"]
-allow_node_revise = ["draft", "proposed", "under-review", "open", "pending", "designing", "implementing", "reviewing"]
+allow_body_revise = ["draft", "open", "working"]
+allow_node_revise = ["draft", "open", "working", "review"]
 
 [evidence_rules]
-allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "designing", "implementing", "reviewing", "closed", "accepted", "rejected", "deprecated"]
+allow_evidence = ["draft", "open", "working", "review", "done", "rejected", "deprecated"]
 ```
 
-### Guard rules
+#### Migration / compatibility notes
 
-#### Guard fields
+- 1.x kind-keyed policy keys (`creation_rules.rfc`, `[[guards]] on = "rfc:..."`, etc.)
+  auto-rewrite to lifecycle keys at config-load time with a deprecation warning. They are
+  rejected outright in 3.0 (SPEC-2.0 §10.4).
+- The 1.x guard predicate `at_least_one_summary` is **no longer shipped** in 2.0 — `summary`
+  is no longer a node type (ADR-006). Projects that need forced narrative content should use
+  `body_sections` on `creation_rules.<lifecycle>` instead. Migration emits a warning naming
+  any `policy.toml` line that still references it.
 
-- `on`: the transition that a guard block applies to, written as `from->to`
-- `requires`: the list of guard rules that must pass for that transition
+### Guard fields
+
+- `on`: the transition that a guard block applies to, written as
+  `[<facet-expr> :] from->to`. `<facet-expr>` is a boolean over `lifecycle=<value>` and
+  `tag=<value>` joined by `AND` / `OR` / `NOT`. Omitting the facet expression makes the guard
+  apply to all threads.
+- `requires`: the list of guard rules that must pass for that transition.
 
 #### Operation check fields
 
-- `[checks]`: global check settings
+- `[checks]`: global check settings.
   - `strict`: when `true`, warnings become errors (unless `--force` is used). Default: `false`.
-- `[creation_rules.<kind>]`: rules for creating threads of a given kind (e.g., `rfc`, `ask`)
-  - `required_body`: if `true`, the thread must have a non-empty body (Error if missing)
-  - `body_sections`: list of section headings to check for in the body (Warning if missing)
-- `[node_rules]`: maps state names to lists of allowed node types in that state (Error if violated). An absent state means all node types are allowed.
-- `[revise_rules]`: controls in which states revision is allowed
-  - `allow_body_revise`: list of states where body revision is allowed (Error if violated)
-  - `allow_node_revise`: list of states where node revision is allowed (Error if violated)
-- `[evidence_rules]`: controls in which states evidence can be attached
-  - `allow_evidence`: list of states where evidence attachment is allowed (Error if violated)
+- `[creation_rules.<lifecycle>]` and `[creation_rules.<lifecycle>.tag.<name>]`: rules for
+  creating threads. Most-specific match wins.
+  - `required_body`: if `true`, the thread must have a non-empty body (Error if missing).
+  - `body_sections`: list of section headings to check for in the body (Warning if missing).
+- `[node_rules]`: maps state names to lists of allowed node types in that state (Error if
+  violated). An absent state means all node types are allowed.
+- `[revise_rules]`: controls in which states revision is allowed.
+  - `allow_body_revise`: list of states where body revision is allowed (Error if violated).
+  - `allow_node_revise`: list of states where node revision is allowed (Error if violated).
+- `[evidence_rules]`: controls in which states evidence can be attached.
+  - `allow_evidence`: list of states where evidence attachment is allowed (Error if violated).
 
 ### Guard rules currently understood by the implementation
 
 - `no_open_objections`
 - `no_open_actions`
-- `at_least_one_summary`
 - `one_human_approval`
 - `has_commit_evidence`
 
@@ -820,12 +949,12 @@ allow_evidence = ["draft", "proposed", "under-review", "open", "pending", "desig
 Operation checks validate write commands against policy rules before committing events. They are
 evaluated at the CLI boundary on `new`, node commands, `revise`, and `evidence add`.
 
-| Policy section | Commands checked | What it validates |
-|----------------|------------------|-------------------|
-| `[creation_rules.<kind>]` | `new` | Required body, required body sections (headings) |
-| `[node_rules]` | `claim`, `question`, etc. | Node type allowed in the current thread state |
-| `[revise_rules]` | `revise` | Revision allowed in the current thread state |
-| `[evidence_rules]` | `evidence add` | Evidence addition allowed in the current thread state |
+| Policy section                              | Commands checked              | What it validates |
+|----------------------------------------------|-------------------------------|-------------------|
+| `[creation_rules.<lifecycle>[.tag.<name>]]`  | `new`, `thread new`           | Required body, required body sections (headings) |
+| `[node_rules]`                               | `comment`, `objection`, etc.  | Node type allowed in the current thread state |
+| `[revise_rules]`                             | `revise`                      | Revision allowed in the current thread state |
+| `[evidence_rules]`                           | `evidence add`                | Evidence addition allowed in the current thread state |
 
 **Severity model:**
 
@@ -850,20 +979,19 @@ printed to stderr regardless of `--force`.
 
 **Missing or partial policy:**
 
-- No policy file → all checks pass (no restrictions)
-- Missing policy sections → no restrictions for that check (`#[serde(default)]`)
+- No policy file → all checks pass (no restrictions).
+- Missing policy sections → no restrictions for that check (`#[serde(default)]`).
 
 ### What is enforced today
 
-- `git forum state ...` evaluates guard rules from `[[guards]]`
-- `git forum verify` is a read-only preflight that evaluates those same guard rules without changing state
-- `git forum show` displays compact next-states with guard blockers and a state diagram
-- `git forum show --what-next` displays detailed guard checks and operation check rules for the current state
-- `git forum policy show` displays the loaded policy in human-readable format
-- `git forum policy lint` validates guard transitions and detects semantic gaps in operation allow-lists
+- `git forum state ...` evaluates guard rules from `[[guards]]`.
+- `git forum verify` is a read-only preflight that evaluates those same guard rules without changing state.
+- `git forum show` displays compact next-states with guard blockers and a state diagram.
+- `git forum show --what-next` displays detailed guard checks and operation check rules for the current state.
+- `git forum policy show` displays the loaded policy in human-readable format.
+- `git forum policy lint` validates guard transitions and detects semantic gaps in operation allow-lists.
 - All write commands evaluate operation checks from `[creation_rules]`, `[node_rules]`,
-  `[revise_rules]`, and `[evidence_rules]`
-
+  `[revise_rules]`, and `[evidence_rules]`.
 
 ### What `git forum verify` actually does
 
@@ -871,11 +999,15 @@ printed to stderr regardless of `--force`.
 
 It evaluates policy guards for the thread's next forward transition:
 
-- Ask in `open` → checks guards for `open->closed`
-- RFC in `under-review` → checks guards for `under-review->accepted`
-- DEC in `proposed` → checks guards for `proposed->accepted`
-- JOB in `reviewing` → checks guards for `reviewing->closed`
+- Bug in `open` → checks guards for `open->done`
+- RFC in `review` → checks guards for `review->done`
+- DEC in `open` → checks guards for `open->done`
+- Task in `review` → checks guards for `review->done`
 - Other states → reports `ready` (no preflight target defined)
+
+It MAY surface an advisory about the state of threads linked from the verified thread (e.g.,
+"linked RFC `@1ooguji1` is not yet `done`"); this is informational only and does not affect the
+verification result (SPEC-2.0 §9.4).
 
 Use it right before an acceptance-like transition. It answers:
 "If I tried to advance this thread now, which guards would block?"
@@ -887,7 +1019,7 @@ Use it right before an acceptance-like transition. It answers:
 | See what's blocking a thread                  | `show --what-next`       | thread     |
 | Check if a thread is ready to advance         | `verify`                 | thread     |
 | Test guards for a specific transition         | `policy check`           | thread     |
-| List unresolved objections/actions/questions   | `status`                 | thread     |
+| List unresolved objections/actions            | `status`                 | thread     |
 | View the full policy rules                    | `policy show`            | repo       |
 | Validate the policy file for errors           | `policy lint`            | repo       |
 | Check repository health (config, index, refs) | `doctor`                 | repo       |
@@ -910,31 +1042,36 @@ Quick decision tree:
 git forum init
 git forum new rfc "Switch solver backend to trait objects" \
   --body "Goal, constraints, and acceptance."
-git forum claim RFC-0001 "Needed for compatibility."
-git forum question RFC-0001 "What is the migration plan?" --as ai/reviewer
-git forum objection RFC-0001 "Benchmarks are missing."
-git forum evidence add RFC-0001 --kind benchmark --ref bench/result.csv
-git forum summary RFC-0001 "Benchmarks added; objection addressed."
-git forum resolve RFC-0001 <OBJECTION_NODE_ID>
-git forum propose RFC-0001
-git forum state RFC-0001 under-review
-git forum verify RFC-0001
-git forum accept RFC-0001 --approve human/alice
-git forum new ask "Implement trait backend" --link-to RFC-0001 --rel implements
-git forum branch bind ASK-0001 feat/trait-backend
-git forum action ASK-0001 "Wire trait backend behind feature flag."
-git forum evidence add ASK-0001 --kind test --ref tests/backend_trait.rs
-git forum close ASK-0001
+# created thread @a7f3b2x1  (lifecycle=proposal, tags=cross-cutting, status=draft)
+
+git forum comment @a7f3 "Need a stable plugin-facing boundary."
+git forum comment @a7f3 "Q: what is the migration plan?" --as ai/reviewer
+git forum objection @a7f3 "Benchmarks are missing."
+git forum evidence add @a7f3 --kind benchmark --ref bench/result.csv
+git forum comment @a7f3 "Summary: benchmarks added; objection addressed."
+git forum resolve @a7f3 <OBJECTION_NODE_ID>
+git forum propose @a7f3                       # draft -> open
+git forum state @a7f3 review                  # open  -> review
+git forum verify @a7f3
+git forum accept @a7f3 --approve human/alice  # review -> done
+
+git forum new task "Implement trait backend" --link-to @a7f3 --rel implements
+# created thread @m2k9p4n8  (lifecycle=execution, tags=task, status=open)
+
+git forum branch bind @m2k9 feat/trait-backend
+git forum action @m2k9 "Wire trait backend behind feature flag."
+git forum evidence add @m2k9 --kind test --ref tests/backend_trait.rs
+git forum close @m2k9                         # working -> done (or open -> done if fast-tracked)
 ```
 
 ### AI-agent workflow
 
 The same CLI surface works for AI agents. The typical pattern is:
 
-1. A human or agent opens an RFC and adds initial claims.
+1. A human or agent opens an RFC and adds initial comments.
 2. An AI reviewer posts objections and questions using `--as ai/reviewer`.
-3. An implementer (human or agent) replies to each objection with evidence or claims.
-4. A human resolves addressed objections, adds a summary, and signs the acceptance.
+3. An implementer (human or agent) replies to each objection with evidence or a comment.
+4. A human resolves addressed objections, posts a summary comment, and signs the acceptance.
 
 ```bash
 # 1. Human opens the RFC
@@ -942,19 +1079,19 @@ git forum new rfc "Add caching layer" --body "Goal and constraints."
 
 # 2. AI reviewer raises concerns
 GIT_FORUM_ACTOR=ai/reviewer
-git forum objection RFC-0001 "No eviction strategy described."
-git forum question RFC-0001 "What is the expected cache hit ratio?"
+git forum objection @<rfc-id> "No eviction strategy described."
+git forum comment   @<rfc-id> "Q: what is the expected cache hit ratio?"
 
 # 3. Implementer responds to the objection
-git forum claim RFC-0001 "LRU eviction with 10-minute TTL." \
+git forum comment @<rfc-id> "LRU eviction with 10-minute TTL." \
   --reply-to <OBJECTION_NODE_ID>
 
 # 4. Human resolves the objection, summarizes, and accepts
-git forum resolve RFC-0001 <OBJECTION_NODE_ID>
-git forum summary RFC-0001 "Caching with LRU eviction approved."
-git forum propose RFC-0001
-git forum state RFC-0001 under-review
-git forum accept RFC-0001 --approve human/alice
+git forum resolve @<rfc-id> <OBJECTION_NODE_ID>
+git forum comment @<rfc-id> "Summary: caching with LRU eviction approved."
+git forum propose @<rfc-id>
+git forum state   @<rfc-id> review
+git forum accept  @<rfc-id> --approve human/alice
 ```
 
 **Non-interactive body input for agents:** Since agents run without a TTY, `--edit` will
@@ -962,11 +1099,13 @@ not work. Use `--body "..."` for short text, `--body-file <path>` for longer con
 pipe through stdin with `--body -`:
 
 ```bash
-echo "Detailed review body..." | git forum review RFC-0001 --body -
-cat /tmp/review.md | git forum revise RFC-0001 --body -
+echo "Detailed comment body..." | git forum comment @<rfc-id> --body -
+cat /tmp/body.md | git forum revise @<rfc-id> --body -
 ```
 
-## Concurrency
+## Concurrency and distribution
+
+### Within a clone
 
 `git-forum` uses Git's atomic ref updates (compare-and-swap) to detect concurrent writes. Each
 `write_event` call reads the current thread ref tip, creates a new commit, and atomically updates
@@ -976,7 +1115,7 @@ If two writers attempt to update the same thread simultaneously, one will succee
 fail with a clear error:
 
 ```text
-concurrent write conflict on refs/forum/threads/RFC-0001: expected <sha> but ref was updated by another writer. Retry your command.
+concurrent write conflict on refs/forum/threads/<thread-id>: expected <sha> but ref was updated by another writer. Retry your command.
 ```
 
 **Recommended patterns for parallel agent workflows:**
@@ -987,25 +1126,36 @@ concurrent write conflict on refs/forum/threads/RFC-0001: expected <sha> but ref
 - **Create vs update**: thread creation uses `create_ref` which fails if the ref already exists,
   preventing duplicate thread IDs.
 
-This is related to ISSUE-0006 (semantic merge for concurrent events), which would automatically
-resolve non-conflicting concurrent writes to the same thread.
+### Across clones
+
+Forum data lives in `refs/forum/*` and is replicated with standard `git push` and `git fetch`
+on those refs. `git-forum` does not introduce its own push / fetch protocol or cross-clone
+conflict resolution (SPEC-2.0 §8.2; CORE-VALUE.md non-goal §3).
+
+When a non-fast-forward push fails, resolve it with the standard Git workflow (fetch, rebase or
+merge the affected forum refs, re-push). `git forum doctor` reports any divergence visible in
+the local refs **informationally** — it does not enforce reconciliation.
+
+`git forum init` configures a `refs/forum/*:refs/forum/*` fetch refspec on the `origin` remote
+so that subsequent clones pick up forum data automatically.
 
 ## Per-subcommand help targets
 
 For focused reference on a specific topic, use per-subcommand `--help-llm`:
 
 ```
-git forum claim --help-llm       Node type taxonomy (10 types)
-git forum state --help-llm       State transition map (all kinds)
+git forum comment --help-llm     Node type taxonomy (4 canonical types)
+git forum state --help-llm       Unified state machine and lifecycle filter
 git forum evidence --help-llm    Evidence kinds reference (8 kinds)
 ```
 
 Per-subcommand `--help-llm` prints a focused ~200-token reference section instead of the full
-manual. All node shorthand commands (`claim`, `question`, `objection`, `summary`, `action`,
-`risk`, `review`, `alternative`, `assumption`, `node`) print the node type taxonomy. All state
-commands (`state`, `close`, `pend`, `accept`, `propose`, `reject`, `deprecate`) print the state
-transition map. `evidence` prints the evidence kinds reference. All other subcommands print
-this full manual.
+manual. All node shorthand commands (`comment`, `objection`, `action`, `node`, plus the
+deprecated `claim` / `question` / `summary` / `risk` / `review` / `alternative` /
+`assumption` aliases) print the node type taxonomy. All state commands (`state`, `close`,
+`pend`, `accept`, `propose`, `reject`, `withdraw`, `deprecate`) print the unified state
+machine and lifecycle filter. `evidence` prints the evidence kinds reference. All other
+subcommands print this full manual.
 
 ## Setup and tools
 
@@ -1036,9 +1186,35 @@ git forum doctor
 git forum reindex
 ```
 
-- `init`: creates `.forum/` and `.git/forum/`, installs git-forum hooks (commit-msg and post-checkout)
-- `doctor`: checks `.forum/` and `.git/forum/` directories exist, validates `policy.toml` syntax, verifies template files are present and non-empty, checks SQLite index health (integrity and freshness), checks for missing blob references in the git index, and replays every thread's event log to verify integrity. Reports `[ok]`, `[WARN]`, or `[FAIL]` per check; exits non-zero only on failures (warnings are informational)
-- `reindex`: rebuilds the local index from Git refs
+- `init`: creates `.forum/` and `.git/forum/`, installs git-forum hooks (commit-msg and post-checkout), configures a `refs/forum/*` fetch refspec on `origin`.
+- `doctor`: checks `.forum/` and `.git/forum/` directories exist, validates `policy.toml` syntax, verifies template files are present and non-empty, checks SQLite index health (integrity and freshness), checks for missing blob references in the git index, replays every thread's event log to verify integrity, and reports any divergence visible in local refs informationally. Reports `[ok]`, `[WARN]`, or `[FAIL]` per check; exits non-zero only on failures (warnings and advisories are informational).
+- `reindex`: rebuilds the local index from Git refs.
+
+#### Migrating from 1.x
+
+```bash
+git forum migrate --dry-run
+git forum migrate
+```
+
+`migrate` is a one-shot rewrite of a 1.x repo into the 2.0 storage format
+(SPEC-2.0 §10):
+
+- thread refs move from `refs/forum/threads/<KIND>-<token>` to
+  `refs/forum/threads/<token>`; the old name is preserved as a read-only alias
+  so external links keep resolving;
+- each thread gets a `facet_set` event populating `lifecycle` and the
+  conventional tags (`cross-cutting` for `rfc`; `bug` for `issue`/`ask`; `task`
+  for `task`/`job`);
+- 1.x states are remapped to the unified state set (`proposed → open` for
+  RFCs, `under-review → review`, `accepted → done`, `closed → done` for
+  execution and record threads, etc.);
+- 1.x node types `claim` / `question` / `summary` / `risk` / `review` /
+  `alternative` / `assumption` are rewritten to `comment` with the original
+  type preserved in `legacy_subtype`; standalone Approval events become
+  `approval` nodes; `objection`, `action`, and `evidence` are unchanged.
+- existing thread-to-thread links are preserved; they are the only grouping
+  mechanism in 2.0.
 
 #### Local configuration
 
@@ -1078,7 +1254,8 @@ An advisory hook that validates thread ID references in commit messages. Delegat
 `git-forum hook check-commit-msg <file>`, which:
 
 1. Strips Git comment lines (respecting `core.commentChar`) and scissors sections.
-2. Scans the cleaned message for thread ID patterns: both legacy sequential (`ASK-NNNN`, `RFC-NNNN`, `DEC-NNNN`, `JOB-NNNN`, `ISSUE-NNNN`, `TASK-NNNN`) and opaque content-addressed (`KIND-XXXXXXXX` where X is base36).
+2. Scans the cleaned message for thread ID patterns: 2.0 native (`@XXXXXXXX` and bare 8-char
+   base36 tokens) and legacy 1.x (`KIND-XXXXXXXX` opaque, `KIND-NNNN` sequential).
 3. Validates each referenced thread exists in `refs/forum/threads/`.
 
 **Behavior:**
@@ -1089,7 +1266,7 @@ An advisory hook that validates thread ID references in commit messages. Delegat
 
 ```text
 git-forum: commit message references non-existent thread(s):
-  ASK-9999 — not found
+  @9999z9z9 — not found
 hint: create the thread first, or remove the reference from the commit message.
 ```
 
@@ -1103,12 +1280,11 @@ Runs after `git checkout`, `git switch`, and `git worktree add`. Performs two ac
    git index, by re-hashing working-tree copies of any staged paths whose blob is missing;
    (b) HEAD's tree, by re-staging paths whose HEAD blob is missing so the next commit lands
    a fresh tree. The mechanism by which an index or HEAD-tree blob goes missing under normal
-   use is not characterized (see the `@0edk3jdm` Phase 1 investigation in the forum); `fix-index`
-   exists as defense-in-depth, not because a specific git operation is known to produce the
-   corruption. When the symptom does occur, the recovery flow is
-   `git-forum hook fix-index && git commit --no-verify` — `--no-verify` is unavoidable for one
-   commit because pre-commit's startup `git diff --diff-filter=A` probe dies on the broken
-   HEAD before any user hook can run.
+   use is not characterized; `fix-index` exists as defense-in-depth, not because a specific
+   git operation is known to produce the corruption. When the symptom does occur, the
+   recovery flow is `git-forum hook fix-index && git commit --no-verify` — `--no-verify` is
+   unavoidable for one commit because pre-commit's startup `git diff --diff-filter=A` probe
+   dies on the broken HEAD before any user hook can run.
 
 #### Hook path resolution
 
@@ -1124,8 +1300,8 @@ This is destructive: commit SHAs change and all clones must re-fetch affected re
 #### Purge a specific event
 
 ```bash
-git forum purge --thread ASK-0001 --event <SHA>
-git forum purge --thread ASK-0001 --event <SHA> --dry-run
+git forum purge --thread @<thread-id> --event <SHA>
+git forum purge --thread @<thread-id> --event <SHA> --dry-run
 ```
 
 Replaces the event's `body` and `title` with `[purged]`. All downstream commits in the thread
@@ -1152,7 +1328,7 @@ specified actor, across all threads. Use `--dry-run` first to review what would 
 
 ```bash
 git forum tui
-git forum tui RFC-0001
+git forum tui @<rfc-id>
 ```
 
 ### Display surface (SPEC-2.0)
