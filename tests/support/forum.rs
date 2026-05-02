@@ -175,7 +175,7 @@ pub fn drive_to_done(git: &GitOps, policy: &Policy, thread_id: &str) {
         if state.status == event::ThreadStatus::Done {
             break;
         }
-        let lifecycle = state.lifecycle();
+        let lifecycle = state.lifecycle;
         let path = event::find_path(lifecycle, state.status.as_str(), "done")
             .unwrap_or_else(|| panic!("no path to done from {} for {:?}", state.status, lifecycle));
         let next = path.first().expect("path is empty but state != done");

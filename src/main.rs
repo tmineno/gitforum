@@ -3082,7 +3082,7 @@ fn run_canonical_thread_new(
         // SPEC-2.0 §9.3 lifecycle-keyed restatement of 1.x §9.2: an
         // execution thread cannot supersede a proposal. Use
         // `link --rel implements` instead.
-        if source.lifecycle() == Lifecycle::Proposal && lifecycle == Lifecycle::Execution {
+        if source.lifecycle == Lifecycle::Proposal && lifecycle == Lifecycle::Execution {
             return Err(ForumError::Config(
                 "cannot create an execution thread --from-thread a proposal thread; \
                      an execution thread does not supersede a proposal. \
@@ -3092,7 +3092,7 @@ fn run_canonical_thread_new(
         }
         let t = title.unwrap_or_else(|| format!("v2: {}", source.title));
         let b = resolve_thread_body(body, body_file, edit, &edit_hint)?.or(source.body.clone());
-        (t, b, None, Some((source_id.clone(), source.lifecycle())))
+        (t, b, None, Some((source_id.clone(), source.lifecycle)))
     } else if let Some(rev) = from_commit {
         let commit_sha = git.resolve_commit(&rev)?;
         let msg = git.run(&["log", "-1", "--format=%B", &commit_sha])?;
@@ -3300,7 +3300,7 @@ fn run_state_shorthand(
     // Replay once up front to resolve the lifecycle facet — the §9.3 table
     // is keyed on lifecycle, not the legacy `kind` field.
     let pre_state = thread::replay_thread(&git, thread_id)?;
-    let target = shorthand_target_for_lifecycle(new_state, pre_state.lifecycle())?;
+    let target = shorthand_target_for_lifecycle(new_state, pre_state.lifecycle)?;
     let options = state_change::StateChangeOptions {
         resolve_open_actions,
         comment: comment.map(|s| s.to_string()),
@@ -3940,7 +3940,7 @@ fn collect_implements_children(
             Ok(child_state) => out.push(show::TreeChild {
                 id: child_state.id.clone(),
                 title: child_state.title.clone(),
-                lifecycle_label: child_state.lifecycle().as_str().to_string(),
+                lifecycle_label: child_state.lifecycle.as_str().to_string(),
                 status: child_state.status.to_string(),
             }),
             Err(_) => {

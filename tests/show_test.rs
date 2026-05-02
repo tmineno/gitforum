@@ -259,7 +259,7 @@ fn show_tree_lists_only_implements_children_not_other_relations() {
         children.push(show::TreeChild {
             id: s.id.clone(),
             title: s.title.clone(),
-            lifecycle_label: s.lifecycle().as_str().to_string(),
+            lifecycle_label: s.lifecycle.as_str().to_string(),
             status: s.status.to_string(),
         });
     }

@@ -108,7 +108,8 @@ pub fn write_facet_set(
     // was already established.
     if let Some(new_lifecycle) = lifecycle {
         let state = thread::replay_thread(git, thread_id)?;
-        if let Some(existing) = &state.lifecycle {
+        if state.lifecycle_explicit {
+            let existing = state.lifecycle.as_str();
             if existing != new_lifecycle {
                 return Err(ForumError::FacetTransitionDisallowed(format!(
                     "lifecycle is immutable after creation: thread is `{existing}`, \

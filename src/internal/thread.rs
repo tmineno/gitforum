@@ -46,11 +46,22 @@ pub struct ThreadState {
     pub body_revision_count: usize,
     /// Node IDs that have been incorporated into the body.
     pub incorporated_node_ids: Vec<String>,
-    /// SPEC-2.0 §2.3.4 / §7.3: lifecycle facet, set once on the first
-    /// `facet_set` carrying it. Immutable after creation; subsequent
-    /// `facet_set` events that carry `lifecycle` are silently ignored at
-    /// replay (write-side rejection lands in Track B).
-    pub lifecycle: Option<String>,
+    /// SPEC-2.0 §2.3.4 / §7.3: the thread's effective lifecycle.
+    ///
+    /// Phase 2c (Finding 1 follow-up): typed and always populated. Initial
+    /// value is derived from `kind.lifecycle()` (the §2.3.3 legacy mapping)
+    /// at replay start; the first `facet_set` event carrying `lifecycle`
+    /// overrides it and sets [`lifecycle_explicit`](Self::lifecycle_explicit).
+    /// Subsequent `facet_set` events carrying a different value are
+    /// silently ignored at replay (write-side rejection with
+    /// `FacetTransitionDisallowed` is Track B's responsibility; strict
+    /// replay surfaces `LifecycleResetAttempted`).
+    pub lifecycle: Lifecycle,
+    /// `true` iff a `facet_set` event in the chain explicitly wrote the
+    /// lifecycle. `false` means the lifecycle is the kind-derived default.
+    /// Used by write-side first-wins guards (`write_ops`) and by display
+    /// surfaces that distinguish "explicitly chosen" from "inferred".
+    pub lifecycle_explicit: bool,
     /// SPEC-2.0 §2.3.5: derived tag set after replaying every `facet_set`
     /// event in chain order. `tags_add` is applied before `tags_remove`
     /// within each event.
@@ -91,18 +102,6 @@ impl ThreadState {
             .iter()
             .filter(|n| n.reply_to.as_deref() == Some(node_id))
             .collect()
-    }
-
-    /// SPEC-2.0 §3.1.1: the effective lifecycle for this thread. Returns
-    /// the value set by the first `facet_set` event carrying `lifecycle`
-    /// (per §2.4.1 / §7.3 — first-wins, immutable after creation), or
-    /// derives from `ThreadKind` for legacy 1.x threads with no
-    /// `facet_set` event in their chain (per §2.3.3 mapping).
-    pub fn lifecycle(&self) -> Lifecycle {
-        self.lifecycle
-            .as_deref()
-            .and_then(Lifecycle::parse)
-            .unwrap_or_else(|| self.kind.lifecycle())
     }
 
     /// Most recent non-retracted summary node, if any.
@@ -180,7 +179,11 @@ fn replay_with_issues(events: &[Event]) -> ForumResult<(ThreadState, Vec<StrictR
         links: vec![],
         body_revision_count: 0,
         incorporated_node_ids: vec![],
-        lifecycle: None,
+        // Phase 2c: lifecycle is always populated. Default is the §2.3.3
+        // kind-derived value; the first explicit `facet_set` overrides it
+        // and flips `lifecycle_explicit` below.
+        lifecycle: kind.lifecycle(),
+        lifecycle_explicit: false,
         tags: Vec::new(),
     };
 
@@ -373,22 +376,27 @@ fn apply_event(
             // at replay (write-side rejection with FacetTransitionDisallowed
             // is Track B's responsibility).
             if let Some(ref lc) = event.lifecycle {
-                if Lifecycle::parse(lc).is_none() {
+                let parsed = Lifecycle::parse(lc);
+                if parsed.is_none() {
                     issues.push(StrictReplayIssue::InvalidLifecycleValue {
                         event_id: event.event_id.clone(),
                         value: lc.clone(),
                     });
                 }
-                match &state.lifecycle {
-                    None => state.lifecycle = Some(lc.clone()),
-                    Some(existing) if existing == lc => {} // idempotent re-set
-                    Some(existing) => {
+                if let Some(parsed_lc) = parsed {
+                    if !state.lifecycle_explicit {
+                        // First explicit facet_set wins. Override the
+                        // kind-derived default.
+                        state.lifecycle = parsed_lc;
+                        state.lifecycle_explicit = true;
+                    } else if state.lifecycle != parsed_lc {
                         issues.push(StrictReplayIssue::LifecycleResetAttempted {
                             event_id: event.event_id.clone(),
-                            existing: existing.clone(),
+                            existing: state.lifecycle.as_str().to_string(),
                             attempted: lc.clone(),
                         });
                     }
+                    // else: idempotent re-set with the same value — no-op.
                 }
             }
             // Within a single event, tags_add is applied before tags_remove
@@ -1068,7 +1076,8 @@ mod tests {
             make_facet_set("RFC-0001", 2, Some("execution"), &[], &[]),
         ];
         let state = replay(&events).unwrap();
-        assert_eq!(state.lifecycle.as_deref(), Some("proposal"));
+        assert_eq!(state.lifecycle, Lifecycle::Proposal);
+        assert!(state.lifecycle_explicit);
     }
 
     #[test]
@@ -1079,7 +1088,10 @@ mod tests {
             make_facet_set("RFC-0001", 1, None, &[], &[]),
         ];
         let state = replay(&events).unwrap();
-        assert_eq!(state.lifecycle, None);
+        // Phase 2c: facet_set without `lifecycle` doesn't flip `lifecycle_explicit`.
+        // The lifecycle stays at its kind-derived default (`Rfc -> Proposal`).
+        assert_eq!(state.lifecycle, Lifecycle::Proposal);
+        assert!(!state.lifecycle_explicit);
         assert!(state.tags.is_empty());
     }
 
@@ -1121,13 +1133,19 @@ mod tests {
     fn lifecycle_accessor_falls_back_to_kind() {
         // No facet_set event in chain — derive from ThreadKind per §2.3.3.
         let state = replay(&[make_create("RFC-0001", ThreadKind::Rfc, "T")]).unwrap();
-        assert_eq!(state.lifecycle(), Lifecycle::Proposal);
+        assert_eq!(state.lifecycle, Lifecycle::Proposal);
+        assert!(
+            !state.lifecycle_explicit,
+            "kind-derived lifecycle is implicit"
+        );
 
         let state = replay(&[make_create("ASK-0001", ThreadKind::Issue, "T")]).unwrap();
-        assert_eq!(state.lifecycle(), Lifecycle::Execution);
+        assert_eq!(state.lifecycle, Lifecycle::Execution);
+        assert!(!state.lifecycle_explicit);
 
         let state = replay(&[make_create("DEC-0001", ThreadKind::Dec, "T")]).unwrap();
-        assert_eq!(state.lifecycle(), Lifecycle::Record);
+        assert_eq!(state.lifecycle, Lifecycle::Record);
+        assert!(!state.lifecycle_explicit);
     }
 
     #[test]
@@ -1140,7 +1158,11 @@ mod tests {
             make_facet_set("ASK-0001", 1, Some("record"), &[], &[]),
         ];
         let state = replay(&events).unwrap();
-        assert_eq!(state.lifecycle(), Lifecycle::Record);
+        assert_eq!(state.lifecycle, Lifecycle::Record);
+        assert!(
+            state.lifecycle_explicit,
+            "explicit facet_set must flip the flag"
+        );
     }
 
     #[test]
@@ -1190,7 +1212,8 @@ mod tests {
         ];
         let (state, issues) = replay_strict(&events).unwrap();
         assert!(issues.is_empty(), "unexpected issues: {issues:?}");
-        assert_eq!(state.lifecycle.as_deref(), Some("proposal"));
+        assert_eq!(state.lifecycle, Lifecycle::Proposal);
+        assert!(state.lifecycle_explicit);
     }
 
     #[test]
@@ -1231,7 +1254,8 @@ mod tests {
         ];
         let (state, issues) = replay_strict(&events).unwrap();
         // Lenient first-wins still holds.
-        assert_eq!(state.lifecycle.as_deref(), Some("proposal"));
+        assert_eq!(state.lifecycle, Lifecycle::Proposal);
+        assert!(state.lifecycle_explicit);
         assert!(matches!(
             issues.as_slice(),
             [StrictReplayIssue::LifecycleResetAttempted { existing, attempted, .. }]
@@ -1300,6 +1324,7 @@ mod tests {
             make_facet_set("RFC-0001", 3, Some("execution"), &[], &[]),
         ];
         let state = replay(&events).expect("lenient replay must still succeed");
-        assert_eq!(state.lifecycle.as_deref(), Some("proposal"));
+        assert_eq!(state.lifecycle, Lifecycle::Proposal);
+        assert!(state.lifecycle_explicit);
     }
 }

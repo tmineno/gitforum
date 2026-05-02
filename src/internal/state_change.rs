@@ -51,7 +51,7 @@ pub fn prepare_state_change(
     // (`is_valid_transition`, `valid_targets`, `check_guards`).
     let from = state.status.to_string();
 
-    let lifecycle = state.lifecycle();
+    let lifecycle = state.lifecycle;
     let normalized_target = event::normalize_state_name(new_state);
     if !event::is_valid_transition(lifecycle, &from, new_state) {
         let valid = event::valid_targets(lifecycle, &from);
@@ -253,7 +253,7 @@ pub fn fast_track_state(
     options: StateChangeOptions,
 ) -> ForumResult<Vec<String>> {
     let state = thread::replay_thread(git, thread_id)?;
-    let lifecycle = state.lifecycle();
+    let lifecycle = state.lifecycle;
     // Normalize the target so legacy 1.x state names line up with the
     // 2.0-name path returned by find_path (otherwise the final-step check
     // below misses).

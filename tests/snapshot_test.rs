@@ -1,7 +1,7 @@
 mod support;
 
 use chrono::TimeZone;
-use git_forum::internal::event::{Event, EventType, NodeType, ThreadKind, ThreadStatus};
+use git_forum::internal::event::{Event, EventType, Lifecycle, NodeType, ThreadKind, ThreadStatus};
 use git_forum::internal::ls;
 use git_forum::internal::node::Node;
 use git_forum::internal::show;
@@ -36,6 +36,10 @@ fn base_state() -> ThreadState {
     ThreadState {
         id: "RFC-a1b2c3d4".into(),
         kind: ThreadKind::Rfc,
+        // Phase 2c: keep lifecycle aligned with kind so the snapshot's
+        // proposal-flavored state-machine transitions don't pick up
+        // execution lifecycle's `working` state by default.
+        lifecycle: Lifecycle::Proposal,
         title: "Test RFC".into(),
         body: Some("Initial thread body.".into()),
         status: ThreadStatus::Draft,

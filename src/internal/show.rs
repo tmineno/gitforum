@@ -137,7 +137,7 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
         }
         if !compact {
             lines.push("transitions:".into());
-            for diagram_line in render_state_diagram(state.lifecycle(), state.status.as_str()) {
+            for diagram_line in render_state_diagram(state.lifecycle, state.status.as_str()) {
                 lines.push(diagram_line);
             }
         }
@@ -372,7 +372,7 @@ fn push_conversations(lines: &mut Vec<String>, state: &ThreadState, compact: boo
 /// Build the `**next:**` line shown under the status field. Returns `None` if
 /// the current state has no outgoing transitions.
 fn next_states_line(state: &ThreadState, policy: &Policy) -> Option<String> {
-    let targets = event::valid_targets(state.lifecycle(), state.status.as_str());
+    let targets = event::valid_targets(state.lifecycle, state.status.as_str());
     if targets.is_empty() {
         return None;
     }
@@ -459,7 +459,7 @@ fn render_what_next_block(state: &ThreadState, policy: &Policy) -> String {
     lines.push(format!("{} ({})", state.id, state.status));
     lines.push(String::new());
 
-    let targets = event::valid_targets(state.lifecycle(), state.status.as_str());
+    let targets = event::valid_targets(state.lifecycle, state.status.as_str());
     if targets.is_empty() {
         lines.push("valid transitions: (none)".to_string());
     } else {
@@ -578,7 +578,7 @@ fn op_check_lines(state: &ThreadState, policy: &Policy) -> Vec<String> {
 fn render_action_hint(state: &ThreadState, policy: &Policy) -> String {
     let mut lines: Vec<String> = Vec::new();
 
-    let targets = event::valid_targets(state.lifecycle(), state.status.as_str());
+    let targets = event::valid_targets(state.lifecycle, state.status.as_str());
     if targets.is_empty() {
         lines.push("  next: (no transitions available)".to_string());
     } else {
@@ -844,7 +844,7 @@ pub struct TreeChild {
 /// list that is already filtered to `rel == "implements"` (see
 /// `index::find_incoming_links`).
 pub fn render_tree(parent: &ThreadState, children: &[TreeChild]) -> String {
-    let parent_lifecycle = parent.lifecycle().as_str();
+    let parent_lifecycle = parent.lifecycle.as_str();
     let mut lines = Vec::new();
     lines.push(format!(
         "{}  {}/{}    {}",
@@ -885,6 +885,8 @@ mod tests {
         ThreadState {
             id: "RFC-0001".into(),
             kind: ThreadKind::Rfc,
+            // Phase 2c: lifecycle is independent — keep it kind-aligned.
+            lifecycle: Lifecycle::Proposal,
             title: "Test RFC".into(),
             body: Some("Thread body".into()),
             status: ThreadStatus::Draft,
