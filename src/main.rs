@@ -1,5 +1,4 @@
 use std::fs;
-use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -7,12 +6,21 @@ use git_forum::internal::actor;
 use git_forum::internal::branch_ops;
 use git_forum::internal::brief;
 use git_forum::internal::clock::SystemClock;
+use git_forum::internal::commands::bulk::{
+    list_thread_states, print_bulk_report, run_bulk_state_change, BulkSelectors,
+};
+use git_forum::internal::commands::node_bulk::run_node_lifecycle_bulk;
+use git_forum::internal::commands::revise as revise_cmd;
+use git_forum::internal::commands::shared::{
+    apply_operation_checks, discover_repo_with_init_warning, resolve_actor, resolve_tid,
+};
+use git_forum::internal::commands::shorthand_say::{run_shorthand_say, warn_legacy_node_shorthand};
+use git_forum::internal::commands::state::run_state_shorthand;
+use git_forum::internal::commands::thread_new::{run_canonical_thread_new, ThreadNewInline};
 use git_forum::internal::config;
 use git_forum::internal::config::RepoPaths;
-use git_forum::internal::create;
 use git_forum::internal::diff;
 use git_forum::internal::doctor;
-use git_forum::internal::editor;
 use git_forum::internal::error::ForumError;
 use git_forum::internal::event;
 use git_forum::internal::event::{Lifecycle, NodeType, ThreadKind};
@@ -30,7 +38,6 @@ use git_forum::internal::ls;
 use git_forum::internal::operation_check;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::purge;
-use git_forum::internal::refs;
 use git_forum::internal::reindex;
 use git_forum::internal::repair;
 use git_forum::internal::show;
@@ -1043,25 +1050,6 @@ enum ThreadCmd {
 
 /// Apply operation check violations: print to stderr, block on errors.
 /// Returns Ok(()) if the operation should proceed, Err if blocked.
-fn apply_operation_checks(
-    violations: &[operation_check::OperationViolation],
-    force: bool,
-    strict: bool,
-) -> Result<(), ForumError> {
-    if violations.is_empty() {
-        return Ok(());
-    }
-    let (has_errors, output) = operation_check::evaluate_violations(violations, force, strict);
-    eprint!("{output}");
-    if has_errors {
-        Err(ForumError::Policy(
-            "operation blocked by check violations".into(),
-        ))
-    } else {
-        Ok(())
-    }
-}
-
 fn main() -> Result<(), ForumError> {
     // Check for --help-llm before clap parsing so it works at any subcommand level
     // (e.g. `git-forum issue --help-llm` where clap would otherwise require a subcommand)
@@ -2145,17 +2133,54 @@ fn main() -> Result<(), ForumError> {
             as_actor,
             force,
             cmd,
-        } => run_revise_dispatch(
-            cmd,
-            thread_id,
-            body,
-            body_file,
-            edit,
-            incorporates,
-            as_actor,
-            force,
-            &clock,
-        )?,
+        } => match cmd {
+            Some(ReviseCmd::Body {
+                thread_id,
+                body,
+                body_file,
+                edit,
+                incorporates,
+                as_actor,
+                force,
+            }) => revise_cmd::run_revise_body(
+                thread_id,
+                body,
+                body_file,
+                edit,
+                incorporates,
+                as_actor,
+                force,
+                &clock,
+            )?,
+            Some(ReviseCmd::Node {
+                thread_id,
+                node_id,
+                body,
+                body_file,
+                edit,
+                as_actor,
+                force,
+            }) => revise_cmd::run_revise_node(
+                thread_id, node_id, body, body_file, edit, as_actor, force, &clock,
+            )?,
+            None => {
+                let thread_id = thread_id.ok_or_else(|| {
+                    ForumError::Config(
+                        "usage: git forum revise <THREAD_ID> --body <TEXT> | --body-file <PATH> | --edit".into(),
+                    )
+                })?;
+                revise_cmd::run_revise_body(
+                    thread_id,
+                    body,
+                    body_file,
+                    edit,
+                    incorporates,
+                    as_actor,
+                    force,
+                    &clock,
+                )?
+            }
+        },
         Commands::Comment {
             thread_id,
             body_positional,
@@ -2812,582 +2837,6 @@ fn main() -> Result<(), ForumError> {
     Ok(())
 }
 
-fn resolve_reply_to(
-    git: &GitOps,
-    thread_id: &str,
-    reply_to: Option<&str>,
-) -> Result<Option<String>, ForumError> {
-    match reply_to {
-        Some(node_ref) => {
-            let resolved = thread::resolve_node_id_in_thread(git, thread_id, node_ref)?;
-            Ok(Some(resolved))
-        }
-        None => Ok(None),
-    }
-}
-
-fn run_revise_cmd(
-    cmd: ReviseCmd,
-    clock: &dyn git_forum::internal::clock::Clock,
-) -> Result<(), ForumError> {
-    match cmd {
-        ReviseCmd::Body {
-            thread_id,
-            body,
-            body_file,
-            edit,
-            incorporates,
-            as_actor,
-            force,
-        } => {
-            let (git, paths) = discover_repo_with_init_warning()?;
-            let thread_id = resolve_tid(&git, &thread_id)?;
-            let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
-            let actor = resolve_actor(as_actor, &git);
-            let body_text = resolve_body_required(
-                body,
-                body_file,
-                edit,
-                &format!("Revise body for {thread_id}"),
-            )?;
-
-            let state = thread::replay_thread(&git, &thread_id)?;
-            let violations = operation_check::check_revise(&policy, state.status.as_str(), true);
-            apply_operation_checks(&violations, force, policy.checks.strict)?;
-
-            write_ops::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
-            let revision = state.body_revision_count + 1;
-            println!("Body revised for {thread_id} (revision {revision})");
-        }
-        ReviseCmd::Node {
-            thread_id,
-            node_id,
-            body,
-            body_file,
-            edit,
-            as_actor,
-            force,
-        } => {
-            let (git, paths) = discover_repo_with_init_warning()?;
-            let thread_id = resolve_tid(&git, &thread_id)?;
-            let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
-            let actor = resolve_actor(as_actor, &git);
-            let body_text = resolve_body_required(
-                body,
-                body_file,
-                edit,
-                &format!("Revise node {node_id} in {thread_id}"),
-            )?;
-
-            let state = thread::replay_thread(&git, &thread_id)?;
-            let violations = operation_check::check_revise(&policy, state.status.as_str(), false);
-            apply_operation_checks(&violations, force, policy.checks.strict)?;
-
-            let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
-            write_ops::revise_node(&git, &thread_id, &resolved, &body_text, &actor, clock)?;
-            println!("Revised {}", show::short_oid(&resolved));
-        }
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_revise_dispatch(
-    cmd: Option<ReviseCmd>,
-    thread_id: Option<String>,
-    body: Option<String>,
-    body_file: Option<PathBuf>,
-    edit: bool,
-    incorporates: Vec<String>,
-    as_actor: Option<String>,
-    force: bool,
-    clock: &dyn git_forum::internal::clock::Clock,
-) -> Result<(), ForumError> {
-    match cmd {
-        Some(subcmd) => run_revise_cmd(subcmd, clock),
-        None => {
-            let thread_id = thread_id.ok_or_else(|| {
-                ForumError::Config(
-                    "usage: git forum revise <THREAD_ID> --body <TEXT> | --body-file <PATH> | --edit".into(),
-                )
-            })?;
-            let (git, paths) = discover_repo_with_init_warning()?;
-            let thread_id = resolve_tid(&git, &thread_id)?;
-            let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
-            let actor = resolve_actor(as_actor, &git);
-            let body_text = resolve_body_required(
-                body,
-                body_file,
-                edit,
-                &format!("Revise body for {thread_id}"),
-            )?;
-
-            let state = thread::replay_thread(&git, &thread_id)?;
-            let violations = operation_check::check_revise(&policy, state.status.as_str(), true);
-            apply_operation_checks(&violations, force, policy.checks.strict)?;
-
-            write_ops::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
-            let revision = state.body_revision_count + 1;
-            println!("Body revised for {thread_id} (revision {revision})");
-            Ok(())
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-/// Print a deprecation warning for legacy node-type shorthand commands.
-///
-/// Per SPEC-2.0 §9.3 / ADR-006, the rhetorical-only shorthands
-/// `claim` / `question` / `summary` / `risk` / `review` are aliased to
-/// `comment` for one minor release and removed in 3.0. The user's chosen
-/// label is preserved on the event as `legacy_subtype`.
-fn warn_legacy_node_shorthand(name: &str) {
-    eprintln!(
-        "warning: `git forum {name}` is deprecated; the canonical 2.0 form is `git forum comment` \
-         (the rhetorical label is preserved). This shorthand will be removed in 3.0."
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_shorthand_say(
-    thread_id: &str,
-    body_positional: Option<String>,
-    body_flag: Option<String>,
-    body_file: Option<PathBuf>,
-    edit: bool,
-    reply_to: Option<String>,
-    as_actor: Option<String>,
-    node_type: NodeType,
-    force: bool,
-    clock: &dyn git_forum::internal::clock::Clock,
-) -> Result<(), ForumError> {
-    let (git, paths) = discover_repo_with_init_warning()?;
-    let thread_id = &resolve_tid(&git, thread_id)?;
-    let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
-    let actor = resolve_actor(as_actor, &git);
-    let body = body_positional.or(body_flag);
-    let body_text = resolve_body_required(
-        body,
-        body_file,
-        edit,
-        &format!("Compose a {node_type} node"),
-    )?;
-
-    // Operation check: is this node type allowed in the current state?
-    let state = thread::replay_thread(&git, thread_id)?;
-    let violations = operation_check::check_say(&policy, state.status.as_str(), node_type);
-    apply_operation_checks(&violations, force, policy.checks.strict)?;
-
-    let resolved_reply = resolve_reply_to(&git, thread_id, reply_to.as_deref())?;
-    let node_id = write_ops::say_node(
-        &git,
-        thread_id,
-        node_type,
-        &body_text,
-        &actor,
-        clock,
-        resolved_reply.as_deref(),
-    )?;
-    println!("Added {node_type} {}", show::short_oid(&node_id));
-    if let Ok(state) = thread::replay_thread(&git, thread_id) {
-        eprintln!(
-            "{}",
-            show::render_show(
-                &state,
-                &show::ShowOptions {
-                    mode: show::ShowMode::ActionHint,
-                    policy: Some(policy.clone()),
-                    ..show::ShowOptions::default()
-                }
-            )
-        );
-    }
-    Ok(())
-}
-
-fn resolve_body_required(
-    body: Option<String>,
-    body_file: Option<PathBuf>,
-    edit: bool,
-    edit_hint: &str,
-) -> Result<String, ForumError> {
-    resolve_thread_body(body, body_file, edit, edit_hint)?
-        .ok_or_else(|| ForumError::Config("--body, --body-file, or --edit is required".into()))
-}
-
-/// Inline-node bodies attached during `git forum new <preset>` (kind preset
-/// path only). The canonical `thread new --lifecycle ...` form does not
-/// accept inline nodes — scripts compose them with `node add` after.
-#[derive(Default)]
-struct ThreadNewInline {
-    claim: Vec<String>,
-    question: Vec<String>,
-    objection: Vec<String>,
-    action: Vec<String>,
-    risk: Vec<String>,
-    summary: Vec<String>,
-}
-
-/// Lifecycle/tag-keyed thread creation, the single dispatch shared by both
-/// the `git forum new <preset>` everyday surface and the canonical
-/// `git forum thread new --lifecycle ... --tag ...` power-user form.
-///
-/// Behaviors:
-/// - Picks a backing [`ThreadKind`] (proposal→Rfc, execution→Issue,
-///   record→Dec). The kind survives only on the `Create` event for legacy
-///   reads; the lifecycle/tag set is the canonical 2.0 facet state, applied
-///   via a follow-on `facet_set` event.
-/// - `--from-thread`: rejects creating a thread in `execution` lifecycle
-///   sourced from a `proposal` thread (SPEC-2.0 §9.3 lifecycle restatement
-///   of the 1.x §9.2 RFC→issue rule). Use `link --rel implements` instead.
-/// - Auto-deprecates the source on proposal→proposal supersede.
-#[allow(clippy::too_many_arguments)]
-fn run_canonical_thread_new(
-    title: Option<String>,
-    body: Option<String>,
-    body_file: Option<PathBuf>,
-    edit: bool,
-    branch: Option<String>,
-    link_to: Vec<String>,
-    rel: Option<String>,
-    as_actor: Option<String>,
-    from_commit: Option<String>,
-    from_thread: Option<String>,
-    inline: ThreadNewInline,
-    force: bool,
-    lifecycle: Lifecycle,
-    tags: Vec<String>,
-    clock: &dyn git_forum::internal::clock::Clock,
-) -> Result<(), ForumError> {
-    let (git, paths) = discover_repo_with_init_warning()?;
-    let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
-    let actor = resolve_actor(as_actor, &git);
-
-    let kind = match lifecycle {
-        Lifecycle::Proposal => ThreadKind::Rfc,
-        Lifecycle::Execution => ThreadKind::Issue,
-        Lifecycle::Record => ThreadKind::Dec,
-    };
-    let edit_hint = format!("Compose body for new {lifecycle} thread");
-
-    let (effective_title, effective_body, commit_ref, source_thread) = if let Some(ref source_id) =
-        from_thread
-    {
-        let source_id = &resolve_tid(&git, source_id)?;
-        let source = thread::replay_thread(&git, source_id)?;
-        // SPEC-2.0 §9.3 lifecycle-keyed restatement of 1.x §9.2: an
-        // execution thread cannot supersede a proposal. Use
-        // `link --rel implements` instead.
-        if source.lifecycle == Lifecycle::Proposal && lifecycle == Lifecycle::Execution {
-            return Err(ForumError::Config(
-                "cannot create an execution thread --from-thread a proposal thread; \
-                     an execution thread does not supersede a proposal. \
-                     Use `git forum link <NEW> <SOURCE> --rel implements` instead."
-                    .into(),
-            ));
-        }
-        let t = title.unwrap_or_else(|| format!("v2: {}", source.title));
-        let b = resolve_thread_body(body, body_file, edit, &edit_hint)?.or(source.body.clone());
-        (t, b, None, Some((source_id.clone(), source.lifecycle)))
-    } else if let Some(rev) = from_commit {
-        let commit_sha = git.resolve_commit(&rev)?;
-        let msg = git.run(&["log", "-1", "--format=%B", &commit_sha])?;
-        let mut lines = msg.lines();
-        let subject = lines.next().unwrap_or("").to_string();
-        let body_text: String = lines
-            .skip_while(|l| l.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let t = title.unwrap_or(subject);
-        let b =
-            resolve_thread_body(body, body_file, edit, &edit_hint)?.or(if body_text.is_empty() {
-                None
-            } else {
-                Some(body_text)
-            });
-        (t, b, Some(commit_sha), None)
-    } else {
-        let t = title.ok_or_else(|| {
-            ForumError::Config("title is required (or use --from-commit / --from-thread)".into())
-        })?;
-        let b = resolve_thread_body(body, body_file, edit, &edit_hint)?;
-        (t, b, None, None)
-    };
-
-    // §7.2 creation rules — keyed on the real `lifecycle`/`tags` the caller
-    // selected, not the backing kind.
-    let violations = operation_check::check_op(
-        &policy,
-        operation_check::Op::Create {
-            lifecycle,
-            tags: &tags,
-            body: effective_body.as_deref(),
-        },
-    );
-    let _ = &effective_title; // Title is not consulted by §7.2 rules.
-    apply_operation_checks(&violations, force, policy.checks.strict)?;
-
-    let thread_id = create::create_thread_with_branch(
-        &git,
-        kind,
-        &effective_title,
-        effective_body.as_deref(),
-        branch.as_deref(),
-        &actor,
-        clock,
-    )?;
-
-    // Persist `lifecycle` and the requested tag set as a `facet_set` event so
-    // 2.0 native threads carry the canonical facet state in their chain
-    // rather than only deriving it from `kind` at replay time. Skipped when
-    // there are no tags AND the lifecycle matches the kind's auto-derivation
-    // (the replay fallback handles it).
-    let needs_facet_set = !tags.is_empty() || lifecycle != kind.lifecycle();
-    if needs_facet_set {
-        write_ops::write_facet_set(
-            &git,
-            &thread_id,
-            Some(lifecycle.as_str()),
-            &tags,
-            &[],
-            &actor,
-            clock,
-        )?;
-    }
-
-    if !link_to.is_empty() {
-        let rel = rel
-            .as_deref()
-            .ok_or_else(|| ForumError::Config("--rel is required when --link-to is used".into()))?;
-        for target in &link_to {
-            let resolved_target = resolve_tid(&git, target)?;
-            evidence::add_thread_link(&git, &thread_id, &resolved_target, rel, &actor, clock)?;
-        }
-    }
-    if let Some(sha) = commit_ref {
-        evidence::add_evidence(
-            &git,
-            &thread_id,
-            EvidenceKind::Commit,
-            &sha,
-            None,
-            &actor,
-            clock,
-        )?;
-    }
-    // --from-thread supersede: bidirectional link, plus auto-deprecate the
-    // source on proposal→proposal (the 1.x RFC→RFC supersede pattern,
-    // restated in lifecycle terms).
-    if let Some((source_id, source_lifecycle)) = source_thread {
-        evidence::add_thread_link(&git, &thread_id, &source_id, "supersedes", &actor, clock)?;
-        evidence::add_thread_link(&git, &source_id, &thread_id, "superseded-by", &actor, clock)?;
-        let proposal_supersede =
-            source_lifecycle == Lifecycle::Proposal && lifecycle == Lifecycle::Proposal;
-        if proposal_supersede {
-            let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
-            state_change::change_state(
-                &git,
-                &source_id,
-                "deprecated",
-                &[],
-                &actor,
-                clock,
-                &policy,
-                state_change::StateChangeOptions::default(),
-            )?;
-        }
-        println!("Created {thread_id} (supersedes {source_id})");
-        if !proposal_supersede {
-            eprintln!("hint: consider closing {source_id} (now superseded)");
-        }
-    } else {
-        println!("Created {thread_id}");
-    }
-
-    let inline_nodes: [(NodeType, &[String]); 6] = [
-        (NodeType::Claim, &inline.claim),
-        (NodeType::Question, &inline.question),
-        (NodeType::Objection, &inline.objection),
-        (NodeType::Action, &inline.action),
-        (NodeType::Risk, &inline.risk),
-        (NodeType::Summary, &inline.summary),
-    ];
-    for (node_type, bodies) in &inline_nodes {
-        for body_text in *bodies {
-            let node_id =
-                write_ops::say_node(&git, &thread_id, *node_type, body_text, &actor, clock, None)?;
-            println!("Added {node_type} {}", show::short_oid(&node_id));
-        }
-    }
-    Ok(())
-}
-
-/// Resolve a state-change shorthand to a concrete target state for the
-/// thread's current lifecycle, per SPEC-2.0 §9.3.
-///
-/// Thin wrapper over [`SPEC::shorthand_target`](git_forum::internal::workflow::WorkflowSpec::shorthand_target);
-/// the §9.3 table itself lives in `workflow.rs`. This wrapper turns the
-/// typed [`ShorthandResolution`] into the CLI-shaped `ForumError`.
-fn shorthand_target_for_lifecycle(
-    shorthand: &str,
-    lifecycle: Lifecycle,
-) -> Result<&'static str, ForumError> {
-    use git_forum::internal::workflow::ShorthandResolution::*;
-    match SPEC.shorthand_target(shorthand, lifecycle) {
-        Target(t) => Ok(t),
-        NotApplicable(hint) => Err(ForumError::Config(format!("{hint} (SPEC-2.0 §9.3)"))),
-        Unknown => Err(ForumError::Config(format!(
-            "unknown state-change shorthand '{shorthand}'",
-        ))),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_state_shorthand(
-    thread_id: &str,
-    new_state: &str,
-    approve: &[String],
-    as_actor: Option<String>,
-    resolve_open_actions: bool,
-    link_to: &[String],
-    rel: Option<&str>,
-    comment: Option<&str>,
-    fast_track: bool,
-    _force: bool,
-    clock: &dyn git_forum::internal::clock::Clock,
-) -> Result<(), ForumError> {
-    let (git, paths) = discover_repo_with_init_warning()?;
-    let thread_id = &resolve_tid(&git, thread_id)?;
-    let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
-    let actor = resolve_actor(as_actor, &git);
-    // Replay once up front to resolve the lifecycle facet — the §9.3 table
-    // is keyed on lifecycle, not the legacy `kind` field.
-    let pre_state = thread::replay_thread(&git, thread_id)?;
-    let target = shorthand_target_for_lifecycle(new_state, pre_state.lifecycle)?;
-    let options = state_change::StateChangeOptions {
-        resolve_open_actions,
-        comment: comment.map(|s| s.to_string()),
-    };
-    if fast_track {
-        let walked = state_change::fast_track_state(
-            &git, thread_id, target, approve, &actor, clock, &policy, options,
-        )?;
-        for (i, step) in walked.iter().enumerate() {
-            let is_final = i == walked.len() - 1;
-            if is_final {
-                println!("{thread_id} -> {step}");
-            } else {
-                eprintln!("  {thread_id}: -> {step}");
-            }
-        }
-    } else {
-        let outcome = state_change::change_state(
-            &git, thread_id, target, approve, &actor, clock, &policy, options,
-        )?;
-        match outcome {
-            state_change::StateChangeOutcome::Applied { .. } => {
-                println!("{thread_id} -> {target}");
-            }
-            state_change::StateChangeOutcome::NoOp {
-                state,
-                comment_recorded,
-            } => {
-                if comment_recorded {
-                    println!(
-                        "note: {thread_id} is already in state '{state}'; no transition recorded (comment attached as a standalone node)"
-                    );
-                } else {
-                    println!(
-                        "note: {thread_id} is already in state '{state}'; no transition recorded"
-                    );
-                }
-            }
-        }
-    }
-    if !link_to.is_empty() {
-        let rel = rel
-            .ok_or_else(|| ForumError::Config("--rel is required when --link-to is used".into()))?;
-        for target in link_to {
-            let resolved_target = resolve_tid(&git, target)?;
-            evidence::add_thread_link(&git, thread_id, &resolved_target, rel, &actor, clock)?;
-        }
-    }
-    if let Ok(state) = thread::replay_thread(&git, thread_id) {
-        eprintln!(
-            "{}",
-            show::render_show(
-                &state,
-                &show::ShowOptions {
-                    mode: show::ShowMode::ActionHint,
-                    policy: Some(policy.clone()),
-                    ..show::ShowOptions::default()
-                }
-            )
-        );
-    }
-    Ok(())
-}
-
-#[derive(Clone, Copy)]
-struct BulkSelectors<'a> {
-    branch: Option<&'a str>,
-    kind: Option<ThreadKind>,
-    status: Option<&'a str>,
-}
-
-struct BulkStateOutcome {
-    thread_id: String,
-    from_state: String,
-    to_state: String,
-    ok: bool,
-    dry_run: bool,
-    detail: Option<String>,
-}
-
-struct BulkStateReport {
-    outcomes: Vec<BulkStateOutcome>,
-    failures: usize,
-}
-
-fn list_thread_states(
-    git: &GitOps,
-    kind: Option<ThreadKind>,
-    branch: Option<&str>,
-) -> Result<Vec<thread::ThreadState>, ForumError> {
-    let all_ids = thread::list_thread_ids(git)?;
-    let mut states = Vec::new();
-    for id in &all_ids {
-        match thread::replay_thread(git, id) {
-            Ok(state) => {
-                if thread_matches_filters(&state, kind, branch, None) {
-                    states.push(state);
-                }
-            }
-            Err(e) => {
-                let ref_name = refs::thread_ref(id);
-                eprintln!(
-                    "warning: skipping {id}: failed to replay {ref_name}: {e}\n  \
-                     hint: run `git forum doctor` to diagnose, \
-                     or `git forum repair` to attempt recovery"
-                );
-            }
-        }
-    }
-    states.sort_by_key(|s| s.created_at);
-    Ok(states)
-}
-
-fn thread_matches_filters(
-    state: &thread::ThreadState,
-    kind: Option<ThreadKind>,
-    branch: Option<&str>,
-    status: Option<&str>,
-) -> bool {
-    kind.is_none_or(|kind| state.kind == kind)
-        && branch.is_none_or(|branch| state.branch.as_deref() == Some(branch))
-        && status.is_none_or(|status| state.status.as_str() == status)
-}
-
 /// SPEC-2.0 §9.1 kind preset registry — re-exported from
 /// [`internal::workflow`](git_forum::internal::workflow).
 ///
@@ -3506,234 +2955,6 @@ fn parse_thread_kind_filter(kind: Option<&str>) -> Result<Option<ThreadKind>, Fo
     kind.map(parse_thread_kind).transpose()
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_bulk_state_change(
-    git: &GitOps,
-    policy: &Policy,
-    explicit_ids: &[String],
-    selectors: BulkSelectors<'_>,
-    new_state: &str,
-    approve: &[String],
-    actor: &str,
-    clock: &dyn git_forum::internal::clock::Clock,
-    options: state_change::StateChangeOptions,
-    dry_run: bool,
-) -> Result<BulkStateReport, ForumError> {
-    if explicit_ids.is_empty()
-        && selectors.branch.is_none()
-        && selectors.kind.is_none()
-        && selectors.status.is_none()
-    {
-        return Err(ForumError::Config(
-            "state bulk requires at least one THREAD_ID or selector (--branch/--kind/--status)"
-                .into(),
-        ));
-    }
-
-    let candidate_ids = if explicit_ids.is_empty() {
-        thread::list_thread_ids(git)?
-    } else {
-        explicit_ids.to_vec()
-    };
-
-    let mut outcomes = Vec::new();
-    for thread_id in candidate_ids {
-        let state = match thread::replay_thread(git, &thread_id) {
-            Ok(state) => state,
-            Err(err) => {
-                outcomes.push(BulkStateOutcome {
-                    thread_id,
-                    from_state: "?".into(),
-                    to_state: new_state.to_string(),
-                    ok: false,
-                    dry_run,
-                    detail: Some(err.to_string()),
-                });
-                continue;
-            }
-        };
-
-        if !thread_matches_filters(&state, selectors.kind, selectors.branch, selectors.status) {
-            continue;
-        }
-
-        // Normalize both sides so 1.x verbs (e.g. `proposed`, `closed`)
-        // collapse onto their 2.0 canonical names before the self-loop check;
-        // otherwise `state bulk --to closed` against a thread already in
-        // canonical `done` would fall through to validation and error.
-        let canonical_target = git_forum::internal::event::normalize_state_name(new_state);
-        if git_forum::internal::event::normalize_state_name(state.status.as_str())
-            == canonical_target
-        {
-            outcomes.push(BulkStateOutcome {
-                thread_id,
-                from_state: state.status.to_string(),
-                to_state: new_state.to_string(),
-                ok: true,
-                dry_run,
-                detail: Some(format!(
-                    "already in '{canonical_target}'; no transition recorded"
-                )),
-            });
-            continue;
-        }
-
-        match state_change::prepare_state_change(
-            git,
-            &thread_id,
-            new_state,
-            approve,
-            clock,
-            policy,
-            options.clone(),
-        ) {
-            Ok(plan) => {
-                if !dry_run {
-                    if let Err(err) = state_change::change_state(
-                        git,
-                        &thread_id,
-                        new_state,
-                        approve,
-                        actor,
-                        clock,
-                        policy,
-                        options.clone(),
-                    ) {
-                        outcomes.push(BulkStateOutcome {
-                            thread_id,
-                            from_state: state.status.to_string(),
-                            to_state: new_state.to_string(),
-                            ok: false,
-                            dry_run,
-                            detail: Some(err.to_string()),
-                        });
-                        continue;
-                    }
-                }
-                outcomes.push(BulkStateOutcome {
-                    thread_id,
-                    from_state: plan.from_state,
-                    to_state: new_state.to_string(),
-                    ok: true,
-                    dry_run,
-                    detail: None,
-                });
-            }
-            Err(err) => outcomes.push(BulkStateOutcome {
-                thread_id,
-                from_state: state.status.to_string(),
-                to_state: new_state.to_string(),
-                ok: false,
-                dry_run,
-                detail: Some(err.to_string()),
-            }),
-        }
-    }
-
-    if outcomes.is_empty() {
-        return Err(ForumError::Config(
-            "state bulk matched no threads for the given selectors".into(),
-        ));
-    }
-
-    let failures = outcomes.iter().filter(|o| !o.ok).count();
-    Ok(BulkStateReport { outcomes, failures })
-}
-
-fn print_bulk_report(report: &BulkStateReport) {
-    for outcome in &report.outcomes {
-        let marker = match (outcome.dry_run, outcome.ok) {
-            (false, true) => "OK",
-            (false, false) => "FAIL",
-            (true, true) => "WOULD-OK",
-            (true, false) => "WOULD-FAIL",
-        };
-        match &outcome.detail {
-            Some(detail) => println!(
-                "{marker:<10} {:<12} {} -> {}  {}",
-                outcome.thread_id, outcome.from_state, outcome.to_state, detail
-            ),
-            None => println!(
-                "{marker:<10} {:<12} {} -> {}",
-                outcome.thread_id, outcome.from_state, outcome.to_state
-            ),
-        }
-    }
-}
-
-fn resolve_actor(as_actor: Option<String>, git: &GitOps) -> String {
-    as_actor.unwrap_or_else(|| actor::current_actor(git, git.default_actor()))
-}
-
-fn run_node_lifecycle_bulk(
-    thread_id: &str,
-    node_ids: &[String],
-    as_actor: Option<String>,
-    event_type: git_forum::internal::event::EventType,
-    label: &str,
-    clock: &dyn git_forum::internal::clock::Clock,
-) -> Result<(), ForumError> {
-    let (git, _paths) = discover_repo_with_init_warning()?;
-    let thread_id = &resolve_tid(&git, thread_id)?;
-    let actor = resolve_actor(as_actor, &git);
-    let mut failures = 0usize;
-    for node_id in node_ids {
-        let resolved = match thread::resolve_node_id_in_thread(&git, thread_id, node_id) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("error: {node_id}: {e}");
-                failures += 1;
-                continue;
-            }
-        };
-        match write_ops::node_lifecycle(&git, thread_id, &resolved, &actor, clock, event_type) {
-            Ok(()) => println!("{label} {}", show::short_oid(&resolved)),
-            Err(e) => {
-                eprintln!("error: {}: {e}", show::short_oid(&resolved));
-                failures += 1;
-            }
-        }
-    }
-    if failures > 0 {
-        std::process::exit(1);
-    }
-    if event_type == git_forum::internal::event::EventType::Retract {
-        eprintln!("note: retract is a soft-delete — the original content remains in git history");
-    }
-    Ok(())
-}
-
-fn discover_repo_with_init_warning() -> Result<(GitOps, RepoPaths), ForumError> {
-    let mut git = GitOps::discover()?;
-    let git_dir = git.git_dir()?;
-    let paths = RepoPaths::from_repo_root_and_git_dir(git.root(), &git_dir);
-    if !is_forum_initialized(&paths, &git) {
-        eprintln!(
-            "warning: git-forum is not initialized in this repository; run `git forum init` first"
-        );
-    }
-    // Load local config and apply settings.
-    let local_cfg = config::load_local_config(&paths).unwrap_or_default();
-    if let Some(identity) = local_cfg.commit_identity {
-        git.set_commit_identity(identity);
-    }
-    if let Some(default_actor) = local_cfg.default_actor {
-        git.set_default_actor(default_actor);
-    }
-    Ok((git, paths))
-}
-
-fn is_forum_initialized(paths: &RepoPaths, git: &GitOps) -> bool {
-    // Primary check: config files created by `git forum init`.
-    if paths.dot_forum.join("policy.toml").is_file() && paths.git_forum.join("logs").is_dir() {
-        return true;
-    }
-    // Fallback: forum refs already exist (repo is functional even without explicit init).
-    git.list_refs("refs/forum/threads/")
-        .map(|refs| !refs.is_empty())
-        .unwrap_or(false)
-}
-
 /// Extract the subcommand name from a clap "unrecognized subcommand" error message.
 fn parse_unrecognized_subcommand(msg: &str) -> Option<String> {
     // clap format: "error: unrecognized subcommand 'foo'"
@@ -3775,38 +2996,6 @@ fn subcommand_hint(sub: &str) -> Option<&'static str> {
     }
 }
 
-fn resolve_thread_body(
-    body: Option<String>,
-    body_file: Option<PathBuf>,
-    edit: bool,
-    edit_hint: &str,
-) -> Result<Option<String>, ForumError> {
-    if edit {
-        return Ok(Some(editor::edit_body(edit_hint)?));
-    }
-    match (body, body_file) {
-        (Some(body), None) if body == "-" => {
-            if std::io::stdin().is_terminal() {
-                return Err(ForumError::Config(
-                    "--body - requires piped input; use --body <text>, --body-file, or --edit instead".into(),
-                ));
-            }
-            let mut buf = String::new();
-            std::io::stdin().read_to_string(&mut buf)?;
-            if buf.trim().is_empty() {
-                return Err(ForumError::Config(
-                    "--body - received empty input; provide non-empty content via stdin".into(),
-                ));
-            }
-            Ok(Some(buf))
-        }
-        (Some(body), None) => Ok(Some(body)),
-        (None, Some(path)) => Ok(Some(fs::read_to_string(path)?)),
-        (None, None) => Ok(None),
-        (Some(_), Some(_)) => unreachable!("clap enforces body/body-file conflicts"),
-    }
-}
-
 fn print_import_plan(plan: &github_import::ImportPlan) {
     if let Some(ref existing) = plan.already_imported {
         println!(
@@ -3821,13 +3010,6 @@ fn print_import_plan(plan: &github_import::ImportPlan) {
     if plan.would_close {
         println!("  State: would be closed after import");
     }
-}
-
-/// Resolve a user-supplied thread reference to its canonical full ID.
-///
-/// Wraps `thread::resolve_thread_id` for use from CLI command handlers.
-fn resolve_tid(git: &GitOps, user_input: &str) -> Result<String, ForumError> {
-    thread::resolve_thread_id(git, user_input)
 }
 
 /// Collect direct incoming `--rel implements` children of a thread for the
