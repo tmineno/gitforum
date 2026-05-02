@@ -46,7 +46,10 @@ pub fn prepare_state_change(
     options: StateChangeOptions,
 ) -> ForumResult<StateChangePlan> {
     let state = thread::replay_thread(git, thread_id)?;
-    let from = state.status.clone();
+    // Phase 2a: `state.status` is now `ThreadStatus`; we keep `from` as
+    // a String so it flows unchanged into existing &str-typed APIs
+    // (`is_valid_transition`, `valid_targets`, `check_guards`).
+    let from = state.status.to_string();
 
     let lifecycle = state.lifecycle();
     let normalized_target = event::normalize_state_name(new_state);
@@ -169,7 +172,7 @@ pub fn change_state(
     // (e.g. `proposed`, `under-review`, `closed`) collapse onto their 2.0
     // equivalents and a self-loop like `review->review` (or `proposed->open`,
     // when the thread is already `open`) is recognized as a no-op.
-    let current = thread::replay_thread(git, thread_id)?.status;
+    let current = thread::replay_thread(git, thread_id)?.status.to_string();
     let canonical_target = event::normalize_state_name(new_state);
     if event::normalize_state_name(&current) == canonical_target {
         let comment_recorded = if let Some(text) = options.comment.as_deref() {
@@ -255,12 +258,13 @@ pub fn fast_track_state(
     // 2.0-name path returned by find_path (otherwise the final-step check
     // below misses).
     let normalized_target = event::normalize_state_name(target);
-    let path = event::find_path(lifecycle, &state.status, normalized_target).ok_or_else(|| {
-        ForumError::StateMachine(format!(
-            "no path from '{}' to '{}' for {lifecycle}",
-            state.status, target,
-        ))
-    })?;
+    let path =
+        event::find_path(lifecycle, state.status.as_str(), normalized_target).ok_or_else(|| {
+            ForumError::StateMachine(format!(
+                "no path from '{}' to '{}' for {lifecycle}",
+                state.status, target,
+            ))
+        })?;
 
     if path.is_empty() {
         return Ok(vec![]);

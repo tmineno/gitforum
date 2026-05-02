@@ -137,7 +137,7 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
         }
         if !compact {
             lines.push("transitions:".into());
-            for diagram_line in render_state_diagram(state.lifecycle(), &state.status) {
+            for diagram_line in render_state_diagram(state.lifecycle(), state.status.as_str()) {
                 lines.push(diagram_line);
             }
         }
@@ -372,7 +372,7 @@ fn push_conversations(lines: &mut Vec<String>, state: &ThreadState, compact: boo
 /// Build the `**next:**` line shown under the status field. Returns `None` if
 /// the current state has no outgoing transitions.
 fn next_states_line(state: &ThreadState, policy: &Policy) -> Option<String> {
-    let targets = event::valid_targets(state.lifecycle(), &state.status);
+    let targets = event::valid_targets(state.lifecycle(), state.status.as_str());
     if targets.is_empty() {
         return None;
     }
@@ -389,7 +389,7 @@ fn format_target_with_blockers(
     target: &str,
     verbose: bool,
 ) -> String {
-    let violations = policy::check_guards(policy, state, &state.status, target);
+    let violations = policy::check_guards(policy, state, state.status.as_str(), target);
     if violations.is_empty() {
         target.to_string()
     } else {
@@ -459,7 +459,7 @@ fn render_what_next_block(state: &ThreadState, policy: &Policy) -> String {
     lines.push(format!("{} ({})", state.id, state.status));
     lines.push(String::new());
 
-    let targets = event::valid_targets(state.lifecycle(), &state.status);
+    let targets = event::valid_targets(state.lifecycle(), state.status.as_str());
     if targets.is_empty() {
         lines.push("valid transitions: (none)".to_string());
     } else {
@@ -468,7 +468,7 @@ fn render_what_next_block(state: &ThreadState, policy: &Policy) -> String {
     lines.push(String::new());
 
     for target in &targets {
-        let violations = policy::check_guards(policy, state, &state.status, target);
+        let violations = policy::check_guards(policy, state, state.status.as_str(), target);
         if violations.is_empty() {
             lines.push(format!("guard check ({} -> {target}): PASS", state.status));
         } else {
@@ -482,7 +482,8 @@ fn render_what_next_block(state: &ThreadState, policy: &Policy) -> String {
         lines.push(String::new());
     }
 
-    let lookahead = super::verify::build_lookahead(state.kind, &state.status, state, policy);
+    let lookahead =
+        super::verify::build_lookahead(state.kind, state.status.as_str(), state, policy);
     for entry in &lookahead {
         lines.push(format!("lookahead ({}):", entry.path));
         for v in &entry.violations {
@@ -522,7 +523,7 @@ fn render_what_next_block(state: &ThreadState, policy: &Policy) -> String {
 fn op_check_lines(state: &ThreadState, policy: &Policy) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     if !policy.node_rules.is_empty() {
-        if let Some(allowed) = policy.node_rules.get(&state.status) {
+        if let Some(allowed) = policy.node_rules.get(state.status.as_str()) {
             if allowed.is_empty() {
                 out.push("  node types: (none allowed)".into());
             } else {
@@ -535,14 +536,20 @@ fn op_check_lines(state: &ThreadState, policy: &Policy) -> Vec<String> {
     }
     if let Some(revise) = &policy.revise_rules {
         if !revise.allow_body_revise.is_empty() {
-            let allowed = revise.allow_body_revise.iter().any(|s| s == &state.status);
+            let allowed = revise
+                .allow_body_revise
+                .iter()
+                .any(|s| s.as_str() == state.status.as_str());
             out.push(format!(
                 "  body revise: {}",
                 if allowed { "allowed" } else { "blocked" }
             ));
         }
         if !revise.allow_node_revise.is_empty() {
-            let allowed = revise.allow_node_revise.iter().any(|s| s == &state.status);
+            let allowed = revise
+                .allow_node_revise
+                .iter()
+                .any(|s| s.as_str() == state.status.as_str());
             out.push(format!(
                 "  node revise: {}",
                 if allowed { "allowed" } else { "blocked" }
@@ -551,7 +558,10 @@ fn op_check_lines(state: &ThreadState, policy: &Policy) -> Vec<String> {
     }
     if let Some(evidence) = &policy.evidence_rules {
         if !evidence.allow_evidence.is_empty() {
-            let allowed = evidence.allow_evidence.iter().any(|s| s == &state.status);
+            let allowed = evidence
+                .allow_evidence
+                .iter()
+                .any(|s| s.as_str() == state.status.as_str());
             out.push(format!(
                 "  evidence:    {}",
                 if allowed { "allowed" } else { "blocked" }
@@ -568,7 +578,7 @@ fn op_check_lines(state: &ThreadState, policy: &Policy) -> Vec<String> {
 fn render_action_hint(state: &ThreadState, policy: &Policy) -> String {
     let mut lines: Vec<String> = Vec::new();
 
-    let targets = event::valid_targets(state.lifecycle(), &state.status);
+    let targets = event::valid_targets(state.lifecycle(), state.status.as_str());
     if targets.is_empty() {
         lines.push("  next: (no transitions available)".to_string());
     } else {
@@ -865,7 +875,7 @@ pub fn render_tree(parent: &ThreadState, children: &[TreeChild]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::event::{Event, EventType, Lifecycle, NodeType, ThreadKind};
+    use crate::internal::event::{Event, EventType, Lifecycle, NodeType, ThreadKind, ThreadStatus};
     use crate::internal::node::Node;
     use crate::internal::thread::ThreadState;
     use chrono::TimeZone;
@@ -877,7 +887,7 @@ mod tests {
             kind: ThreadKind::Rfc,
             title: "Test RFC".into(),
             body: Some("Thread body".into()),
-            status: "draft".into(),
+            status: ThreadStatus::Draft,
             created_at: t,
             created_by: "human/alice".into(),
             events: vec![Event {
@@ -1020,7 +1030,7 @@ mod tests {
             id: "RFC-PARENT".into(),
             kind: ThreadKind::Rfc,
             title: "Parent RFC".into(),
-            status: "done".into(),
+            status: ThreadStatus::Done,
             ..Default::default()
         };
         let children = vec![
@@ -1051,7 +1061,7 @@ mod tests {
             id: "RFC-LONELY".into(),
             kind: ThreadKind::Rfc,
             title: "Lonely RFC".into(),
-            status: "draft".into(),
+            status: ThreadStatus::Draft,
             ..Default::default()
         };
         let out = render_tree(&parent, &[]);

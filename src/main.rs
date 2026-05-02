@@ -1937,7 +1937,7 @@ fn main() -> Result<(), ForumError> {
             let states = list_thread_states(&git, kind_filter, branch.as_deref())?;
             let filtered: Vec<&thread::ThreadState> = states
                 .iter()
-                .filter(|s| status.as_deref().is_none_or(|st| s.status == st))
+                .filter(|s| status.as_deref().is_none_or(|st| s.status.as_str() == st))
                 .collect();
             print!("{}", ls::render_ls(&filtered));
         }
@@ -2416,7 +2416,7 @@ fn main() -> Result<(), ForumError> {
                 new_type.parse().map_err(ForumError::Config)?;
 
             let state = thread::replay_thread(&git, &thread_id)?;
-            let violations = operation_check::check_revise(&policy, &state.status, false);
+            let violations = operation_check::check_revise(&policy, state.status.as_str(), false);
             apply_operation_checks(&violations, force, policy.checks.strict)?;
 
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
@@ -2649,7 +2649,7 @@ fn main() -> Result<(), ForumError> {
                 let actor = resolve_actor(as_actor, &git);
                 let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
                 let state = thread::replay_thread(&git, &thread_id)?;
-                let violations = operation_check::check_evidence(&policy, &state.status);
+                let violations = operation_check::check_evidence(&policy, state.status.as_str());
                 apply_operation_checks(&violations, force, policy.checks.strict)?;
                 for ref_target in &ref_targets {
                     let commit_sha = evidence::add_evidence(
@@ -2856,7 +2856,7 @@ fn run_revise_cmd(
             )?;
 
             let state = thread::replay_thread(&git, &thread_id)?;
-            let violations = operation_check::check_revise(&policy, &state.status, true);
+            let violations = operation_check::check_revise(&policy, state.status.as_str(), true);
             apply_operation_checks(&violations, force, policy.checks.strict)?;
 
             write_ops::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
@@ -2884,7 +2884,7 @@ fn run_revise_cmd(
             )?;
 
             let state = thread::replay_thread(&git, &thread_id)?;
-            let violations = operation_check::check_revise(&policy, &state.status, false);
+            let violations = operation_check::check_revise(&policy, state.status.as_str(), false);
             apply_operation_checks(&violations, force, policy.checks.strict)?;
 
             let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
@@ -2927,7 +2927,7 @@ fn run_revise_dispatch(
             )?;
 
             let state = thread::replay_thread(&git, &thread_id)?;
-            let violations = operation_check::check_revise(&policy, &state.status, true);
+            let violations = operation_check::check_revise(&policy, state.status.as_str(), true);
             apply_operation_checks(&violations, force, policy.checks.strict)?;
 
             write_ops::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
@@ -2979,7 +2979,7 @@ fn run_shorthand_say(
 
     // Operation check: is this node type allowed in the current state?
     let state = thread::replay_thread(&git, thread_id)?;
-    let violations = operation_check::check_say(&policy, &state.status, node_type);
+    let violations = operation_check::check_say(&policy, state.status.as_str(), node_type);
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
     let resolved_reply = resolve_reply_to(&git, thread_id, reply_to.as_deref())?;
@@ -3422,7 +3422,7 @@ fn thread_matches_filters(
 ) -> bool {
     kind.is_none_or(|kind| state.kind == kind)
         && branch.is_none_or(|branch| state.branch.as_deref() == Some(branch))
-        && status.is_none_or(|status| state.status == status)
+        && status.is_none_or(|status| state.status.as_str() == status)
 }
 
 /// SPEC-2.0 §9.1 kind preset table: the single source of truth that maps a
@@ -3567,7 +3567,7 @@ fn terminal_state_date(state: &thread::ThreadState) -> Option<chrono::DateTime<c
     // terminal status (handles reopen-then-close scenarios correctly).
     state.events.iter().rev().find_map(|e| {
         if e.event_type == git_forum::internal::event::EventType::State
-            && e.new_state.as_deref() == Some(&state.status)
+            && e.new_state.as_deref() == Some(state.status.as_str())
         {
             Some(e.created_at)
         } else {
@@ -3636,10 +3636,12 @@ fn run_bulk_state_change(
         // otherwise `state bulk --to closed` against a thread already in
         // canonical `done` would fall through to validation and error.
         let canonical_target = git_forum::internal::event::normalize_state_name(new_state);
-        if git_forum::internal::event::normalize_state_name(&state.status) == canonical_target {
+        if git_forum::internal::event::normalize_state_name(state.status.as_str())
+            == canonical_target
+        {
             outcomes.push(BulkStateOutcome {
                 thread_id,
-                from_state: state.status.clone(),
+                from_state: state.status.to_string(),
                 to_state: new_state.to_string(),
                 ok: true,
                 dry_run,
@@ -3673,7 +3675,7 @@ fn run_bulk_state_change(
                     ) {
                         outcomes.push(BulkStateOutcome {
                             thread_id,
-                            from_state: state.status,
+                            from_state: state.status.to_string(),
                             to_state: new_state.to_string(),
                             ok: false,
                             dry_run,
@@ -3693,7 +3695,7 @@ fn run_bulk_state_change(
             }
             Err(err) => outcomes.push(BulkStateOutcome {
                 thread_id,
-                from_state: state.status,
+                from_state: state.status.to_string(),
                 to_state: new_state.to_string(),
                 ok: false,
                 dry_run,
@@ -3939,7 +3941,7 @@ fn collect_implements_children(
                 id: child_state.id.clone(),
                 title: child_state.title.clone(),
                 lifecycle_label: child_state.lifecycle().as_str().to_string(),
-                status: child_state.status.clone(),
+                status: child_state.status.to_string(),
             }),
             Err(_) => {
                 // Skip unreplayable children rather than aborting the

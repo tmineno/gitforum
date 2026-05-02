@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 
 use super::error::{ForumError, ForumResult};
-use super::event::{self, Event, EventType, Lifecycle, NodeType, ThreadKind};
+use super::event::{self, Event, EventType, Lifecycle, NodeType, ThreadKind, ThreadStatus};
 use super::evidence::Evidence;
 use super::git_ops::GitOps;
 use super::node::Node;
@@ -29,7 +29,10 @@ pub struct ThreadState {
     pub title: String,
     pub body: Option<String>,
     pub branch: Option<String>,
-    pub status: String,
+    /// Phase 2a: typed status. Storage (`Event.new_state`) stays
+    /// `Option<String>` for 1.x compatibility; this field is the parsed,
+    /// 2.0-canonical view used by every read path.
+    pub status: ThreadStatus,
     pub created_at: DateTime<Utc>,
     pub created_by: String,
     pub events: Vec<Event>,
@@ -158,13 +161,17 @@ fn replay_with_issues(events: &[Event]) -> ForumResult<(ThreadState, Vec<StrictR
         .clone()
         .ok_or_else(|| ForumError::StateMachine("create event missing 'title'".into()))?;
 
+    // `kind.initial_status()` returns a hardcoded canonical literal
+    // (`"draft"` / `"open"`); parse_lenient is total over this input.
+    let initial_status = ThreadStatus::parse_lenient(kind.initial_status())
+        .expect("kind.initial_status() always returns a canonical 2.0 status name");
     let mut state = ThreadState {
         id: first.thread_id.clone(),
         kind,
         title,
         body: first.body.clone(),
         branch: first.branch.clone(),
-        status: kind.initial_status().to_string(),
+        status: initial_status,
         created_at: first.created_at,
         created_by: first.actor.clone(),
         events: vec![first.clone()],
@@ -192,14 +199,21 @@ fn apply_event(
     state.events.push(event.clone());
     match event.event_type {
         EventType::State => {
-            if let Some(ref new_state) = event.new_state {
-                state.status.clone_from(new_state);
-            } else {
-                issues.push(StrictReplayIssue::MissingRequiredField {
+            match event.new_state.as_deref() {
+                Some(name) => match ThreadStatus::parse_lenient(name) {
+                    Some(parsed) => state.status = parsed,
+                    // Lenient: keep the prior status. Strict mode surfaces
+                    // the unparseable value below.
+                    None => issues.push(StrictReplayIssue::InvalidStateValue {
+                        event_id: event.event_id.clone(),
+                        value: name.to_string(),
+                    }),
+                },
+                None => issues.push(StrictReplayIssue::MissingRequiredField {
                     event_id: event.event_id.clone(),
                     event_type: event.event_type,
                     field: "new_state",
-                });
+                }),
             }
             // SPEC-2.0 §2.8: 1.x State events carried approvals as a direct
             // field; 2.0 emits them as Approval-typed Say nodes. Synthesize
@@ -882,12 +896,15 @@ mod tests {
 
     #[test]
     fn replay_create_then_state() {
+        // Phase 2a: 1.x "proposed" is normalized by parse_lenient into the
+        // canonical 2.0 status `Open`. The original assertion against the
+        // raw string is replaced by the parsed enum variant.
         let events = vec![
             make_create("RFC-0001", ThreadKind::Rfc, "Test RFC"),
             make_state("RFC-0001", "proposed"),
         ];
         let state = replay(&events).unwrap();
-        assert_eq!(state.status, "proposed");
+        assert_eq!(state.status, ThreadStatus::Open);
         assert_eq!(state.events.len(), 2);
     }
 

@@ -1,6 +1,6 @@
 use super::config::RepoPaths;
 use super::error::ForumResult;
-use super::event::{self, normalize_state_name};
+use super::event;
 use super::git_ops::GitOps;
 use super::hook;
 use super::index;
@@ -328,13 +328,13 @@ fn build_cross_thread_advisories(states: &[thread::ThreadState]) -> Vec<String> 
         let Some(parent) = by_id.get(parent_id.as_str()) else {
             continue; // referenced parent not in this repo's refs — skip silently
         };
-        if normalize_state_name(&parent.status) != "done" {
+        if parent.status != event::ThreadStatus::Done {
             continue;
         }
         let children = &implements_children_by_parent[parent_id];
         let open_children: Vec<&&thread::ThreadState> = children
             .iter()
-            .filter(|c| normalize_state_name(&c.status) != "done")
+            .filter(|c| c.status != event::ThreadStatus::Done)
             .collect();
         if open_children.is_empty() {
             continue;

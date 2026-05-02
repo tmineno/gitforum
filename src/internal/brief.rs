@@ -135,7 +135,7 @@ pub fn build_json(state: &ThreadState, incoming: &IncomingLinkCounts) -> BriefJs
         title: state.title.clone(),
         lifecycle: state.lifecycle().as_str().to_string(),
         tags: state.tags.clone(),
-        status: state.status.clone(),
+        status: state.status.to_string(),
         created_at: state.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
         created_by: state.created_by.clone(),
         branch: state.branch.clone(),
@@ -254,7 +254,7 @@ fn single_line(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::event::ThreadKind;
+    use crate::internal::event::{ThreadKind, ThreadStatus};
     use crate::internal::node::Node;
     use crate::internal::thread::ThreadLink;
     use chrono::{TimeZone, Utc};
@@ -265,7 +265,7 @@ mod tests {
             id: "RFC-x9k2".into(),
             kind: ThreadKind::Rfc,
             title: "Replace LIKE scan with FTS5".into(),
-            status: "done".into(),
+            status: ThreadStatus::Done,
             created_at: t,
             created_by: "ai/claude".into(),
             tags: vec!["cross-cutting".into()],
@@ -298,7 +298,7 @@ mod tests {
             id: "TASK-123".into(),
             kind: ThreadKind::Task,
             title: "Lonely task".into(),
-            status: "open".into(),
+            status: ThreadStatus::Open,
             created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             created_by: "human/alice".into(),
             ..Default::default()
@@ -338,7 +338,7 @@ mod tests {
             id: "RFC-1".into(),
             kind: ThreadKind::Rfc,
             title: "T".into(),
-            status: "draft".into(),
+            status: ThreadStatus::Draft,
             created_at: Utc::now(),
             created_by: "ai/x".into(),
             nodes: vec![

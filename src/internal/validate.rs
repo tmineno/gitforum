@@ -53,6 +53,11 @@ pub enum StrictReplayIssue {
     },
     /// `facet_set` carried a `lifecycle` value outside the canonical set.
     InvalidLifecycleValue { event_id: String, value: String },
+    /// A `state` event's `new_state` does not parse as a known status
+    /// (canonical 2.0 OR a 1.x synonym handled by
+    /// [`ThreadStatus::parse_lenient`](super::event::ThreadStatus::parse_lenient)).
+    /// Lenient replay leaves the prior status untouched; strict mode flags it.
+    InvalidStateValue { event_id: String, value: String },
 }
 
 impl std::fmt::Display for StrictReplayIssue {
@@ -85,6 +90,10 @@ impl std::fmt::Display for StrictReplayIssue {
             Self::InvalidLifecycleValue { event_id, value } => write!(
                 f,
                 "facet_set event {event_id} carries invalid lifecycle '{value}' (allowed: proposal | execution | record)"
+            ),
+            Self::InvalidStateValue { event_id, value } => write!(
+                f,
+                "state event {event_id} carries unparseable status '{value}' (allowed: canonical 2.0 names or recognized 1.x synonyms)"
             ),
         }
     }

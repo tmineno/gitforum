@@ -214,7 +214,7 @@ fn say_on_accepted_rfc_blocked() {
     assert_eq!(state.status, "done");
 
     let policy = restrictive_policy();
-    let violations = operation_check::check_say(&policy, &state.status, NodeType::Claim);
+    let violations = operation_check::check_say(&policy, state.status.as_str(), NodeType::Claim);
     assert_eq!(violations.len(), 1);
     assert_eq!(violations[0].severity, Severity::Error);
     assert_eq!(violations[0].rule, "node_type_restricted");
@@ -237,7 +237,7 @@ fn say_on_draft_rfc_allowed() {
     assert_eq!(state.status, "draft");
 
     let policy = restrictive_policy();
-    let violations = operation_check::check_say(&policy, &state.status, NodeType::Claim);
+    let violations = operation_check::check_say(&policy, state.status.as_str(), NodeType::Claim);
     assert!(violations.is_empty());
 }
 

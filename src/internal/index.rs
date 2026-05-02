@@ -165,7 +165,7 @@ pub fn upsert_thread(conn: &Connection, state: &ThreadState) -> ForumResult<()> 
         params![
             state.id,
             state.kind.to_string(),
-            state.status,
+            state.status.as_str(),
             state.title,
             state.body,
             state.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
@@ -586,13 +586,13 @@ mod tests {
     }
 
     fn make_state(id: &str) -> ThreadState {
-        use crate::internal::event::{Event, EventType, ThreadKind};
+        use crate::internal::event::{Event, EventType, ThreadKind, ThreadStatus};
         let t = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
         ThreadState {
             id: id.into(),
             kind: ThreadKind::Rfc,
             title: "Test RFC".into(),
-            status: "draft".into(),
+            status: ThreadStatus::Draft,
             created_at: t,
             created_by: "human/alice".into(),
             events: vec![Event {

@@ -1,7 +1,7 @@
 mod support;
 
 use chrono::TimeZone;
-use git_forum::internal::event::{Event, EventType, NodeType, ThreadKind};
+use git_forum::internal::event::{Event, EventType, NodeType, ThreadKind, ThreadStatus};
 use git_forum::internal::ls;
 use git_forum::internal::node::Node;
 use git_forum::internal::show;
@@ -38,7 +38,7 @@ fn base_state() -> ThreadState {
         kind: ThreadKind::Rfc,
         title: "Test RFC".into(),
         body: Some("Initial thread body.".into()),
-        status: "draft".into(),
+        status: ThreadStatus::Draft,
         created_at: t,
         created_by: "human/alice".into(),
         events: vec![Event {
@@ -60,7 +60,8 @@ fn rich_state() -> ThreadState {
     let t2 = t + chrono::Duration::hours(1);
     let t3 = t + chrono::Duration::hours(2);
     let mut state = base_state();
-    state.status = "under-review".into();
+    // Lenient parse so 1.x-flavored fixture data still produces a valid 2.0 status.
+    state.status = ThreadStatus::parse_lenient("under-review").unwrap();
     state.branch = Some("feat/solver".into());
     state.nodes = vec![
         Node {
@@ -214,7 +215,7 @@ fn ls_two_threads() {
     s2.id = "ASK-e5f6a7b8".into();
     s2.kind = ThreadKind::Issue;
     s2.title = "Implement trait backend".into();
-    s2.status = "open".into();
+    s2.status = ThreadStatus::Open;
     s2.branch = Some("feat/parser".into());
     let out = ls::render_ls(&[&s1, &s2]);
     assert_snapshot("ls_two_threads", &out);

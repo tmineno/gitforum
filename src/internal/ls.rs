@@ -61,7 +61,7 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
         .clamp(10, 16);
     let status_width = states
         .iter()
-        .map(|s| s.status.len())
+        .map(|s| s.status.as_str().len())
         .max()
         .unwrap_or(14)
         .clamp(14, 20);
@@ -140,7 +140,7 @@ pub fn render_shortlog(entries: &[(&ThreadState, DateTime<Utc>)]) -> String {
             .clamp(12, 20);
         let status_width = group
             .iter()
-            .map(|(s, _)| s.status.len())
+            .map(|(s, _)| s.status.as_str().len())
             .max()
             .unwrap_or(10)
             .clamp(10, 16);
@@ -197,7 +197,7 @@ fn preview_one_line(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::event::{Event, EventType, ThreadKind};
+    use crate::internal::event::{Event, EventType, ThreadKind, ThreadStatus};
     use chrono::TimeZone;
 
     fn t() -> chrono::DateTime<chrono::Utc> {
@@ -210,7 +210,7 @@ mod tests {
             kind: ThreadKind::Rfc,
             title: "Test RFC".into(),
             body: Some("Thread body".into()),
-            status: "draft".into(),
+            status: ThreadStatus::Draft,
             created_at: t(),
             created_by: "human/alice".into(),
             events: vec![Event {
