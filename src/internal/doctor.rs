@@ -1,6 +1,6 @@
 use super::config::RepoPaths;
 use super::error::ForumResult;
-use super::event::normalize_state_name;
+use super::event::{self, normalize_state_name};
 use super::git_ops::GitOps;
 use super::hook;
 use super::index;
@@ -46,8 +46,28 @@ impl DoctorReport {
 
 const TEMPLATE_FILES: &[&str] = &["issue.md", "rfc.md", "dec.md", "task.md"];
 
-/// Run health checks on a git-forum repository.
+/// Run health checks on a git-forum repository (lenient mode).
+///
+/// "Lenient" = the same posture lenient `replay()` takes for read paths:
+/// silent-no-op conditions inside event replay are NOT promoted to checks.
+/// Use [`run_doctor_strict`] (CLI: `git forum doctor --strict`) for the
+/// migration / CI posture that surfaces every such no-op as FAIL.
 pub fn run_doctor(git: &GitOps, paths: &RepoPaths) -> ForumResult<DoctorReport> {
+    run_with_mode(git, paths, false)
+}
+
+/// Run health checks with strict event-replay validation enabled.
+///
+/// Each [`validate::StrictReplayIssue`](super::validate::StrictReplayIssue)
+/// becomes its own `strict-replay <ref>` FAIL check, so triage knows exactly
+/// which event broke which invariant. Intended for migration verification,
+/// CI gates, and audit runs — default `run_doctor` stays lenient so existing
+/// repos with historical write-side mistakes don't go red on every run.
+pub fn run_doctor_strict(git: &GitOps, paths: &RepoPaths) -> ForumResult<DoctorReport> {
+    run_with_mode(git, paths, true)
+}
+
+fn run_with_mode(git: &GitOps, paths: &RepoPaths, strict: bool) -> ForumResult<DoctorReport> {
     let mut checks = Vec::new();
 
     // 1. .forum/ directory
@@ -220,17 +240,40 @@ pub fn run_doctor(git: &GitOps, paths: &RepoPaths) -> ForumResult<DoctorReport> 
         }
     }
 
-    // 8. Replay each thread
+    // 8. Replay each thread (strict). Strict mode surfaces silent no-ops
+    //    that lenient `replay()` swallows for read-side compatibility — see
+    //    `validate::StrictReplayIssue`. Each issue becomes its own FAIL line
+    //    so triage knows exactly which event broke the invariant.
+    //
+    //    A replay error whose root cause is "the thread ref's bottom commit
+    //    is not a valid event.json" is downgraded to a `WARN` orphan-ref
+    //    finding with a `prune-orphans` hint, since the ref carries no
+    //    recoverable thread and the fix is deletion, not data repair. Genuine
+    //    mid-chain corruption keeps `FAIL` semantics.
     let mut replayed_states: Vec<thread::ThreadState> = Vec::new();
     if let Some(ids) = &thread_ids {
         for id in ids {
             let ref_name = refs::thread_ref(id);
-            match thread::replay_thread(git, id) {
-                Ok(state) => {
+            match thread::replay_thread_strict(git, id) {
+                Ok((state, issues)) => {
                     checks.push(ok(&format!("replay {ref_name}")));
+                    if strict {
+                        for issue in issues {
+                            checks.push(fail(
+                                &format!("strict-replay {ref_name}"),
+                                &issue.to_string(),
+                            ));
+                        }
+                    }
                     replayed_states.push(state);
                 }
-                Err(e) => checks.push(fail(&format!("replay {ref_name}"), &e.to_string())),
+                Err(e) => match event::is_orphan_ref(git, id) {
+                    Ok(true) => checks.push(warn(
+                        &format!("orphan ref {ref_name}"),
+                        "ref has no usable create event; run `git forum prune-orphans` to delete",
+                    )),
+                    _ => checks.push(fail(&format!("replay {ref_name}"), &e.to_string())),
+                },
             }
         }
     }

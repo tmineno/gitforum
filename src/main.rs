@@ -45,11 +45,12 @@ const GROUPED_HELP: &str = "\
 These are common git-forum commands:
 
 setup and repo health
-   init        Initialize a git-forum repository
-   doctor      Diagnose repo health (config, index, refs)
-   repair      Detect and fix thread ID conflicts with a remote
-   reindex     Rebuild local index from Git refs
-   migrate     Rewrite a 1.x repo to the 2.0 storage format
+   init           Initialize a git-forum repository
+   doctor         Diagnose repo health (config, index, refs)
+   repair         Detect and fix thread ID conflicts with a remote
+   reindex        Rebuild local index from Git refs
+   prune-orphans  Delete thread refs that have no valid create event
+   migrate        Rewrite a 1.x repo to the 2.0 storage format
 
 create and browse threads
    new         Create a new thread via kind preset (rfc/dec/task/issue/bug)
@@ -137,9 +138,20 @@ enum Commands {
         /// Show all checks including passing ones
         #[arg(long, short)]
         verbose: bool,
+        /// Surface every silent replay no-op (unknown target node, etc.) as FAIL.
+        /// Intended for migration verification and CI gates; default doctor stays
+        /// lenient so historical write-side mistakes don't fail every run.
+        #[arg(long)]
+        strict: bool,
     },
     /// Rebuild local index from Git refs
     Reindex,
+    /// Delete thread refs whose oldest commit is not a valid event.json
+    PruneOrphans {
+        /// Actually delete the orphan refs (default is dry-run preview)
+        #[arg(long)]
+        apply: bool,
+    },
     /// Migrate a 1.x repo to the 2.0 storage format (ADR-004 / SPEC-2.0 §10)
     Migrate {
         /// Report planned changes without writing anything
@@ -1206,9 +1218,13 @@ fn main() -> Result<(), ForumError> {
             hook::install_all_hooks(&git, false)?;
         }
 
-        Commands::Doctor { verbose } => {
+        Commands::Doctor { verbose, strict } => {
             let (git, paths) = discover_repo_with_init_warning()?;
-            let report = doctor::run_doctor(&git, &paths)?;
+            let report = if strict {
+                doctor::run_doctor_strict(&git, &paths)?
+            } else {
+                doctor::run_doctor(&git, &paths)?
+            };
 
             // Separate replay checks from non-replay checks
             let mut replay_ok = 0u32;
@@ -1306,6 +1322,31 @@ fn main() -> Result<(), ForumError> {
             );
             for (id, err) in &report.errors {
                 eprintln!("  error: {id}: {err}");
+            }
+        }
+
+        Commands::PruneOrphans { apply } => {
+            let (git, paths) = discover_repo_with_init_warning()?;
+            let orphans = git_forum::internal::prune::scan(&git)?;
+            if orphans.is_empty() {
+                println!("No orphan thread refs found.");
+                return Ok(());
+            }
+            println!("Orphan thread refs ({}):", orphans.len());
+            for orphan in &orphans {
+                println!("  {} ({})", orphan.ref_name, orphan.thread_id);
+            }
+            if !apply {
+                println!("\nDry run — re-run with --apply to delete these refs.");
+                return Ok(());
+            }
+            git_forum::internal::prune::delete(&git, &orphans)?;
+            println!("\nDeleted {} orphan ref(s).", orphans.len());
+            // Stale rows remain in the index until the operator runs reindex;
+            // mention it inline so they don't have to remember.
+            let db_path = paths.git_forum.join("index.db");
+            if db_path.exists() {
+                println!("hint: run `git forum reindex` to drop stale index rows.");
             }
         }
 

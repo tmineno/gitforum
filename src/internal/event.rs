@@ -796,6 +796,22 @@ pub fn load_thread_events(git: &GitOps, thread_id: &str) -> ForumResult<Vec<Even
     Ok(events)
 }
 
+/// Returns `true` when the thread ref's bottom (oldest) commit cannot be
+/// parsed as a valid `event.json`. Used by `doctor` and `prune-orphans` to
+/// distinguish a structurally empty ref (manually-created Git ref under
+/// `refs/forum/threads/`, or a history that lost its create event) from
+/// mid-chain corruption that points at real damage to a once-valid thread.
+///
+/// An empty ref (no commits) is also reported as orphan.
+pub fn is_orphan_ref(git: &GitOps, thread_id: &str) -> ForumResult<bool> {
+    let ref_name = refs::thread_ref(thread_id);
+    let shas = git.rev_list(&ref_name)?;
+    let Some(oldest) = shas.last() else {
+        return Ok(true);
+    };
+    Ok(read_event(git, oldest).is_err())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
