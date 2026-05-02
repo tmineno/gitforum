@@ -315,6 +315,164 @@ fn doctor_strict_flips_unknown_target_resolve_to_fail() {
         .contains("ghost-node-id"));
 }
 
+/// `prune-stale-events` round-trip: build a thread with a resolve event whose
+/// `target_node_id` doesn't exist, run the planner, apply, then assert the
+/// thread no longer triggers strict-replay FAILs and that unrelated history
+/// (the create event SHA) is preserved.
+#[test]
+fn prune_stale_events_drops_unknown_target_resolve() {
+    use chrono::TimeZone;
+    use git_forum::internal::clock::FixedClock;
+    use git_forum::internal::event::{self as ev, Event, EventType, ThreadKind};
+    use git_forum::internal::prune;
+
+    let (_repo, git, paths) = setup();
+    init::init_forum(&paths).unwrap();
+    let clock = FixedClock {
+        instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+    };
+    let thread_id = git_forum::internal::create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Phantom resolve",
+        None,
+        "human/alice",
+        &clock,
+    )
+    .unwrap();
+    let original_create_sha = git
+        .resolve_ref(&format!("refs/forum/threads/{thread_id}"))
+        .unwrap()
+        .unwrap();
+
+    // Append a resolve event whose target was never created.
+    ev::write_event(
+        &git,
+        &Event {
+            thread_id: thread_id.clone(),
+            event_type: EventType::Resolve,
+            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
+            actor: "human/alice".into(),
+            target_node_id: Some("ghost-node-id".into()),
+            ..Event::default()
+        },
+    )
+    .unwrap();
+
+    // Planner spots exactly one stale event on this thread.
+    let plans = prune::scan_stale_events(&git).unwrap();
+    let plan = plans
+        .iter()
+        .find(|p| p.thread_id == thread_id)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected plan for {thread_id}, got: {:?}",
+                plans.iter().map(|p| &p.thread_id).collect::<Vec<_>>()
+            )
+        });
+    assert_eq!(plan.events_to_drop.len(), 1);
+    assert_eq!(plan.orphan_target_count, 1);
+
+    let dropped = prune::apply_stale_event_plans(&git, &plans).unwrap();
+    assert_eq!(dropped, 1);
+
+    // After apply: strict replay reports no issues for this thread.
+    let (state, issues) = git_forum::internal::thread::replay_thread_strict(&git, &thread_id)
+        .expect("strict replay should succeed");
+    assert!(
+        issues.is_empty(),
+        "strict replay should be clean after prune: {issues:?}"
+    );
+    assert_eq!(state.id, thread_id);
+
+    // Chain has only the create event again — drop happened on the only
+    // post-create commit, so the chain is exactly its original prefix.
+    let new_tip = git
+        .resolve_ref(&format!("refs/forum/threads/{thread_id}"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        new_tip, original_create_sha,
+        "prune should have rolled the ref back to the create commit"
+    );
+}
+
+#[test]
+fn prune_stale_events_preserves_unaffected_prefix_sha() {
+    // Chain: create → resolve(unknown) → comment(real). The stale resolve
+    // is dropped; the create commit SHA must be unchanged but the comment
+    // commit MUST be re-emitted (its parent changed).
+    use chrono::TimeZone;
+    use git_forum::internal::clock::FixedClock;
+    use git_forum::internal::event::{self as ev, Event, EventType, NodeType, ThreadKind};
+    use git_forum::internal::prune;
+
+    let (_repo, git, paths) = setup();
+    init::init_forum(&paths).unwrap();
+    let clock = FixedClock {
+        instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+    };
+    let thread_id = git_forum::internal::create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Mixed",
+        None,
+        "human/alice",
+        &clock,
+    )
+    .unwrap();
+    let create_sha = git
+        .resolve_ref(&format!("refs/forum/threads/{thread_id}"))
+        .unwrap()
+        .unwrap();
+    ev::write_event(
+        &git,
+        &Event {
+            thread_id: thread_id.clone(),
+            event_type: EventType::Resolve,
+            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
+            actor: "human/alice".into(),
+            target_node_id: Some("ghost".into()),
+            ..Event::default()
+        },
+    )
+    .unwrap();
+    ev::write_event(
+        &git,
+        &Event {
+            thread_id: thread_id.clone(),
+            event_type: EventType::Say,
+            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 2, 0).unwrap(),
+            actor: "human/alice".into(),
+            node_type: Some(NodeType::Comment),
+            body: Some("real comment".into()),
+            ..Event::default()
+        },
+    )
+    .unwrap();
+
+    let plans = prune::scan_stale_events(&git).unwrap();
+    prune::apply_stale_event_plans(&git, &plans).unwrap();
+
+    // After prune: chain length is 2 (create + comment); create SHA stable.
+    let new_chain = git
+        .rev_list(&format!("refs/forum/threads/{thread_id}"))
+        .unwrap();
+    assert_eq!(new_chain.len(), 2, "expected 2 commits, got: {new_chain:?}");
+    assert_eq!(
+        new_chain.last().unwrap(),
+        &create_sha,
+        "create commit must keep its original SHA"
+    );
+
+    // Comment is preserved (not dropped) and visible.
+    let (state, issues) =
+        git_forum::internal::thread::replay_thread_strict(&git, &thread_id).unwrap();
+    assert!(issues.is_empty());
+    assert_eq!(state.nodes.len(), 1);
+    assert_eq!(state.nodes[0].body, "real comment");
+}
+
 #[test]
 fn prune_orphans_scan_finds_and_delete_removes() {
     use git_forum::internal::prune;

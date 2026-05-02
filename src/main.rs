@@ -45,12 +45,13 @@ const GROUPED_HELP: &str = "\
 These are common git-forum commands:
 
 setup and repo health
-   init           Initialize a git-forum repository
-   doctor         Diagnose repo health (config, index, refs)
-   repair         Detect and fix thread ID conflicts with a remote
-   reindex        Rebuild local index from Git refs
-   prune-orphans  Delete thread refs that have no valid create event
-   migrate        Rewrite a 1.x repo to the 2.0 storage format
+   init               Initialize a git-forum repository
+   doctor             Diagnose repo health (config, index, refs)
+   repair             Detect and fix thread ID conflicts with a remote
+   reindex            Rebuild local index from Git refs
+   prune-orphans      Delete thread refs that have no valid create event
+   prune-stale-events Drop events whose target_node_id references a vanished node
+   migrate            Rewrite a 1.x repo to the 2.0 storage format
 
 create and browse threads
    new         Create a new thread via kind preset (rfc/dec/task/issue/bug)
@@ -149,6 +150,13 @@ enum Commands {
     /// Delete thread refs whose oldest commit is not a valid event.json
     PruneOrphans {
         /// Actually delete the orphan refs (default is dry-run preview)
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Drop events whose target_node_id references a vanished node.
+    /// Surfaces of `git forum doctor --strict` that aren't ref-level damage.
+    PruneStaleEvents {
+        /// Actually rewrite affected thread chains (default is dry-run preview)
         #[arg(long)]
         apply: bool,
     },
@@ -1347,6 +1355,46 @@ fn main() -> Result<(), ForumError> {
             let db_path = paths.git_forum.join("index.db");
             if db_path.exists() {
                 println!("hint: run `git forum reindex` to drop stale index rows.");
+            }
+        }
+
+        Commands::PruneStaleEvents { apply } => {
+            let (git, paths) = discover_repo_with_init_warning()?;
+            let plans = git_forum::internal::prune::scan_stale_events(&git)?;
+            if plans.is_empty() {
+                println!("No stale-target events found.");
+                return Ok(());
+            }
+            let total_threads = plans.len();
+            let total_events: usize = plans.iter().map(|p| p.events_to_drop.len()).sum();
+            let total_targets: usize = plans.iter().map(|p| p.orphan_target_count).sum();
+            println!(
+                "Stale-target events: {total_events} event(s) across {total_threads} thread(s) (referencing {total_targets} vanished node(s))"
+            );
+            for plan in &plans {
+                println!(
+                    "  {}: drop {} event(s) ({} orphan target(s))",
+                    plan.thread_id,
+                    plan.events_to_drop.len(),
+                    plan.orphan_target_count
+                );
+                for sha in &plan.events_to_drop {
+                    println!("    - {sha}");
+                }
+            }
+            if !apply {
+                println!(
+                    "\nDry run — re-run with --apply to rewrite these threads. Backup: refs/forum/threads/* are local-only on this clone."
+                );
+                return Ok(());
+            }
+            let dropped = git_forum::internal::prune::apply_stale_event_plans(&git, &plans)?;
+            println!("\nDropped {dropped} event(s) from {total_threads} thread(s).");
+            let db_path = paths.git_forum.join("index.db");
+            if db_path.exists() {
+                println!(
+                    "hint: run `git forum reindex` to refresh index rows for affected threads."
+                );
             }
         }
 
