@@ -4,13 +4,52 @@ This directory contains shared support code for integration tests and E2E scenar
 
 ## Directory Layout
 
+Files under `tests/` follow the categories defined in
+`doc/spec/TEST-POLICY.md`. Names mirror their owner module in
+`src/internal/` so a contributor can predict where a new test
+belongs.
+
 ```
 tests/
-  m1_test.rs .. m5_test.rs         Milestone integration tests (library API)
-  cli_*_test.rs                    CLI binary integration tests
-  snapshot_test.rs                 Snapshot-based show/ls/status tests
-  e2e_multiagent_test.rs           Deterministic multi-agent E2E scenario
-  e2e_live_agent_test.rs           Live-agent E2E scenario (#[ignore])
+  # Module integration (category 1) — drives the library API directly.
+  init_test.rs                     init + commit identity
+  event_storage_test.rs            write_event / read_event / load_thread_events
+  thread_test.rs                   replay, list, create, resolve, timestamp
+  doctor_test.rs                   doctor checks + linked-thread advisory
+  index_test.rs                    index db + reindex + search + tui startup +
+                                   reverse-link queries
+  id_alloc_test.rs                 thread ID allocation + validation
+  ls_test.rs                       ls render + kind filters
+  show_test.rs                     show render + nodes + tree advisory + DEC/TASK
+  node_test.rs                     say / objection / resolve / retract / revise /
+                                   find_node / node-id resolution
+  state_change_test.rs             transitions + guards + fast_track + approvals +
+                                   RFC deprecation + DEC/TASK lifecycle
+  verify_test.rs                   verify_thread guard reports + linked-thread
+                                   advisory
+  policy_test.rs                   policy.toml load/lint + facet-scoped guards
+  evidence_test.rs                 add_evidence + commit-evidence + show section
+  thread_link_test.rs              add_thread_link + show + node_show
+  brief_test.rs                    brief render + JSON schema
+
+  # CLI surface (category 2) — spawns the git-forum binary.
+  cli_*_test.rs
+
+  # Cross-module behavior (category 3).
+  operation_check_test.rs          operation-check rule tables (cross-module)
+  migrate_test.rs                  1.x → 2.0 storage rewrite
+  hook_test.rs                     git commit-msg hook
+  purge_test.rs                    purge subcommand
+  github_test.rs                   github import/export
+
+  # Output goldens (category 4).
+  snapshot_test.rs
+
+  # End-to-end scenarios (category 5).
+  e2e_multiagent_test.rs           Deterministic multi-agent scenario
+  e2e_live_agent_test.rs           Live-agent scenario (#[ignore])
+
+  # Shared support (category 6).
   support/
     mod.rs                         Module declarations
     repo.rs                        TestRepo: isolated temp Git repos
