@@ -23,6 +23,19 @@ pub struct StateChangePlan {
     pub resolve_action_ids: Vec<String>,
 }
 
+/// The result of attempting a state change.
+#[derive(Debug, Clone)]
+pub enum StateChangeOutcome {
+    /// A State event was written; the thread moved from `from` to `to`.
+    Applied { from: String, to: String },
+    /// `from == to`; no State event was written. `comment_recorded` is true if
+    /// a `--comment` was supplied and recorded as a standalone Say node.
+    NoOp {
+        state: String,
+        comment_recorded: bool,
+    },
+}
+
 pub fn prepare_state_change(
     git: &GitOps,
     thread_id: &str,
@@ -135,7 +148,10 @@ pub fn prepare_state_change(
 /// Attempt a thread state transition, checking the state machine and policy guards.
 ///
 /// Preconditions: thread_id exists; approve_actors is the list of approving actor IDs.
-/// Postconditions: on success, a State event with attached approvals is written.
+/// Postconditions: on success, returns either `Applied` (a State event with attached
+///   approvals was written) or `NoOp` (the thread was already in `new_state`; no State
+///   event was written, but a Say node carrying `options.comment` may have been written
+///   if a comment was supplied).
 /// Failure modes: ForumError::StateMachine if transition invalid; ForumError::Policy if guards fail.
 /// Side effects: writes git objects, updates ref.
 #[allow(clippy::too_many_arguments)]
@@ -148,7 +164,26 @@ pub fn change_state(
     clock: &dyn Clock,
     policy: &Policy,
     options: StateChangeOptions,
-) -> ForumResult<()> {
+) -> ForumResult<StateChangeOutcome> {
+    // SPEC-2.0 §3.1: compare states *after* normalization so legacy 1.x verbs
+    // (e.g. `proposed`, `under-review`, `closed`) collapse onto their 2.0
+    // equivalents and a self-loop like `review->review` (or `proposed->open`,
+    // when the thread is already `open`) is recognized as a no-op.
+    let current = thread::replay_thread(git, thread_id)?.status;
+    let canonical_target = event::normalize_state_name(new_state);
+    if event::normalize_state_name(&current) == canonical_target {
+        let comment_recorded = if let Some(text) = options.comment.as_deref() {
+            write_ops::say_node(git, thread_id, NodeType::Comment, text, actor, clock, None)?;
+            true
+        } else {
+            false
+        };
+        return Ok(StateChangeOutcome::NoOp {
+            state: canonical_target.to_string(),
+            comment_recorded,
+        });
+    }
+
     let comment = options.comment.clone();
     let plan = prepare_state_change(
         git,
@@ -190,7 +225,10 @@ pub fn change_state(
         ev = ev.with_body(text);
     }
     super::event::write_event(git, &ev)?;
-    Ok(())
+    Ok(StateChangeOutcome::Applied {
+        from: plan.from_state,
+        to: new_state.to_string(),
+    })
 }
 
 /// Walk through intermediate states to reach `target`, checking guards at each step.

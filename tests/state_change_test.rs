@@ -1384,3 +1384,126 @@ fn task_reviewing_to_closed_blocked_by_actions() {
     let err = result.unwrap_err().to_string();
     assert!(err.contains("no_open_actions"));
 }
+
+#[test]
+fn change_state_self_loop_is_noop_without_comment() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Self-loop without comment",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
+    let event_count_before = thread::replay_thread(&git, &thread_id)
+        .unwrap()
+        .events
+        .len();
+
+    // Issue is created in 'open'. Re-asserting 'open' must not error and
+    // must not write any new event.
+    let outcome = state_change::change_state(
+        &git,
+        &thread_id,
+        "open",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions::default(),
+    )
+    .expect("self-loop must succeed");
+
+    match outcome {
+        state_change::StateChangeOutcome::NoOp {
+            state,
+            comment_recorded,
+        } => {
+            assert_eq!(state, "open");
+            assert!(!comment_recorded);
+        }
+        other => panic!("expected NoOp, got {other:?}"),
+    }
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.status, "open");
+    // No new events recorded.
+    assert_eq!(state.events.len(), event_count_before);
+    // No State events written at all.
+    assert!(
+        !state
+            .events
+            .iter()
+            .any(|e| e.event_type == EventType::State),
+        "no State events should be present after a bare self-loop"
+    );
+}
+
+#[test]
+fn change_state_self_loop_with_comment_records_say_node() {
+    let (_repo, git, _paths) = setup();
+    let thread_id = create::create_thread(
+        &git,
+        ThreadKind::Issue,
+        "Self-loop with comment",
+        None,
+        "human/alice",
+        &fixed_clock(),
+    )
+    .unwrap();
+
+    let outcome = state_change::change_state(
+        &git,
+        &thread_id,
+        "open",
+        &[],
+        "human/alice",
+        &fixed_clock(),
+        &empty_policy(),
+        state_change::StateChangeOptions {
+            comment: Some("re-affirming after evidence attachment".into()),
+            ..Default::default()
+        },
+    )
+    .expect("self-loop with comment must succeed");
+
+    match outcome {
+        state_change::StateChangeOutcome::NoOp {
+            state,
+            comment_recorded,
+        } => {
+            assert_eq!(state, "open");
+            assert!(comment_recorded);
+        }
+        other => panic!("expected NoOp, got {other:?}"),
+    }
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.status, "open");
+
+    // No State event was written for the self-loop.
+    assert!(
+        !state
+            .events
+            .iter()
+            .any(|e| e.event_type == EventType::State),
+        "no State events should be present after a self-loop, even with --comment"
+    );
+
+    // The comment was attached as a standalone Say node.
+    let say_events: Vec<_> = state
+        .events
+        .iter()
+        .filter(|e| e.event_type == EventType::Say)
+        .collect();
+    assert_eq!(say_events.len(), 1);
+    assert_eq!(
+        say_events[0].body.as_deref(),
+        Some("re-affirming after evidence attachment")
+    );
+    assert_eq!(say_events[0].node_type, Some(NodeType::Comment));
+    assert_eq!(state.nodes.len(), 1);
+}

@@ -2426,11 +2426,29 @@ fn main() -> Result<(), ForumError> {
                             }
                         }
                     } else {
-                        state_change::change_state(
+                        let outcome = state_change::change_state(
                             &git, &thread_id, &new_state, &approve, &actor, &clock, &policy,
                             options,
                         )?;
-                        println!("{thread_id} -> {new_state}");
+                        match outcome {
+                            state_change::StateChangeOutcome::Applied { .. } => {
+                                println!("{thread_id} -> {new_state}");
+                            }
+                            state_change::StateChangeOutcome::NoOp {
+                                state,
+                                comment_recorded,
+                            } => {
+                                if comment_recorded {
+                                    println!(
+                                        "note: {thread_id} is already in state '{state}'; no transition recorded (comment attached as a standalone node)"
+                                    );
+                                } else {
+                                    println!(
+                                        "note: {thread_id} is already in state '{state}'; no transition recorded"
+                                    );
+                                }
+                            }
+                        }
                     }
                     // Create links after state transition if requested
                     if !link_to.is_empty() {
@@ -3198,10 +3216,28 @@ fn run_state_shorthand(
             }
         }
     } else {
-        state_change::change_state(
+        let outcome = state_change::change_state(
             &git, thread_id, target, approve, &actor, clock, &policy, options,
         )?;
-        println!("{thread_id} -> {target}");
+        match outcome {
+            state_change::StateChangeOutcome::Applied { .. } => {
+                println!("{thread_id} -> {target}");
+            }
+            state_change::StateChangeOutcome::NoOp {
+                state,
+                comment_recorded,
+            } => {
+                if comment_recorded {
+                    println!(
+                        "note: {thread_id} is already in state '{state}'; no transition recorded (comment attached as a standalone node)"
+                    );
+                } else {
+                    println!(
+                        "note: {thread_id} is already in state '{state}'; no transition recorded"
+                    );
+                }
+            }
+        }
     }
     if !link_to.is_empty() {
         let rel = rel
@@ -3490,6 +3526,25 @@ fn run_bulk_state_change(
         };
 
         if !thread_matches_filters(&state, selectors.kind, selectors.branch, selectors.status) {
+            continue;
+        }
+
+        // Normalize both sides so 1.x verbs (e.g. `proposed`, `closed`)
+        // collapse onto their 2.0 canonical names before the self-loop check;
+        // otherwise `state bulk --to closed` against a thread already in
+        // canonical `done` would fall through to validation and error.
+        let canonical_target = git_forum::internal::event::normalize_state_name(new_state);
+        if git_forum::internal::event::normalize_state_name(&state.status) == canonical_target {
+            outcomes.push(BulkStateOutcome {
+                thread_id,
+                from_state: state.status.clone(),
+                to_state: new_state.to_string(),
+                ok: true,
+                dry_run,
+                detail: Some(format!(
+                    "already in '{canonical_target}'; no transition recorded"
+                )),
+            });
             continue;
         }
 
