@@ -58,42 +58,33 @@ to resolve via the alias mechanism.
 
 ### Example
 
-The kind-reduced model supports both standalone quick-capture and topic grouping with the
-same vocabulary:
+The user types familiar nouns; the system translates each to the underlying
+`(lifecycle, tag)` pair without exposing the schema:
 
 ```text
-# Standalone quick capture — no topic ceremony
 $ git forum new bug "TUI crashes on resize"
-created @a3f9b2k1  (lifecycle: execution, tags: bug, status: open, standalone)
+created @a3f9b2k1  (lifecycle: execution, tags: bug, status: open)
 
-# Same command, attached to a topic
-$ git forum topic new "Payment system rewrite"
-created !payment-system-rewrite
+$ git forum new rfc  "Replace gateway with async queue"
+created @x9k2m4p7  (lifecycle: proposal,  tags: cross-cutting, status: draft)
 
-$ git forum new rfc  "Replace gateway with async queue"   --topic payment-system-rewrite
-created @x9k2m4p7  (lifecycle: proposal,  tags: cross-cutting,  attached to !payment-system-rewrite)
+$ git forum new task "Implement async dispatcher" --link-to @x9k2 --rel implements
+created @y3p7n2q4  (lifecycle: execution, tags: task, status: open)
 
-$ git forum new task "Implement async dispatcher"         --topic payment-system-rewrite
-created @y3p7n2q4  (lifecycle: execution, tags: task,           attached to !payment-system-rewrite)
-
-$ git forum new bug  "Gateway client retry overflow"      --topic payment-system-rewrite
-created @r7n8m1z2  (lifecycle: execution, tags: bug,            attached to !payment-system-rewrite)
-
-$ git forum new dec  "Use UUIDv7 for new entity IDs"      --topic payment-system-rewrite
-created @q8w2e1r3  (lifecycle: record,    tags: -,              attached to !payment-system-rewrite)
+$ git forum new dec  "Use UUIDv7 for new entity IDs" --link-to @x9k2 --rel relates-to
+created @q8w2e1r3  (lifecycle: record,    tags: -, status: open)
 ```
-
-The user types familiar nouns (`rfc`, `task`, `bug`, `dec`); the system translates each to the
-underlying `(lifecycle, tag)` pair without exposing the schema. Topics compose threads of
-mixed lifecycles into a single grouped context.
 
 The same flow works using the canonical form for scripts that want explicit control:
 
 ```text
 $ git forum thread new "Replace gateway with async queue" \
-    --lifecycle proposal --tag cross-cutting \
-    --topic payment-system-rewrite
+    --lifecycle proposal --tag cross-cutting
 ```
+
+Grouping across these threads is expressed via `--rel implements` link relations and surfaced
+through advisory display (`show --tree`, `verify` linked-thread advisory), per CORE-VALUE.md.
+2.0 deliberately rejects a topic entity — see CORE-VALUE.md §"Rejected from scope".
 
 ## Consequences
 
@@ -106,8 +97,6 @@ $ git forum thread new "Replace gateway with async queue" \
   agents — can keep typing `new bug` / `new task` / `new rfc` / `new dec` indefinitely. The
   facet vocabulary is internal schema, surfaced explicitly only when the user opts into
   `thread new --lifecycle ...` or writes facet-scoped policy.
-- Standalone threads (no topic attached) are first-class throughout the CLI and TUI;
-  topic membership is a context affordance, not a precondition for any operation.
 - `dec` users (none observed) lose a dedicated kind but gain `lifecycle=record` threads with no
   required tag — strictly more flexible.
 - Migration must inject `facet_set` events into existing thread histories (see ADR-004).
@@ -156,5 +145,3 @@ guards become harder to reason about.
   as first-class CLI surface that internally delegates to the canonical
   `thread new --lifecycle ...` path.
 - All four 1.x state machines round-trip into the unified model in tests.
-- A topic can hold threads of all three lifecycles simultaneously (proposal + execution +
-  record) — verified by integration test.
