@@ -757,7 +757,12 @@ digits). Comment lines (respecting `core.commentChar`) and scissors sections are
 - Any missing: warn, exit 1 (blocks commit).
 
 **post-checkout hook:** Runs `worktree-init` (auto-initializes git-forum in new worktrees) then
-`fix-index` (repairs missing blob references in the git index caused by GC in worktrees).
+`fix-index` (repairs missing blob references in the index and HEAD's tree). The HEAD-tree pass
+re-stages paths whose committed blob is no longer present in the local object store, so the
+next commit lands a fresh tree. The mechanism by which a HEAD-tree blob goes missing under
+normal use is not characterized — `fix-index` exists as defense-in-depth, not because a specific
+git operation is known to produce the corruption (see ADR-007 referenced from the
+`@0edk3jdm` Phase 1 investigation).
 
 Hook paths are resolved via `git rev-parse --git-path hooks/<name>` (worktree and
 `core.hooksPath` safe). `--force` overwrites without backup.

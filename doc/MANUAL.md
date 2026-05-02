@@ -1099,10 +1099,16 @@ Runs after `git checkout`, `git switch`, and `git worktree add`. Performs two ac
 
 1. **`git-forum hook worktree-init`** — auto-initializes git-forum in new worktrees (creates
    `.git/forum/`, `local.toml`, installs hooks). No-op if already initialized.
-2. **`git-forum hook fix-index`** — repairs missing blob references in the git index. Worktrees
-   can end up with index entries pointing at blobs that were garbage-collected. This proactively
-   re-hashes working-tree files to recreate missing blobs, preventing pre-commit framework
-   crashes during the stash/restore cycle.
+2. **`git-forum hook fix-index`** — repairs missing blob references in two places: (a) the
+   git index, by re-hashing working-tree copies of any staged paths whose blob is missing;
+   (b) HEAD's tree, by re-staging paths whose HEAD blob is missing so the next commit lands
+   a fresh tree. The mechanism by which an index or HEAD-tree blob goes missing under normal
+   use is not characterized (see the `@0edk3jdm` Phase 1 investigation in the forum); `fix-index`
+   exists as defense-in-depth, not because a specific git operation is known to produce the
+   corruption. When the symptom does occur, the recovery flow is
+   `git-forum hook fix-index && git commit --no-verify` — `--no-verify` is unavoidable for one
+   commit because pre-commit's startup `git diff --diff-filter=A` probe dies on the broken
+   HEAD before any user hook can run.
 
 #### Hook path resolution
 
