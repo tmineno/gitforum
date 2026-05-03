@@ -204,8 +204,8 @@ Every category and tag MUST satisfy:
 ### 2.5 Connection to code
 
 Threads stay connected to the repository content they discuss through three
-mechanisms. None of them introduce cross-thread enforcement (CORE-VALUE
-non-goal §1).
+mechanisms. None of them introduce cross-thread enforcement (per CORE-VALUE:
+Bounded Policy).
 
 1. **Evidence records.** `evidence.toml` (§2.3) lets a thread point at a
    commit, file, hunk, test, benchmark, doc, or external reference. Evidence
@@ -225,8 +225,8 @@ non-goal §1).
    NOT block commits that have no `Refs:` trailer. It MUST fail commits
    whose `Refs:` trailer names an undefined thread ID.
 
-These mechanisms are required surface (CORE-VALUE "Connection to code (always
-in scope)"). Their CLI entry points are listed in §7.
+These mechanisms are required surface (per CORE-VALUE: Code-Adjacent
+Deliberation). Their CLI entry points are listed in §7.
 
 ## 3. Category registry and policy
 
