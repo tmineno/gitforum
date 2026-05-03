@@ -1,7 +1,10 @@
 use chrono::{DateTime, Utc};
 
 use super::error::{ForumError, ForumResult};
-use super::event::{self, Event, EventType, Lifecycle, NodeType, ThreadKind, ThreadStatus};
+use super::event::{
+    self, DomainEvent, Event, EventMeta, EventType, Lifecycle, LinkPayload, NodeType,
+    ProjectionError, ThreadKind, ThreadStatus,
+};
 use super::evidence::Evidence;
 use super::git_ops::GitOps;
 use super::node::Node;
@@ -180,13 +183,26 @@ fn replay_with_issues_inner(
         ));
     }
 
-    let kind = first
-        .kind
-        .ok_or_else(|| ForumError::StateMachine("create event missing 'kind'".into()))?;
-    let title = first
-        .title
-        .clone()
-        .ok_or_else(|| ForumError::StateMachine("create event missing 'title'".into()))?;
+    // Project the create event up-front: the seed needs `kind` + `title`
+    // and there is no graceful "skip Create" path (an empty thread is
+    // not representable in 2.0).
+    let create = first.project().map_err(|e| match e {
+        ProjectionError::MissingRequiredField { field } => {
+            ForumError::StateMachine(format!("create event missing '{field}'"))
+        }
+    })?;
+    let DomainEvent::Create {
+        kind,
+        title,
+        body,
+        branch,
+        ..
+    } = create
+    else {
+        return Err(ForumError::StateMachine(
+            "first event must be 'create'".into(),
+        ));
+    };
 
     // `kind.initial_status()` returns a hardcoded canonical literal
     // (`"draft"` / `"open"`); parse_lenient is total over this input.
@@ -196,8 +212,8 @@ fn replay_with_issues_inner(
         id: first.thread_id.clone(),
         kind,
         title,
-        body: first.body.clone(),
-        branch: first.branch.clone(),
+        body,
+        branch,
         status: initial_status,
         created_at: first.created_at,
         created_by: first.actor.clone(),
@@ -218,7 +234,20 @@ fn replay_with_issues_inner(
 
     let mut issues = Vec::new();
     for ev in &events[1..] {
-        apply_event(&mut state, ev, &mut issues)?;
+        // Push the stored event onto the running history regardless of
+        // projection outcome — display surfaces still want to render
+        // events whose payload is malformed.
+        state.events.push(ev.clone());
+        match ev.project() {
+            Ok(domain) => apply_event(&mut state, &domain, &mut issues)?,
+            Err(ProjectionError::MissingRequiredField { field }) => {
+                issues.push(StrictReplayIssue::MissingRequiredField {
+                    event_id: ev.event_id.clone(),
+                    event_type: ev.event_type,
+                    field,
+                });
+            }
+        }
     }
     if suppress_self_healed {
         suppress_self_healed_invalid_transitions(events, &state, &mut issues);
@@ -303,56 +332,52 @@ fn is_self_healed_after(tail: &[Event], lifecycle: super::event::Lifecycle, targ
 
 fn apply_event(
     state: &mut ThreadState,
-    event: &Event,
+    event: &DomainEvent,
     issues: &mut Vec<StrictReplayIssue>,
 ) -> ForumResult<()> {
-    state.events.push(event.clone());
-    match event.event_type {
-        EventType::State => {
-            match event.new_state.as_deref() {
-                Some(name) => match ThreadStatus::parse_lenient(name) {
-                    Some(parsed) => {
-                        // SPEC-2.0 §3.1 (P0 #34ith16h): strict mode flags
-                        // an illegal `from -> to` for the thread's
-                        // lifecycle on the per-lifecycle filtered graph.
-                        // Lenient mode applies the new status regardless
-                        // so legacy chains keep replaying.
-                        let from = state.status;
-                        if from != parsed
-                            && !super::workflow::SPEC.is_valid_transition(
-                                state.lifecycle,
-                                from.as_str(),
-                                parsed.as_str(),
-                            )
-                        {
-                            issues.push(StrictReplayIssue::InvalidTransition {
-                                event_id: event.event_id.clone(),
-                                from: from.as_str().to_string(),
-                                to: parsed.as_str().to_string(),
-                                lifecycle: state.lifecycle.as_str().to_string(),
-                            });
-                        }
-                        state.status = parsed;
+    match event {
+        DomainEvent::State {
+            meta,
+            new_state,
+            approvals,
+        } => {
+            match ThreadStatus::parse_lenient(new_state) {
+                Some(parsed) => {
+                    // SPEC-2.0 §3.1 (P0 #34ith16h): strict mode flags
+                    // an illegal `from -> to` for the thread's
+                    // lifecycle on the per-lifecycle filtered graph.
+                    // Lenient mode applies the new status regardless
+                    // so legacy chains keep replaying.
+                    let from = state.status;
+                    if from != parsed
+                        && !super::workflow::SPEC.is_valid_transition(
+                            state.lifecycle,
+                            from.as_str(),
+                            parsed.as_str(),
+                        )
+                    {
+                        issues.push(StrictReplayIssue::InvalidTransition {
+                            event_id: meta.event_id.clone(),
+                            from: from.as_str().to_string(),
+                            to: parsed.as_str().to_string(),
+                            lifecycle: state.lifecycle.as_str().to_string(),
+                        });
                     }
-                    // Lenient: keep the prior status. Strict mode surfaces
-                    // the unparseable value below.
-                    None => issues.push(StrictReplayIssue::InvalidStateValue {
-                        event_id: event.event_id.clone(),
-                        value: name.to_string(),
-                    }),
-                },
-                None => issues.push(StrictReplayIssue::MissingRequiredField {
-                    event_id: event.event_id.clone(),
-                    event_type: event.event_type,
-                    field: "new_state",
+                    state.status = parsed;
+                }
+                // Lenient: keep the prior status. Strict mode surfaces
+                // the unparseable value below.
+                None => issues.push(StrictReplayIssue::InvalidStateValue {
+                    event_id: meta.event_id.clone(),
+                    value: new_state.clone(),
                 }),
             }
             // SPEC-2.0 §2.8: 1.x State events carried approvals as a direct
             // field; 2.0 emits them as Approval-typed Say nodes. Synthesize
             // equivalent nodes here so policy guards see one source of truth.
-            for approval in &event.approvals {
+            for approval in approvals {
                 state.nodes.push(Node {
-                    node_id: format!("{}#{}", event.event_id, approval.actor_id),
+                    node_id: format!("{}#{}", meta.event_id, approval.actor_id),
                     node_type: NodeType::Approval,
                     body: String::new(),
                     actor: approval.actor_id.clone(),
@@ -361,102 +386,99 @@ fn apply_event(
                 });
             }
         }
-        EventType::Scope => {
-            // `branch = None` legitimately clears scope, so absence is not an
-            // issue here; lenient and strict agree.
-            state.branch.clone_from(&event.branch);
+        DomainEvent::Scope { branch, .. } => {
+            // `branch = None` legitimately clears scope; lenient and strict agree.
+            state.branch.clone_from(branch);
         }
-        EventType::Say => match (event.node_type, &event.body) {
-            (Some(node_type), Some(body)) => {
-                state.nodes.push(Node {
-                    node_id: say_node_id(event).to_string(),
-                    node_type,
-                    body: body.clone(),
-                    actor: event.actor.clone(),
-                    created_at: event.created_at,
-                    resolved: false,
-                    retracted: false,
-                    incorporated: false,
-                    reply_to: event.reply_to.clone(),
-                    legacy_subtype: event.legacy_subtype.clone(),
+        DomainEvent::Say {
+            meta,
+            node_type,
+            body,
+            reply_to,
+            legacy_subtype,
+            target_node_id,
+        } => {
+            state.nodes.push(Node {
+                // 2.0: a Say node id is the writer's pre-allocated
+                // `target_node_id` when present, else the event's
+                // commit SHA (the common case for native 2.0 writes).
+                node_id: target_node_id
+                    .clone()
+                    .unwrap_or_else(|| meta.event_id.clone()),
+                node_type: *node_type,
+                body: body.clone(),
+                actor: meta.actor.clone(),
+                created_at: meta.created_at,
+                resolved: false,
+                retracted: false,
+                incorporated: false,
+                reply_to: reply_to.clone(),
+                legacy_subtype: legacy_subtype.clone(),
+            });
+        }
+        DomainEvent::Edit {
+            meta,
+            target_node_id,
+            body,
+        } => {
+            if let Some(node) = state
+                .nodes
+                .iter_mut()
+                .find(|n| &n.node_id == target_node_id)
+            {
+                node.body = body.clone();
+            } else {
+                issues.push(StrictReplayIssue::UnknownTargetNode {
+                    event_id: meta.event_id.clone(),
+                    event_type: meta.event_type,
+                    target_node_id: target_node_id.clone(),
                 });
             }
-            (None, _) => issues.push(StrictReplayIssue::MissingRequiredField {
-                event_id: event.event_id.clone(),
-                event_type: event.event_type,
-                field: "node_type",
-            }),
-            (_, None) => issues.push(StrictReplayIssue::MissingRequiredField {
-                event_id: event.event_id.clone(),
-                event_type: event.event_type,
-                field: "body",
-            }),
-        },
-        EventType::Edit => match (&event.target_node_id, &event.body) {
-            (Some(node_id), Some(body)) => {
-                if let Some(node) = state.nodes.iter_mut().find(|n| &n.node_id == node_id) {
-                    node.body = body.clone();
-                } else {
-                    issues.push(StrictReplayIssue::UnknownTargetNode {
-                        event_id: event.event_id.clone(),
-                        event_type: event.event_type,
-                        target_node_id: node_id.clone(),
-                    });
-                }
-            }
-            (None, _) => issues.push(StrictReplayIssue::MissingRequiredField {
-                event_id: event.event_id.clone(),
-                event_type: event.event_type,
-                field: "target_node_id",
-            }),
-            (_, None) => issues.push(StrictReplayIssue::MissingRequiredField {
-                event_id: event.event_id.clone(),
-                event_type: event.event_type,
-                field: "body",
-            }),
-        },
-        EventType::Retract => apply_node_flag(state, event, issues, |n| n.retracted = true),
-        EventType::Resolve => apply_node_flag(state, event, issues, |n| n.resolved = true),
-        EventType::Reopen => apply_node_flag(state, event, issues, |n| {
+        }
+        DomainEvent::Retract {
+            meta,
+            target_node_id,
+        } => apply_node_flag(state, meta, target_node_id, issues, |n| n.retracted = true),
+        DomainEvent::Resolve {
+            meta,
+            target_node_id,
+        } => apply_node_flag(state, meta, target_node_id, issues, |n| n.resolved = true),
+        DomainEvent::Reopen {
+            meta,
+            target_node_id,
+        } => apply_node_flag(state, meta, target_node_id, issues, |n| {
             n.resolved = false;
             n.retracted = false;
             n.incorporated = false;
         }),
-        EventType::Retype => match (&event.target_node_id, event.node_type) {
-            (Some(node_id), Some(new_type)) => {
-                if let Some(node) = state.nodes.iter_mut().find(|n| &n.node_id == node_id) {
-                    node.node_type = new_type;
-                } else {
-                    issues.push(StrictReplayIssue::UnknownTargetNode {
-                        event_id: event.event_id.clone(),
-                        event_type: event.event_type,
-                        target_node_id: node_id.clone(),
-                    });
-                }
-            }
-            (None, _) => issues.push(StrictReplayIssue::MissingRequiredField {
-                event_id: event.event_id.clone(),
-                event_type: event.event_type,
-                field: "target_node_id",
-            }),
-            (_, None) => issues.push(StrictReplayIssue::MissingRequiredField {
-                event_id: event.event_id.clone(),
-                event_type: event.event_type,
-                field: "node_type",
-            }),
-        },
-        EventType::ReviseBody => {
-            if let Some(ref body) = event.body {
-                state.body = Some(body.clone());
-                state.body_revision_count += 1;
+        DomainEvent::Retype {
+            meta,
+            target_node_id,
+            node_type,
+            ..
+        } => {
+            if let Some(node) = state
+                .nodes
+                .iter_mut()
+                .find(|n| &n.node_id == target_node_id)
+            {
+                node.node_type = *node_type;
             } else {
-                issues.push(StrictReplayIssue::MissingRequiredField {
-                    event_id: event.event_id.clone(),
-                    event_type: event.event_type,
-                    field: "body",
+                issues.push(StrictReplayIssue::UnknownTargetNode {
+                    event_id: meta.event_id.clone(),
+                    event_type: meta.event_type,
+                    target_node_id: target_node_id.clone(),
                 });
             }
-            for node_id in &event.incorporated_node_ids {
+        }
+        DomainEvent::ReviseBody {
+            meta,
+            body,
+            incorporated_node_ids,
+        } => {
+            state.body = Some(body.clone());
+            state.body_revision_count += 1;
+            for node_id in incorporated_node_ids {
                 let found = state
                     .nodes
                     .iter_mut()
@@ -464,8 +486,8 @@ fn apply_event(
                     .map(|node| node.incorporated = true);
                 if found.is_none() {
                     issues.push(StrictReplayIssue::UnknownTargetNode {
-                        event_id: event.event_id.clone(),
-                        event_type: event.event_type,
+                        event_id: meta.event_id.clone(),
+                        event_type: meta.event_type,
                         target_node_id: node_id.clone(),
                     });
                 }
@@ -474,41 +496,52 @@ fn apply_event(
                 }
             }
         }
-        EventType::Link => {
-            if let Some(ev_data) = &event.evidence {
+        DomainEvent::Link { meta, payload } => match payload {
+            LinkPayload::Evidence(ev_data) => {
                 let mut ev = ev_data.clone();
-                ev.evidence_id = event.event_id.clone();
+                ev.evidence_id = meta.event_id.clone();
                 state.evidence_items.push(ev);
-            } else if let (Some(target), Some(rel)) = (&event.target_node_id, &event.link_rel) {
+            }
+            LinkPayload::Thread {
+                target_thread_id,
+                link_rel,
+            } => {
                 state.links.push(ThreadLink {
-                    target_thread_id: target.clone(),
-                    rel: rel.clone(),
-                });
-            } else {
-                // Neither evidence nor (target+rel) present — Link with no
-                // payload is meaningless.
-                issues.push(StrictReplayIssue::MissingRequiredField {
-                    event_id: event.event_id.clone(),
-                    event_type: event.event_type,
-                    field: "evidence_or_target_link",
+                    target_thread_id: target_thread_id.clone(),
+                    rel: link_rel.clone(),
                 });
             }
+        },
+        // No-ops during replay:
+        DomainEvent::Create { .. } => {} // handled in replay() seed before apply_event loop
+        DomainEvent::Verify { .. } | DomainEvent::Merge { .. } => {}
+        // ADR-010 option (a): unknown variants no-op + emit a strict
+        // issue. Unreachable in Phase A; Phase B wires the
+        // `EventType::Other(String)` deserialiser to this arm.
+        DomainEvent::Unknown { meta, .. } => {
+            issues.push(StrictReplayIssue::MissingRequiredField {
+                event_id: meta.event_id.clone(),
+                event_type: meta.event_type,
+                field: "unknown_event_type",
+            });
         }
-        // These event types are no-ops during replay:
-        EventType::Create => {} // handled in replay() before apply_event loop
-        EventType::Verify | EventType::Merge => {}
-        // SPEC-2.0 §2.4.1: per-event facet mutation, not a full-state
+        // SPEC-2.0 §2.4.1: per-event facet mutation, not full-state
         // replacement.
-        EventType::FacetSet => {
+        DomainEvent::FacetSet {
+            meta,
+            lifecycle,
+            tags_add,
+            tags_remove,
+        } => {
             // First-lifecycle-wins: §7.3 makes lifecycle immutable, so any
             // subsequent facet_set carrying `lifecycle` is silently ignored
             // at replay (write-side rejection with FacetTransitionDisallowed
             // is Track B's responsibility).
-            if let Some(ref lc) = event.lifecycle {
+            if let Some(lc) = lifecycle {
                 let parsed = Lifecycle::parse(lc);
                 if parsed.is_none() {
                     issues.push(StrictReplayIssue::InvalidLifecycleValue {
-                        event_id: event.event_id.clone(),
+                        event_id: meta.event_id.clone(),
                         value: lc.clone(),
                     });
                 }
@@ -520,7 +553,7 @@ fn apply_event(
                         state.lifecycle_explicit = true;
                     } else if state.lifecycle != parsed_lc {
                         issues.push(StrictReplayIssue::LifecycleResetAttempted {
-                            event_id: event.event_id.clone(),
+                            event_id: meta.event_id.clone(),
                             existing: state.lifecycle.as_str().to_string(),
                             attempted: lc.clone(),
                         });
@@ -531,12 +564,12 @@ fn apply_event(
             // Within a single event, tags_add is applied before tags_remove
             // (an event that simultaneously adds and removes the same tag
             // is a removal). Insertion is set-style (no duplicates).
-            for tag in &event.tags_add {
+            for tag in tags_add {
                 if !state.tags.iter().any(|t| t == tag) {
                     state.tags.push(tag.clone());
                 }
             }
-            for tag in &event.tags_remove {
+            for tag in tags_remove {
                 state.tags.retain(|t| t != tag);
             }
         }
@@ -544,31 +577,25 @@ fn apply_event(
     Ok(())
 }
 
-/// Shared helper for `Retract` / `Resolve` / `Reopen`: locate the target node
-/// by id, apply `mutate`, or record an [`StrictReplayIssue::UnknownTargetNode`].
+/// Shared helper for `Retract` / `Resolve` / `Reopen`: locate the target
+/// node by id, apply `mutate`, or record an
+/// [`StrictReplayIssue::UnknownTargetNode`]. Projection has already
+/// guaranteed a present `target_node_id` for these variants.
 fn apply_node_flag(
     state: &mut ThreadState,
-    event: &Event,
+    meta: &EventMeta,
+    target_node_id: &str,
     issues: &mut Vec<StrictReplayIssue>,
     mutate: impl FnOnce(&mut Node),
 ) {
-    match &event.target_node_id {
-        Some(node_id) => {
-            if let Some(node) = state.nodes.iter_mut().find(|n| &n.node_id == node_id) {
-                mutate(node);
-            } else {
-                issues.push(StrictReplayIssue::UnknownTargetNode {
-                    event_id: event.event_id.clone(),
-                    event_type: event.event_type,
-                    target_node_id: node_id.clone(),
-                });
-            }
-        }
-        None => issues.push(StrictReplayIssue::MissingRequiredField {
-            event_id: event.event_id.clone(),
-            event_type: event.event_type,
-            field: "target_node_id",
-        }),
+    if let Some(node) = state.nodes.iter_mut().find(|n| n.node_id == target_node_id) {
+        mutate(node);
+    } else {
+        issues.push(StrictReplayIssue::UnknownTargetNode {
+            event_id: meta.event_id.clone(),
+            event_type: meta.event_type,
+            target_node_id: target_node_id.to_string(),
+        });
     }
 }
 
