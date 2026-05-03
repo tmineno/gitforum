@@ -1,12 +1,24 @@
 //! Renderers for `git forum show`, `node show`, `log`, `status`, `ls`,
 //! `shortlog`, and search results. Per RFC-lmr3wfcm Track E, the thread-detail
 //! renderers all collapse to a single [`render_show`] driven by [`ShowOptions`].
+//!
+//! Phase 2 slot 7c (RFC `7ymtc4b2`): the `Show` arm body relocates from
+//! `main.rs` to [`run`] in this module. The `--tree` advisory's
+//! [`collect_implements_children`] / [`fallback_scan_implements`]
+//! helpers also move here — they are now exclusively a `show --tree`
+//! concern, and per ADR-011 Decision 6 the SQLite reverse-link index
+//! is on the Phase 4 DELETE list, so the tree-scan fallback is the
+//! only path.
 
+use super::super::error::ForumError;
 use super::super::event::{self, Lifecycle};
+use super::super::git_ops::GitOps;
 use super::super::policy::{self, Policy};
-use super::super::thread::{NodeLookup, ThreadState};
+use super::super::thread::{self, NodeLookup, ThreadState};
 use super::super::timeline;
 use super::super::workflow::SPEC;
+use super::context::Context;
+use super::shared::resolve_tid;
 
 // ============================================================
 //  Public surface — ShowOptions and the unified entry point
@@ -881,6 +893,107 @@ pub fn render_tree(parent: &ThreadState, children: &[TreeChild]) -> String {
     }
     lines.push(String::new());
     lines.join("\n")
+}
+
+// ============================================================
+//  Show command — `git forum show` orchestration
+// ============================================================
+
+/// Args for [`run`] — `git forum show` flags.
+pub struct ShowArgs {
+    pub thread_id: String,
+    pub what_next: bool,
+    pub compact: bool,
+    pub no_timeline: bool,
+    pub tree: bool,
+}
+
+/// Uniform entry point for the `show` subcommand.
+///
+/// `--tree`: prints the parent + direct `implements` children (no recursion).
+/// `--what-next`: switches the renderer to the WhatNext mode with policy
+/// guards; otherwise renders the canonical Full view.
+pub fn run(args: ShowArgs, ctx: &Context) -> Result<(), ForumError> {
+    let thread_id = resolve_tid(&ctx.git, &args.thread_id)?;
+    let policy = Policy::load(&ctx.paths.dot_forum.join("policy.toml"))?;
+    let state = thread::replay_thread(&ctx.git, &thread_id)?;
+    if args.tree {
+        let children = collect_implements_children(&ctx.git, &thread_id)?;
+        print!("{}", render_tree(&state, &children));
+    } else {
+        let mode = if args.what_next {
+            ShowMode::WhatNext
+        } else {
+            ShowMode::Full
+        };
+        print!(
+            "{}",
+            render_show(
+                &state,
+                &ShowOptions {
+                    compact: args.compact,
+                    no_timeline: args.no_timeline,
+                    policy: Some(policy),
+                    mode,
+                }
+            )
+        );
+    }
+    Ok(())
+}
+
+/// Collect direct incoming `--rel implements` children of a thread for
+/// the `show --tree` advisory.
+///
+/// Phase 2 slot 7c (RFC `7ymtc4b2`): relocated from `main.rs`. Per ADR-011
+/// Decision 6 the SQLite reverse-link index is on the Phase 4 DELETE list,
+/// so this always falls back to the O(N-thread-refs) tree scan.
+pub fn collect_implements_children(
+    git: &GitOps,
+    parent_thread_id: &str,
+) -> Result<Vec<TreeChild>, ForumError> {
+    let child_ids = fallback_scan_implements(git, parent_thread_id)?;
+    let mut out = Vec::with_capacity(child_ids.len());
+    for id in child_ids {
+        match thread::replay_thread(git, &id) {
+            Ok(child_state) => out.push(TreeChild {
+                id: child_state.id.clone(),
+                title: child_state.title.clone(),
+                lifecycle_label: child_state.lifecycle.as_str().to_string(),
+                status: child_state.status.to_string(),
+            }),
+            Err(_) => continue,
+        }
+    }
+    Ok(out)
+}
+
+/// Fallback for `show --tree`: list all thread refs and replay each to
+/// find the ones whose forward links include `(parent_thread_id, implements)`.
+/// O(N) on thread count.
+fn fallback_scan_implements(
+    git: &GitOps,
+    parent_thread_id: &str,
+) -> Result<Vec<String>, ForumError> {
+    let ids = thread::list_thread_ids(git)?;
+    let mut out = Vec::new();
+    for id in ids {
+        if id == parent_thread_id {
+            continue;
+        }
+        let Ok(state) = thread::replay_thread(git, &id) else {
+            continue;
+        };
+        if state
+            .links
+            .iter()
+            .any(|l| l.target_thread_id == parent_thread_id && l.rel == "implements")
+        {
+            out.push(state.id);
+        }
+    }
+    out.sort();
+    Ok(out)
 }
 
 // User-visible output is locked in by the golden snapshots in

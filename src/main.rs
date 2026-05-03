@@ -1333,32 +1333,17 @@ fn main() -> Result<(), ForumError> {
             no_timeline,
             tree,
         } => {
-            let (git, paths) = discover_repo_with_init_warning()?;
-            let thread_id = resolve_tid(&git, &thread_id)?;
-            let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
-            let state = thread::replay_thread(&git, &thread_id)?;
-            if tree {
-                let children = collect_implements_children(&git, &paths, &thread_id)?;
-                print!("{}", show::render_tree(&state, &children));
-            } else {
-                let mode = if what_next {
-                    show::ShowMode::WhatNext
-                } else {
-                    show::ShowMode::Full
-                };
-                print!(
-                    "{}",
-                    show::render_show(
-                        &state,
-                        &show::ShowOptions {
-                            compact,
-                            no_timeline,
-                            policy: Some(policy),
-                            mode,
-                        }
-                    )
-                );
-            }
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            show::run(
+                show::ShowArgs {
+                    thread_id,
+                    what_next,
+                    compact,
+                    no_timeline,
+                    tree,
+                },
+                &ctx,
+            )?;
         }
 
         // Log arm removed at Phase 2 slot 11 (RFC `7ymtc4b2`); the
@@ -1893,33 +1878,10 @@ fn main() -> Result<(), ForumError> {
 // `translate_legacy_kind_query` removed at slot 11 (went with the
 // deleted `Search` arm). `print_import_plan` / `print_export_plan`
 // removed at slot 11 (went with the deleted `Import` / `Export` arms).
-
-/// Collect direct incoming `--rel implements` children of a thread
-/// for the `show --tree` advisory.
-///
-/// Phase 2 slot 11 (RFC `7ymtc4b2`): the SQLite reverse-link index
-/// is on the Phase 4 DELETE list (ADR-011 Decision 6), so this
-/// helper now always falls back to the O(N-thread-refs) tree scan.
-fn collect_implements_children(
-    git: &GitOps,
-    _paths: &config::RepoPaths,
-    parent_thread_id: &str,
-) -> Result<Vec<show::TreeChild>, ForumError> {
-    let child_ids = fallback_scan_implements(git, parent_thread_id)?;
-    let mut out = Vec::with_capacity(child_ids.len());
-    for id in child_ids {
-        match thread::replay_thread(git, &id) {
-            Ok(child_state) => out.push(show::TreeChild {
-                id: child_state.id.clone(),
-                title: child_state.title.clone(),
-                lifecycle_label: child_state.lifecycle.as_str().to_string(),
-                status: child_state.status.to_string(),
-            }),
-            Err(_) => continue,
-        }
-    }
-    Ok(out)
-}
+//
+// `collect_implements_children` / `fallback_scan_implements` relocated
+// to `commands::show` at slot 7c. `read_incoming_link_counts` relocates
+// to `commands::brief` at slot 7h.
 
 /// Read incoming-link counts grouped by relation for `brief`.
 ///
@@ -1932,32 +1894,4 @@ fn read_incoming_link_counts(
     _thread_id: &str,
 ) -> brief::IncomingLinkCounts {
     brief::IncomingLinkCounts::default()
-}
-
-/// Fallback for `show --tree`: list all thread refs and replay each
-/// to find the ones whose forward links include `(parent_thread_id,
-/// implements)`. O(N) on thread count.
-fn fallback_scan_implements(
-    git: &GitOps,
-    parent_thread_id: &str,
-) -> Result<Vec<String>, ForumError> {
-    let ids = thread::list_thread_ids(git)?;
-    let mut out = Vec::new();
-    for id in ids {
-        if id == parent_thread_id {
-            continue;
-        }
-        let Ok(state) = thread::replay_thread(git, &id) else {
-            continue;
-        };
-        if state
-            .links
-            .iter()
-            .any(|l| l.target_thread_id == parent_thread_id && l.rel == "implements")
-        {
-            out.push(state.id);
-        }
-    }
-    out.sort();
-    Ok(out)
 }
