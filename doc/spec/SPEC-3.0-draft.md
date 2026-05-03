@@ -183,9 +183,7 @@ Native 3.0 implementations MUST always provide these built-in categories:
 | Category | Meaning |
 |---|---|
 | `rfc` | Proposal-style discussion that starts in `draft` and is accepted or rejected after review. |
-| `decision` | Decision record that starts in `open` and normally moves directly to `done` or `rejected`. |
-| `task` | Work tracking that starts in `open` and may move through `working` and `review`. |
-| `bug` | Defect tracking with the same default state model as `task`. |
+| `task` | Work tracking that starts in `open` and may move through `working` and `review`. Defect reports and decision records are also `task` threads, distinguished by a `bug` or `decision` tag. |
 
 Repositories MAY define additional categories in `.forum/policy.toml`.
 Repositories MAY also override built-in category definitions category-by-category.
@@ -202,6 +200,29 @@ Every category and tag MUST satisfy:
 - Length is 2 to 32 characters.
 - Not equal to `all`, `none`, `any`, or `untagged`.
 - Contains no spaces, slashes, colons, `@`, or `!`.
+
+### 2.5 Connection to code
+
+Threads stay connected to the repository content they discuss through three
+mechanisms. None of them introduce cross-thread enforcement (CORE-VALUE
+non-goal §1).
+
+1. **Evidence records.** `evidence.toml` (§2.3) lets a thread point at a
+   commit, file, hunk, test, benchmark, doc, or external reference. Evidence
+   is the primary linkage from a thread to the working tree.
+2. **Branch binding.** The optional `branch` field on `thread.toml` (§2.1)
+   records the Git branch a thread concerns. It is advisory: it does not gate
+   any operation, but readers can use it to surface threads relevant to the
+   current branch, and CLIs MAY default `<THREAD>` arguments to a thread
+   bound to the current branch when the argument is omitted.
+3. **Commit-message validation.** An optional `commit-msg` Git hook installed
+   by git-forum validates that any thread IDs mentioned in a commit message
+   resolve to threads in `refs/forum/threads/*`. The hook MUST NOT block
+   commits that reference no thread. It MUST fail commits that reference an
+   undefined thread ID.
+
+These mechanisms are required surface (CORE-VALUE "Connection to code (always
+in scope)"). Their CLI entry points are listed in §7.
 
 ## 3. Category registry and policy
 
@@ -236,30 +257,7 @@ transitions = [
   "rejected->deprecated",
 ]
 
-[categories.decision]
-initial_status = "open"
-statuses = ["open", "done", "rejected", "deprecated"]
-transitions = ["open->done", "open->rejected", "done->deprecated", "rejected->deprecated"]
-
 [categories.task]
-initial_status = "open"
-statuses = ["open", "working", "review", "done", "rejected", "deprecated"]
-transitions = [
-  "open->working",
-  "open->review",
-  "open->done",
-  "open->rejected",
-  "working->review",
-  "working->done",
-  "working->rejected",
-  "review->done",
-  "review->working",
-  "review->rejected",
-  "done->deprecated",
-  "rejected->deprecated",
-]
-
-[categories.bug]
 initial_status = "open"
 statuses = ["open", "working", "review", "done", "rejected", "deprecated"]
 transitions = [
@@ -293,7 +291,7 @@ Transition guards are attached directly to a category transition:
 
 ```toml
 [categories.rfc.guards]
-"review->done" = ["one_human_approval", "no_open_objections"]
+"review->done" = ["one_approval", "no_open_objections"]
 ```
 
 Guard rule names understood by the core:
@@ -302,7 +300,7 @@ Guard rule names understood by the core:
 |---|---|
 | `no_open_objections` | The thread has no `objection` node with `status = "open"`. |
 | `no_open_actions` | The thread has no `action` node with `status = "open"`. |
-| `one_human_approval` | At least one non-retracted `approval` node was created by an actor whose ID starts with `human/`. |
+| `one_approval` | At least one non-retracted `approval` node exists on the thread, regardless of actor type. |
 | `has_commit_evidence` | The thread has at least one evidence entry with `kind = "commit"`. |
 
 `at_least_one_summary` is not a 3.0 rule because `summary` is not a native node
@@ -406,9 +404,7 @@ Tracked repository configuration lives under `.forum/`:
   templates/
     thread.md
     rfc.md
-    decision.md
     task.md
-    bug.md
 ```
 
 `.forum/` is configuration and templates, not authoritative thread storage.
@@ -541,7 +537,16 @@ git forum reopen <THREAD> [<NODE>...]
 git forum state <THREAD> <STATE>
 git forum evidence add <THREAD> --kind <KIND> --ref <REF>
 git forum link <FROM> <TO> --rel <REL>
+git forum branch bind <THREAD> [<BRANCH>]
+git forum branch unbind <THREAD>
+git forum hooks install
 ```
+
+The last three commands implement the connection-to-code mechanisms from
+§2.5. `branch bind` sets the optional `branch` field on `thread.toml` to the
+named branch, defaulting to the current branch when `<BRANCH>` is omitted.
+`branch unbind` clears the field. `hooks install` installs the optional
+`commit-msg` validator hook into the local clone.
 
 Removed from the 3.0 live CLI:
 
@@ -639,18 +644,20 @@ Migration uses a fixed built-in mapping from 1.x/2.x thread kind or lifecycle to
 | 1.x/2.x source | 3.0 category |
 |---|---|
 | `rfc` | `rfc` |
-| `dec` | `decision` |
+| `dec` | `task` |
 | `task` | `task` |
-| `issue` | `bug` |
-| `bug` | `bug` |
+| `issue` | `task` |
+| `bug` | `task` |
 | `proposal` | `rfc` |
 | `execution` | `task` |
-| `record` | `decision` |
+| `record` | `task` |
 | unrecognized | `task` |
 
 Migration MUST NOT require repository-specific category mapping logic. The
 source kind or lifecycle SHOULD also be preserved as a tag when it satisfies the
-tag grammar in §2.4.
+tag grammar in §2.4. In particular, `bug`, `issue`, `dec`, and `record` source kinds SHOULD be
+preserved as tags so defect and decision classification are not lost when
+collapsed into `task`.
 
 ### 8.4 Unmigrated event-chain refs
 

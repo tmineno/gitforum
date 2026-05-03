@@ -126,6 +126,11 @@ this document, regardless of how cleanly they are designed.
 
 ## Empirical basis
 
+Survey conducted 2026-04-30 against the v2.0.2 event-chain dataset.
+Subsequent surveys SHOULD use the migration archive at
+`legacy/events.ndjson` (SPEC-3.0 §8.2) so empirical comparisons remain
+reproducible across the 3.0 collapse.
+
 This document is grounded in observed usage of the tool inside its own
 repository:
 
@@ -153,30 +158,24 @@ repository:
 
 ## Litmus test
 
-When a new RFC, feature, or scope expansion is proposed, judge it by
-this table. The table is illustrative, not exhaustive — extend it as
-new directions appear.
+The five non-goals above are the active gate. The table below shows
+worked examples of how the guard/advisory split and the non-goals
+apply in practice. It is illustrative, not exhaustive — full
+per-feature verdicts live in the current spec (SPEC-3.0 and superseded
+ADRs).
 
 | Direction | Verdict | Why |
 |---|---|---|
-| Reduce thread kinds (collapse dec/task) | **Keep** | Empirically supported (ADR-002). |
-| Reduce node types to {comment, approval, objection, action} | **Keep** | Cut by *protocol effect* (none / approve / block / obligation), not rhetorical type. claim/question/summary/risk/review/alternative/assumption collapse to `comment`. |
-| Single-thread state guards (operation checks, RFC-0018) | **Keep** (guard) | Reads only the thread being modified. |
-| Connect threads to commits (commit-msg hook, evidence, branch bind) | **Keep** | Thread-code linkage is core. |
+| Single-thread state guards (operation checks) | **Keep** (guard) | Reads only the thread being modified. |
 | Display linked-thread state in `show` / `verify` (no blocking) | **Keep** (advisory) | Cross-thread *information* without cross-thread *enforcement*. |
-| Topic mechanism (handle, alias, attach/detach, archive) | **Reject** | Empirically the "group" the dogfood wanted is RFC + its `--rel implements` children — link relations already cover that. Topic adds an entity, an event family, a ref tree, and a markup symbol (`!`) for value already obtained from links + advisory display. |
-| Cross-clone conflict-resolution protocol (ADR-005) | **Reject** | Distribution is Git's job. |
-| `git forum push` / `git forum fetch` | **Reject** | Same. |
-| Cross-thread workflow policy (RFC-ij6g130o) | **Reject** | Cross-thread orchestration is non-goal #1. |
-| Workflow meta-thread (RFC-0027) | **Reject** | Same. |
-| Lease / claim / agent dispatch (RFC-rwi8spmf) | **Reject** | Non-goal #2. |
-| Web UI as primary surface (RFC-0019) | **Reject** | Non-goal #5. |
-| Dashboard / brief / scope tracking as core feature (RFC-0022) | **Reject** | Non-goal #4. *(A read-only `brief` command is acceptable iff it derives strictly from current thread state and adds no enforcement.)* |
-| Tag registry vocabulary discipline (SPEC-2.0 §2.3.5) | **Defer** | No language-drift evidence yet. |
-| GitHub import/export | **Maintain (frozen)** | Migration aid; not extended. |
-| TUI advanced features (markdown table wrap, h/v split, full-screen select) | **Maintain (frozen)** | Already shipped; no new TUI features without core-value justification. |
-| Performance telemetry / replay cache | **Remove** | Premature; no observed bottleneck. |
+| Cross-thread workflow policy | **Reject** | Cross-thread orchestration is non-goal #1. |
+| Lease / claim / agent dispatch | **Reject** | Non-goal #2. Agents are peers, not coordination targets. |
+| Dashboard / scope tracking as core feature | **Reject** | Non-goal #4. *(A read-only `brief` command is acceptable iff it derives strictly from current thread state and adds no enforcement.)* |
 | AI-specific commands (`git forum fix`, agent-only flags) | **Reject** | Same CLI for humans and agents (non-goal #5). |
+
+**Outstanding deferral.** Tag-registry vocabulary discipline (SPEC-2.0
+§2.3.5) — no language-drift evidence yet; revisit if drift becomes
+measurable.
 
 ---
 
