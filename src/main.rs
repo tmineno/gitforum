@@ -17,9 +17,9 @@ use git_forum::internal::commands::ls;
 use git_forum::internal::commands::node_bulk::{run_node_lifecycle_bulk, NodeLifecycleOp};
 use git_forum::internal::commands::revise::{self as revise_cmd, ReviseCmd};
 use git_forum::internal::commands::shared::{
-    apply_operation_checks, discover_repo_with_init_warning, parse_since_date, parse_thread_kind,
-    parse_thread_kind_filter, parse_unrecognized_subcommand, resolve_actor, resolve_tid,
-    subcommand_hint, terminal_state_date,
+    discover_repo_with_init_warning, parse_since_date, parse_thread_kind, parse_thread_kind_filter,
+    parse_unrecognized_subcommand, resolve_actor, resolve_tid, subcommand_hint,
+    terminal_state_date,
 };
 use git_forum::internal::commands::shorthand_say::run_shorthand_say;
 use git_forum::internal::commands::show;
@@ -37,7 +37,6 @@ use git_forum::internal::config::RepoPaths;
 use git_forum::internal::error::ForumError;
 use git_forum::internal::event;
 use git_forum::internal::event::NodeType;
-use git_forum::internal::evidence;
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::github;
@@ -46,7 +45,6 @@ use git_forum::internal::github_import;
 use git_forum::internal::index;
 use git_forum::internal::init;
 use git_forum::internal::lint_emit::{self, LintEmitter};
-use git_forum::internal::operation_check;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::purge;
 use git_forum::internal::reindex;
@@ -55,7 +53,6 @@ use git_forum::internal::state_change;
 use git_forum::internal::thread;
 use git_forum::internal::timeline;
 use git_forum::internal::tui as forum_tui;
-use git_forum::internal::write_ops;
 
 const GROUPED_HELP: &str = "\
 These are common git-forum commands:
@@ -2127,38 +2124,7 @@ fn main() -> Result<(), ForumError> {
             as_actor,
             force,
         } => {
-            let (git, paths) = discover_repo_with_init_warning()?;
-            let thread_id = resolve_tid(&git, &thread_id)?;
-            let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
-            let actor = resolve_actor(as_actor, &git);
-            let parsed_type: git_forum::internal::event::NodeType =
-                new_type.parse().map_err(ForumError::Config)?;
-
-            let state = thread::replay_thread(&git, &thread_id)?;
-            let violations = operation_check::check_revise(&policy, state.status.as_str(), false);
-            apply_operation_checks(&violations, force, policy.checks.strict)?;
-
-            let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
-            let old_type = state
-                .nodes
-                .iter()
-                .find(|n| n.node_id == resolved)
-                .map(|n| n.node_type)
-                .ok_or_else(|| {
-                    ForumError::Repo(format!(
-                        "node '{resolved}' not found in thread '{thread_id}'"
-                    ))
-                })?;
-            write_ops::retype_node(
-                &git,
-                &thread_id,
-                &resolved,
-                parsed_type,
-                old_type,
-                &actor,
-                &clock,
-            )?;
-            println!("Retyped {} -> {parsed_type}", show::short_oid(&resolved));
+            commands::retype::run_retype(&thread_id, &node_id, &new_type, as_actor, force, &clock)?
         }
 
         Commands::State {
@@ -2301,33 +2267,14 @@ fn main() -> Result<(), ForumError> {
                 ref_targets,
                 as_actor,
                 force,
-            } => {
-                if ref_targets.is_empty() {
-                    return Err(ForumError::Config("--ref is required".into()));
-                }
-                let (git, paths) = discover_repo_with_init_warning()?;
-                let thread_id = resolve_tid(&git, &thread_id)?;
-                let actor = resolve_actor(as_actor, &git);
-                let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
-                let state = thread::replay_thread(&git, &thread_id)?;
-                let violations = operation_check::check_evidence(&policy, state.status.as_str());
-                apply_operation_checks(&violations, force, policy.checks.strict)?;
-                for ref_target in &ref_targets {
-                    let commit_sha = evidence::add_evidence(
-                        &git,
-                        &thread_id,
-                        kind.clone(),
-                        ref_target,
-                        None,
-                        &actor,
-                        &clock,
-                    )?;
-                    println!(
-                        "Evidence added ({})",
-                        &commit_sha[..commit_sha.len().min(8)]
-                    );
-                }
-            }
+            } => commands::evidence::run_evidence_add(
+                &thread_id,
+                kind,
+                &ref_targets,
+                as_actor,
+                force,
+                &clock,
+            )?,
         },
 
         Commands::Link {
@@ -2335,14 +2282,7 @@ fn main() -> Result<(), ForumError> {
             target_thread_id,
             rel,
             as_actor,
-        } => {
-            let (git, _paths) = discover_repo_with_init_warning()?;
-            let thread_id = resolve_tid(&git, &thread_id)?;
-            let target_thread_id = resolve_tid(&git, &target_thread_id)?;
-            let actor = resolve_actor(as_actor, &git);
-            evidence::add_thread_link(&git, &thread_id, &target_thread_id, &rel, &actor, &clock)?;
-            println!("{thread_id} -> {target_thread_id} ({rel})");
-        }
+        } => commands::link::run_link(&thread_id, &target_thread_id, &rel, as_actor, &clock)?,
 
         Commands::Hook { cmd } => {
             let git = GitOps::discover()?;
