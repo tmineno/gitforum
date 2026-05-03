@@ -298,18 +298,20 @@ pub fn unified_transitions() -> &'static [(&'static str, &'static str)] {
 
 /// SPEC-2.0 §3.1.2 — pure text-level normalization of 1.x state names to 2.0.
 ///
-/// Thin wrapper over [`SPEC::normalize_state_name`](super::workflow::WorkflowSpec::normalize_state_name);
-/// the alias table lives in `workflow.rs`.
+/// Thin wrapper that re-exports [`super::compat::v1::normalize_state_name`]
+/// so existing call sites keep their `event::normalize_state_name`
+/// import path. New domain code should call into [`super::compat::v1`]
+/// directly per RFC 915yuegd P1.
 pub fn normalize_state_name(s: &str) -> &str {
-    SPEC.normalize_state_name(s)
+    super::compat::v1::normalize_state_name(s)
 }
 
 /// SPEC-2.0 §3.1.1 / §3.1.2 — kind-aware migration of a 1.x state name to a
 /// 2.0 state in the lifecycle's allowed set.
 ///
-/// Thin wrapper over [`SPEC::migrate_legacy_state`](super::workflow::WorkflowSpec::migrate_legacy_state).
+/// Thin wrapper over [`super::compat::v1::migrate_legacy_state`].
 pub fn migrate_legacy_state(kind: ThreadKind, state: &str) -> &str {
-    SPEC.migrate_legacy_state(kind, state)
+    super::compat::v1::migrate_legacy_state(kind, state)
 }
 
 /// Shortest path from `from` to `to` for `lifecycle`. Thin wrapper over
@@ -421,49 +423,26 @@ pub enum NodeType {
 impl NodeType {
     /// Map any variant to its 2.0 canonical form.
     ///
-    /// - The seven 1.x prose-only variants collapse to `Comment`.
-    /// - `Evidence` collapses to `Comment` (the evidence-pointer surface
-    ///   moves out of the node namespace entirely; see `evidence add`).
-    /// - `Comment`, `Approval`, `Objection`, `Action` are unchanged.
+    /// Thin delegator over [`super::compat::v1::canonical_node_type`];
+    /// the rule body (which legacy variants collapse to which canonical
+    /// node) lives in `compat::v1` per RFC 915yuegd P1.
     pub fn canonical(self) -> Self {
-        match self {
-            Self::Comment | Self::Approval | Self::Objection | Self::Action => self,
-            Self::Claim
-            | Self::Question
-            | Self::Evidence
-            | Self::Summary
-            | Self::Risk
-            | Self::Review
-            | Self::Alternative
-            | Self::Assumption => Self::Comment,
-        }
+        super::compat::v1::canonical_node_type(self)
     }
 
     /// Returns true if this is a 2.0 canonical variant.
     pub fn is_canonical(self) -> bool {
-        matches!(
-            self,
-            Self::Comment | Self::Approval | Self::Objection | Self::Action
-        )
+        super::compat::v1::is_canonical_node_type(self)
     }
 
     /// Legacy 1.x label for non-canonical variants, or `None` if already canonical.
     ///
-    /// Used by 2.0 write paths to record the user's stated rhetorical type in
-    /// `Event.legacy_subtype` while persisting the canonical `node_type` on
-    /// the event (SPEC-2.0 §2.5 / §9.3 / §10.1).
+    /// Thin delegator over [`super::compat::v1::legacy_subtype_label`].
+    /// Used by 2.0 write paths to record the user's stated rhetorical
+    /// type in `Event.legacy_subtype` while persisting the canonical
+    /// `node_type` on the event (SPEC-2.0 §2.5 / §9.3 / §10.1).
     pub fn legacy_subtype_label(self) -> Option<&'static str> {
-        match self {
-            Self::Comment | Self::Approval | Self::Objection | Self::Action => None,
-            Self::Claim => Some("claim"),
-            Self::Question => Some("question"),
-            Self::Evidence => Some("evidence"),
-            Self::Summary => Some("summary"),
-            Self::Risk => Some("risk"),
-            Self::Review => Some("review"),
-            Self::Alternative => Some("alternative"),
-            Self::Assumption => Some("assumption"),
-        }
+        super::compat::v1::legacy_subtype_label(self)
     }
 }
 

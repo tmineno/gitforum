@@ -3,6 +3,7 @@ pub mod branch_ops;
 pub mod brief;
 pub mod clock;
 pub mod commands;
+pub mod compat;
 pub mod config;
 pub mod create;
 pub mod diff;

@@ -330,85 +330,11 @@ impl Policy {
         }
         let mut policy: Self = toml::from_str(&text)
             .map_err(|e| ForumError::Config(format!("invalid policy.toml: {e}")))?;
-        // Strip any AtLeastOneSummary entries that still slipped through —
-        // the predicate no longer fires (ADR-006).
-        policy.strip_removed_predicates();
-        for warning in policy.resolve_guard_scopes() {
-            emitter.emit("legacy_guard_scope", Some(path), None, &warning);
-        }
-        for warning in policy.translate_legacy_creation_rules() {
-            emitter.emit("legacy_creation_rules", Some(path), None, &warning);
-        }
+        // 1.x → 2.0 shape rewrites (predicate strip, guard scopes,
+        // creation rules) all live in `compat::v1`; they emit deprecation
+        // warnings through the supplied emitter.
+        super::compat::v1::rewrite_legacy_policy(&mut policy, emitter, path);
         Ok(policy)
-    }
-
-    /// Drop `AtLeastOneSummary` entries from every guard's `requires`
-    /// list. ADR-006: the predicate is no longer enforced; this keeps
-    /// 1.x policies loadable while ensuring the runtime never tries to
-    /// evaluate the removed rule.
-    fn strip_removed_predicates(&mut self) {
-        for guard in &mut self.guards {
-            guard
-                .requires
-                .retain(|r| !matches!(r, GuardRule::AtLeastOneSummary));
-        }
-    }
-
-    /// SPEC-2.0 §2.3.3 / §7.2 / §10.4: rewrite any legacy kind-keyed
-    /// `creation_rules.<kind>` entry into the equivalent
-    /// `creation_rules.<lifecycle>.tag.<conventional-tag>` overlay so
-    /// existing 1.x policy.toml files keep their semantics post-migration.
-    /// Returns the warnings emitted.
-    pub fn translate_legacy_creation_rules(&mut self) -> Vec<String> {
-        let mut warnings = Vec::new();
-        let legacy_keys: Vec<String> = self
-            .creation_rules
-            .keys()
-            .filter(|k| matches!(k.as_str(), "rfc" | "issue" | "dec" | "task"))
-            .cloned()
-            .collect();
-        for key in legacy_keys {
-            let Some(rules) = self.creation_rules.remove(&key) else {
-                continue;
-            };
-            let (lifecycle, conventional_tag): (&str, Option<&str>) = match key.as_str() {
-                "rfc" => ("proposal", Some("cross-cutting")),
-                "issue" => ("execution", Some("bug")),
-                "task" => ("execution", Some("task")),
-                "dec" => ("record", None),
-                _ => unreachable!(),
-            };
-            let entry = self
-                .creation_rules
-                .entry(lifecycle.to_string())
-                .or_default();
-            match conventional_tag {
-                Some(tag) => {
-                    let target = format!("creation_rules.{lifecycle}.tag.{tag} (SPEC-2.0 §2.3.3)");
-                    warnings.push(format!("creation_rules.{key}: rewritten to {target}"));
-                    entry.tag.insert(tag.to_string(), rules.base);
-                    // Preserve any nested tag overlays the legacy
-                    // entry happened to carry.
-                    for (t, r) in rules.tag {
-                        entry.tag.insert(t, r);
-                    }
-                }
-                None => {
-                    warnings.push(format!(
-                        "creation_rules.{key}: rewritten to creation_rules.{lifecycle}"
-                    ));
-                    if entry.base.body_sections.is_empty() {
-                        entry.base = rules.base;
-                    } else {
-                        // Don't overwrite an explicit lifecycle entry; tag overlays only.
-                    }
-                    for (t, r) in rules.tag {
-                        entry.tag.insert(t, r);
-                    }
-                }
-            }
-        }
-        warnings
     }
 
     /// Resolve creation rules for a given lifecycle + tag set, applying
@@ -429,38 +355,6 @@ impl Policy {
             return entry.tag.get(*t);
         }
         Some(&entry.base)
-    }
-
-    /// Parse the predicate scope and transition from each guard's `on`
-    /// field. Normalizes 1.x state names so guards loaded from legacy
-    /// `policy.toml` line up with the 2.0 state names produced by the
-    /// unified state machine (§3.1). Legacy `kind:from->to` forms
-    /// auto-rewrite to `lifecycle=<...>` predicates with a warning.
-    pub fn resolve_guard_scopes(&mut self) -> Vec<String> {
-        let mut warnings = Vec::new();
-        for guard in &mut self.guards {
-            match parse_guard_on(&guard.on) {
-                Ok((predicate, transition, warning)) => {
-                    guard.predicate = predicate;
-                    guard.transition = normalize_transition_str(&transition);
-                    if let Some(w) = warning {
-                        warnings.push(w);
-                    }
-                }
-                Err(_) => {
-                    // Lint surfaces parse errors with file context; the
-                    // predicate falls back to Always so the transition
-                    // string still matches and `lint_policy` can report.
-                    guard.predicate = FacetPredicate::Always;
-                    guard.transition = guard
-                        .on
-                        .split_once(':')
-                        .map(|(_, t)| normalize_transition_str(t))
-                        .unwrap_or_else(|| normalize_transition_str(&guard.on));
-                }
-            }
-        }
-        warnings
     }
 
     /// Return guards whose transition matches `transition` and whose
@@ -983,7 +877,14 @@ fn lint_allow_list_coverage(
 ///
 /// Returns `Err` only when a `<facet-expr>` portion is present but
 /// fails to parse.
-fn parse_guard_on(on: &str) -> Result<(FacetPredicate, String, Option<String>), String> {
+/// Parse a guard's `on` field into a (predicate, transition, optional
+/// rewrite-warning) triple. Legacy kind-prefixed scopes route through
+/// [`super::compat::v1::legacy_kind_prefix_to_lifecycle`] for the
+/// `kind:from->to` → `lifecycle=...` rewrite.
+///
+/// Visibility: crate-internal so [`super::compat::v1::rewrite_legacy_policy`]
+/// can dispatch through it without re-exporting the parser pipeline.
+pub(crate) fn parse_guard_on(on: &str) -> Result<(FacetPredicate, String, Option<String>), String> {
     let Some((scope, transition)) = on.split_once(':') else {
         return Ok((FacetPredicate::Always, on.to_string(), None));
     };
@@ -993,13 +894,7 @@ fn parse_guard_on(on: &str) -> Result<(FacetPredicate, String, Option<String>), 
     // word with no `=` and matching one of the four legacy kinds.
     if !scope_trimmed.contains('=') && !scope_trimmed.contains(' ') && !scope_trimmed.contains('(')
     {
-        let legacy_lifecycle = match scope_trimmed {
-            "issue" | "task" => Some(Lifecycle::Execution),
-            "rfc" => Some(Lifecycle::Proposal),
-            "dec" => Some(Lifecycle::Record),
-            _ => None,
-        };
-        if let Some(lifecycle) = legacy_lifecycle {
+        if let Some(lifecycle) = super::compat::v1::legacy_kind_prefix_to_lifecycle(scope_trimmed) {
             let warning = format!(
                 "guard {:?}: legacy kind-prefixed scope `{scope_trimmed}:` rewritten to \
                  `lifecycle={lifecycle}` (SPEC-2.0 §7.1 / §10.4)",
@@ -1057,17 +952,19 @@ pub fn scan_at_least_one_summary_warnings(text: &str) -> Vec<AtLeastOneSummaryHi
 }
 
 /// Normalize the `from->to` portion of a guard transition string to 2.0
-/// state names (per `event::normalize_state_name`). Trims
-/// surrounding whitespace so guards written with spaces around the `:`
-/// separator (`lifecycle=X : from->to`) match query strings produced by
-/// the state machine.
-fn normalize_transition_str(transition: &str) -> String {
+/// state names. Trims surrounding whitespace so guards written with
+/// spaces around the `:` separator (`lifecycle=X : from->to`) match
+/// query strings produced by the state machine.
+///
+/// Visibility: crate-internal so [`super::compat::v1::rewrite_legacy_policy`]
+/// shares the same canonicalisation as `guards_for`.
+pub(crate) fn normalize_transition_str(transition: &str) -> String {
     let trimmed = transition.trim();
     if let Some((from, to)) = trimmed.split_once("->") {
         format!(
             "{}->{}",
-            event::normalize_state_name(from.trim()),
-            event::normalize_state_name(to.trim()),
+            super::compat::v1::normalize_state_name(from.trim()),
+            super::compat::v1::normalize_state_name(to.trim()),
         )
     } else {
         trimmed.to_string()
@@ -1173,7 +1070,12 @@ mod tests {
             guards,
             ..Default::default()
         };
-        let _ = p.resolve_guard_scopes();
+        let emitter = lint_emit::LintEmitter::new_capturing(None);
+        super::super::compat::v1::rewrite_legacy_policy(
+            &mut p,
+            &emitter,
+            std::path::Path::new("policy.toml"),
+        );
         p
     }
 
@@ -1422,7 +1324,12 @@ mod tests {
             }],
             ..Default::default()
         };
-        p.strip_removed_predicates();
+        let emitter = lint_emit::LintEmitter::new_capturing(None);
+        super::super::compat::v1::rewrite_legacy_policy(
+            &mut p,
+            &emitter,
+            std::path::Path::new("policy.toml"),
+        );
         assert!(!p.guards[0]
             .requires
             .iter()
