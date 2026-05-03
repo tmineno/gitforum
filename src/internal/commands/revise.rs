@@ -3,6 +3,13 @@
 //! Owns the clap subcommand enum `ReviseCmd` (moved from `main.rs` by
 //! task `t8o3vnt6`) so the command's full surface — args, dispatch,
 //! orchestration — lives in one module.
+//!
+//! Phase 2 slot 5 (RFC `7ymtc4b2`): body and node revisions overwrite
+//! `body.md` / `nodes/<id>.md` directly via
+//! `snapshot::store::write_snapshot`. SPEC-3.0 §4.2 has no
+//! `body_revision_count` field — revision history is `git log` over
+//! the snapshot ref. The legacy `internal::write_ops::revise_*`
+//! event-write paths are no longer invoked here.
 
 use std::path::PathBuf;
 
@@ -12,14 +19,16 @@ use super::context::Context;
 use crate::internal::clock::Clock;
 use crate::internal::commands::show;
 use crate::internal::error::ForumError;
+use crate::internal::node::NodeStatus;
 use crate::internal::operation_check;
 use crate::internal::policy::Policy;
+use crate::internal::snapshot::{self, store::write_snapshot};
 use crate::internal::thread;
-use crate::internal::write_ops;
 
 use super::shared::{
     apply_operation_checks, discover_repo_with_init_warning, resolve_actor, resolve_tid,
 };
+use super::shorthand_say::migrate_legacy_to_snapshot;
 use super::thread_new::resolve_body_required;
 
 /// Args for the top-level `revise` arm — captures the optional thread_id +
@@ -145,7 +154,11 @@ pub enum ReviseCmd {
     },
 }
 
-/// Body revision: rewrite the thread body and bump `body_revision_count`.
+/// Body revision: rewrite `body.md` in the snapshot tree.
+///
+/// SPEC-3.0 §4.2 has no body_revision_count — revision history is
+/// `git log` over the snapshot ref. `--incorporates` flips the named
+/// nodes to `NodeStatus::Incorporated` in the same snapshot commit.
 #[allow(clippy::too_many_arguments)]
 pub fn run_revise_body(
     thread_id: String,
@@ -172,9 +185,32 @@ pub fn run_revise_body(
     let violations = operation_check::check_revise(&policy, state.status.as_str(), true);
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
-    write_ops::revise_body(&git, &thread_id, &body_text, &incorporates, &actor, clock)?;
-    let revision = state.body_revision_count + 1;
-    println!("Body revised for {thread_id} (revision {revision})");
+    let mut doc = match snapshot::read_snapshot(&git, &thread_id) {
+        Ok(doc) => doc,
+        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(&git, &thread_id)?,
+        Err(other) => return Err(other),
+    };
+    let now = clock.now();
+    doc.body = Some(body_text);
+    doc.snapshot.updated_at = now;
+    doc.snapshot.updated_by = actor.clone();
+
+    for nref in &incorporates {
+        let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, nref)?;
+        if let Some(n) = doc.nodes.iter_mut().find(|n| n.record.id == resolved) {
+            n.record.status = NodeStatus::Incorporated;
+            n.record.updated_at = Some(now);
+            n.record.updated_by = Some(actor.clone());
+        }
+    }
+
+    write_snapshot(
+        &git,
+        &thread_id,
+        &doc,
+        &format!("revise body of {thread_id}"),
+    )?;
+    println!("Body revised for {thread_id}");
     Ok(())
 }
 
@@ -206,7 +242,33 @@ pub fn run_revise_node(
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
     let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
-    write_ops::revise_node(&git, &thread_id, &resolved, &body_text, &actor, clock)?;
+    let mut doc = match snapshot::read_snapshot(&git, &thread_id) {
+        Ok(doc) => doc,
+        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(&git, &thread_id)?,
+        Err(other) => return Err(other),
+    };
+    let now = clock.now();
+    let node = doc
+        .nodes
+        .iter_mut()
+        .find(|n| n.record.id == resolved)
+        .ok_or_else(|| {
+            ForumError::Repo(format!(
+                "node '{resolved}' not found in snapshot for thread '{thread_id}'"
+            ))
+        })?;
+    node.body = body_text;
+    node.record.updated_at = Some(now);
+    node.record.updated_by = Some(actor.clone());
+    doc.snapshot.updated_at = now;
+    doc.snapshot.updated_by = actor.clone();
+
+    write_snapshot(
+        &git,
+        &thread_id,
+        &doc,
+        &format!("revise node {resolved} in {thread_id}"),
+    )?;
     println!("Revised {}", show::short_oid(&resolved));
     Ok(())
 }
