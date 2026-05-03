@@ -1,10 +1,14 @@
 //! `git forum close|accept|propose|pend|reject|withdraw|deprecate <ID>`
 //! orchestration — the §9.3 shorthand verbs.
 //!
-//! The shorthand→target mapping itself lives in
+//! Owns the clap subcommand enum `StateCmd` (moved from `main.rs` by
+//! task `t8o3vnt6`). The shorthand→target mapping itself lives in
 //! [`WorkflowSpec`](crate::internal::workflow::WorkflowSpec) (#34ith16h);
 //! this module only handles the I/O and state-change wiring.
 
+use clap::Subcommand;
+
+use super::context::Context;
 use crate::internal::clock::Clock;
 use crate::internal::error::ForumError;
 use crate::internal::event::Lifecycle;
@@ -16,6 +20,63 @@ use crate::internal::thread;
 use crate::internal::workflow::SPEC;
 
 use super::shared::{discover_repo_with_init_warning, resolve_actor, resolve_tid};
+
+/// `git forum state` sub-commands.
+#[derive(Subcommand)]
+pub enum StateCmd {
+    /// Apply the same transition to multiple threads
+    Bulk {
+        #[arg(long = "to", value_name = "STATE")]
+        new_state: String,
+        thread_ids: Vec<String>,
+        #[arg(long, value_name = "BRANCH")]
+        branch: Option<String>,
+        #[arg(long, value_name = "KIND")]
+        kind: Option<String>,
+        #[arg(long, value_name = "STATUS")]
+        status: Option<String>,
+        #[arg(long = "approve", value_name = "ACTOR")]
+        approve: Vec<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        #[arg(long)]
+        resolve_open_actions: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+/// Args for `commands::state::run` shorthand path
+/// (close/accept/propose/pend/reject/withdraw/deprecate).
+pub struct StateShorthandArgs {
+    pub thread_id: String,
+    pub new_state: String,
+    pub approve: Vec<String>,
+    pub as_actor: Option<String>,
+    pub resolve_open_actions: bool,
+    pub link_to: Vec<String>,
+    pub rel: Option<String>,
+    pub comment: Option<String>,
+    pub fast_track: bool,
+    pub force: bool,
+}
+
+/// Uniform shorthand entry point per task `t8o3vnt6`.
+pub fn run(args: StateShorthandArgs, ctx: &Context) -> Result<(), ForumError> {
+    run_state_shorthand(
+        &args.thread_id,
+        &args.new_state,
+        &args.approve,
+        args.as_actor,
+        args.resolve_open_actions,
+        &args.link_to,
+        args.rel.as_deref(),
+        args.comment.as_deref(),
+        args.fast_track,
+        args.force,
+        ctx.clock.as_ref(),
+    )
+}
 
 /// Resolve a state-change shorthand to a concrete target state for the
 /// thread's current lifecycle, per SPEC-2.0 §9.3.

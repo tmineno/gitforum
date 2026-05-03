@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 
+use super::context::Context;
 use crate::internal::clock::Clock;
 use crate::internal::error::ForumError;
 use crate::internal::event::NodeType;
@@ -20,6 +21,37 @@ use super::shared::{
     apply_operation_checks, discover_repo_with_init_warning, resolve_actor, resolve_tid,
 };
 use super::thread_new::resolve_body_required;
+
+/// Args for `commands::shorthand_say::run` — the shared field set used
+/// by `comment` / `objection` / `action` / `claim` / `question` /
+/// `summary` / `risk` / `review` / `node add`.
+pub struct ShorthandSayArgs {
+    pub thread_id: String,
+    pub body_positional: Option<String>,
+    pub body_flag: Option<String>,
+    pub body_file: Option<PathBuf>,
+    pub edit: bool,
+    pub reply_to: Option<String>,
+    pub as_actor: Option<String>,
+    pub node_type: NodeType,
+    pub force: bool,
+}
+
+/// Uniform entry point per task `t8o3vnt6`.
+pub fn run(args: ShorthandSayArgs, ctx: &Context) -> Result<(), ForumError> {
+    run_shorthand_say(
+        &args.thread_id,
+        args.body_positional,
+        args.body_flag,
+        args.body_file,
+        args.edit,
+        args.reply_to,
+        args.as_actor,
+        args.node_type,
+        args.force,
+        ctx.clock.as_ref(),
+    )
+}
 
 /// Print a deprecation warning for legacy node-type shorthand commands.
 ///

@@ -6,24 +6,30 @@ use git_forum::internal::actor;
 use git_forum::internal::branch_ops;
 use git_forum::internal::brief;
 use git_forum::internal::clock::SystemClock;
+use git_forum::internal::commands;
 use git_forum::internal::commands::bulk::{
     list_thread_states, print_bulk_report, run_bulk_state_change, BulkSelectors,
 };
 use git_forum::internal::commands::node_bulk::run_node_lifecycle_bulk;
-use git_forum::internal::commands::revise as revise_cmd;
+use git_forum::internal::commands::revise::{self as revise_cmd, ReviseCmd};
 use git_forum::internal::commands::shared::{
-    apply_operation_checks, discover_repo_with_init_warning, resolve_actor, resolve_tid,
+    apply_operation_checks, discover_repo_with_init_warning, parse_lifecycle, parse_since_date,
+    parse_thread_kind, parse_thread_kind_filter, parse_unrecognized_subcommand, resolve_actor,
+    resolve_tid, subcommand_hint, terminal_state_date,
 };
 use git_forum::internal::commands::shorthand_say::{run_shorthand_say, warn_legacy_node_shorthand};
 use git_forum::internal::commands::state::run_state_shorthand;
-use git_forum::internal::commands::thread_new::{run_canonical_thread_new, ThreadNewInline};
+use git_forum::internal::commands::state::StateCmd;
+use git_forum::internal::commands::thread_new::ThreadCmd;
+use git_forum::internal::commands::thread_new::ThreadNewInline;
+use git_forum::internal::commands::Context;
 use git_forum::internal::config;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::diff;
 use git_forum::internal::doctor;
 use git_forum::internal::error::ForumError;
 use git_forum::internal::event;
-use git_forum::internal::event::{Lifecycle, NodeType, ThreadKind};
+use git_forum::internal::event::NodeType;
 use git_forum::internal::evidence;
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::git_ops::GitOps;
@@ -808,53 +814,6 @@ enum PolicyCmd {
 }
 
 #[derive(Subcommand)]
-enum ReviseCmd {
-    /// Revise the body of a thread
-    Body {
-        thread_id: String,
-        /// New thread body text (use "-" to read from stdin)
-        #[arg(long, conflicts_with = "body_file")]
-        body: Option<String>,
-        /// Read new thread body from a file
-        #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
-        body_file: Option<PathBuf>,
-        /// Open $EDITOR to compose the body
-        #[arg(long, conflicts_with_all = ["body", "body_file"])]
-        edit: bool,
-        /// Node IDs to mark as incorporated into this body revision
-        #[arg(long = "incorporates", alias = "incorporate", value_name = "NODE_ID")]
-        incorporates: Vec<String>,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Bypass warning-level operation checks (does not bypass errors)
-        #[arg(long)]
-        force: bool,
-    },
-    /// Revise the body of an existing node
-    Node {
-        thread_id: String,
-        #[arg(
-            value_name = "NODE_ID",
-            help = "Full node ID or unique prefix within the thread (8+ chars unless exact match)"
-        )]
-        node_id: String,
-        #[arg(long, conflicts_with = "body_file")]
-        body: Option<String>,
-        /// Read revised body from a file
-        #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
-        body_file: Option<PathBuf>,
-        /// Open $EDITOR to compose the body
-        #[arg(long, conflicts_with_all = ["body", "body_file"])]
-        edit: bool,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Bypass warning-level operation checks (does not bypass errors)
-        #[arg(long)]
-        force: bool,
-    },
-}
-
-#[derive(Subcommand)]
 enum EvidenceCmd {
     /// Add evidence items to a thread (accepts multiple --ref values)
     Add {
@@ -990,79 +949,6 @@ enum ExportCmd {
         /// Show what would be created without actually creating
         #[arg(long)]
         dry_run: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum StateCmd {
-    /// Apply the same transition to multiple threads
-    Bulk {
-        #[arg(long = "to", value_name = "STATE")]
-        new_state: String,
-        thread_ids: Vec<String>,
-        #[arg(long, value_name = "BRANCH")]
-        branch: Option<String>,
-        #[arg(long, value_name = "KIND")]
-        kind: Option<String>,
-        #[arg(long, value_name = "STATUS")]
-        status: Option<String>,
-        #[arg(long = "approve", value_name = "ACTOR")]
-        approve: Vec<String>,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        #[arg(long)]
-        resolve_open_actions: bool,
-        #[arg(long)]
-        dry_run: bool,
-    },
-}
-
-/// Canonical thread sub-commands per SPEC-2.0 §9.1.
-///
-/// Power-user / scripting interface keyed on `--lifecycle` and `--tag` rather
-/// than the `new <kind>` preset. The kind presets at the top level
-/// (`git forum new rfc`, etc.) are the everyday surface; this `thread`
-/// namespace exists so scripts can set arbitrary lifecycle/tag combinations
-/// without depending on the preset table.
-#[derive(Subcommand)]
-#[allow(clippy::large_enum_variant)]
-enum ThreadCmd {
-    /// Create a new thread with explicit lifecycle and tag values
-    New {
-        /// Thread title (omit when using --from-commit)
-        #[arg(
-            allow_hyphen_values = true,
-            required_unless_present_any = ["from_commit", "from_thread"]
-        )]
-        title: Option<String>,
-        /// Lifecycle facet (proposal | execution | record). SPEC-2.0 §2.3.4.
-        #[arg(long, value_name = "LIFECYCLE")]
-        lifecycle: String,
-        /// Tag(s) to attach via the create-time facet_set (may be repeated). SPEC-2.0 §2.3.5.
-        #[arg(long, value_name = "TAG")]
-        tag: Vec<String>,
-        #[arg(long, conflicts_with = "body_file")]
-        body: Option<String>,
-        #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
-        body_file: Option<PathBuf>,
-        /// Open $EDITOR to compose the body
-        #[arg(long, conflicts_with_all = ["body", "body_file"])]
-        edit: bool,
-        #[arg(long, value_name = "BRANCH")]
-        branch: Option<String>,
-        #[arg(long = "link-to", value_name = "THREAD_ID")]
-        link_to: Vec<String>,
-        #[arg(long, requires = "link_to", value_name = "REL")]
-        rel: Option<String>,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        #[arg(long = "from-commit", value_name = "REV")]
-        from_commit: Option<String>,
-        #[arg(long = "from-thread", value_name = "THREAD_ID")]
-        from_thread: Option<String>,
-        /// Bypass warning-level operation checks (does not bypass errors)
-        #[arg(long)]
-        force: bool,
     },
 }
 
@@ -1702,23 +1588,26 @@ fn main() -> Result<(), ForumError> {
                     force,
                 },
         } => {
+            let ctx = Context::discover(Box::new(SystemClock))?;
             let lifecycle = parse_lifecycle(&lifecycle)?;
-            run_canonical_thread_new(
-                title,
-                body,
-                body_file,
-                edit,
-                branch,
-                link_to,
-                rel,
-                as_actor,
-                from_commit,
-                from_thread,
-                ThreadNewInline::default(),
-                force,
-                lifecycle,
-                tag,
-                &clock,
+            commands::thread_new::run(
+                commands::thread_new::ThreadNewArgs {
+                    title,
+                    body,
+                    body_file,
+                    edit,
+                    branch,
+                    link_to,
+                    rel,
+                    as_actor,
+                    from_commit,
+                    from_thread,
+                    inline: ThreadNewInline::default(),
+                    force,
+                    lifecycle,
+                    tags: tag,
+                },
+                &ctx,
             )?;
         }
 
@@ -1742,35 +1631,38 @@ fn main() -> Result<(), ForumError> {
             summary,
             force,
         } => {
+            let ctx = Context::discover(Box::new(SystemClock))?;
             let preset = preset_lookup(&kind).ok_or_else(|| {
                 ForumError::Config(format!(
                     "unknown kind '{kind}'; valid presets: {}",
                     valid_preset_names(),
                 ))
             })?;
-            run_canonical_thread_new(
-                title,
-                body,
-                body_file,
-                edit,
-                branch,
-                link_to,
-                rel,
-                as_actor,
-                from_commit,
-                from_thread,
-                ThreadNewInline {
-                    claim,
-                    question,
-                    objection,
-                    action,
-                    risk,
-                    summary,
+            commands::thread_new::run(
+                commands::thread_new::ThreadNewArgs {
+                    title,
+                    body,
+                    body_file,
+                    edit,
+                    branch,
+                    link_to,
+                    rel,
+                    as_actor,
+                    from_commit,
+                    from_thread,
+                    inline: ThreadNewInline {
+                        claim,
+                        question,
+                        objection,
+                        action,
+                        risk,
+                        summary,
+                    },
+                    force,
+                    lifecycle: preset.lifecycle,
+                    tags: preset.tags.iter().map(|s| s.to_string()).collect(),
                 },
-                force,
-                preset.lifecycle,
-                preset.tags.iter().map(|s| s.to_string()).collect(),
-                &clock,
+                &ctx,
             )?;
         }
 
@@ -1785,18 +1677,21 @@ fn main() -> Result<(), ForumError> {
             fast_track,
             force,
         } => {
-            run_state_shorthand(
-                &thread_id,
-                "closed",
-                &approve,
-                as_actor,
-                resolve_open_actions,
-                &link_to,
-                rel.as_deref(),
-                comment.as_deref(),
-                fast_track,
-                force,
-                &clock,
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            commands::state::run(
+                commands::state::StateShorthandArgs {
+                    thread_id,
+                    new_state: "closed".into(),
+                    approve,
+                    as_actor,
+                    resolve_open_actions,
+                    link_to,
+                    rel,
+                    comment,
+                    fast_track,
+                    force,
+                },
+                &ctx,
             )?;
         }
         Commands::Pend {
@@ -1806,18 +1701,21 @@ fn main() -> Result<(), ForumError> {
             fast_track,
             force,
         } => {
-            run_state_shorthand(
-                &thread_id,
-                "pending",
-                &[],
-                as_actor,
-                false,
-                &[],
-                None,
-                comment.as_deref(),
-                fast_track,
-                force,
-                &clock,
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            commands::state::run(
+                commands::state::StateShorthandArgs {
+                    thread_id,
+                    new_state: "pending".into(),
+                    approve: vec![],
+                    as_actor,
+                    resolve_open_actions: false,
+                    link_to: vec![],
+                    rel: None,
+                    comment,
+                    fast_track,
+                    force,
+                },
+                &ctx,
             )?;
         }
         Commands::Accept {
@@ -1830,18 +1728,21 @@ fn main() -> Result<(), ForumError> {
             fast_track,
             force,
         } => {
-            run_state_shorthand(
-                &thread_id,
-                "accepted",
-                &approve,
-                as_actor,
-                false,
-                &link_to,
-                rel.as_deref(),
-                comment.as_deref(),
-                fast_track,
-                force,
-                &clock,
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            commands::state::run(
+                commands::state::StateShorthandArgs {
+                    thread_id,
+                    new_state: "accepted".into(),
+                    approve,
+                    as_actor,
+                    resolve_open_actions: false,
+                    link_to,
+                    rel,
+                    comment,
+                    fast_track,
+                    force,
+                },
+                &ctx,
             )?;
         }
         Commands::Propose {
@@ -1851,18 +1752,21 @@ fn main() -> Result<(), ForumError> {
             fast_track,
             force,
         } => {
-            run_state_shorthand(
-                &thread_id,
-                "proposed",
-                &[],
-                as_actor,
-                false,
-                &[],
-                None,
-                comment.as_deref(),
-                fast_track,
-                force,
-                &clock,
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            commands::state::run(
+                commands::state::StateShorthandArgs {
+                    thread_id,
+                    new_state: "proposed".into(),
+                    approve: vec![],
+                    as_actor,
+                    resolve_open_actions: false,
+                    link_to: vec![],
+                    rel: None,
+                    comment,
+                    fast_track,
+                    force,
+                },
+                &ctx,
             )?;
         }
         Commands::Deprecate {
@@ -1872,18 +1776,21 @@ fn main() -> Result<(), ForumError> {
             fast_track,
             force,
         } => {
-            run_state_shorthand(
-                &thread_id,
-                "deprecated",
-                &[],
-                as_actor,
-                false,
-                &[],
-                None,
-                comment.as_deref(),
-                fast_track,
-                force,
-                &clock,
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            commands::state::run(
+                commands::state::StateShorthandArgs {
+                    thread_id,
+                    new_state: "deprecated".into(),
+                    approve: vec![],
+                    as_actor,
+                    resolve_open_actions: false,
+                    link_to: vec![],
+                    rel: None,
+                    comment,
+                    fast_track,
+                    force,
+                },
+                &ctx,
             )?;
         }
         Commands::Reject {
@@ -1893,18 +1800,21 @@ fn main() -> Result<(), ForumError> {
             fast_track,
             force,
         } => {
-            run_state_shorthand(
-                &thread_id,
-                "rejected",
-                &[],
-                as_actor,
-                false,
-                &[],
-                None,
-                comment.as_deref(),
-                fast_track,
-                force,
-                &clock,
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            commands::state::run(
+                commands::state::StateShorthandArgs {
+                    thread_id,
+                    new_state: "rejected".into(),
+                    approve: vec![],
+                    as_actor,
+                    resolve_open_actions: false,
+                    link_to: vec![],
+                    rel: None,
+                    comment,
+                    fast_track,
+                    force,
+                },
+                &ctx,
             )?;
         }
 
@@ -1915,18 +1825,21 @@ fn main() -> Result<(), ForumError> {
             fast_track,
             force,
         } => {
-            run_state_shorthand(
-                &thread_id,
-                "withdrawn",
-                &[],
-                as_actor,
-                false,
-                &[],
-                None,
-                comment.as_deref(),
-                fast_track,
-                force,
-                &clock,
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            commands::state::run(
+                commands::state::StateShorthandArgs {
+                    thread_id,
+                    new_state: "withdrawn".into(),
+                    approve: vec![],
+                    as_actor,
+                    resolve_open_actions: false,
+                    link_to: vec![],
+                    rel: None,
+                    comment,
+                    fast_track,
+                    force,
+                },
+                &ctx,
             )?;
         }
 
@@ -2163,43 +2076,10 @@ fn main() -> Result<(), ForumError> {
             as_actor,
             force,
             cmd,
-        } => match cmd {
-            Some(ReviseCmd::Body {
-                thread_id,
-                body,
-                body_file,
-                edit,
-                incorporates,
-                as_actor,
-                force,
-            }) => revise_cmd::run_revise_body(
-                thread_id,
-                body,
-                body_file,
-                edit,
-                incorporates,
-                as_actor,
-                force,
-                &clock,
-            )?,
-            Some(ReviseCmd::Node {
-                thread_id,
-                node_id,
-                body,
-                body_file,
-                edit,
-                as_actor,
-                force,
-            }) => revise_cmd::run_revise_node(
-                thread_id, node_id, body, body_file, edit, as_actor, force, &clock,
-            )?,
-            None => {
-                let thread_id = thread_id.ok_or_else(|| {
-                    ForumError::Config(
-                        "usage: git forum revise <THREAD_ID> --body <TEXT> | --body-file <PATH> | --edit".into(),
-                    )
-                })?;
-                revise_cmd::run_revise_body(
+        } => {
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            revise_cmd::run(
+                revise_cmd::ReviseArgs {
                     thread_id,
                     body,
                     body_file,
@@ -2207,10 +2087,11 @@ fn main() -> Result<(), ForumError> {
                     incorporates,
                     as_actor,
                     force,
-                    &clock,
-                )?
-            }
-        },
+                    cmd,
+                },
+                &ctx,
+            )?;
+        }
         Commands::Comment {
             thread_id,
             body_positional,
@@ -2872,6 +2753,10 @@ fn main() -> Result<(), ForumError> {
 ///
 /// The data table itself moved to `WorkflowSpec` (#34ith16h); these
 /// type/value aliases keep the call-site spelling unchanged.
+///
+// TODO(phase-4): the `kind` vocabulary is removed when categories
+// replace lifecycle/tag presets (Phase 1 model rewrite); the helpers
+// below disappear with it.
 use git_forum::internal::workflow::{KindPreset, SPEC};
 
 fn preset_lookup(name: &str) -> Option<&'static KindPreset> {
@@ -2886,23 +2771,8 @@ fn valid_preset_names() -> String {
         .join(", ")
 }
 
-fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
-    preset_lookup(kind).map(|p| p.kind).ok_or_else(|| {
-        ForumError::Config(format!(
-            "unknown kind '{kind}'; valid presets: {}",
-            valid_preset_names(),
-        ))
-    })
-}
-
-fn parse_lifecycle(s: &str) -> Result<Lifecycle, ForumError> {
-    Lifecycle::parse(s).ok_or_else(|| {
-        ForumError::Config(format!(
-            "unknown lifecycle '{s}'; valid: proposal, execution, record"
-        ))
-    })
-}
-
+// TODO(phase-4): goes with the `Search` arm at slot 11; see
+// `doc/internal/main-rs-audit.md`.
 /// SPEC-2.0 §9.2 / Track D: rewrite legacy `kind:<name>` tokens in a search
 /// query string to the equivalent `lifecycle:<L> AND tag:<T>` form for one
 /// minor release, then prints a deprecation warning to stderr.
@@ -2945,87 +2815,7 @@ fn translate_legacy_kind_query(query: &str) -> String {
     out.join(" ")
 }
 
-fn parse_since_date(
-    since: &str,
-    git: &GitOps,
-) -> Result<chrono::DateTime<chrono::Utc>, ForumError> {
-    use chrono::{DateTime, NaiveDate, Utc};
-    // Try ISO date: YYYY-MM-DD (treat as start of day UTC)
-    if let Ok(naive) = NaiveDate::parse_from_str(since, "%Y-%m-%d") {
-        return Ok(naive.and_hms_opt(0, 0, 0).unwrap().and_utc());
-    }
-    // Try full RFC 3339 / ISO 8601
-    if let Ok(dt) = DateTime::parse_from_rfc3339(since) {
-        return Ok(dt.with_timezone(&Utc));
-    }
-    // Try as git revision (tag, branch, SHA)
-    git.commit_timestamp(since)
-}
-
-fn terminal_state_date(state: &thread::ThreadState) -> Option<chrono::DateTime<chrono::Utc>> {
-    use git_forum::internal::policy::TERMINAL_STATES;
-
-    if !TERMINAL_STATES.contains(&state.status.as_str()) {
-        return None;
-    }
-    // Scan events in reverse for the most recent State event that set the current
-    // terminal status (handles reopen-then-close scenarios correctly).
-    state.events.iter().rev().find_map(|e| {
-        if e.event_type == git_forum::internal::event::EventType::State
-            && e.new_state.as_deref() == Some(state.status.as_str())
-        {
-            Some(e.created_at)
-        } else {
-            None
-        }
-    })
-}
-
-fn parse_thread_kind_filter(kind: Option<&str>) -> Result<Option<ThreadKind>, ForumError> {
-    kind.map(parse_thread_kind).transpose()
-}
-
-/// Extract the subcommand name from a clap "unrecognized subcommand" error message.
-fn parse_unrecognized_subcommand(msg: &str) -> Option<String> {
-    // clap format: "error: unrecognized subcommand 'foo'"
-    let marker = "unrecognized subcommand '";
-    let start = msg.find(marker)? + marker.len();
-    let end = msg[start..].find('\'')?;
-    Some(msg[start..start + end].to_string())
-}
-
-/// Return a custom hint for known unrecognized subcommands.
-///
-/// SPEC-2.0 §10.2: kind-prefixed subcommand groupings (`git forum rfc new`,
-/// `git forum issue close`, etc.) are removed in 2.0 (pulled forward from
-/// 3.0 by RFC-nm3d31yk Q1). Invoking them prints a hard error pointing at
-/// the top-level form.
-fn subcommand_hint(sub: &str) -> Option<&'static str> {
-    match sub {
-        "rfc" | "issue" | "ask" | "dec" | "task" | "job" => Some(
-            "kind-prefixed subcommand groupings (`git forum rfc new`, \
-             `git forum issue close`, etc.) were removed in 2.0 (SPEC-2.0 §10.2). \
-             Use the top-level form:\n  \
-             git forum new <kind> \"title\"      (create — kinds: rfc, dec, task, issue, bug)\n  \
-             git forum close|accept|propose|pend|reject|withdraw|deprecate <ID>\n  \
-             git forum thread new --lifecycle <X> --tag <Y> ...   (canonical / scripts)",
-        ),
-        "say" => Some(
-            "\"say\" is an internal module, not a CLI command. \
-             Use node shorthands instead:\n  \
-             git forum comment, objection, action  (canonical 2.0)\n  \
-             or: git forum node add <THREAD> --type <TYPE> \"body\"",
-        ),
-        "revise-body" => Some(
-            "use `git forum revise <THREAD_ID>` to revise a thread body, \
-             or `git forum revise node <NODE_ID> <THREAD_ID>` to revise a node",
-        ),
-        "create" => Some("use `git forum new <kind> \"title\"` to create a thread"),
-        "add" => Some("use `git forum node add <THREAD> --type <TYPE> \"body\"` to add a node"),
-        _ => None,
-    }
-}
-
+// TODO(phase-4): goes with the `Import` arm at slot 11.
 fn print_import_plan(plan: &github_import::ImportPlan) {
     if let Some(ref existing) = plan.already_imported {
         println!(

@@ -1,6 +1,8 @@
 //! `git forum state bulk` orchestration: bulk state-change with selectors
 //! (`--branch` / `--kind` / `--status`) and per-thread report.
 
+use super::context::Context;
+use super::shared::resolve_actor;
 use crate::internal::clock::Clock;
 use crate::internal::error::ForumError;
 use crate::internal::event::ThreadKind;
@@ -9,6 +11,49 @@ use crate::internal::policy::Policy;
 use crate::internal::refs;
 use crate::internal::state_change;
 use crate::internal::thread;
+
+/// Args for `commands::bulk::run` — `state bulk` selector + transition.
+pub struct BulkArgs {
+    pub thread_ids: Vec<String>,
+    pub branch: Option<String>,
+    pub kind: Option<ThreadKind>,
+    pub status: Option<String>,
+    pub new_state: String,
+    pub approve: Vec<String>,
+    pub as_actor: Option<String>,
+    pub resolve_open_actions: bool,
+    pub dry_run: bool,
+}
+
+/// Uniform entry point per task `t8o3vnt6`.
+pub fn run(args: BulkArgs, ctx: &Context) -> Result<(), ForumError> {
+    let policy = Policy::load(&ctx.paths.dot_forum.join("policy.toml"))?;
+    let actor = resolve_actor(args.as_actor, &ctx.git);
+    let report = run_bulk_state_change(
+        &ctx.git,
+        &policy,
+        &args.thread_ids,
+        BulkSelectors {
+            branch: args.branch.as_deref(),
+            kind: args.kind,
+            status: args.status.as_deref(),
+        },
+        &args.new_state,
+        &args.approve,
+        &actor,
+        ctx.clock.as_ref(),
+        state_change::StateChangeOptions {
+            resolve_open_actions: args.resolve_open_actions,
+            ..Default::default()
+        },
+        args.dry_run,
+    )?;
+    print_bulk_report(&report);
+    if report.failures > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy)]
 pub struct BulkSelectors<'a> {

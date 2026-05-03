@@ -1,5 +1,6 @@
 //! `git forum {retract|resolve|reopen}` orchestration over a node id list.
 
+use super::context::Context;
 use crate::internal::clock::Clock;
 use crate::internal::error::ForumError;
 use crate::internal::event::EventType;
@@ -8,6 +9,27 @@ use crate::internal::thread;
 use crate::internal::write_ops;
 
 use super::shared::{discover_repo_with_init_warning, resolve_actor, resolve_tid};
+
+/// Args for `commands::node_bulk::run`.
+pub struct NodeBulkArgs {
+    pub thread_id: String,
+    pub node_ids: Vec<String>,
+    pub as_actor: Option<String>,
+    pub event_type: EventType,
+    pub label: String,
+}
+
+/// Uniform entry point per task `t8o3vnt6`.
+pub fn run(args: NodeBulkArgs, ctx: &Context) -> Result<(), ForumError> {
+    run_node_lifecycle_bulk(
+        &args.thread_id,
+        &args.node_ids,
+        args.as_actor,
+        args.event_type,
+        &args.label,
+        ctx.clock.as_ref(),
+    )
+}
 
 pub fn run_node_lifecycle_bulk(
     thread_id: &str,

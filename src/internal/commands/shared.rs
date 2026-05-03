@@ -2,13 +2,15 @@
 //!
 //! These wrap small pieces that previously lived in `main.rs` and were used
 //! by every `run_*` function: repo discovery with the init warning,
-//! operation-check application, actor/thread-id resolution. Kept here (not
+//! operation-check application, actor/thread-id resolution, plus the CLI
+//! parsing helpers relocated by task `t8o3vnt6`. Kept here (not
 //! re-introduced as a Service / DTO layer per #yjelk0s0 Out-of-scope) so
 //! command modules don't need a back-reference to `main.rs`.
 
 use crate::internal::actor;
 use crate::internal::config::{self, RepoPaths};
 use crate::internal::error::ForumError;
+use crate::internal::event::{Lifecycle, ThreadKind};
 use crate::internal::git_ops::GitOps;
 use crate::internal::operation_check;
 use crate::internal::thread;
@@ -77,4 +79,127 @@ pub fn resolve_actor(as_actor: Option<String>, git: &GitOps) -> String {
 /// Wraps `thread::resolve_thread_id` for use from CLI command handlers.
 pub fn resolve_tid(git: &GitOps, user_input: &str) -> Result<String, ForumError> {
     thread::resolve_thread_id(git, user_input)
+}
+
+// =============================================================================
+// CLI parsing helpers — relocated from main.rs by task `t8o3vnt6`.
+// =============================================================================
+
+/// Parse a kind preset name (`rfc`, `dec`, `task`, `issue`, `bug`, plus
+/// historical aliases) into the canonical `ThreadKind`. Used by `Ls`,
+/// `Shortlog`, and the `--kind` filter on `state bulk`.
+///
+/// TODO(phase-4): the kind preset table itself disappears with the
+/// Phase 1 category rewrite; this helper goes with it.
+pub fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
+    use crate::internal::workflow::SPEC;
+    SPEC.preset_lookup(kind).map(|p| p.kind).ok_or_else(|| {
+        let valid: Vec<&str> = SPEC.presets().iter().map(|p| p.name).collect();
+        ForumError::Config(format!(
+            "unknown kind '{kind}'; valid presets: {}",
+            valid.join(", "),
+        ))
+    })
+}
+
+/// Optional-input variant of [`parse_thread_kind`]. Returns `Ok(None)`
+/// when the caller passed `None` (no `--kind` flag).
+pub fn parse_thread_kind_filter(kind: Option<&str>) -> Result<Option<ThreadKind>, ForumError> {
+    kind.map(parse_thread_kind).transpose()
+}
+
+/// Parse a lifecycle string (`proposal` / `execution` / `record`) into
+/// its enum.
+///
+/// TODO(phase-4): replaced by `Category` parsing during Phase 1 model
+/// rewrite.
+pub fn parse_lifecycle(s: &str) -> Result<Lifecycle, ForumError> {
+    Lifecycle::parse(s).ok_or_else(|| {
+        ForumError::Config(format!(
+            "unknown lifecycle '{s}'; valid: proposal, execution, record"
+        ))
+    })
+}
+
+/// Parse a `--since` value (ISO date, RFC 3339, or git revision) into
+/// a UTC instant. Used by `Log` and `Shortlog`.
+pub fn parse_since_date(
+    since: &str,
+    git: &GitOps,
+) -> Result<chrono::DateTime<chrono::Utc>, ForumError> {
+    use chrono::{DateTime, NaiveDate, Utc};
+    if let Ok(naive) = NaiveDate::parse_from_str(since, "%Y-%m-%d") {
+        return Ok(naive.and_hms_opt(0, 0, 0).unwrap().and_utc());
+    }
+    if let Ok(dt) = DateTime::parse_from_rfc3339(since) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+    git.commit_timestamp(since)
+}
+
+/// Find the timestamp at which a thread reached its current terminal
+/// state. Returns `None` when the thread is not currently terminal.
+/// Used by `Shortlog`.
+///
+/// TODO(phase-4): rewires to read snapshot tip timestamp directly when
+/// the event chain is replaced by snapshot trees.
+pub fn terminal_state_date(state: &thread::ThreadState) -> Option<chrono::DateTime<chrono::Utc>> {
+    use crate::internal::event::EventType;
+    use crate::internal::policy::TERMINAL_STATES;
+
+    if !TERMINAL_STATES.contains(&state.status.as_str()) {
+        return None;
+    }
+    state.events.iter().rev().find_map(|e| {
+        if e.event_type == EventType::State && e.new_state.as_deref() == Some(state.status.as_str())
+        {
+            Some(e.created_at)
+        } else {
+            None
+        }
+    })
+}
+
+// =============================================================================
+// Clap-error hint helpers — relocated from main.rs by task `t8o3vnt6`.
+// =============================================================================
+
+/// Extract the subcommand name from a clap "unrecognized subcommand"
+/// error message: `"error: unrecognized subcommand 'foo'"` → `Some("foo")`.
+pub fn parse_unrecognized_subcommand(msg: &str) -> Option<String> {
+    let marker = "unrecognized subcommand '";
+    let start = msg.find(marker)? + marker.len();
+    let end = msg[start..].find('\'')?;
+    Some(msg[start..start + end].to_string())
+}
+
+/// Return a custom hint for known unrecognized subcommands.
+///
+/// SPEC-2.0 §10.2: kind-prefixed subcommand groupings (`git forum rfc new`,
+/// `git forum issue close`, etc.) are removed in 2.0. Invoking them
+/// prints a hard error pointing at the top-level form.
+pub fn subcommand_hint(sub: &str) -> Option<&'static str> {
+    match sub {
+        "rfc" | "issue" | "ask" | "dec" | "task" | "job" => Some(
+            "kind-prefixed subcommand groupings (`git forum rfc new`, \
+             `git forum issue close`, etc.) were removed in 2.0 (SPEC-2.0 §10.2). \
+             Use the top-level form:\n  \
+             git forum new <kind> \"title\"      (create — kinds: rfc, dec, task, issue, bug)\n  \
+             git forum close|accept|propose|pend|reject|withdraw|deprecate <ID>\n  \
+             git forum thread new --lifecycle <X> --tag <Y> ...   (canonical / scripts)",
+        ),
+        "say" => Some(
+            "\"say\" is an internal module, not a CLI command. \
+             Use node shorthands instead:\n  \
+             git forum comment, objection, action  (canonical 2.0)\n  \
+             or: git forum node add <THREAD> --type <TYPE> \"body\"",
+        ),
+        "revise-body" => Some(
+            "use `git forum revise <THREAD_ID>` to revise a thread body, \
+             or `git forum revise node <NODE_ID> <THREAD_ID>` to revise a node",
+        ),
+        "create" => Some("use `git forum new <kind> \"title\"` to create a thread"),
+        "add" => Some("use `git forum node add <THREAD> --type <TYPE> \"body\"` to add a node"),
+        _ => None,
+    }
 }

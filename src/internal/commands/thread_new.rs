@@ -1,8 +1,10 @@
 //! `git forum new <preset>` and `git forum thread new --lifecycle ...`
 //! orchestration.
 //!
-//! Both CLI surfaces collapse onto [`run_canonical_thread_new`]; the kind
-//! preset surface (`Commands::New`) resolves a preset row first via
+//! Owns the clap subcommand enum `ThreadCmd` (moved from `main.rs` by
+//! task `t8o3vnt6`). Both CLI surfaces collapse onto
+//! [`run_canonical_thread_new`]; the kind preset surface
+//! (`Commands::New`) resolves a preset row first via
 //! [`SPEC.preset_lookup`](crate::internal::workflow::WorkflowSpec::preset_lookup)
 //! and feeds the resulting `(lifecycle, tags)` into this function. The
 //! canonical surface (`ThreadCmd::New`) parses lifecycle/tags from the
@@ -12,6 +14,9 @@ use std::fs;
 use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 
+use clap::Subcommand;
+
+use super::context::Context;
 use crate::internal::clock::Clock;
 use crate::internal::create;
 use crate::internal::editor;
@@ -23,6 +28,55 @@ use crate::internal::policy::Policy;
 use crate::internal::show;
 use crate::internal::state_change;
 use crate::internal::thread;
+
+/// Canonical thread sub-commands per SPEC-2.0 §9.1.
+///
+/// Power-user / scripting interface keyed on `--lifecycle` and `--tag` rather
+/// than the `new <kind>` preset. The kind presets at the top level
+/// (`git forum new rfc`, etc.) are the everyday surface; this `thread`
+/// namespace exists so scripts can set arbitrary lifecycle/tag combinations
+/// without depending on the preset table.
+#[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
+pub enum ThreadCmd {
+    /// Create a new thread with explicit lifecycle and tag values
+    New {
+        /// Thread title (omit when using --from-commit)
+        #[arg(
+            allow_hyphen_values = true,
+            required_unless_present_any = ["from_commit", "from_thread"]
+        )]
+        title: Option<String>,
+        /// Lifecycle facet (proposal | execution | record). SPEC-2.0 §2.3.4.
+        #[arg(long, value_name = "LIFECYCLE")]
+        lifecycle: String,
+        /// Tag(s) to attach via the create-time facet_set (may be repeated). SPEC-2.0 §2.3.5.
+        #[arg(long, value_name = "TAG")]
+        tag: Vec<String>,
+        #[arg(long, conflicts_with = "body_file")]
+        body: Option<String>,
+        #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body", "body_file"])]
+        edit: bool,
+        #[arg(long, value_name = "BRANCH")]
+        branch: Option<String>,
+        #[arg(long = "link-to", value_name = "THREAD_ID")]
+        link_to: Vec<String>,
+        #[arg(long, requires = "link_to", value_name = "REL")]
+        rel: Option<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        #[arg(long = "from-commit", value_name = "REV")]
+        from_commit: Option<String>,
+        #[arg(long = "from-thread", value_name = "THREAD_ID")]
+        from_thread: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
+    },
+}
 use crate::internal::write_ops;
 
 use super::shared::{
@@ -40,6 +94,48 @@ pub struct ThreadNewInline {
     pub action: Vec<String>,
     pub risk: Vec<String>,
     pub summary: Vec<String>,
+}
+
+/// Args for `commands::thread_new::run` — covers both the `new <preset>`
+/// surface (kind preset → lifecycle/tags via the registry) and the
+/// canonical `thread new --lifecycle <X> --tag <Y>` form.
+pub struct ThreadNewArgs {
+    pub title: Option<String>,
+    pub body: Option<String>,
+    pub body_file: Option<PathBuf>,
+    pub edit: bool,
+    pub branch: Option<String>,
+    pub link_to: Vec<String>,
+    pub rel: Option<String>,
+    pub as_actor: Option<String>,
+    pub from_commit: Option<String>,
+    pub from_thread: Option<String>,
+    pub inline: ThreadNewInline,
+    pub force: bool,
+    pub lifecycle: Lifecycle,
+    pub tags: Vec<String>,
+}
+
+/// Uniform entry point per task `t8o3vnt6` — bundles the existing
+/// canonical thread-create call with [`Context`].
+pub fn run(args: ThreadNewArgs, ctx: &Context) -> Result<(), ForumError> {
+    run_canonical_thread_new(
+        args.title,
+        args.body,
+        args.body_file,
+        args.edit,
+        args.branch,
+        args.link_to,
+        args.rel,
+        args.as_actor,
+        args.from_commit,
+        args.from_thread,
+        args.inline,
+        args.force,
+        args.lifecycle,
+        args.tags,
+        ctx.clock.as_ref(),
+    )
 }
 
 /// Lifecycle/tag-keyed thread creation, the single dispatch shared by both

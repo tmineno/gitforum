@@ -1,11 +1,14 @@
 //! `git forum revise` orchestration — body and node revisions.
 //!
-//! The clap subcommand enum `ReviseCmd` stays in `main.rs` (per #yjelk0s0
-//! out-of-scope: no clap restructuring); main.rs destructures the variants
-//! and calls the appropriate function below.
+//! Owns the clap subcommand enum `ReviseCmd` (moved from `main.rs` by
+//! task `t8o3vnt6`) so the command's full surface — args, dispatch,
+//! orchestration — lives in one module.
 
 use std::path::PathBuf;
 
+use clap::Subcommand;
+
+use super::context::Context;
 use crate::internal::clock::Clock;
 use crate::internal::error::ForumError;
 use crate::internal::operation_check;
@@ -18,6 +21,129 @@ use super::shared::{
     apply_operation_checks, discover_repo_with_init_warning, resolve_actor, resolve_tid,
 };
 use super::thread_new::resolve_body_required;
+
+/// Args for the top-level `revise` arm — captures the optional thread_id +
+/// shared body fields that apply when no explicit `body` / `node`
+/// sub-command is given (default-shorthand path), plus the optional
+/// `cmd` for explicit `revise body` / `revise node` dispatch.
+pub struct ReviseArgs {
+    pub thread_id: Option<String>,
+    pub body: Option<String>,
+    pub body_file: Option<PathBuf>,
+    pub edit: bool,
+    pub incorporates: Vec<String>,
+    pub as_actor: Option<String>,
+    pub force: bool,
+    pub cmd: Option<ReviseCmd>,
+}
+
+/// Uniform entry point per task `t8o3vnt6` — dispatches to the body /
+/// node revise impls based on the parsed sub-command.
+pub fn run(args: ReviseArgs, ctx: &Context) -> Result<(), ForumError> {
+    match args.cmd {
+        Some(ReviseCmd::Body {
+            thread_id,
+            body,
+            body_file,
+            edit,
+            incorporates,
+            as_actor,
+            force,
+        }) => run_revise_body(
+            thread_id,
+            body,
+            body_file,
+            edit,
+            incorporates,
+            as_actor,
+            force,
+            ctx.clock.as_ref(),
+        ),
+        Some(ReviseCmd::Node {
+            thread_id,
+            node_id,
+            body,
+            body_file,
+            edit,
+            as_actor,
+            force,
+        }) => run_revise_node(
+            thread_id,
+            node_id,
+            body,
+            body_file,
+            edit,
+            as_actor,
+            force,
+            ctx.clock.as_ref(),
+        ),
+        None => {
+            let thread_id = args.thread_id.ok_or_else(|| {
+                ForumError::Config(
+                    "usage: git forum revise <THREAD_ID> --body <TEXT> | --body-file <PATH> | --edit".into(),
+                )
+            })?;
+            run_revise_body(
+                thread_id,
+                args.body,
+                args.body_file,
+                args.edit,
+                args.incorporates,
+                args.as_actor,
+                args.force,
+                ctx.clock.as_ref(),
+            )
+        }
+    }
+}
+
+/// `git forum revise` sub-commands.
+#[derive(Subcommand)]
+pub enum ReviseCmd {
+    /// Revise the body of a thread
+    Body {
+        thread_id: String,
+        /// New thread body text (use "-" to read from stdin)
+        #[arg(long, conflicts_with = "body_file")]
+        body: Option<String>,
+        /// Read new thread body from a file
+        #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body", "body_file"])]
+        edit: bool,
+        /// Node IDs to mark as incorporated into this body revision
+        #[arg(long = "incorporates", alias = "incorporate", value_name = "NODE_ID")]
+        incorporates: Vec<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
+    },
+    /// Revise the body of an existing node
+    Node {
+        thread_id: String,
+        #[arg(
+            value_name = "NODE_ID",
+            help = "Full node ID or unique prefix within the thread (8+ chars unless exact match)"
+        )]
+        node_id: String,
+        #[arg(long, conflicts_with = "body_file")]
+        body: Option<String>,
+        /// Read revised body from a file
+        #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
+        body_file: Option<PathBuf>,
+        /// Open $EDITOR to compose the body
+        #[arg(long, conflicts_with_all = ["body", "body_file"])]
+        edit: bool,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
+    },
+}
 
 /// Body revision: rewrite the thread body and bump `body_revision_count`.
 #[allow(clippy::too_many_arguments)]
