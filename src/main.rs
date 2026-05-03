@@ -35,23 +35,14 @@ use git_forum::internal::commands::Context;
 use git_forum::internal::config;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::error::ForumError;
-use git_forum::internal::event;
 use git_forum::internal::event::NodeType;
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::github;
-use git_forum::internal::github_export;
-use git_forum::internal::github_import;
-use git_forum::internal::index;
 use git_forum::internal::init;
 use git_forum::internal::lint_emit::{self, LintEmitter};
 use git_forum::internal::policy::Policy;
-use git_forum::internal::purge;
-use git_forum::internal::reindex;
-use git_forum::internal::repair;
 use git_forum::internal::state_change;
 use git_forum::internal::thread;
-use git_forum::internal::timeline;
 use git_forum::internal::tui as forum_tui;
 
 const GROUPED_HELP: &str = "\
@@ -158,21 +149,6 @@ enum Commands {
         #[arg(long)]
         strict: bool,
     },
-    /// Rebuild local index from Git refs
-    Reindex,
-    /// Delete thread refs whose oldest commit is not a valid event.json
-    PruneOrphans {
-        /// Actually delete the orphan refs (default is dry-run preview)
-        #[arg(long)]
-        apply: bool,
-    },
-    /// Drop events whose target_node_id references a vanished node.
-    /// Surfaces of `git forum doctor --strict` that aren't ref-level damage.
-    PruneStaleEvents {
-        /// Actually rewrite affected thread chains (default is dry-run preview)
-        #[arg(long)]
-        apply: bool,
-    },
     /// Migrate a 1.x repo to the 2.0 storage format (ADR-004 / SPEC-2.0 §10)
     Migrate {
         /// Report planned changes without writing anything
@@ -181,61 +157,6 @@ enum Commands {
         /// Override the actor recorded on synthetic facet_set events
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
-    },
-    /// Detect and fix thread ID conflicts with a remote, or repair
-    /// historical workflow violations (#uu9wxn1d) via append-only
-    /// corrective `state` events.
-    Repair {
-        /// Remote to compare against (default mode: ID conflict repair)
-        #[arg(long, default_value = "origin")]
-        remote: String,
-        /// Show what would be repaired without modifying
-        #[arg(long)]
-        dry_run: bool,
-        /// Switch to workflow-violation repair mode (#uu9wxn1d): scan
-        /// every thread for `InvalidTransition` strict-replay issues
-        /// and append corrective `state` events to bring each chain
-        /// onto a legal terminal path. Always defaults to a dry-run
-        /// preview; pair with `--apply` to write events.
-        #[arg(long = "workflow-violations")]
-        workflow_violations: bool,
-        /// Write the corrective events (with `--workflow-violations`).
-        /// Without `--apply`, the command prints the per-thread plan
-        /// and exits without modifying any refs.
-        #[arg(long, requires = "workflow_violations")]
-        apply: bool,
-        /// Override the actor recorded on the corrective events. By
-        /// default the local config's actor is used.
-        #[arg(long = "as", value_name = "ACTOR", requires = "workflow_violations")]
-        as_actor: Option<String>,
-    },
-    /// Purge event content from git history (hard-delete)
-    Purge {
-        /// Thread ID (required with --event or --node)
-        #[arg(long, value_name = "THREAD_ID")]
-        thread: Option<String>,
-        /// Event SHA to purge (requires --thread)
-        #[arg(
-            long,
-            value_name = "EVENT_SHA",
-            requires = "thread",
-            conflicts_with = "node"
-        )]
-        event: Option<String>,
-        /// Node ID to purge (requires --thread; resolves to the originating event)
-        #[arg(
-            long,
-            value_name = "NODE_ID",
-            requires = "thread",
-            conflicts_with = "event"
-        )]
-        node: Option<String>,
-        /// Purge all events by a specific actor across all threads
-        #[arg(long, value_name = "ACTOR_ID", conflicts_with_all = ["thread", "event", "node"])]
-        actor: Option<String>,
-        /// Show what would be purged without modifying
-        #[arg(long)]
-        dry_run: bool,
     },
     /// Canonical thread sub-commands (lifecycle/tag — power-user form)
     Thread {
@@ -438,22 +359,6 @@ enum Commands {
         /// Cross-thread display only — never gates an operation.
         #[arg(long)]
         tree: bool,
-    },
-    /// Show event timeline for a thread
-    Log {
-        thread_id: String,
-        /// Show newest events first
-        #[arg(long)]
-        reverse: bool,
-        /// Limit to the last N events
-        #[arg(short = 'n', long)]
-        last: Option<usize>,
-        /// Show only events after this date (ISO date, RFC 3339, or git revision)
-        #[arg(long)]
-        since: Option<String>,
-        /// Filter events by displayed type (e.g. review, state, claim, revise-body)
-        #[arg(long = "type", value_name = "TYPE")]
-        event_type: Option<String>,
     },
     /// Show unified diff between body revisions
     Diff {
@@ -676,11 +581,6 @@ enum Commands {
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
-    /// Search threads by title, kind, or status
-    Search {
-        /// Search query (matched against title, id, kind, and status)
-        query: String,
-    },
     /// Manage git-forum hooks (commit-msg, post-checkout)
     Hook {
         #[command(subcommand)]
@@ -690,16 +590,6 @@ enum Commands {
     Tui {
         /// Open a specific thread in detail view directly
         thread_id: Option<String>,
-    },
-    /// Import from external sources
-    Import {
-        #[command(subcommand)]
-        cmd: ImportCmd,
-    },
-    /// Export to external platforms
-    Export {
-        #[command(subcommand)]
-        cmd: ExportCmd,
     },
 }
 
@@ -996,21 +886,12 @@ fn main() -> Result<(), ForumError> {
                 }
             }
 
-            // Reindex if we fetched forum refs
-            if fetched_any {
-                let thread_ids = git.list_refs("refs/forum/threads/").unwrap_or_default();
-                if !thread_ids.is_empty() {
-                    let db_path = paths.git_forum.join("index.db");
-                    match reindex::run_reindex(&git, &db_path) {
-                        Ok(report) => {
-                            eprintln!("Reindexed {} threads", report.threads_replayed.len());
-                        }
-                        Err(e) => {
-                            eprintln!("warning: reindex failed: {e}");
-                        }
-                    }
-                }
-            }
+            // Phase 2 slot 11 (RFC `7ymtc4b2`): the SQLite reindex
+            // step is removed alongside the index.rs / reindex.rs
+            // DELETE-list modules. Init no longer materialises an
+            // index after fetch; ADR-011 Decision 6 declares the
+            // index optional in v3.0.0.
+            let _ = (fetched_any, &paths);
 
             let dir_name = git
                 .root()
@@ -1114,86 +995,9 @@ fn main() -> Result<(), ForumError> {
             }
         }
 
-        Commands::Reindex => {
-            let (git, paths) = discover_repo_with_init_warning()?;
-            let db_path = paths.git_forum.join("index.db");
-            let report = reindex::run_reindex(&git, &db_path)?;
-            println!(
-                "Reindex complete: {} threads found, {} replayed, {} errors",
-                report.threads_found,
-                report.threads_replayed.len(),
-                report.errors.len()
-            );
-            for (id, err) in &report.errors {
-                eprintln!("  error: {id}: {err}");
-            }
-        }
-
-        Commands::PruneOrphans { apply } => {
-            let (git, paths) = discover_repo_with_init_warning()?;
-            let orphans = git_forum::internal::prune::scan(&git)?;
-            if orphans.is_empty() {
-                println!("No orphan thread refs found.");
-                return Ok(());
-            }
-            println!("Orphan thread refs ({}):", orphans.len());
-            for orphan in &orphans {
-                println!("  {} ({})", orphan.ref_name, orphan.thread_id);
-            }
-            if !apply {
-                println!("\nDry run — re-run with --apply to delete these refs.");
-                return Ok(());
-            }
-            git_forum::internal::prune::delete(&git, &orphans)?;
-            println!("\nDeleted {} orphan ref(s).", orphans.len());
-            // Stale rows remain in the index until the operator runs reindex;
-            // mention it inline so they don't have to remember.
-            let db_path = paths.git_forum.join("index.db");
-            if db_path.exists() {
-                println!("hint: run `git forum reindex` to drop stale index rows.");
-            }
-        }
-
-        Commands::PruneStaleEvents { apply } => {
-            let (git, paths) = discover_repo_with_init_warning()?;
-            let plans = git_forum::internal::prune::scan_stale_events(&git)?;
-            if plans.is_empty() {
-                println!("No stale-target events found.");
-                return Ok(());
-            }
-            let total_threads = plans.len();
-            let total_events: usize = plans.iter().map(|p| p.events_to_drop.len()).sum();
-            let total_targets: usize = plans.iter().map(|p| p.orphan_target_count).sum();
-            println!(
-                "Stale-target events: {total_events} event(s) across {total_threads} thread(s) (referencing {total_targets} vanished node(s))"
-            );
-            for plan in &plans {
-                println!(
-                    "  {}: drop {} event(s) ({} orphan target(s))",
-                    plan.thread_id,
-                    plan.events_to_drop.len(),
-                    plan.orphan_target_count
-                );
-                for sha in &plan.events_to_drop {
-                    println!("    - {sha}");
-                }
-            }
-            if !apply {
-                println!(
-                    "\nDry run — re-run with --apply to rewrite these threads. Backup: refs/forum/threads/* are local-only on this clone."
-                );
-                return Ok(());
-            }
-            let dropped = git_forum::internal::prune::apply_stale_event_plans(&git, &plans)?;
-            println!("\nDropped {dropped} event(s) from {total_threads} thread(s).");
-            let db_path = paths.git_forum.join("index.db");
-            if db_path.exists() {
-                println!(
-                    "hint: run `git forum reindex` to refresh index rows for affected threads."
-                );
-            }
-        }
-
+        // Reindex/PruneOrphans/PruneStaleEvents arms removed at Phase 2
+        // slot 11 (RFC `7ymtc4b2`); the underlying modules are on the
+        // Phase 4 DELETE list (ADR-011 Decision 6: no index in v3.0.0).
         Commands::Migrate { dry_run, as_actor } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             let actor = as_actor
@@ -1204,191 +1008,19 @@ fn main() -> Result<(), ForumError> {
             // After a write run, the local index can drift (refs renamed,
             // events rewritten). Rebuild it so subsequent reads see the
             // migrated state.
-            if !dry_run {
-                let db_path = paths.git_forum.join("index.db");
-                if db_path.exists() {
-                    if let Err(e) = reindex::run_reindex(&git, &db_path) {
-                        eprintln!("warning: reindex failed after migrate: {e}");
-                    }
-                }
-            }
+            //
+            // Phase 2 slot 11: the post-migrate reindex step is gone
+            // along with reindex.rs / index.rs (Phase 4 DELETE list).
+            let _ = (paths, dry_run);
             // Non-zero exit if any thread plan failed — currently `run`
             // already printed warnings; the outcome counts both successes
             // and skips. Normal exit unless we want hard errors later.
             let _ = outcome;
         }
 
-        Commands::Repair {
-            remote,
-            dry_run,
-            workflow_violations,
-            apply,
-            as_actor,
-        } => {
-            if workflow_violations {
-                git_forum::internal::commands::repair_workflow::run_workflow_repair(
-                    apply, as_actor, &clock,
-                )?;
-            } else {
-                let (git, paths) = discover_repo_with_init_warning()?;
-                let report = repair::repair_conflicts(&git, &remote, dry_run)?;
-                if report.reallocated.is_empty() {
-                    println!("No thread ID conflicts found with remote '{remote}'");
-                } else if dry_run {
-                    println!("Found {} conflict(s):", report.reallocated.len());
-                    for (old_id, _) in &report.reallocated {
-                        println!("  {old_id}");
-                    }
-                    println!("\nRun without --dry-run to re-allocate conflicting thread IDs");
-                } else {
-                    for (old_id, new_id) in &report.reallocated {
-                        println!("Reallocated {old_id} -> {new_id}");
-                    }
-                    // Reindex if index exists
-                    let db_path = paths.git_forum.join("index.db");
-                    if db_path.exists() {
-                        if let Err(e) = reindex::run_reindex(&git, &db_path) {
-                            eprintln!("warning: reindex failed: {e}");
-                        }
-                    }
-                    println!("\nYou can now push with: git push");
-                }
-                for err in &report.errors {
-                    eprintln!("warning: {err}");
-                }
-            }
-        }
-
-        Commands::Purge {
-            thread,
-            event,
-            node,
-            actor,
-            dry_run,
-        } => {
-            let (git, paths) = discover_repo_with_init_warning()?;
-            match (thread, event, node, actor) {
-                (Some(thread_id), None, Some(node_id), None) => {
-                    let thread_id = resolve_tid(&git, &thread_id)?;
-                    let resolved_node_id =
-                        thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
-                    let state = thread::replay_thread(&git, &thread_id)?;
-                    let event_sha = state
-                        .events
-                        .iter()
-                        .find(|e| {
-                            e.event_type == git_forum::internal::event::EventType::Say
-                                && e.target_node_id
-                                    .as_deref()
-                                    .unwrap_or(e.event_id.as_str())
-                                    == resolved_node_id
-                        })
-                        .map(|e| e.event_id.clone())
-                        .ok_or_else(|| {
-                            ForumError::Repo(format!(
-                                "no originating say event found for node '{node_id}' in thread '{thread_id}'"
-                            ))
-                        })?;
-                    if dry_run {
-                        let plan = purge::plan_purge_event(&git, &thread_id, &event_sha)?;
-                        println!("Would purge {} event(s):", plan.events.len());
-                        for e in &plan.events {
-                            println!(
-                                "  {} {} by {} (has body: {})",
-                                e.thread_id, e.event_type, e.actor, e.has_body
-                            );
-                        }
-                    } else {
-                        let report = purge::purge_event(&git, &thread_id, &event_sha)?;
-                        println!(
-                            "Purged {} event(s), rewrote {} commit(s)",
-                            report.events_purged, report.commits_rewritten
-                        );
-                        let db_path = paths.git_forum.join("index.db");
-                        if db_path.exists() {
-                            reindex::run_reindex(&git, &db_path)?;
-                            println!("Index rebuilt");
-                        }
-                        eprintln!("warning: commit SHAs have changed — all clones must re-fetch affected refs");
-                    }
-                }
-                (Some(thread_id), Some(event_sha), None, None) => {
-                    let thread_id = resolve_tid(&git, &thread_id)?;
-                    if dry_run {
-                        let plan = purge::plan_purge_event(&git, &thread_id, &event_sha)?;
-                        println!("Would purge {} event(s):", plan.events.len());
-                        for e in &plan.events {
-                            println!(
-                                "  {} {} by {} (has body: {})",
-                                e.thread_id, e.event_type, e.actor, e.has_body
-                            );
-                        }
-                    } else {
-                        let report = purge::purge_event(&git, &thread_id, &event_sha)?;
-                        println!(
-                            "Purged {} event(s), rewrote {} commit(s)",
-                            report.events_purged, report.commits_rewritten
-                        );
-                        // Rebuild index
-                        let db_path = paths.git_forum.join("index.db");
-                        if db_path.exists() {
-                            reindex::run_reindex(&git, &db_path)?;
-                            println!("Index rebuilt");
-                        }
-                        eprintln!("warning: commit SHAs have changed — all clones must re-fetch affected refs");
-                    }
-                }
-                (None, None, None, Some(actor_id)) => {
-                    if dry_run {
-                        let plan = purge::plan_purge_actor(&git, &actor_id)?;
-                        println!("Would purge {} event(s):", plan.events.len());
-                        for e in &plan.events {
-                            println!(
-                                "  {} {} by {} (has body: {})",
-                                e.thread_id, e.event_type, e.actor, e.has_body
-                            );
-                        }
-                    } else {
-                        let report = purge::purge_actor(&git, &actor_id)?;
-                        println!(
-                            "Purged {} event(s) across {} thread(s), rewrote {} commit(s)",
-                            report.events_purged,
-                            report.threads_affected.len(),
-                            report.commits_rewritten
-                        );
-                        for tid in &report.threads_affected {
-                            println!("  {tid}");
-                        }
-                        // Rebuild index
-                        let db_path = paths.git_forum.join("index.db");
-                        if db_path.exists() {
-                            reindex::run_reindex(&git, &db_path)?;
-                            println!("Index rebuilt");
-                        }
-                        eprintln!("warning: commit SHAs have changed — all clones must re-fetch affected refs");
-                    }
-                }
-                _ => {
-                    return Err(ForumError::Config(
-                        "specify either --thread + --event, --thread + --node, or --actor".into(),
-                    ));
-                }
-            }
-        }
-
-        Commands::Search { query } => {
-            let (_git, paths) = discover_repo_with_init_warning()?;
-            let db_path = paths.git_forum.join("index.db");
-            let conn = index::open_db(&db_path)?;
-            // SPEC-2.0 §9.2 / Track D: legacy `kind:<name>` query tokens
-            // auto-translate to lifecycle/tag pairs for one minor release,
-            // emitting a deprecation warning so scripts have a runway to
-            // migrate to the canonical vocabulary.
-            let translated = translate_legacy_kind_query(&query);
-            let results = index::search_threads(&conn, &translated)?;
-            print!("{}", ls::render_search_results(&results));
-        }
-
+        // Repair / Purge / Search arms removed at Phase 2 slot 11
+        // (RFC `7ymtc4b2`); repair.rs / repair_workflow.rs / purge.rs /
+        // search-via-index.rs are on the Phase 4 DELETE list (ADR-011).
         Commands::Tui { thread_id } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             let thread_id = thread_id.map(|id| resolve_tid(&git, &id)).transpose()?;
@@ -1396,85 +1028,9 @@ fn main() -> Result<(), ForumError> {
             forum_tui::run(&git, &db_path, thread_id.as_deref())?;
         }
 
-        Commands::Import { cmd } => match cmd {
-            ImportCmd::GithubIssue {
-                repo,
-                issue,
-                all,
-                as_actor,
-                dry_run,
-            } => {
-                let (git, _paths) = discover_repo_with_init_warning()?;
-                let actor = resolve_actor(as_actor, &git);
-                if dry_run {
-                    if all {
-                        let issues = github::list_issues(&repo)?;
-                        for gh_issue in &issues {
-                            let plan = github_import::plan_import(&git, &repo, gh_issue.number)?;
-                            print_import_plan(&plan);
-                        }
-                    } else {
-                        let issue_number = issue
-                            .ok_or_else(|| ForumError::Config("--issue is required".into()))?;
-                        let plan = github_import::plan_import(&git, &repo, issue_number)?;
-                        print_import_plan(&plan);
-                    }
-                } else if all {
-                    let results = github_import::import_all(&git, &repo, &actor, &clock)?;
-                    for result in &results {
-                        match result {
-                            Ok(r) => {
-                                println!("Imported {} <- {}", r.thread_id, r.github_url);
-                                if r.state_changed {
-                                    println!("  (closed)");
-                                }
-                                println!("  {} comment(s)", r.comments_imported);
-                            }
-                            Err((num, e)) => eprintln!("Failed #{num}: {e}"),
-                        }
-                    }
-                } else {
-                    let issue_number =
-                        issue.ok_or_else(|| ForumError::Config("--issue is required".into()))?;
-                    let result =
-                        github_import::import_issue(&git, &repo, issue_number, &actor, &clock)?;
-                    println!("Imported {} <- {}", result.thread_id, result.github_url);
-                    if result.state_changed {
-                        println!("  (closed)");
-                    }
-                    println!("  {} comment(s)", result.comments_imported);
-                }
-            }
-        },
-
-        Commands::Export { cmd } => match cmd {
-            ExportCmd::GithubIssue {
-                thread_id,
-                repo,
-                as_actor,
-                dry_run,
-            } => {
-                let (git, _paths) = discover_repo_with_init_warning()?;
-                let thread_id = resolve_tid(&git, &thread_id)?;
-                let actor = resolve_actor(as_actor, &git);
-                if dry_run {
-                    let plan = github_export::plan_export(&git, &thread_id)?;
-                    print_export_plan(&plan);
-                } else {
-                    let result =
-                        github_export::export_issue(&git, &thread_id, &repo, &actor, &clock)?;
-                    println!("Exported {} -> {}", thread_id, result.github_url);
-                    println!(
-                        "  Comments: {} created, {} updated, {} skipped",
-                        result.comments_created, result.comments_updated, result.comments_skipped
-                    );
-                    if result.was_closed {
-                        println!("  (GitHub issue closed)");
-                    }
-                }
-            }
-        },
-
+        // Import / Export arms removed at Phase 2 slot 11 (RFC `7ymtc4b2`);
+        // github*.rs are on the Phase 4 DELETE list (ADR-011 Decision 7:
+        // GitHub bridge is not part of v3.0.0 core).
         Commands::Thread {
             cmd:
                 ThreadCmd::New {
@@ -1826,71 +1382,12 @@ fn main() -> Result<(), ForumError> {
             }
         }
 
-        Commands::Log {
-            thread_id,
-            reverse,
-            last,
-            since,
-            event_type,
-        } => {
-            let (git, _paths) = discover_repo_with_init_warning()?;
-            if let Some(ref type_str) = event_type {
-                const VALID_TYPES: &[&str] = &[
-                    // EventType display names
-                    "create",
-                    "edit",
-                    "retract",
-                    "say",
-                    "link",
-                    "state",
-                    "scope",
-                    "resolve",
-                    "reopen",
-                    "verify",
-                    "merge",
-                    "revise-body",
-                    "retype",
-                    // NodeType display names (shown for Say events)
-                    "claim",
-                    "question",
-                    "objection",
-                    "evidence",
-                    "summary",
-                    "action",
-                    "risk",
-                    "review",
-                    "alternative",
-                    "assumption",
-                ];
-                if !VALID_TYPES.contains(&type_str.as_str()) {
-                    eprintln!(
-                        "error: unknown event type '{type_str}'\naccepted values: {}",
-                        VALID_TYPES.join(", ")
-                    );
-                    std::process::exit(1);
-                }
-            }
-            let state = thread::replay_thread(&git, &thread_id)?;
-            let mut events: Vec<&event::Event> = state.events.iter().collect();
-            if let Some(ref since_str) = since {
-                let since_dt = parse_since_date(since_str, &git)?;
-                events.retain(|e| e.created_at >= since_dt);
-            }
-            if let Some(ref type_str) = event_type {
-                events.retain(|e| timeline::event_display_type(e) == *type_str);
-            }
-            let len = events.len();
-            let skip = last.map(|n| len.saturating_sub(n)).unwrap_or(0);
-            let selected: Vec<&event::Event> = if reverse {
-                events.iter().rev().take(len - skip).copied().collect()
-            } else {
-                events.iter().skip(skip).copied().collect()
-            };
-            for line in timeline::render_markdown_refs(&selected) {
-                println!("{line}");
-            }
-        }
-
+        // Log arm removed at Phase 2 slot 11 (RFC `7ymtc4b2`); the
+        // domain-timeline view is on the Phase 4 DELETE list. Per
+        // SPEC-3.0 §5.4, `git forum log` is to be re-introduced as a
+        // git-history wrapper over the snapshot ref — that is a NEW
+        // additive arm landing alongside or after slot 11, not an
+        // extraction of this body.
         Commands::Diff { thread_id, rev } => {
             let (git, _paths) = discover_repo_with_init_warning()?;
             let thread_id = resolve_tid(&git, &thread_id)?;
@@ -2417,97 +1914,22 @@ fn main() -> Result<(), ForumError> {
     Ok(())
 }
 
-// TODO(phase-4): goes with the `Search` arm at slot 11; see
-// `doc/internal/main-rs-audit.md`.
-/// SPEC-2.0 §9.2 / Track D: rewrite legacy `kind:<name>` tokens in a search
-/// query string to the equivalent `lifecycle:<L> AND tag:<T>` form for one
-/// minor release, then prints a deprecation warning to stderr.
-///
-/// Mapping (drawn from the kind preset table):
-/// - `kind:rfc`  → `lifecycle:proposal AND tag:cross-cutting`
-/// - `kind:dec`  → `lifecycle:record`
-/// - `kind:task` (alias `job`) → `lifecycle:execution AND tag:task`
-/// - `kind:issue` (aliases `ask`, `bug`) → `lifecycle:execution AND tag:bug`
-///
-/// Tokens are split on whitespace; `kind:` matching is case-insensitive on
-/// the prefix and value. Unknown values pass through unchanged. The query
-/// returned is a plain substring expression (the index search is LIKE-based;
-/// SPEC-2.0 §9.2 reserves the right to add a real grammar later).
-fn translate_legacy_kind_query(query: &str) -> String {
-    let mut out: Vec<String> = Vec::with_capacity(8);
-    let mut translated_any = false;
-    for token in query.split_whitespace() {
-        let lower = token.to_ascii_lowercase();
-        if let Some(rest) = lower.strip_prefix("kind:") {
-            if let Some(preset) = preset_lookup(rest) {
-                let mut parts = vec![format!("lifecycle:{}", preset.lifecycle.as_str())];
-                for tag in preset.tags {
-                    parts.push(format!("tag:{tag}"));
-                }
-                out.push(parts.join(" AND "));
-                translated_any = true;
-                continue;
-            }
-        }
-        out.push(token.to_string());
-    }
-    if translated_any {
-        eprintln!(
-            "warning: `kind:<name>` is deprecated in search queries (SPEC-2.0 §9.2). \
-             Use `lifecycle:<L>` and/or `tag:<T>` instead. \
-             Auto-translation will be removed in 3.0."
-        );
-    }
-    out.join(" ")
-}
+// `translate_legacy_kind_query` removed at slot 11 (went with the
+// deleted `Search` arm). `print_import_plan` / `print_export_plan`
+// removed at slot 11 (went with the deleted `Import` / `Export` arms).
 
-// TODO(phase-4): goes with the `Import` arm at slot 11.
-fn print_import_plan(plan: &github_import::ImportPlan) {
-    if let Some(ref existing) = plan.already_imported {
-        println!(
-            "[SKIP] {} — already imported as {existing}",
-            plan.github_url
-        );
-        return;
-    }
-    println!("[DRY-RUN] Would import: {}", plan.github_url);
-    println!("  Title: {}", plan.title);
-    println!("  Comments: {}", plan.comment_count);
-    if plan.would_close {
-        println!("  State: would be closed after import");
-    }
-}
-
-/// Collect direct incoming `--rel implements` children of a thread for the
-/// `show --tree` advisory.
+/// Collect direct incoming `--rel implements` children of a thread
+/// for the `show --tree` advisory.
 ///
-/// Reads the SQLite reverse-link index for child IDs (single indexed lookup),
-/// then replays each child's tip ref to get its lifecycle/status/title. One
-/// hop only — does not recurse, does not include other relations. Per
-/// SPEC-2.0 §2.1 and CORE-VALUE.md "Advisories", the result is informational
-/// and never gates an operation.
-///
-/// If the index is missing or stale (e.g. before the first reindex on an
-/// upgraded repo), falls back to scanning thread refs directly so the
-/// advisory still works.
+/// Phase 2 slot 11 (RFC `7ymtc4b2`): the SQLite reverse-link index
+/// is on the Phase 4 DELETE list (ADR-011 Decision 6), so this
+/// helper now always falls back to the O(N-thread-refs) tree scan.
 fn collect_implements_children(
     git: &GitOps,
-    paths: &config::RepoPaths,
+    _paths: &config::RepoPaths,
     parent_thread_id: &str,
 ) -> Result<Vec<show::TreeChild>, ForumError> {
-    let db_path = paths.git_forum.join("index.db");
-    let child_ids: Vec<String> = if db_path.is_file() {
-        match index::open_db(&db_path) {
-            Ok(conn) => index::find_incoming_links(&conn, parent_thread_id, Some("implements"))?
-                .into_iter()
-                .map(|l| l.from_thread_id)
-                .collect(),
-            Err(_) => fallback_scan_implements(git, parent_thread_id)?,
-        }
-    } else {
-        fallback_scan_implements(git, parent_thread_id)?
-    };
-
+    let child_ids = fallback_scan_implements(git, parent_thread_id)?;
     let mut out = Vec::with_capacity(child_ids.len());
     for id in child_ids {
         match thread::replay_thread(git, &id) {
@@ -2517,12 +1939,7 @@ fn collect_implements_children(
                 lifecycle_label: child_state.lifecycle.as_str().to_string(),
                 status: child_state.status.to_string(),
             }),
-            Err(_) => {
-                // Skip unreplayable children rather than aborting the
-                // advisory — staleness in the reverse-link index is recoverable
-                // by `git forum reindex`.
-                continue;
-            }
+            Err(_) => continue,
         }
     }
     Ok(out)
@@ -2530,35 +1947,20 @@ fn collect_implements_children(
 
 /// Read incoming-link counts grouped by relation for `brief`.
 ///
-/// Returns an empty `IncomingLinkCounts` (not an error) when the SQLite index
-/// is missing — `brief` is read-only and per RFC-5wf2v8hv MUST NOT open other
-/// threads' refs to compute these counts. A stale or absent index just means
-/// the in= line shows `0`; `git forum reindex` rebuilds it.
+/// Phase 2 slot 11: the SQLite index is on the Phase 4 DELETE list,
+/// so this returns the zero-counts default. SPEC-3.0 §9.2: the
+/// index is optional acceleration; the reverse-link query stays
+/// available as a tree scan if a future slot needs it.
 fn read_incoming_link_counts(
-    paths: &config::RepoPaths,
-    thread_id: &str,
+    _paths: &config::RepoPaths,
+    _thread_id: &str,
 ) -> brief::IncomingLinkCounts {
-    let db_path = paths.git_forum.join("index.db");
-    if !db_path.is_file() {
-        return brief::IncomingLinkCounts::default();
-    }
-    let Ok(conn) = index::open_db(&db_path) else {
-        return brief::IncomingLinkCounts::default();
-    };
-    let Ok(rows) = index::find_incoming_links(&conn, thread_id, None) else {
-        return brief::IncomingLinkCounts::default();
-    };
-    let mut counts = brief::IncomingLinkCounts::default();
-    for row in rows {
-        *counts.by_rel.entry(row.rel).or_insert(0) += 1;
-    }
-    counts
+    brief::IncomingLinkCounts::default()
 }
 
-/// Fallback for `show --tree` when the SQLite index is missing/unreadable:
-/// list all thread refs and replay each to find the ones whose forward links
-/// include `(parent_thread_id, implements)`. O(N) on thread count — only used
-/// as a safety net so the advisory never silently fails.
+/// Fallback for `show --tree`: list all thread refs and replay each
+/// to find the ones whose forward links include `(parent_thread_id,
+/// implements)`. O(N) on thread count.
 fn fallback_scan_implements(
     git: &GitOps,
     parent_thread_id: &str,
@@ -2582,21 +1984,4 @@ fn fallback_scan_implements(
     }
     out.sort();
     Ok(out)
-}
-
-fn print_export_plan(plan: &github_export::ExportPlan) {
-    if plan.already_exported {
-        println!(
-            "[RE-EXPORT] {} -> {} (will update existing)",
-            plan.thread_id,
-            plan.existing_github_url.as_deref().unwrap_or("?")
-        );
-    } else {
-        println!("[DRY-RUN] Would export: {}", plan.thread_id);
-    }
-    println!("  Title: {}", plan.title);
-    println!("  Nodes: {}", plan.node_count);
-    if plan.would_close {
-        println!("  State: GitHub issue would be closed");
-    }
 }
