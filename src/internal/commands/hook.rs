@@ -4,12 +4,21 @@
 //! - A commit-msg hook that validates thread ID references in commit messages.
 //! - A post-checkout hook that repairs missing blob references in the index.
 //! - A `fix-index` subcommand that detects and re-hashes missing blobs.
+//!
+//! Phase 2 slot 10b (RFC `7ymtc4b2`): the `Hook::*` arm body relocates
+//! from `main.rs` to [`run_arm`] in this module. The lower-level
+//! installer / scanner functions stay here as the hook subsystem
+//! library; the new entry-point dispatches across the four sub-arms.
 
 use std::fs;
 use std::path::Path;
 
+use crate::internal::actor;
+use crate::internal::config::RepoPaths;
+
 use super::super::error::{ForumError, ForumResult};
 use super::super::git_ops::GitOps;
+use super::super::init;
 use super::super::refs;
 
 // ── commit-msg hook ─────────────────────────────────────────────────
@@ -30,6 +39,107 @@ const POST_CHECKOUT_HOOK_SCRIPT: &str = r#"#!/bin/sh
 git-forum hook worktree-init
 git-forum hook fix-index
 "#;
+
+// ── arm dispatcher ──────────────────────────────────────────────────
+
+/// Variants for [`run_arm`]. Mirrors the clap `HookCmd` enum in `main.rs`
+/// 1:1 so the dispatcher can simply forward.
+pub enum HookArm {
+    Install { force: bool },
+    Uninstall,
+    CheckCommitMsg { file: std::path::PathBuf },
+    FixIndex,
+    WorktreeInit,
+}
+
+/// Uniform entry point for the `hook` subcommand cluster.
+///
+/// Each sub-arm operates on a `GitOps` only; we deliberately do not
+/// emit the `git-forum is not initialized` warning, since the
+/// post-checkout hook may run mid-clone before the forum is set up.
+/// Use `Context::discover_quiet` at the call site.
+pub fn run_arm(arm: HookArm, ctx: &super::context::Context) -> Result<(), ForumError> {
+    match arm {
+        HookArm::Install { force } => install_all_hooks(&ctx.git, force),
+        HookArm::Uninstall => uninstall_all_hooks(&ctx.git),
+        HookArm::CheckCommitMsg { file } => run_check_commit_msg(&ctx.git, &file),
+        HookArm::FixIndex => run_fix_index(&ctx.git),
+        HookArm::WorktreeInit => run_worktree_init(&ctx.git),
+    }
+}
+
+fn run_check_commit_msg(git: &GitOps, file: &Path) -> Result<(), ForumError> {
+    let raw = fs::read_to_string(file)?;
+    let comment_char = get_comment_char(git);
+    let cleaned = strip_comments(&raw, comment_char);
+    let ids = extract_thread_ids(&cleaned);
+    if ids.is_empty() {
+        eprintln!("git-forum: warning: no thread ID referenced in commit message");
+        return Ok(());
+    }
+    let result = check_thread_refs(git, &ids)?;
+    if result.has_errors() {
+        eprintln!("git-forum: commit message references non-existent thread(s):");
+        for id in &result.missing_ids {
+            eprintln!("  {id} — not found");
+        }
+        eprintln!(
+            "hint: create the thread first, or remove the reference from the commit message."
+        );
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn run_fix_index(git: &GitOps) -> Result<(), ForumError> {
+    let result = fix_index_blobs(git)?;
+    for (path, sha) in &result.fixed {
+        eprintln!("fix-index: re-hashed {path} (missing blob {sha})");
+    }
+    for (path, sha) in &result.warnings {
+        eprintln!("fix-index: WARNING — {path} has missing blob {sha} and no working-tree copy");
+    }
+    if result.fixed.is_empty() && result.warnings.is_empty() {
+        eprintln!("fix-index: all index blobs present");
+    }
+    Ok(())
+}
+
+fn run_worktree_init(git: &GitOps) -> Result<(), ForumError> {
+    let git_dir = git.git_dir()?;
+    let paths = RepoPaths::from_repo_root_and_git_dir(git.root(), &git_dir);
+    if paths.git_forum.join("logs").is_dir() {
+        return Ok(());
+    }
+    // Per ADR-007: worktree-init writes only .git/forum/ local state.
+    // Tracked .forum/ content arrives via checkout, never via this hook.
+    init::init_forum_local(&paths)?;
+    let local_toml_path = paths.git_forum.join("local.toml");
+    if !local_toml_path.exists() {
+        let default_actor = actor::actor_from_git_config(git);
+        let content = format!(
+            "# git-forum local config (per-clone, not committed)\n\
+             \n\
+             # Default actor ID for this clone.\n\
+             # Override per-command with --as or GIT_FORUM_ACTOR env var.\n\
+             default_actor = \"{default_actor}\"\n\
+             \n\
+             # Override git commit author/committer on forum commits.\n\
+             # Uncomment to use a pseudonym instead of git config user.name/email.\n\
+             # [commit_identity]\n\
+             # name = \"pseudonym\"\n\
+             # email = \"pseudonym@example.com\"\n"
+        );
+        fs::write(&local_toml_path, content)?;
+    }
+    let _ = init::ensure_forum_refspecs(git);
+    install_all_hooks(git, false)?;
+    eprintln!(
+        "git-forum: initialized worktree at {}",
+        git.root().display()
+    );
+    Ok(())
+}
 
 // ── fix-index result ────────────────────────────────────────────────
 

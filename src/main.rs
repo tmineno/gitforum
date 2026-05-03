@@ -1,8 +1,6 @@
-use std::fs;
 use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand};
-use git_forum::internal::actor;
 use git_forum::internal::clock::SystemClock;
 use git_forum::internal::commands;
 use git_forum::internal::commands::branch;
@@ -36,7 +34,6 @@ use git_forum::internal::error::ForumError;
 use git_forum::internal::event::NodeType;
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::init;
 use git_forum::internal::lint_emit::{self, LintEmitter};
 use git_forum::internal::policy::Policy;
 use git_forum::internal::thread;
@@ -1514,84 +1511,15 @@ fn main() -> Result<(), ForumError> {
         } => commands::link::run_link(&thread_id, &target_thread_id, &rel, as_actor, &clock)?,
 
         Commands::Hook { cmd } => {
-            let git = GitOps::discover()?;
-            match cmd {
-                HookCmd::Install { force } => {
-                    hook::install_all_hooks(&git, force)?;
-                }
-                HookCmd::Uninstall => {
-                    hook::uninstall_all_hooks(&git)?;
-                }
-                HookCmd::CheckCommitMsg { file } => {
-                    let raw = fs::read_to_string(&file)?;
-                    let comment_char = hook::get_comment_char(&git);
-                    let cleaned = hook::strip_comments(&raw, comment_char);
-                    let ids = hook::extract_thread_ids(&cleaned);
-                    if ids.is_empty() {
-                        eprintln!("git-forum: warning: no thread ID referenced in commit message");
-                        return Ok(());
-                    }
-                    let result = hook::check_thread_refs(&git, &ids)?;
-                    if result.has_errors() {
-                        eprintln!("git-forum: commit message references non-existent thread(s):");
-                        for id in &result.missing_ids {
-                            eprintln!("  {id} — not found");
-                        }
-                        eprintln!(
-                            "hint: create the thread first, or remove the reference from the commit message."
-                        );
-                        std::process::exit(1);
-                    }
-                }
-                HookCmd::FixIndex => {
-                    let result = hook::fix_index_blobs(&git)?;
-                    for (path, sha) in &result.fixed {
-                        eprintln!("fix-index: re-hashed {path} (missing blob {sha})");
-                    }
-                    for (path, sha) in &result.warnings {
-                        eprintln!(
-                            "fix-index: WARNING — {path} has missing blob {sha} and no working-tree copy"
-                        );
-                    }
-                    if result.fixed.is_empty() && result.warnings.is_empty() {
-                        eprintln!("fix-index: all index blobs present");
-                    }
-                }
-                HookCmd::WorktreeInit => {
-                    let git_dir = git.git_dir()?;
-                    let paths = RepoPaths::from_repo_root_and_git_dir(git.root(), &git_dir);
-                    if !paths.git_forum.join("logs").is_dir() {
-                        // Per ADR-007: worktree-init writes only .git/forum/
-                        // local state. Tracked .forum/ content arrives via
-                        // checkout, never via this hook.
-                        init::init_forum_local(&paths)?;
-                        let local_toml_path = paths.git_forum.join("local.toml");
-                        if !local_toml_path.exists() {
-                            let default_actor = actor::actor_from_git_config(&git);
-                            let content = format!(
-                                "# git-forum local config (per-clone, not committed)\n\
-                                 \n\
-                                 # Default actor ID for this clone.\n\
-                                 # Override per-command with --as or GIT_FORUM_ACTOR env var.\n\
-                                 default_actor = \"{default_actor}\"\n\
-                                 \n\
-                                 # Override git commit author/committer on forum commits.\n\
-                                 # Uncomment to use a pseudonym instead of git config user.name/email.\n\
-                                 # [commit_identity]\n\
-                                 # name = \"pseudonym\"\n\
-                                 # email = \"pseudonym@example.com\"\n"
-                            );
-                            fs::write(&local_toml_path, content)?;
-                        }
-                        let _ = init::ensure_forum_refspecs(&git);
-                        hook::install_all_hooks(&git, false)?;
-                        eprintln!(
-                            "git-forum: initialized worktree at {}",
-                            git.root().display()
-                        );
-                    }
-                }
-            }
+            let ctx = Context::discover_quiet(Box::new(SystemClock))?;
+            let arm = match cmd {
+                HookCmd::Install { force } => hook::HookArm::Install { force },
+                HookCmd::Uninstall => hook::HookArm::Uninstall,
+                HookCmd::CheckCommitMsg { file } => hook::HookArm::CheckCommitMsg { file },
+                HookCmd::FixIndex => hook::HookArm::FixIndex,
+                HookCmd::WorktreeInit => hook::HookArm::WorktreeInit,
+            };
+            hook::run_arm(arm, &ctx)?;
         }
 
         Commands::Policy { cmd } => {
