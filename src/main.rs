@@ -8,7 +8,7 @@ use git_forum::internal::commands;
 use git_forum::internal::commands::branch;
 use git_forum::internal::commands::brief;
 use git_forum::internal::commands::bulk::{
-    list_thread_states, print_bulk_report, run_bulk_state_change, BulkSelectors,
+    print_bulk_report, run_bulk_state_change, BulkSelectors,
 };
 use git_forum::internal::commands::diff;
 use git_forum::internal::commands::doctor;
@@ -17,9 +17,8 @@ use git_forum::internal::commands::ls;
 use git_forum::internal::commands::node_bulk::{run_node_lifecycle_bulk, NodeLifecycleOp};
 use git_forum::internal::commands::revise::{self as revise_cmd, ReviseCmd};
 use git_forum::internal::commands::shared::{
-    discover_repo_with_init_warning, parse_since_date, parse_thread_kind, parse_thread_kind_filter,
-    parse_unrecognized_subcommand, resolve_actor, resolve_tid, subcommand_hint,
-    terminal_state_date,
+    discover_repo_with_init_warning, parse_thread_kind_filter, parse_unrecognized_subcommand,
+    resolve_actor, resolve_tid, subcommand_hint,
 };
 use git_forum::internal::commands::shorthand_say::run_shorthand_say;
 use git_forum::internal::commands::show;
@@ -1323,20 +1322,8 @@ fn main() -> Result<(), ForumError> {
         }
 
         Commands::Shortlog { since, kind } => {
-            let (git, _paths) = discover_repo_with_init_warning()?;
-            let kind_filter = kind.as_deref().map(parse_thread_kind).transpose()?;
-            let since_dt = parse_since_date(&since, &git)?;
-            let states = list_thread_states(&git, kind_filter, None)?;
-            let mut entries: Vec<(&thread::ThreadState, chrono::DateTime<chrono::Utc>)> =
-                Vec::new();
-            for state in &states {
-                if let Some(term_date) = terminal_state_date(state) {
-                    if term_date >= since_dt {
-                        entries.push((state, term_date));
-                    }
-                }
-            }
-            print!("{}", ls::render_shortlog(&entries));
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            commands::shortlog::run(commands::shortlog::ShortlogArgs { since, kind }, &ctx)?;
         }
 
         Commands::Show {

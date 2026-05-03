@@ -124,28 +124,8 @@ pub fn parse_since_date(
     git.commit_timestamp(since)
 }
 
-/// Find the timestamp at which a thread reached its current terminal
-/// state. Returns `None` when the thread is not currently terminal.
-/// Used by `Shortlog`.
-///
-/// TODO(phase-4): rewires to read snapshot tip timestamp directly when
-/// the event chain is replaced by snapshot trees.
-pub fn terminal_state_date(state: &thread::ThreadState) -> Option<chrono::DateTime<chrono::Utc>> {
-    use crate::internal::event::EventType;
-    use crate::internal::policy::TERMINAL_STATES;
-
-    if !TERMINAL_STATES.contains(&state.status.as_str()) {
-        return None;
-    }
-    state.events.iter().rev().find_map(|e| {
-        if e.event_type == EventType::State && e.new_state.as_deref() == Some(state.status.as_str())
-        {
-            Some(e.created_at)
-        } else {
-            None
-        }
-    })
-}
+// `terminal_state_date` relocated to `commands::shortlog::terminal_state_date`
+// at Phase 2 slot 7b (RFC `7ymtc4b2`).
 
 // =============================================================================
 // Clap-error hint helpers — relocated from main.rs by task `t8o3vnt6`.

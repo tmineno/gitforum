@@ -23,6 +23,7 @@ pub mod retype;
 pub mod revise;
 pub mod shared;
 pub mod shorthand_say;
+pub mod shortlog;
 pub mod show;
 pub mod state;
 pub mod thread_new;
