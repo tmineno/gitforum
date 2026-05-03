@@ -1,7 +1,8 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::clock::Clock;
-use super::error::ForumResult;
+use super::error::{ForumError, ForumResult};
 use super::event::{Event, EventType};
 use super::git_ops::GitOps;
 
@@ -140,6 +141,48 @@ pub fn add_thread_link(
     super::event::write_event(git, &ev)
 }
 
+// --------------------------------------------------------------------
+// SPEC-3.0 §2.3 `evidence.toml` shape.
+//
+// The 3.0 record carries the snapshot-time metadata the SPEC requires
+// (`id`, `kind`, `ref`, `created_at`, `created_by`). It lives alongside
+// the legacy `Evidence` struct above; the legacy struct exists for the
+// 2.x event-time write/read path until Phase 4 deletes it.
+// --------------------------------------------------------------------
+
+/// One `[[evidence]]` entry in `evidence.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvidenceRecord {
+    pub id: String,
+    pub kind: EvidenceKind,
+    #[serde(rename = "ref")]
+    pub ref_target: String,
+    pub created_at: DateTime<Utc>,
+    pub created_by: String,
+}
+
+/// `evidence.toml` document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct EvidenceFile {
+    #[serde(default, rename = "evidence", skip_serializing_if = "Vec::is_empty")]
+    pub entries: Vec<EvidenceRecord>,
+}
+
+impl EvidenceFile {
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn to_toml(&self) -> Result<String, ForumError> {
+        toml::to_string(self)
+            .map_err(|e| ForumError::SnapshotInvalid(format!("serialize evidence.toml: {e}")))
+    }
+
+    pub fn from_toml(s: &str) -> Result<Self, ForumError> {
+        Ok(toml::from_str(s)?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,5 +218,68 @@ mod tests {
         assert!(!json.contains("evidence_id"));
         assert!(json.contains("benchmark"));
         assert!(json.contains("bench/result.csv"));
+    }
+
+    fn sample_record() -> EvidenceRecord {
+        EvidenceRecord {
+            id: "ev1".into(),
+            kind: EvidenceKind::Commit,
+            ref_target: "HEAD".into(),
+            created_at: "2026-05-03T00:00:00Z".parse().unwrap(),
+            created_by: "human/alice".into(),
+        }
+    }
+
+    #[test]
+    fn evidence_record_round_trip() {
+        let original = EvidenceFile {
+            entries: vec![sample_record()],
+        };
+        let s = original.to_toml().unwrap();
+        let parsed = EvidenceFile::from_toml(&s).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn evidence_record_round_trip_empty() {
+        let original = EvidenceFile::default();
+        let s = original.to_toml().unwrap();
+        assert_eq!(EvidenceFile::from_toml(&s).unwrap(), original);
+    }
+
+    #[test]
+    fn evidence_record_uses_spec_keys() {
+        let s = EvidenceFile {
+            entries: vec![sample_record()],
+        }
+        .to_toml()
+        .unwrap();
+        // SPEC-3.0 §2.3 keys.
+        assert!(s.contains("id = "), "missing `id`: {s}");
+        assert!(s.contains("kind = "), "missing `kind`: {s}");
+        assert!(s.contains("ref = "), "missing `ref`: {s}");
+        assert!(s.contains("created_at = "), "missing `created_at`: {s}");
+        assert!(s.contains("created_by = "), "missing `created_by`: {s}");
+        // Legacy field names MUST NOT appear.
+        assert!(
+            !s.contains("evidence_id = "),
+            "unexpected `evidence_id`: {s}"
+        );
+        assert!(!s.contains("ref_target = "), "unexpected `ref_target`: {s}");
+        assert!(!s.contains("locator = "), "unexpected `locator`: {s}");
+    }
+
+    #[test]
+    fn evidence_record_rejects_legacy_field_names() {
+        let bad = r#"
+            [[evidence]]
+            evidence_id = "ev1"
+            kind = "commit"
+            ref_target = "HEAD"
+            created_at = "2026-05-03T00:00:00Z"
+            created_by = "human/alice"
+        "#;
+        let err = EvidenceFile::from_toml(bad).unwrap_err();
+        assert!(matches!(err, ForumError::Toml(_)));
     }
 }

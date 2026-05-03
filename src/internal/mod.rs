@@ -27,6 +27,7 @@ pub mod refs;
 pub mod reindex;
 pub mod repair;
 pub mod repair_workflow;
+pub mod snapshot;
 pub mod state_change;
 pub mod thread;
 pub mod timeline;

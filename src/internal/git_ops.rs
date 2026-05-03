@@ -334,9 +334,35 @@ impl GitOps {
     }
 
     /// Read a file from a commit's tree (e.g. `<sha>:event.json`).
+    ///
+    /// Returns the file contents with trailing whitespace trimmed.
+    /// Suitable for parsing structured formats (JSON, TOML) but
+    /// destructive for content that may legitimately end with a
+    /// newline (Markdown bodies, etc.) — use [`show_file_bytes`] for
+    /// byte-exact reads.
     pub fn show_file(&self, commit_sha: &str, path: &str) -> ForumResult<String> {
         let spec = format!("{commit_sha}:{path}");
         self.run(&["cat-file", "-p", &spec])
+    }
+
+    /// Read a file from a commit's tree as raw bytes, preserving
+    /// trailing whitespace and any binary content.
+    pub fn show_file_bytes(&self, commit_sha: &str, path: &str) -> ForumResult<Vec<u8>> {
+        let spec = format!("{commit_sha}:{path}");
+        let output = Command::new("git")
+            .args(["cat-file", "-p", &spec])
+            .current_dir(&self.root)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+            .output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(ForumError::Git(stderr));
+        }
+        Ok(output.stdout)
     }
 
     /// Run `git diff --no-index` between two files.

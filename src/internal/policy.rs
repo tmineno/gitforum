@@ -1060,6 +1060,195 @@ pub fn render_policy_show(policy: &Policy) -> String {
     lines.join("\n")
 }
 
+// --------------------------------------------------------------------
+// SPEC-3.0 §3.1 category registry.
+//
+// Phase 1 step 7: the registry shape + the two built-in categories
+// (`rfc`, `task`). Repository overrides via `.forum/policy.toml` are
+// Phase 2 work — adding the type now lets the snapshot read path
+// validate `category` and `status` fields against a known set.
+// Per RFC `7ymtc4b2` node `3c989eaf` the registry lives in this
+// module (no `policy::category` submodule).
+// --------------------------------------------------------------------
+
+/// One category's status machine per SPEC-3.0 §3.1.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CategoryDefinition {
+    pub initial_status: String,
+    pub statuses: Vec<String>,
+    /// `from->to` strings, e.g. `"draft->open"`.
+    pub transitions: Vec<String>,
+}
+
+impl CategoryDefinition {
+    pub fn has_status(&self, status: &str) -> bool {
+        self.statuses.iter().any(|s| s == status)
+    }
+
+    pub fn allows_transition(&self, from: &str, to: &str) -> bool {
+        let needle = format!("{from}->{to}");
+        self.transitions.iter().any(|t| t == &needle)
+    }
+}
+
+/// Repository-level category map per SPEC-3.0 §3.1.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CategoryRegistry {
+    pub categories: HashMap<String, CategoryDefinition>,
+}
+
+impl CategoryRegistry {
+    /// Built-in categories that every native 3.0 implementation MUST
+    /// always provide (SPEC-3.0 §3.1).
+    pub fn built_in() -> Self {
+        let mut categories = HashMap::new();
+        categories.insert("rfc".into(), built_in_rfc());
+        categories.insert("task".into(), built_in_task());
+        Self { categories }
+    }
+
+    pub fn get(&self, category: &str) -> Option<&CategoryDefinition> {
+        self.categories.get(category)
+    }
+
+    /// Validate that `status` is an allowed status for `category`.
+    /// Returns `Err` for unknown category or unknown status.
+    pub fn validate_status(&self, category: &str, status: &str) -> Result<(), ForumError> {
+        let def = self
+            .get(category)
+            .ok_or_else(|| ForumError::SnapshotInvalid(format!("unknown category `{category}`")))?;
+        if !def.has_status(status) {
+            return Err(ForumError::SnapshotInvalid(format!(
+                "category `{category}` does not allow status `{status}`"
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn built_in_rfc() -> CategoryDefinition {
+    CategoryDefinition {
+        initial_status: "draft".into(),
+        statuses: [
+            "draft",
+            "open",
+            "review",
+            "done",
+            "rejected",
+            "withdrawn",
+            "deprecated",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect(),
+        transitions: [
+            "draft->open",
+            "draft->withdrawn",
+            "open->review",
+            "open->rejected",
+            "open->withdrawn",
+            "review->done",
+            "review->rejected",
+            "done->deprecated",
+            "rejected->deprecated",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect(),
+    }
+}
+
+fn built_in_task() -> CategoryDefinition {
+    CategoryDefinition {
+        initial_status: "open".into(),
+        statuses: [
+            "open",
+            "working",
+            "review",
+            "done",
+            "rejected",
+            "deprecated",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect(),
+        transitions: [
+            "open->working",
+            "open->review",
+            "open->done",
+            "open->rejected",
+            "working->review",
+            "working->done",
+            "working->rejected",
+            "review->done",
+            "review->working",
+            "review->rejected",
+            "done->deprecated",
+            "rejected->deprecated",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect(),
+    }
+}
+
+#[cfg(test)]
+mod category_registry_tests {
+    use super::*;
+
+    #[test]
+    fn built_in_provides_rfc_and_task() {
+        let r = CategoryRegistry::built_in();
+        assert!(r.get("rfc").is_some());
+        assert!(r.get("task").is_some());
+    }
+
+    #[test]
+    fn rfc_initial_status_is_draft() {
+        let r = CategoryRegistry::built_in();
+        assert_eq!(r.get("rfc").unwrap().initial_status, "draft");
+    }
+
+    #[test]
+    fn task_initial_status_is_open() {
+        let r = CategoryRegistry::built_in();
+        assert_eq!(r.get("task").unwrap().initial_status, "open");
+    }
+
+    #[test]
+    fn rfc_draft_to_open_allowed() {
+        let r = CategoryRegistry::built_in();
+        assert!(r.get("rfc").unwrap().allows_transition("draft", "open"));
+    }
+
+    #[test]
+    fn rfc_done_to_draft_disallowed() {
+        let r = CategoryRegistry::built_in();
+        assert!(!r.get("rfc").unwrap().allows_transition("done", "draft"));
+    }
+
+    #[test]
+    fn validate_status_rejects_unknown_category() {
+        let r = CategoryRegistry::built_in();
+        let err = r.validate_status("bogus", "draft").unwrap_err();
+        assert!(matches!(err, ForumError::SnapshotInvalid(_)));
+    }
+
+    #[test]
+    fn validate_status_rejects_unknown_status() {
+        let r = CategoryRegistry::built_in();
+        let err = r.validate_status("rfc", "merged").unwrap_err();
+        assert!(matches!(err, ForumError::SnapshotInvalid(_)));
+    }
+
+    #[test]
+    fn validate_status_accepts_known_pair() {
+        let r = CategoryRegistry::built_in();
+        assert!(r.validate_status("rfc", "draft").is_ok());
+        assert!(r.validate_status("task", "working").is_ok());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::event::ThreadKind;

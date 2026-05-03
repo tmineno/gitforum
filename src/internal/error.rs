@@ -36,6 +36,36 @@ pub enum ForumError {
 
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+
+    /// SPEC-3.0 §11: thread ref tip lacks `thread.toml`.
+    #[error("snapshot missing: {0}")]
+    SnapshotMissing(String),
+
+    /// SPEC-3.0 §11: `schema_version` is absent or unsupported.
+    #[error("snapshot schema unsupported: {0}")]
+    SnapshotSchemaUnsupported(String),
+
+    /// SPEC-3.0 §11: snapshot fields fail schema or grammar checks.
+    #[error("snapshot invalid: {0}")]
+    SnapshotInvalid(String),
+
+    /// SPEC-3.0 §11: 3.0 command sees an unmigrated 1.x/2.x event chain.
+    #[error("legacy event chain at thread ref; run `git forum migrate`")]
+    LegacyEventChain,
+
+    /// SPEC-3.0 §5/§10: concurrent create or stale-parent CAS write
+    /// conflict on `refs/forum/threads/<id>`. Caller should re-read the
+    /// latest snapshot and re-apply. Not in §11's enumerated table; the
+    /// SPEC mandates the no-silent-overwrite semantics without naming
+    /// the error.
+    #[error("snapshot write conflict: {0}")]
+    SnapshotWriteConflict(String),
+
+    /// TOML deserialization error. Snapshot codecs use this directly so
+    /// parser context (line/column) is preserved instead of being
+    /// flattened into a `Config` or `Json` string.
+    #[error("toml error: {0}")]
+    Toml(#[from] toml::de::Error),
 }
 
 /// Result alias used throughout the crate.

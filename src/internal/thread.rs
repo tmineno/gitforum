@@ -1017,6 +1017,143 @@ fn format_global_ambiguity(node_ref: &str, matches: &[&NodeLookup]) -> String {
     message
 }
 
+// --------------------------------------------------------------------
+// SPEC-3.0 §2.1 + §4.2 `thread.toml` shape.
+//
+// `ThreadSnapshot` is the 3.0-native thread metadata type, distinct
+// from the legacy `ThreadState` (which models replayed event-chain
+// state). Body text is stored separately as `body.md` per SPEC-3.0
+// §2.1 so plain Git diffs are useful; this type does NOT carry the
+// body.
+// --------------------------------------------------------------------
+
+/// SPEC-3.0 §2.1 / §4.2 thread metadata.
+///
+/// Required fields per the SPEC-3.0 §2.1 table; `branch` and
+/// `supersedes` are optional convenience fields per the same section.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ThreadSnapshot {
+    pub schema_version: u32,
+    pub id: String,
+    pub title: String,
+    pub category: String,
+    pub status: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub created_at: DateTime<Utc>,
+    pub created_by: String,
+    pub updated_at: DateTime<Utc>,
+    pub updated_by: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supersedes: Vec<String>,
+}
+
+impl ThreadSnapshot {
+    /// Schema version this implementation reads/writes.
+    pub const SCHEMA_VERSION: u32 = 3;
+
+    pub fn to_toml(&self) -> Result<String, ForumError> {
+        toml::to_string(self)
+            .map_err(|e| ForumError::SnapshotInvalid(format!("serialize thread.toml: {e}")))
+    }
+
+    pub fn from_toml(s: &str) -> Result<Self, ForumError> {
+        let snap: Self = toml::from_str(s)?;
+        if snap.schema_version != Self::SCHEMA_VERSION {
+            return Err(ForumError::SnapshotSchemaUnsupported(format!(
+                "thread.toml schema_version={} (this build supports {})",
+                snap.schema_version,
+                Self::SCHEMA_VERSION
+            )));
+        }
+        Ok(snap)
+    }
+}
+
+#[cfg(test)]
+mod thread_snapshot_tests {
+    use super::*;
+
+    fn sample_snapshot() -> ThreadSnapshot {
+        ThreadSnapshot {
+            schema_version: 3,
+            id: "fg61bcmp".into(),
+            title: "3.0: Snapshot storage".into(),
+            category: "rfc".into(),
+            status: "draft".into(),
+            tags: vec!["cross-cutting".into()],
+            created_at: "2026-05-02T23:31:40Z".parse().unwrap(),
+            created_by: "ai/codex".into(),
+            updated_at: "2026-05-02T23:31:40Z".parse().unwrap(),
+            updated_by: "ai/codex".into(),
+            branch: None,
+            supersedes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn round_trip_minimal() {
+        let original = sample_snapshot();
+        let s = original.to_toml().unwrap();
+        let parsed = ThreadSnapshot::from_toml(&s).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn round_trip_with_optionals() {
+        let original = ThreadSnapshot {
+            branch: Some("feat/snapshot".into()),
+            supersedes: vec!["thread-old1".into(), "thread-old2".into()],
+            ..sample_snapshot()
+        };
+        let s = original.to_toml().unwrap();
+        let parsed = ThreadSnapshot::from_toml(&s).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn schema_version_mismatch_rejected() {
+        let mut snap = sample_snapshot();
+        snap.schema_version = 2;
+        let s = toml::to_string(&snap).unwrap();
+        let err = ThreadSnapshot::from_toml(&s).unwrap_err();
+        assert!(
+            matches!(err, ForumError::SnapshotSchemaUnsupported(_)),
+            "expected SnapshotSchemaUnsupported, got {err}"
+        );
+    }
+
+    #[test]
+    fn missing_schema_version_rejected_as_toml_error() {
+        let bad = r#"
+            id = "fg61bcmp"
+            title = "T"
+            category = "rfc"
+            status = "draft"
+            tags = []
+            created_at = "2026-05-02T23:31:40Z"
+            created_by = "ai/codex"
+            updated_at = "2026-05-02T23:31:40Z"
+            updated_by = "ai/codex"
+        "#;
+        let err = ThreadSnapshot::from_toml(bad).unwrap_err();
+        assert!(matches!(err, ForumError::Toml(_)));
+    }
+
+    #[test]
+    fn omits_unset_optionals() {
+        let s = sample_snapshot().to_toml().unwrap();
+        assert!(!s.contains("branch"), "unset branch should be omitted: {s}");
+        assert!(
+            !s.contains("supersedes"),
+            "empty supersedes should be omitted: {s}"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

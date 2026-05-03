@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
+use super::error::ForumError;
 use super::event::NodeType;
 
 /// A structured discussion node contributed via a `say` event.
@@ -50,5 +52,218 @@ impl Node {
         } else {
             "open"
         }
+    }
+}
+
+// --------------------------------------------------------------------
+// SPEC-3.0 §2.2 `nodes/<id>.toml` shape.
+//
+// Strict 4-variant `NodeKind` (no claim/question/summary/risk/review/
+// alternative/assumption) and a `NodeStatus` enum replace the v2
+// `NodeType` carrying legacy variants and the three boolean status
+// flags. The legacy `Node` struct above is untouched until Phase 4.
+// --------------------------------------------------------------------
+
+/// SPEC-3.0 §2.2 node type (strict canonical four).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeKind {
+    Comment,
+    Approval,
+    Objection,
+    Action,
+}
+
+/// SPEC-3.0 §2.2 node status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeStatus {
+    Open,
+    Resolved,
+    Retracted,
+    Incorporated,
+}
+
+/// SPEC-3.0 §2.2 node metadata (`nodes/<id>.toml`).
+///
+/// One file per node; the document is a flat key/value record (not a
+/// table or array). The paired `nodes/<id>.md` body file is owned by
+/// `snapshot::store`, not by this type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeRecord {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: NodeKind,
+    pub status: NodeStatus,
+    pub created_at: DateTime<Utc>,
+    pub created_by: String,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    /// Migration-only archival label (SPEC-3.0 §2.2). Ignored for live
+    /// behavior; preserves the user's 1.x rhetorical label if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_label: Option<String>,
+}
+
+impl NodeRecord {
+    pub fn to_toml(&self) -> Result<String, ForumError> {
+        toml::to_string(self)
+            .map_err(|e| ForumError::SnapshotInvalid(format!("serialize node toml: {e}")))
+    }
+
+    pub fn from_toml(s: &str) -> Result<Self, ForumError> {
+        Ok(toml::from_str(s)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_record() -> NodeRecord {
+        NodeRecord {
+            id: "node1".into(),
+            kind: NodeKind::Comment,
+            status: NodeStatus::Open,
+            created_at: "2026-05-03T00:00:00Z".parse().unwrap(),
+            created_by: "human/alice".into(),
+            updated_at: None,
+            updated_by: None,
+            reply_to: None,
+            legacy_label: None,
+        }
+    }
+
+    #[test]
+    fn node_record_round_trip_minimal() {
+        let original = sample_record();
+        let s = original.to_toml().unwrap();
+        let parsed = NodeRecord::from_toml(&s).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn node_record_round_trip_with_optionals() {
+        let original = NodeRecord {
+            updated_at: Some("2026-05-03T01:00:00Z".parse().unwrap()),
+            updated_by: Some("ai/codex".into()),
+            reply_to: Some("parent_node".into()),
+            legacy_label: Some("claim".into()),
+            ..sample_record()
+        };
+        let s = original.to_toml().unwrap();
+        let parsed = NodeRecord::from_toml(&s).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn node_record_uses_spec_keys() {
+        let s = sample_record().to_toml().unwrap();
+        assert!(s.contains("id = "), "missing `id`: {s}");
+        assert!(s.contains("type = "), "missing `type`: {s}");
+        assert!(s.contains("status = "), "missing `status`: {s}");
+        assert!(s.contains("created_at = "), "missing `created_at`: {s}");
+        assert!(s.contains("created_by = "), "missing `created_by`: {s}");
+        // v2 field names MUST NOT appear.
+        assert!(!s.contains("node_id = "), "unexpected `node_id`: {s}");
+        assert!(!s.contains("node_type = "), "unexpected `node_type`: {s}");
+        assert!(!s.contains("actor = "), "unexpected `actor`: {s}");
+        assert!(
+            !s.contains("resolved = "),
+            "unexpected `resolved` flag: {s}"
+        );
+        assert!(
+            !s.contains("retracted = "),
+            "unexpected `retracted` flag: {s}"
+        );
+        assert!(
+            !s.contains("incorporated = "),
+            "unexpected `incorporated` flag: {s}"
+        );
+        assert!(
+            !s.contains("legacy_subtype = "),
+            "unexpected `legacy_subtype`: {s}"
+        );
+    }
+
+    #[test]
+    fn node_record_rejects_v2_field_names() {
+        let bad = r#"
+            node_id = "node1"
+            node_type = "comment"
+            actor = "human/alice"
+            created_at = "2026-05-03T00:00:00Z"
+            resolved = false
+        "#;
+        let err = NodeRecord::from_toml(bad).unwrap_err();
+        assert!(matches!(err, ForumError::Toml(_)));
+    }
+
+    #[test]
+    fn node_record_rejects_non_canonical_type() {
+        for legacy_type in [
+            "claim",
+            "question",
+            "summary",
+            "risk",
+            "review",
+            "alternative",
+            "assumption",
+            "evidence",
+        ] {
+            let s = format!(
+                r#"
+                id = "node1"
+                type = "{legacy_type}"
+                status = "open"
+                created_at = "2026-05-03T00:00:00Z"
+                created_by = "human/alice"
+                "#
+            );
+            let err = NodeRecord::from_toml(&s).unwrap_err();
+            assert!(
+                matches!(err, ForumError::Toml(_)),
+                "expected Toml error for legacy type {legacy_type}, got {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn node_record_rejects_unknown_status() {
+        let bad = r#"
+            id = "node1"
+            type = "comment"
+            status = "deferred"
+            created_at = "2026-05-03T00:00:00Z"
+            created_by = "human/alice"
+        "#;
+        let err = NodeRecord::from_toml(bad).unwrap_err();
+        assert!(matches!(err, ForumError::Toml(_)));
+    }
+
+    #[test]
+    fn node_record_omits_unset_optionals() {
+        let s = sample_record().to_toml().unwrap();
+        assert!(
+            !s.contains("updated_at"),
+            "unset `updated_at` should be omitted: {s}"
+        );
+        assert!(
+            !s.contains("updated_by"),
+            "unset `updated_by` should be omitted: {s}"
+        );
+        assert!(
+            !s.contains("reply_to"),
+            "unset `reply_to` should be omitted: {s}"
+        );
+        assert!(
+            !s.contains("legacy_label"),
+            "unset `legacy_label` should be omitted: {s}"
+        );
     }
 }
