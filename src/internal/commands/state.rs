@@ -1,11 +1,19 @@
 //! `git forum close|accept|propose|pend|reject|withdraw|deprecate <ID>`
-//! orchestration — the §9.3 shorthand verbs.
+//! orchestration — the §9.3 shorthand verbs, plus the canonical
+//! `git forum state <ID> <state>` form.
 //!
 //! Owns the clap subcommand enum `StateCmd` (moved from `main.rs` by
-//! task `t8o3vnt6`). The shorthand→target mapping itself lives in
-//! [`WorkflowSpec`](crate::internal::workflow::WorkflowSpec) (#34ith16h);
-//! this module only handles the I/O and state-change wiring.
+//! task `t8o3vnt6`).
+//!
+//! Phase 2 slot 3 (RFC `7ymtc4b2`): the write path updates
+//! `thread.toml`'s `status` field directly via
+//! `snapshot::store::write_snapshot` per SPEC-3.0 §3.1 and adds any
+//! companion side-effects (comment node, approval nodes, link
+//! entries, action resolution) into the same snapshot commit. The
+//! legacy `state_change::change_state` event-write path is no longer
+//! invoked here.
 
+use chrono::Utc;
 use clap::Subcommand;
 
 use super::context::Context;
@@ -13,13 +21,15 @@ use crate::internal::clock::Clock;
 use crate::internal::commands::show;
 use crate::internal::error::ForumError;
 use crate::internal::event::Lifecycle;
-use crate::internal::evidence;
+use crate::internal::id_alloc;
+use crate::internal::node::{NodeKind, NodeRecord, NodeStatus};
 use crate::internal::policy::Policy;
-use crate::internal::state_change;
+use crate::internal::snapshot::{self, store::write_snapshot, Link, NodeWithBody, ThreadDocument};
 use crate::internal::thread;
 use crate::internal::workflow::SPEC;
 
 use super::shared::{discover_repo_with_init_warning, resolve_actor, resolve_tid};
+use super::shorthand_say::migrate_legacy_to_snapshot;
 
 /// `git forum state` sub-commands.
 #[derive(Subcommand)]
@@ -80,12 +90,6 @@ pub fn run(args: StateShorthandArgs, ctx: &Context) -> Result<(), ForumError> {
 
 /// Resolve a state-change shorthand to a concrete target state for the
 /// thread's current lifecycle, per SPEC-2.0 §9.3.
-///
-/// Thin wrapper over
-/// [`SPEC::shorthand_target`](crate::internal::workflow::WorkflowSpec::shorthand_target);
-/// the §9.3 table itself lives in `workflow.rs`. This wrapper turns the
-/// typed [`ShorthandResolution`](crate::internal::workflow::ShorthandResolution)
-/// into the CLI-shaped `ForumError`.
 pub fn shorthand_target_for_lifecycle(
     shorthand: &str,
     lifecycle: Lifecycle,
@@ -118,18 +122,114 @@ pub fn run_state_shorthand(
     let thread_id = &resolve_tid(&git, thread_id)?;
     let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
     let actor = resolve_actor(as_actor, &git);
-    // Replay once up front to resolve the lifecycle facet — the §9.3 table
-    // is keyed on lifecycle, not the legacy `kind` field.
+
+    // Replay once up front to resolve the lifecycle facet — the §9.3
+    // table is keyed on lifecycle, not on the legacy `kind` field.
     let pre_state = thread::replay_thread(&git, thread_id)?;
     let target = shorthand_target_for_lifecycle(new_state, pre_state.lifecycle)?;
-    let options = state_change::StateChangeOptions {
-        resolve_open_actions,
-        comment: comment.map(|s| s.to_string()),
+
+    let mut doc = match snapshot::read_snapshot(&git, thread_id) {
+        Ok(doc) => doc,
+        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(&git, thread_id)?,
+        Err(other) => return Err(other),
     };
+    let from = doc.snapshot.status.clone();
+    let now = clock.now();
+
+    if from == target {
+        // No-op (already in target state). Honour `--comment` by
+        // attaching a standalone Comment node so operators can leave
+        // a note even on a no-op.
+        if let Some(text) = comment {
+            doc.nodes.push(comment_node(&actor, text, now));
+            doc.snapshot.updated_at = now;
+            doc.snapshot.updated_by = actor.clone();
+            write_snapshot(
+                &git,
+                thread_id,
+                &doc,
+                &format!("state no-op (comment recorded) on {thread_id}"),
+            )?;
+            println!(
+                "note: {thread_id} is already in state '{from}'; no transition recorded (comment attached as a standalone node)"
+            );
+        } else {
+            println!("note: {thread_id} is already in state '{from}'; no transition recorded");
+        }
+        emit_action_hint(&git, thread_id, &policy);
+        return Ok(());
+    }
+
+    // Validate the transition. With `fast_track`, find_path walks
+    // intermediate states; otherwise the direct edge must be legal.
+    let walked: Vec<&'static str> = if fast_track {
+        SPEC.find_path(pre_state.lifecycle, &from, target)
+            .ok_or_else(|| {
+                ForumError::Config(format!(
+                    "no legal path from '{from}' to '{target}' for {} lifecycle",
+                    pre_state.lifecycle
+                ))
+            })?
+    } else if SPEC.is_valid_transition(pre_state.lifecycle, &from, target) {
+        vec![target]
+    } else {
+        return Err(ForumError::Config(format!(
+            "transition '{from}' → '{target}' is not allowed for {} lifecycle",
+            pre_state.lifecycle
+        )));
+    };
+
+    // Update status to the final hop. The snapshot model carries
+    // the cumulative state, so we write one snapshot landing on
+    // the final target — the intermediate hops are still validated
+    // against the workflow graph by `find_path`.
+    let final_state = walked.last().expect("walked is non-empty after validation");
+    doc.snapshot.status = (*final_state).to_string();
+    doc.snapshot.updated_at = now;
+    doc.snapshot.updated_by = actor.clone();
+
+    if resolve_open_actions {
+        for n in doc.nodes.iter_mut() {
+            if matches!(n.record.kind, NodeKind::Action)
+                && matches!(n.record.status, NodeStatus::Open)
+            {
+                n.record.status = NodeStatus::Resolved;
+                n.record.updated_at = Some(now);
+                n.record.updated_by = Some(actor.clone());
+            }
+        }
+    }
+
+    for approver in approve {
+        doc.nodes.push(approval_node(approver, now));
+    }
+
+    if let Some(text) = comment {
+        doc.nodes.push(comment_node(&actor, text, now));
+    }
+
+    if !link_to.is_empty() {
+        let rel = rel
+            .ok_or_else(|| ForumError::Config("--rel is required when --link-to is used".into()))?;
+        for target_id in link_to {
+            let resolved_target = resolve_tid(&git, target_id)?;
+            doc.links.entries.push(Link {
+                target: resolved_target,
+                rel: rel.into(),
+                created_at: now,
+                created_by: actor.clone(),
+            });
+        }
+    }
+
+    write_snapshot(
+        &git,
+        thread_id,
+        &doc,
+        &format!("state {} -> {}", from, final_state),
+    )?;
+
     if fast_track {
-        let walked = state_change::fast_track_state(
-            &git, thread_id, target, approve, &actor, clock, &policy, options,
-        )?;
         for (i, step) in walked.iter().enumerate() {
             let is_final = i == walked.len() - 1;
             if is_final {
@@ -139,38 +239,49 @@ pub fn run_state_shorthand(
             }
         }
     } else {
-        let outcome = state_change::change_state(
-            &git, thread_id, target, approve, &actor, clock, &policy, options,
-        )?;
-        match outcome {
-            state_change::StateChangeOutcome::Applied { .. } => {
-                println!("{thread_id} -> {target}");
-            }
-            state_change::StateChangeOutcome::NoOp {
-                state,
-                comment_recorded,
-            } => {
-                if comment_recorded {
-                    println!(
-                        "note: {thread_id} is already in state '{state}'; no transition recorded (comment attached as a standalone node)"
-                    );
-                } else {
-                    println!(
-                        "note: {thread_id} is already in state '{state}'; no transition recorded"
-                    );
-                }
-            }
-        }
+        println!("{thread_id} -> {target}");
     }
-    if !link_to.is_empty() {
-        let rel = rel
-            .ok_or_else(|| ForumError::Config("--rel is required when --link-to is used".into()))?;
-        for target in link_to {
-            let resolved_target = resolve_tid(&git, target)?;
-            evidence::add_thread_link(&git, thread_id, &resolved_target, rel, &actor, clock)?;
-        }
+
+    emit_action_hint(&git, thread_id, &policy);
+    Ok(())
+}
+
+fn comment_node(actor: &str, body: &str, now: chrono::DateTime<Utc>) -> NodeWithBody {
+    NodeWithBody {
+        record: NodeRecord {
+            id: id_alloc::alloc_bare_thread_id(actor, body, &now.to_rfc3339()),
+            kind: NodeKind::Comment,
+            status: NodeStatus::Open,
+            created_at: now,
+            created_by: actor.into(),
+            updated_at: None,
+            updated_by: None,
+            reply_to: None,
+            legacy_label: None,
+        },
+        body: body.into(),
     }
-    if let Ok(state) = thread::replay_thread(&git, thread_id) {
+}
+
+fn approval_node(approver: &str, now: chrono::DateTime<Utc>) -> NodeWithBody {
+    NodeWithBody {
+        record: NodeRecord {
+            id: id_alloc::alloc_bare_thread_id(approver, "approval", &now.to_rfc3339()),
+            kind: NodeKind::Approval,
+            status: NodeStatus::Open,
+            created_at: now,
+            created_by: approver.into(),
+            updated_at: None,
+            updated_by: None,
+            reply_to: None,
+            legacy_label: None,
+        },
+        body: String::new(),
+    }
+}
+
+fn emit_action_hint(git: &crate::internal::git_ops::GitOps, thread_id: &str, policy: &Policy) {
+    if let Ok(state) = thread::replay_thread(git, thread_id) {
         eprintln!(
             "{}",
             show::render_show(
@@ -183,5 +294,10 @@ pub fn run_state_shorthand(
             )
         );
     }
-    Ok(())
 }
+
+// `ThreadDocument` is referenced through the snapshot module; the
+// re-export here keeps later slots' helpers inside `commands::state`
+// from needing the full path.
+#[allow(dead_code)]
+pub(crate) type Doc = ThreadDocument;
