@@ -8,8 +8,8 @@ Discussion thread: `fg61bcmp`.
 Bound by `doc/spec/CORE-VALUE.md` - when this document conflicts with the core
 value statement, this document is wrong and must be revised.
 
-> 3.0 uses a `thread` model classified by `lifecycle` and `tags`, with four
-> canonical node types: `comment`, `approval`, `objection`, and `action`.
+> 3.0 uses a `thread` model classified by a policy-controlled `category`, with
+> four canonical node types: `comment`, `approval`, `objection`, and `action`.
 > Storage changes from event replay to **snapshot refs**.
 >
 > Authoritative forum data still lives under `refs/forum/*`. This preserves
@@ -29,8 +29,8 @@ value statement, this document is wrong and must be revised.
 | History model | Domain-event timeline owned by git-forum | Git commit history and file diffs |
 | Repair model | Orphan/stale event repair, strict replay diagnostics | Snapshot schema and reference integrity checks |
 | Migration | 1.x/2.x event rewrite | 1.x/2.x event chain -> 3.0 snapshot commit |
-| Compatibility | Legacy event/state/node compatibility in runtime | One-shot migration; legacy events are archival, not the live model |
-| Policy grammar | Facet expression strings | Structured TOML selectors; no custom boolean expression parser |
+| Compatibility | Legacy event/state/node compatibility in runtime | Lossy one-shot migration; legacy events are archival, not the live model |
+| Policy classification | Facet expression strings over kinds, states, and tags | Required category registry; tags are not policy enforcement keys |
 
 ### 1.2 Design principles
 
@@ -63,9 +63,9 @@ thread state is a snapshot with these required fields:
 | `schema_version` | integer | Must be `3` for native 3.0 snapshots. |
 | `id` | string | Thread ID. |
 | `title` | string | Human-readable title. |
-| `lifecycle` | enum | `proposal`, `execution`, or `record`. |
-| `status` | enum | Current state from the unified state machine in §3.1. |
-| `tags` | array | Free-form tags using the grammar in §2.4. |
+| `category` | string | Required policy category from §2.4. |
+| `status` | string | Current state allowed by the category registry in §3.1. |
+| `tags` | array | Free-form labels using the grammar in §2.4. |
 | `created_at` | datetime | Creation timestamp. |
 | `created_by` | string | Actor ID. |
 | `updated_at` | datetime | Timestamp of last snapshot update. |
@@ -171,22 +171,29 @@ Evidence `kind` values:
 | `thread` | Another git-forum thread ID. |
 | `external` | External URL or opaque external reference. |
 
-### 2.4 Lifecycle and tag vocabulary
+### 2.4 Category and tag vocabulary
 
-`lifecycle` is the only required classification facet. It controls which states
-are valid for a thread.
+`category` is the required classification facet. It selects the policy category
+that defines a thread's initial status, valid states, valid transitions,
+transition guards, and operation checks.
 
-| Lifecycle | Meaning |
+Categories are policy-controlled and MUST satisfy the same grammar as tags.
+Native 3.0 implementations MUST provide these built-in categories when no
+repository policy overrides them:
+
+| Category | Meaning |
 |---|---|
-| `proposal` | A proposal that may be drafted, opened for review, accepted, rejected, withdrawn, or deprecated. |
-| `execution` | Work or bug tracking that may move through open, working, review, done, rejected, or deprecated states. |
-| `record` | A short-lived record or decision that usually moves from open to done or rejected. |
+| `rfc` | Proposal-style discussion that starts in `draft` and is accepted or rejected after review. |
+| `decision` | Decision record that starts in `open` and normally moves directly to `done` or `rejected`. |
+| `task` | Work tracking that starts in `open` and may move through `working` and `review`. |
+| `bug` | Defect tracking with the same default state model as `task`. |
 
-`tags` are free-form labels for subcategories such as `bug`, `task`, or
-`cross-cutting`. Tags are first-class for filtering and policy selectors, but
-there is no required tag registry in 3.0.
+Repositories MAY define additional categories in `.forum/policy.toml`.
 
-Every tag MUST satisfy:
+`tags` are free-form labels for filtering, search, and display. Tags MUST NOT be
+used as policy enforcement selectors in 3.0 core behavior.
+
+Every category and tag MUST satisfy:
 
 - ASCII lowercase only: `[a-z0-9-]`.
 - Starts with a lowercase letter: `[a-z]`.
@@ -194,114 +201,98 @@ Every tag MUST satisfy:
 - Not equal to `all`, `none`, `any`, or `untagged`.
 - Contains no spaces, slashes, colons, `@`, or `!`.
 
-The preset commands in §7 emit these conventional tags:
+## 3. Category registry and policy
 
-| Preset | Lifecycle | Tags |
+### 3.1 Category registry
+
+Policy enforcement is keyed by `category`. 3.0 does not define a selector
+language over tags or other facets.
+
+Each category definition MUST provide:
+
+| Field | Type | Meaning |
 |---|---|---|
-| `new rfc` | `proposal` | `cross-cutting` |
-| `new dec` | `record` | none |
-| `new task` | `execution` | `task` |
-| `new issue` | `execution` | `bug` |
-| `new bug` | `execution` | `bug` |
+| `initial_status` | string | Status assigned to new threads in this category. |
+| `statuses` | array | Complete set of valid statuses for this category. |
+| `transitions` | array | Valid `from->to` status transitions for this category. |
 
-## 3. State machine and policy
+Example category registry:
 
-### 3.1 State machine
+```toml
+[categories.rfc]
+initial_status = "draft"
+statuses = ["draft", "open", "review", "done", "rejected", "withdrawn", "deprecated"]
+transitions = [
+  "draft->open",
+  "draft->withdrawn",
+  "open->review",
+  "open->rejected",
+  "open->withdrawn",
+  "review->done",
+  "review->rejected",
+  "done->deprecated",
+  "rejected->deprecated",
+]
 
-A single transition graph is used for every thread. A transition is valid only
-when both the edge exists in this graph and the destination state is allowed for
-the thread's lifecycle.
+[categories.decision]
+initial_status = "open"
+statuses = ["open", "done", "rejected", "deprecated"]
+transitions = ["open->done", "open->rejected", "done->deprecated", "rejected->deprecated"]
 
-Unified transition graph:
+[categories.task]
+initial_status = "open"
+statuses = ["open", "working", "review", "done", "rejected", "deprecated"]
+transitions = [
+  "open->working",
+  "open->review",
+  "open->done",
+  "open->rejected",
+  "working->review",
+  "working->done",
+  "working->rejected",
+  "review->done",
+  "review->working",
+  "review->rejected",
+  "done->deprecated",
+  "rejected->deprecated",
+]
 
-```text
-draft    -> open
-draft    -> withdrawn
-open     -> working
-open     -> review
-open     -> done
-open     -> rejected
-open     -> withdrawn
-working  -> review
-working  -> done
-working  -> rejected
-review   -> done
-review   -> working
-review   -> rejected
-done     -> open
-rejected -> open
-done     -> deprecated
-rejected -> deprecated
+[categories.bug]
+initial_status = "open"
+statuses = ["open", "working", "review", "done", "rejected", "deprecated"]
+transitions = [
+  "open->working",
+  "open->review",
+  "open->done",
+  "open->rejected",
+  "working->review",
+  "working->done",
+  "working->rejected",
+  "review->done",
+  "review->working",
+  "review->rejected",
+  "done->deprecated",
+  "rejected->deprecated",
+]
 ```
 
-Lifecycle-filtered states:
-
-| Lifecycle | Allowed states | Initial state | Typical path |
-|---|---|---|---|
-| `proposal` | `draft`, `open`, `review`, `done`, `rejected`, `withdrawn`, `deprecated` | `draft` | `draft -> open -> review -> done` |
-| `execution` | `open`, `working`, `review`, `done`, `rejected`, `deprecated` | `open` | `open -> working -> review -> done`; trivial work may use `open -> done` |
-| `record` | `open`, `done`, `rejected`, `deprecated` | `open` | `open -> done` |
-
-`withdrawn` and `deprecated` are absorbing terminal states. Terminal states for
-filtering are `done`, `rejected`, `deprecated`, and `withdrawn`.
-
-A transition whose destination state is not allowed for the thread's lifecycle
-MUST fail with a lifecycle/state mismatch diagnostic that names the lifecycle,
-the rejected destination, and the allowed state set.
+A transition is valid only when it is listed in the thread category's
+`transitions` array. A status is valid only when it is listed in the thread
+category's `statuses` array. New threads MUST start at the category's
+`initial_status`.
 
 State transitions update `thread.toml` directly. The historical record of a
 transition is the Git commit that changed `status`, plus the commit message and
 diff. There is no separate `state` event object in the live model.
 
-### 3.2 Structured policy selectors
+### 3.2 Transition guards
 
-3.0 replaces string facet expressions with structured TOML selectors.
-
-Old string-expression form:
+Transition guards are attached directly to a category transition:
 
 ```toml
-[[guards]]
-on = "lifecycle=proposal AND tag=cross-cutting : review->done"
-requires = ["one_human_approval", "no_open_objections"]
+[categories.rfc.guards]
+"review->done" = ["one_human_approval", "no_open_objections"]
 ```
-
-3.0:
-
-```toml
-[[guards]]
-transition = "review->done"
-lifecycle = "proposal"
-tags_all = ["cross-cutting"]
-requires = ["one_human_approval", "no_open_objections"]
-```
-
-Selector fields:
-
-| Field | Type | Meaning |
-|---|---|---|
-| `transition` | string | Required `from->to` transition. |
-| `lifecycle` | string | Optional lifecycle equality match. |
-| `tags_all` | array | Optional set of tags all required to match. |
-| `tags_any` | array | Optional set of tags where at least one must match. |
-| `tags_none` | array | Optional set of tags that must not be present. |
-
-All present selectors are combined with AND semantics. This intentionally avoids
-a custom boolean parser in the core.
-
-### 3.3 Operation checks
-
-Operation checks use the same structured selector shape:
-
-```toml
-[[creation_rules]]
-lifecycle = "proposal"
-tags_all = ["cross-cutting"]
-required_body = true
-body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
-```
-
-Most-specific match wins. If multiple rules tie, the implementation MUST fail
-with an ambiguous-policy diagnostic rather than silently picking one.
 
 Guard rule names understood by the core:
 
@@ -315,22 +306,29 @@ Guard rule names understood by the core:
 `at_least_one_summary` is not a 3.0 rule because `summary` is not a native node
 type.
 
-Operation check sections:
+### 3.3 Operation checks
+
+Operation checks are category-scoped:
 
 ```toml
-[[node_rules]]
-status = "review"
-allowed_types = ["comment", "approval", "objection", "action"]
+[categories.rfc.creation]
+required_body = true
+body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
 
-[revise_rules]
+[categories.rfc.allowed_node_types]
+review = ["comment", "approval", "objection", "action"]
+
+[categories.rfc.revise]
 allow_body_revise = ["draft", "open", "working", "review"]
 allow_node_revise = ["draft", "open", "working", "review"]
 
-[evidence_rules]
+[categories.rfc.evidence]
 allow_evidence = ["draft", "open", "working", "review", "done", "rejected", "deprecated"]
 ```
 
-Absent operation-check sections mean no restriction for that operation.
+Absent operation-check sections mean no restriction for that operation. A
+category definition with an unknown guard name, unknown status, duplicate
+transition, or transition that references a status outside `statuses` is invalid.
 
 ## 4. Storage layout
 
@@ -365,9 +363,9 @@ legacy/
 ```
 
 `thread.toml` is required. `body.md`, `links.toml`, `evidence.toml`, and
-`nodes/` MAY be absent when empty. `legacy/events.ndjson` MUST be present on
-threads converted from a 1.x/2.x event chain and MUST be absent or ignored for
-native 3.0 threads.
+`nodes/` MAY be absent when empty. `legacy/events.ndjson` SHOULD be present by
+default on threads converted from a 1.x/2.x event chain when source events are
+available. Core 3.0 reads MUST ignore it.
 
 Example `thread.toml`:
 
@@ -375,7 +373,7 @@ Example `thread.toml`:
 schema_version = 3
 id = "fg61bcmp"
 title = "3.0: Snapshot storage for substantial code reduction"
-lifecycle = "proposal"
+category = "rfc"
 status = "draft"
 tags = ["cross-cutting"]
 created_at = "2026-05-02T23:31:40Z"
@@ -405,14 +403,16 @@ Tracked repository configuration lives under `.forum/`:
   actors.toml
   templates/
     thread.md
-    proposal.md
-    execution.md
-    record.md
+    rfc.md
+    decision.md
+    task.md
+    bug.md
 ```
 
 `.forum/` is configuration and templates, not authoritative thread storage.
-`policy.toml` defines guards and operation checks. `actors.toml` may define
-actor metadata. Templates provide initial body text for new threads.
+`policy.toml` defines category registry overrides, guards, and operation checks.
+`actors.toml` may define actor metadata. Templates provide initial body text for
+new threads by category.
 
 Local clone state lives under `.git/forum/` and MUST NOT be committed:
 
@@ -436,7 +436,7 @@ To read a thread:
 2. Read the tip commit tree.
 3. Parse `thread.toml`.
 4. Parse optional `body.md`, `nodes/*`, `links.toml`, and `evidence.toml`.
-5. Validate schema, state, tag grammar, node references, and link/evidence shape.
+5. Validate schema, category/status/tag grammar, node references, and link/evidence shape.
 6. Return `ThreadSnapshot`.
 
 No event replay is performed for native 3.0 snapshots.
@@ -448,7 +448,7 @@ To write a change:
 1. Resolve the current thread ref tip.
 2. Read and validate the current snapshot.
 3. Apply the requested mutation in memory.
-4. Validate the resulting snapshot and policy checks.
+4. Validate the resulting snapshot and category policy checks.
 5. Write blobs and a new tree.
 6. Create a commit whose parent is the previous tip.
 7. Update `refs/forum/threads/<thread-id>` with compare-and-swap.
@@ -524,8 +524,8 @@ actor ID supplied by the command; they do not prove cryptographic sign-off.
 The everyday CLI surface remains recognizable:
 
 ```text
-git forum new rfc|dec|task|issue|bug <TITLE>
-git forum thread new <TITLE> --lifecycle <L> [--tag <T>]...
+git forum new <CATEGORY> <TITLE> [--tag <T>]...
+git forum thread new <TITLE> --category <CATEGORY> [--tag <T>]...
 git forum ls
 git forum show <THREAD>
 git forum log <THREAD>
@@ -554,7 +554,7 @@ Removed from the 3.0 live CLI:
 as the CLI for:
 
 - reading thread snapshots;
-- validating lifecycle transitions, node mutations, links, evidence, and policy;
+- validating category transitions, node mutations, links, evidence, and policy;
 - writing snapshot commits;
 - handling CAS conflicts.
 
@@ -568,7 +568,22 @@ or retry the intended edit.
 
 ### 8.1 Strategy
 
-Migration is one-way:
+Migration is one-way and intentionally lossy. The migration tool preserves the
+minimum useful user-facing material:
+
+- thread title and body;
+- readable discussion content;
+- outgoing links;
+- tags;
+- legacy kind or lifecycle mapped to a 3.0 category.
+
+It does not preserve exact 1.x/2.x state-machine semantics, policy outcomes,
+node-type behavior, evidence behavior, repair metadata, or timeline semantics.
+Implementations MAY use the existing 1.x/2.x replay/materialization code inside
+the migration module to avoid duplicating event parsing logic, but that legacy
+adapter MUST NOT be part of the native 3.0 read or write path.
+
+Commands:
 
 ```text
 git forum migrate --to 3.0
@@ -577,43 +592,60 @@ git forum migrate --to 3.0 --dry-run
 
 For each 1.x/2.x `refs/forum/threads/<id>` event-chain ref:
 
-1. Load the 1.x/2.x event chain using the migration tool's replay implementation.
-2. Materialize the final `ThreadState`.
-3. Convert it to a 3.0 snapshot tree.
-4. Create a snapshot commit whose parent is the old event-chain tip.
-5. Move `refs/forum/threads/<id>` to the snapshot commit with CAS.
-6. Emit a migration report.
+1. Materialize the legacy thread through a migration-only 1.x/2.x adapter.
+2. Map the legacy kind or lifecycle to a 3.0 category using the fixed table in
+   §8.3.
+3. Project only the preserved material listed above into a 3.0 snapshot.
+4. Create the snapshot using the target category's `initial_status`.
+5. Convert preserved textual discussion material to `body.md` and `comment`
+   nodes. Legacy approvals, objections, actions, reviews, questions, claims,
+   risks, summaries, and other non-native semantics MAY be flattened to
+   `comment` nodes.
+6. Convert representable outgoing links to `links.toml`. Invalid or
+   unrepresentable links MAY be omitted and MUST be listed in the migration
+   report.
+7. Preserve valid tags. Invalid tags MAY be omitted and MUST be listed in the
+   migration report.
+8. Create a snapshot commit whose parent is the old event-chain tip.
+9. Move `refs/forum/threads/<id>` to the snapshot commit with CAS.
+10. Emit a migration report.
 
 Because the snapshot commit keeps the old event-chain tip as parent, the old
-events remain reachable through Git history. In addition, migration MUST write
-`legacy/events.ndjson` into the snapshot tree so the migrated source events are
-inspectable without traversing the old event commits. The 3.0 runtime still
-reads only the tip snapshot.
+events remain reachable through Git history. The 3.0 runtime still reads only
+the tip snapshot.
 
 ### 8.2 Legacy archive
 
-Migration MUST write:
+Migration SHOULD write by default:
 
 ```text
 legacy/events.ndjson
 ```
 
 This archive is for inspection and export. Core 3.0 commands MUST NOT depend on
-it for normal reads or writes. The archive MUST contain the 1.x/2.x source
-events in event-chain order as newline-delimited JSON. If a legacy event cannot
-be serialized into this archive, migration MUST fail before moving the thread
-ref.
+it for normal reads or writes. The archive SHOULD contain the 1.x/2.x source
+events in event-chain order as newline-delimited JSON when those source events
+are available. Writing the archive MUST NOT require semantic reconstruction of
+old state. If archive generation is omitted or incomplete, migration MUST list
+that fact in the migration report.
 
-### 8.3 Aliases and legacy references
+### 8.3 Category mapping
 
-Migration MAY preserve legacy thread IDs through alias refs:
+Migration uses a fixed built-in mapping from 1.x/2.x thread kind or lifecycle to
+3.0 category:
 
-```text
-refs/forum/aliases/<legacy-id> -> <thread-id>
-```
+| 1.x/2.x source | 3.0 category |
+|---|---|
+| `rfc` | `rfc` |
+| `dec` | `decision` |
+| `task` | `task` |
+| `issue` | `bug` |
+| `bug` | `bug` |
+| unrecognized | `task` |
 
-Alias resolution is read-only. New 3.0 writes always target the canonical
-thread ref.
+Migration MUST NOT require repository-specific category mapping logic. The
+source kind or lifecycle SHOULD also be preserved as a tag when it satisfies the
+tag grammar in §2.4.
 
 ### 8.4 Unmigrated event-chain refs
 
@@ -631,11 +663,12 @@ names the ref and suggests `git forum migrate --to 3.0`.
 
 - `refs/forum/threads/*` points to readable snapshot commits;
 - `thread.toml` schema version and required fields;
-- lifecycle/status/tag grammar;
+- category/status/tag grammar;
+- category registry shape and transition references;
 - node metadata/body pairing;
 - `reply_to` references target existing nodes;
 - link targets are syntactically valid thread IDs, and optionally resolvable;
-- policy file shape and selector ambiguity.
+- policy file shape.
 
 Doctor no longer performs strict replay validation for native 3.0 snapshots.
 
@@ -679,7 +712,8 @@ New or revised error categories:
 | `SnapshotSchemaUnsupported` | error | `schema_version` is absent or unsupported. |
 | `SnapshotInvalid` | error | Snapshot fields fail schema or grammar checks. |
 | `DanglingNodeReference` | error | `reply_to` points to a missing node in the same thread. |
-| `AmbiguousPolicyRule` | error | Multiple structured policy rules tie for one operation. |
+| `CategoryUnknown` | error | Thread category is not defined by built-in or repository policy. |
+| `CategoryPolicyInvalid` | error | Category policy references unknown statuses, unknown guards, or malformed transitions. |
 | `LegacyEventChain` | error | 3.0 command sees an unmigrated 1.x/2.x event chain. |
 
 Event-chain-specific errors such as stale target events are not native 3.0
@@ -697,7 +731,7 @@ errors.
 ### Writes
 
 - Node add/edit/resolve/retract/reopen mutate only snapshot files.
-- State transitions update `thread.toml` and preserve valid lifecycle/status pairs.
+- State transitions update `thread.toml` and preserve valid category/status pairs.
 - Links and evidence update their TOML files and remain readable after branch switches.
 - Concurrent same-thread writes fail with a retryable CAS error.
 
@@ -713,17 +747,23 @@ errors.
 ### Migration
 
 - Every migrated 1.x/2.x thread produces a valid 3.0 snapshot.
+- Every migrated 1.x/2.x thread preserves title/body discussion content, valid
+  links, valid tags, and a 3.0 category.
+- Migrated threads use the target category's `initial_status` rather than
+  preserving legacy status semantics.
 - Old event commits remain reachable as parents of the migration snapshot commit.
-- Every migrated 1.x/2.x thread contains `legacy/events.ndjson`.
+- `legacy/events.ndjson` is written by default when source events are available,
+  and normal 3.0 reads do not depend on it.
 - Unmigrated 1.x/2.x event-chain refs are rejected by normal 3.0 read and write
   commands with a migration-required error.
-- Migrated legacy node labels do not affect live node-type behavior.
+- Omitted invalid links, omitted invalid tags, and incomplete legacy archives
+  are listed in the migration report.
 - Dry-run reports every planned ref update without writing objects.
 
 ### Policy
 
-- Structured selectors match lifecycle and tags without invoking a string expression parser.
-- Ambiguous operation rules fail loudly.
+- Category policy validates initial statuses, status sets, transitions, guards,
+  and operation checks without invoking a string expression parser.
 - Removed legacy policy forms are rejected with actionable migration hints.
 
 ## 13. Non-goals
