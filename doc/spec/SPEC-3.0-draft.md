@@ -4,7 +4,7 @@ Version 3.0-draft - 2026-05-03 (JST)
 Status: **Draft**. This document is intended to be self-contained: every
 normative 3.0 rule is written here directly rather than inherited by reference
 from an earlier specification.
-Discussion thread: `@fg61bcmp`.
+Discussion thread: `fg61bcmp`.
 Bound by `doc/spec/CORE-VALUE.md` - when this document conflicts with the core
 value statement, this document is wrong and must be revised.
 
@@ -61,7 +61,7 @@ thread state is a snapshot with these required fields:
 | Field | Type | Description |
 |---|---|---|
 | `schema_version` | integer | Must be `3` for native 3.0 snapshots. |
-| `id` | string | Thread ID, storage form without display marker. |
+| `id` | string | Thread ID. |
 | `title` | string | Human-readable title. |
 | `lifecycle` | enum | `proposal`, `execution`, or `record`. |
 | `status` | enum | Current state from the unified state machine in §3.1. |
@@ -485,24 +485,24 @@ MUST NOT require replaying historical snapshots to compute current state.
 
 ## 6. Identity scheme
 
-Thread IDs have two forms:
+Thread IDs have one form:
 
 | Form | Example | Use |
 |---|---|---|
-| Storage form | `fg61bcmp` | Ref names and snapshot fields. |
-| Display form | `@fg61bcmp` | Human-facing CLI output. |
+| Thread ID | `fg61bcmp` | Ref names, snapshot fields, CLI input, and CLI output. |
 
-The `@` marker is display-only. CLI input MUST accept both `@fg61bcmp` and
-`fg61bcmp` wherever a thread ID is expected.
+3.0 does not define a display marker for thread IDs. Human-facing output MUST
+show bare thread IDs such as `fg61bcmp`. CLI input MUST treat `@fg61bcmp` as an
+invalid 3.0 thread ID input.
 
 Native 3.0 thread IDs SHOULD be 8-character lowercase base36 tokens. They MUST
 be valid as the final path component of `refs/forum/threads/<thread-id>` and
-MUST NOT contain `/`, `:`, whitespace, `@{`, `..`, or other characters rejected
-by Git ref-name validation.
+MUST NOT contain `/`, `:`, `@`, whitespace, `@{`, `..`, or other characters
+rejected by Git ref-name validation.
 
 Implementations MAY accept unique thread ID prefixes for interactive CLI input
-when the prefix is at least 4 characters after removing an optional leading
-`@`. Ambiguous prefixes MUST fail with candidate IDs.
+when the prefix is at least 4 characters. Ambiguous prefixes MUST fail with
+candidate IDs.
 
 Node IDs in native 3.0 are opaque path-safe tokens. Implementations SHOULD use
 lowercase base36 or hex strings and MUST avoid `/`, `:`, `@`, whitespace, and
