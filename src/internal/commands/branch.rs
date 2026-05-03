@@ -1,14 +1,26 @@
+//! `git forum branch {bind|clear}` orchestration.
+//!
+//! Phase 2 slot 6 (RFC `7ymtc4b2`): writes the `branch` field on
+//! `thread.toml` directly via `snapshot::store::write_snapshot` per
+//! SPEC-3.0 §3.1. The legacy `Scope` event-write path is no longer
+//! invoked here.
+
 use super::super::clock::Clock;
 use super::super::error::{ForumError, ForumResult};
-use super::super::event::{Event, EventType};
 use super::super::git_ops::GitOps;
+use super::super::snapshot::{self, store::write_snapshot};
+
+use super::shorthand_say::migrate_legacy_to_snapshot;
 
 /// Bind or clear a thread's branch scope.
 ///
-/// Preconditions: thread_id exists; when `branch` is Some, the branch exists in `refs/heads/`.
-/// Postconditions: a Scope event is written and the thread ref is updated.
-/// Failure modes: ForumError::Repo if the branch does not exist; ForumError::Git on subprocess failure.
-/// Side effects: writes git objects, updates ref.
+/// Preconditions: thread_id exists; when `branch` is Some, the branch
+/// exists in `refs/heads/`.
+/// Postconditions: `thread.toml.branch` is updated to the new value
+/// (or removed when clearing).
+/// Failure modes: `ForumError::Repo` when the branch does not exist;
+/// `ForumError::Git` on subprocess failure.
+/// Side effects: writes one snapshot commit and updates the thread ref.
 pub fn set_branch(
     git: &GitOps,
     thread_id: &str,
@@ -25,7 +37,20 @@ pub fn set_branch(
         }
     }
 
-    let ev = Event::base(thread_id, EventType::Scope, actor, clock).with_branch(branch);
-    super::super::event::write_event(git, &ev)?;
+    let mut doc = match snapshot::read_snapshot(git, thread_id) {
+        Ok(doc) => doc,
+        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(git, thread_id)?,
+        Err(other) => return Err(other),
+    };
+    let now = clock.now();
+    doc.snapshot.branch = branch.map(String::from);
+    doc.snapshot.updated_at = now;
+    doc.snapshot.updated_by = actor.into();
+
+    let msg = match branch {
+        Some(b) => format!("branch bind {thread_id} -> {b}"),
+        None => format!("branch clear {thread_id}"),
+    };
+    write_snapshot(git, thread_id, &doc, &msg)?;
     Ok(())
 }
