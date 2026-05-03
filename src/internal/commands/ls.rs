@@ -1,13 +1,60 @@
 //! Top-level list/search renderers (`git forum ls`, `shortlog`, search).
 //! Separated from `show.rs` because they don't share the thread-detail
 //! view's data model — they format thread/index rows, not replayed state.
+//!
+//! Phase 2 slot 7a (RFC `7ymtc4b2`): the `Ls` arm body relocates from
+//! `main.rs` to [`run`] in this module. `render_ls` and the lower-level
+//! `list_thread_states` (in `commands::bulk`) are unchanged — the slot
+//! is a pure handler relocation since `replay_thread` already reads
+//! snapshot tips.
 
 use chrono::{DateTime, Utc};
 
-use super::super::event::Lifecycle;
+use super::super::error::ForumError;
+use super::super::event::{Lifecycle, ThreadKind};
 use super::super::index::SearchRow;
-use super::super::thread::ThreadState;
+use super::super::thread::{self, ThreadState};
+use super::context::Context;
 use super::show::short_oid;
+
+/// Args for [`run`] — `git forum ls` filters.
+pub struct LsArgs {
+    pub kind_positional: Option<String>,
+    pub branch: Option<String>,
+    pub kind: Option<String>,
+    pub status: Option<String>,
+}
+
+/// Uniform entry point for the `ls` subcommand.
+///
+/// Resolves `kind_positional` ↔ `--kind` (rejecting conflicts), filters
+/// the replayed thread list, and prints `render_ls` to stdout.
+pub fn run(args: LsArgs, ctx: &Context) -> Result<(), ForumError> {
+    let effective_kind = match (args.kind_positional.as_deref(), args.kind.as_deref()) {
+        (Some(pos), Some(flag)) if pos != flag => {
+            return Err(ForumError::Config(format!(
+                "conflicting kind: positional '{pos}' vs --kind '{flag}'"
+            )));
+        }
+        (Some(pos), _) => Some(pos),
+        (_, Some(flag)) => Some(flag),
+        (None, None) => None,
+    };
+    let kind_filter: Option<ThreadKind> = effective_kind
+        .map(super::shared::parse_thread_kind)
+        .transpose()?;
+    let states = super::bulk::list_thread_states(&ctx.git, kind_filter, args.branch.as_deref())?;
+    let filtered: Vec<&thread::ThreadState> = states
+        .iter()
+        .filter(|s| {
+            args.status
+                .as_deref()
+                .is_none_or(|st| s.status.as_str() == st)
+        })
+        .collect();
+    print!("{}", render_ls(&filtered));
+    Ok(())
+}
 
 /// Render search results from the local index.
 ///

@@ -1310,24 +1310,16 @@ fn main() -> Result<(), ForumError> {
             kind,
             status,
         } => {
-            let effective_kind = match (kind_positional.as_deref(), kind.as_deref()) {
-                (Some(pos), Some(flag)) if pos != flag => {
-                    return Err(ForumError::Config(format!(
-                        "conflicting kind: positional '{pos}' vs --kind '{flag}'"
-                    )));
-                }
-                (Some(pos), _) => Some(pos),
-                (_, Some(flag)) => Some(flag),
-                (None, None) => None,
-            };
-            let kind_filter = effective_kind.map(parse_thread_kind).transpose()?;
-            let (git, _paths) = discover_repo_with_init_warning()?;
-            let states = list_thread_states(&git, kind_filter, branch.as_deref())?;
-            let filtered: Vec<&thread::ThreadState> = states
-                .iter()
-                .filter(|s| status.as_deref().is_none_or(|st| s.status.as_str() == st))
-                .collect();
-            print!("{}", ls::render_ls(&filtered));
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            ls::run(
+                ls::LsArgs {
+                    kind_positional,
+                    branch,
+                    kind,
+                    status,
+                },
+                &ctx,
+            )?;
         }
 
         Commands::Shortlog { since, kind } => {
