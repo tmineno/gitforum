@@ -31,7 +31,6 @@ use git_forum::internal::commands::thread_new::{
 };
 use git_forum::internal::commands::verify;
 use git_forum::internal::commands::Context;
-use git_forum::internal::config;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::error::ForumError;
 use git_forum::internal::event::NodeType;
@@ -1656,18 +1655,8 @@ fn main() -> Result<(), ForumError> {
         }
 
         Commands::Brief { thread_id, json } => {
-            let (git, paths) = discover_repo_with_init_warning()?;
-            let thread_id = resolve_tid(&git, &thread_id)?;
-            let state = thread::replay_thread(&git, &thread_id)?;
-            let incoming = read_incoming_link_counts(&paths, &thread_id);
-            if json {
-                let payload = brief::build_json(&state, &incoming);
-                let s = serde_json::to_string_pretty(&payload)
-                    .map_err(|e| ForumError::Repo(e.to_string()))?;
-                println!("{s}");
-            } else {
-                print!("{}", brief::render_plaintext(&state, &incoming));
-            }
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            brief::run(brief::BriefArgs { thread_id, json }, &ctx)?;
         }
 
         Commands::Verify { thread_id } => {
@@ -1864,18 +1853,5 @@ fn main() -> Result<(), ForumError> {
 // removed at slot 11 (went with the deleted `Import` / `Export` arms).
 //
 // `collect_implements_children` / `fallback_scan_implements` relocated
-// to `commands::show` at slot 7c. `read_incoming_link_counts` relocates
+// to `commands::show` at slot 7c. `read_incoming_link_counts` relocated
 // to `commands::brief` at slot 7h.
-
-/// Read incoming-link counts grouped by relation for `brief`.
-///
-/// Phase 2 slot 11: the SQLite index is on the Phase 4 DELETE list,
-/// so this returns the zero-counts default. SPEC-3.0 §9.2: the
-/// index is optional acceleration; the reverse-link query stays
-/// available as a tree scan if a future slot needs it.
-fn read_incoming_link_counts(
-    _paths: &config::RepoPaths,
-    _thread_id: &str,
-) -> brief::IncomingLinkCounts {
-    brief::IncomingLinkCounts::default()
-}

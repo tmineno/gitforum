@@ -12,14 +12,25 @@
 //! - Never appends an event.
 //! - No flag suggests cross-thread analysis (no `--tree`, no
 //!   `--with-parent`, no `--show-blockers`).
+//!
+//! Phase 2 slot 7h (RFC `7ymtc4b2`): the `Brief` arm body relocates
+//! from `main.rs` to [`run`] in this module, and
+//! [`read_incoming_link_counts`] moves here. Per ADR-011 Decision 6
+//! the SQLite reverse-link index is on the Phase 4 DELETE list, so
+//! `read_incoming_link_counts` returns the zero-counts default until
+//! a future slot adds a tree-scan fallback.
 
 use std::collections::BTreeMap;
 
 use serde::Serialize;
 
+use super::super::config;
+use super::super::error::ForumError;
 use super::super::event::NodeType;
 use super::super::node::Node;
-use super::super::thread::ThreadState;
+use super::super::thread::{self, ThreadState};
+use super::context::Context;
+use super::shared::resolve_tid;
 
 /// Tally of incoming `--rel <X>` link counts grouped by relation, sourced from
 /// the SQLite reverse-link index.
@@ -249,6 +260,45 @@ fn single_line(s: &str, max: usize) -> String {
         }
         format!("{}…", &one[..end])
     }
+}
+
+// ============================================================
+//  Brief command — `git forum brief` orchestration
+// ============================================================
+
+/// Args for [`run`] — `git forum brief`.
+pub struct BriefArgs {
+    pub thread_id: String,
+    pub json: bool,
+}
+
+/// Uniform entry point for the `brief` subcommand.
+pub fn run(args: BriefArgs, ctx: &Context) -> Result<(), ForumError> {
+    let thread_id = resolve_tid(&ctx.git, &args.thread_id)?;
+    let state = thread::replay_thread(&ctx.git, &thread_id)?;
+    let incoming = read_incoming_link_counts(&ctx.paths, &thread_id);
+    if args.json {
+        let payload = build_json(&state, &incoming);
+        let s =
+            serde_json::to_string_pretty(&payload).map_err(|e| ForumError::Repo(e.to_string()))?;
+        println!("{s}");
+    } else {
+        print!("{}", render_plaintext(&state, &incoming));
+    }
+    Ok(())
+}
+
+/// Read incoming-link counts grouped by relation for `brief`.
+///
+/// Phase 2 slot 11: the SQLite index is on the Phase 4 DELETE list,
+/// so this returns the zero-counts default. SPEC-3.0 §9.2: the
+/// index is optional acceleration; the reverse-link query stays
+/// available as a tree scan if a future slot needs it.
+pub fn read_incoming_link_counts(
+    _paths: &config::RepoPaths,
+    _thread_id: &str,
+) -> IncomingLinkCounts {
+    IncomingLinkCounts::default()
 }
 
 #[cfg(test)]
