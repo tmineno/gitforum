@@ -20,6 +20,7 @@ pub mod ls;
 pub mod migrate;
 pub mod node;
 pub mod node_bulk;
+pub mod policy;
 pub mod repair_workflow;
 pub mod retype;
 pub mod revise;

@@ -36,7 +36,6 @@ use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::lint_emit::{self, LintEmitter};
 use git_forum::internal::policy::Policy;
-use git_forum::internal::thread;
 use git_forum::internal::tui as forum_tui;
 
 const GROUPED_HELP: &str = "\
@@ -1523,51 +1522,19 @@ fn main() -> Result<(), ForumError> {
         }
 
         Commands::Policy { cmd } => {
-            let (git, paths) = discover_repo_with_init_warning()?;
-            match cmd {
-                PolicyCmd::Show => {
-                    let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
-                    print!(
-                        "{}",
-                        git_forum::internal::policy::render_policy_show(&policy)
-                    );
-                }
-                PolicyCmd::Lint => {
-                    let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
-                    let diags = git_forum::internal::policy::lint_policy(&policy);
-                    if diags.is_empty() {
-                        println!("policy ok");
-                    } else {
-                        for d in &diags {
-                            println!("{d}");
-                        }
-                    }
-                }
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            let arm = match cmd {
+                PolicyCmd::Show => commands::policy::PolicyArm::Show,
+                PolicyCmd::Lint => commands::policy::PolicyArm::Lint,
                 PolicyCmd::Check {
                     thread_id,
                     transition,
-                } => {
-                    let thread_id = resolve_tid(&git, &thread_id)?;
-                    let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
-                    let state = thread::replay_thread(&git, &thread_id)?;
-                    let parts: Vec<&str> = transition.splitn(2, "->").collect();
-                    if parts.len() != 2 {
-                        eprintln!("error: --transition must be 'from->to'");
-                        std::process::exit(1);
-                    }
-                    let violations = git_forum::internal::policy::check_guards(
-                        &policy, &state, parts[0], parts[1],
-                    );
-                    if violations.is_empty() {
-                        println!("transition {transition}: ok");
-                    } else {
-                        for v in &violations {
-                            println!("FAIL [{}] {}", v.rule, v.reason);
-                        }
-                        std::process::exit(1);
-                    }
-                }
-            }
+                } => commands::policy::PolicyArm::Check {
+                    thread_id,
+                    transition,
+                },
+            };
+            commands::policy::run_arm(arm, &ctx)?;
         }
     }
 
