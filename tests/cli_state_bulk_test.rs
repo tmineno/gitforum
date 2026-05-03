@@ -188,8 +188,6 @@ fn state_self_loop_returns_zero_with_note() {
 
 #[test]
 fn state_self_loop_with_comment_records_say_node() {
-    use git_forum::internal::event::EventType;
-
     let repo = support::repo::TestRepo::new();
     let paths = RepoPaths::from_repo_root(repo.path());
     init::init_forum(&paths).unwrap();
@@ -225,21 +223,14 @@ fn state_self_loop_with_comment_records_say_node() {
     let git = GitOps::new(repo.path().to_path_buf());
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(state.status, "open");
-    assert!(
-        !state
-            .events
-            .iter()
-            .any(|e| e.event_type == EventType::State),
-        "no State event should be written for a self-loop"
-    );
-    let say_events: Vec<_> = state
-        .events
+    // SPEC-3.0 §2.2 (Phase 2 slot 3): comments are nodes in
+    // `nodes/<id>.{toml,md}`. The pre-Phase-2 assertion was on
+    // `state.events` (v2 event-chain shape); the v3 surface is
+    // `state.nodes`.
+    let comment_nodes: Vec<_> = state
+        .nodes
         .iter()
-        .filter(|e| e.event_type == EventType::Say)
+        .filter(|n| n.body == "still investigating; leaving open")
         .collect();
-    assert_eq!(say_events.len(), 1);
-    assert_eq!(
-        say_events[0].body.as_deref(),
-        Some("still investigating; leaving open")
-    );
+    assert_eq!(comment_nodes.len(), 1);
 }

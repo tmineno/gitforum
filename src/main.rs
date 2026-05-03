@@ -2172,7 +2172,7 @@ fn main() -> Result<(), ForumError> {
             rel,
             comment,
             fast_track,
-            force: _force,
+            force,
         } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
@@ -2221,86 +2221,28 @@ fn main() -> Result<(), ForumError> {
                                 .into(),
                         )
                     })?;
-                    let thread_id = resolve_tid(&git, &thread_id)?;
                     let new_state = new_state.ok_or_else(|| {
                         ForumError::Config(
                             "usage: git forum state <THREAD_ID> <NEW_STATE> [--approve <ACTOR_ID>]... [--resolve-open-actions]"
                                 .into(),
                         )
                     })?;
-                    let actor = resolve_actor(as_actor, &git);
-                    let options = state_change::StateChangeOptions {
-                        resolve_open_actions,
-                        comment,
-                    };
-                    if fast_track {
-                        let walked = state_change::fast_track_state(
-                            &git, &thread_id, &new_state, &approve, &actor, &clock, &policy,
-                            options,
-                        )?;
-                        for (i, step) in walked.iter().enumerate() {
-                            let is_final = i == walked.len() - 1;
-                            if is_final {
-                                println!("{thread_id} -> {step}");
-                            } else {
-                                eprintln!("  {thread_id}: -> {step}");
-                            }
-                        }
-                    } else {
-                        let outcome = state_change::change_state(
-                            &git, &thread_id, &new_state, &approve, &actor, &clock, &policy,
-                            options,
-                        )?;
-                        match outcome {
-                            state_change::StateChangeOutcome::Applied { .. } => {
-                                println!("{thread_id} -> {new_state}");
-                            }
-                            state_change::StateChangeOutcome::NoOp {
-                                state,
-                                comment_recorded,
-                            } => {
-                                if comment_recorded {
-                                    println!(
-                                        "note: {thread_id} is already in state '{state}'; no transition recorded (comment attached as a standalone node)"
-                                    );
-                                } else {
-                                    println!(
-                                        "note: {thread_id} is already in state '{state}'; no transition recorded"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    // Create links after state transition if requested
-                    if !link_to.is_empty() {
-                        let rel = rel.as_deref().ok_or_else(|| {
-                            ForumError::Config("--rel is required when --link-to is used".into())
-                        })?;
-                        for target in &link_to {
-                            let resolved_target = resolve_tid(&git, target)?;
-                            evidence::add_thread_link(
-                                &git,
-                                &thread_id,
-                                &resolved_target,
-                                rel,
-                                &actor,
-                                &clock,
-                            )?;
-                        }
-                    }
-                    if let Ok(state) = thread::replay_thread(&git, &thread_id) {
-                        eprintln!(
-                            "{}",
-                            show::render_show(
-                                &state,
-                                &show::ShowOptions {
-                                    mode: show::ShowMode::ActionHint,
-                                    policy: Some(policy.clone()),
-                                    ..show::ShowOptions::default()
-                                }
-                            )
-                        );
-                    }
+                    let ctx = Context::discover(Box::new(SystemClock))?;
+                    commands::state::run(
+                        commands::state::StateShorthandArgs {
+                            thread_id,
+                            new_state,
+                            approve,
+                            as_actor,
+                            resolve_open_actions,
+                            link_to,
+                            rel,
+                            comment,
+                            fast_track,
+                            force,
+                        },
+                        &ctx,
+                    )?;
                 }
             }
         }

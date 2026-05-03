@@ -104,6 +104,30 @@ pub fn shorthand_target_for_lifecycle(
     }
 }
 
+/// Resolve `new_state` as either a §9.3 shorthand verb (`close`,
+/// `accept`, etc.) or a canonical 2.0 state name (`done`, `accepted`,
+/// `open`, …). Used by both the shorthand arms and the canonical
+/// `git forum state <ID> <STATE>` form.
+fn resolve_target_state(new_state: &str, lifecycle: Lifecycle) -> Result<&'static str, ForumError> {
+    use crate::internal::workflow::ShorthandResolution::*;
+    match SPEC.shorthand_target(new_state, lifecycle) {
+        Target(t) => Ok(t),
+        NotApplicable(hint) => Err(ForumError::Config(format!("{hint} (SPEC-2.0 §9.3)"))),
+        Unknown => {
+            // Try as a canonical state name. The legacy 1.x → 2.0
+            // alias fold (`closed` → `done`, `proposed` → `open`,
+            // etc.) lives in `event::ThreadStatus::parse_lenient`.
+            crate::internal::event::ThreadStatus::parse_lenient(new_state)
+                .map(|s| s.as_str())
+                .ok_or_else(|| {
+                    ForumError::Config(format!(
+                        "unknown state '{new_state}' for {lifecycle} lifecycle"
+                    ))
+                })
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run_state_shorthand(
     thread_id: &str,
@@ -126,7 +150,7 @@ pub fn run_state_shorthand(
     // Replay once up front to resolve the lifecycle facet — the §9.3
     // table is keyed on lifecycle, not on the legacy `kind` field.
     let pre_state = thread::replay_thread(&git, thread_id)?;
-    let target = shorthand_target_for_lifecycle(new_state, pre_state.lifecycle)?;
+    let target = resolve_target_state(new_state, pre_state.lifecycle)?;
 
     let mut doc = match snapshot::read_snapshot(&git, thread_id) {
         Ok(doc) => doc,
