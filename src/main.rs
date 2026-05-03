@@ -1364,12 +1364,8 @@ fn main() -> Result<(), ForumError> {
 
         Commands::Node { cmd } => match cmd {
             NodeCmd::Show { node_id } => {
-                let (git, _paths) = discover_repo_with_init_warning()?;
-                let lookup = thread::find_node(&git, &node_id)?;
-                print!(
-                    "{}",
-                    show::render_node_show(&lookup, &show::ShowOptions::default())
-                );
+                let ctx = Context::discover(Box::new(SystemClock))?;
+                commands::node::run_show(commands::node::NodeShowArgs { node_id }, &ctx)?;
             }
             NodeCmd::Add {
                 thread_id,
@@ -1381,16 +1377,18 @@ fn main() -> Result<(), ForumError> {
                 reply_to,
                 as_actor,
                 force,
-            } => run_shorthand_say(
-                &thread_id,
-                body_positional,
-                body_flag,
-                body_file,
-                edit,
-                reply_to,
-                as_actor,
-                node_type,
-                force,
+            } => commands::node::run_add(
+                commands::node::NodeAddArgs {
+                    thread_id,
+                    node_type,
+                    body_positional,
+                    body_flag,
+                    body_file,
+                    edit,
+                    reply_to,
+                    as_actor,
+                    force,
+                },
                 &clock,
             )?,
         },

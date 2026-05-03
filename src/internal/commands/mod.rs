@@ -17,6 +17,7 @@ pub mod hook;
 pub mod link;
 pub mod ls;
 pub mod migrate;
+pub mod node;
 pub mod node_bulk;
 pub mod repair_workflow;
 pub mod retype;
