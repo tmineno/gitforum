@@ -824,80 +824,8 @@ fn main() -> Result<(), ForumError> {
 
     match command {
         Commands::Init => {
-            let git = GitOps::discover()?;
-            let git_dir = git.git_dir()?;
-            let paths = RepoPaths::from_repo_root_and_git_dir(git.root(), &git_dir);
-            init::init_forum(&paths)?;
-            // Generate local.toml with default_actor if it doesn't exist
-            let local_toml_path = paths.git_forum.join("local.toml");
-            if !local_toml_path.exists() {
-                let default_actor = actor::actor_from_git_config(&git);
-                let content = format!(
-                    "# git-forum local config (per-clone, not committed)\n\
-                     \n\
-                     # Default actor ID for this clone.\n\
-                     # Override per-command with --as or GIT_FORUM_ACTOR env var.\n\
-                     default_actor = \"{default_actor}\"\n\
-                     \n\
-                     # Override git commit author/committer on forum commits.\n\
-                     # Uncomment to use a pseudonym instead of git config user.name/email.\n\
-                     # [commit_identity]\n\
-                     # name = \"pseudonym\"\n\
-                     # email = \"pseudonym@example.com\"\n"
-                );
-                std::fs::write(&local_toml_path, content)?;
-                println!("Default actor: {default_actor}");
-                eprintln!(
-                    "hint: edit .git/forum/local.toml to change your actor ID or commit identity"
-                );
-            }
-            // Configure fetch refspecs for forum refs on all remotes
-            match init::ensure_forum_refspecs(&git) {
-                Ok(modified) => {
-                    for remote in &modified {
-                        eprintln!("Added forum fetch refspec for remote '{remote}'");
-                    }
-                }
-                Err(e) => {
-                    eprintln!("warning: could not configure forum fetch refspecs: {e}");
-                }
-            }
-
-            // Fetch forum refs from all remotes
-            let mut fetched_any = false;
-            if let Ok(remotes_output) = git.run(&["remote"]) {
-                for remote in remotes_output.lines() {
-                    let remote = remote.trim();
-                    if remote.is_empty() {
-                        continue;
-                    }
-                    match git.run(&["fetch", remote, init::FORUM_REFSPEC]) {
-                        Ok(_) => {
-                            eprintln!("Fetched forum refs from '{remote}'");
-                            fetched_any = true;
-                        }
-                        Err(e) => {
-                            eprintln!("warning: could not fetch forum refs from '{remote}': {e}");
-                        }
-                    }
-                }
-            }
-
-            // Phase 2 slot 11 (RFC `7ymtc4b2`): the SQLite reindex
-            // step is removed alongside the index.rs / reindex.rs
-            // DELETE-list modules. Init no longer materialises an
-            // index after fetch; ADR-011 Decision 6 declares the
-            // index optional in v3.0.0.
-            let _ = (fetched_any, &paths);
-
-            let dir_name = git
-                .root()
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| ".".to_string());
-            println!("Initialized git-forum in {dir_name}");
-            eprintln!("note: actor IDs (--as) are claimed identities, not authenticated. Approvals are recorded, not cryptographically verified.");
-            hook::install_all_hooks(&git, false)?;
+            let ctx = Context::discover_quiet(Box::new(SystemClock))?;
+            commands::init::run(&ctx)?;
         }
 
         Commands::Doctor { verbose, strict } => {

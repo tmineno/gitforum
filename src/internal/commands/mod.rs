@@ -14,6 +14,7 @@ pub mod diff;
 pub mod doctor;
 pub mod evidence;
 pub mod hook;
+pub mod init;
 pub mod link;
 pub mod ls;
 pub mod migrate;
