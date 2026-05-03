@@ -1,11 +1,24 @@
+//! `git forum doctor` orchestration + report data model.
+//!
+//! Phase 2 slot 8 (RFC `7ymtc4b2`): SPEC-3.0 §11/§12 snapshot
+//! integrity checks replace the SQLite-index health block. The
+//! strict-replay pass is retained because `replay_thread_strict`
+//! is mixed-chain aware and surfaces tail-event corruption on
+//! event-chain threads still in the repo. A new check decodes the
+//! snapshot tip via `internal::snapshot::read_snapshot` for each
+//! thread ref; `LegacyEventChain` results emit a `migrate-required`
+//! WARN so the operator knows a Phase 3 `git forum migrate` is
+//! pending.
+
 use super::super::config::RepoPaths;
-use super::super::error::ForumResult;
+use super::super::error::{ForumError, ForumResult};
 use super::super::event;
 use super::super::git_ops::GitOps;
-use super::super::index;
 use super::super::init;
 use super::super::refs;
+use super::super::snapshot;
 use super::super::thread;
+use super::context::Context;
 use super::hook;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,55 +177,42 @@ fn run_with_mode(git: &GitOps, paths: &RepoPaths, strict: bool) -> ForumResult<D
         None => checks.push(fail("thread refs", "could not list refs")),
     }
 
-    // 6. SQLite index health
-    let db_path = paths.git_forum.join("index.db");
-    if db_path.is_file() {
-        match index::open_db(&db_path) {
-            Ok(conn) => {
-                // integrity check
-                match conn.query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0)) {
-                    Ok(result) if result == "ok" => {
-                        checks.push(ok("index integrity"));
-                    }
-                    Ok(result) => {
-                        checks.push(fail("index integrity", &result));
-                    }
-                    Err(e) => {
-                        checks.push(fail("index integrity", &e.to_string()));
-                    }
-                }
-
-                // staleness check: compare thread counts
-                match index::list_threads(&conn) {
-                    Ok(rows) => {
-                        let index_count = rows.len();
-                        if index_count == thread_count {
-                            checks.push(ok(&format!(
-                                "index freshness: {index_count} threads indexed"
-                            )));
-                        } else {
-                            checks.push(warn(
-                                "index freshness",
-                                &format!(
-                                    "index has {index_count} threads but {thread_count} refs exist; run `git forum reindex`"
-                                ),
-                            ));
-                        }
-                    }
-                    Err(e) => {
-                        checks.push(fail("index freshness", &e.to_string()));
-                    }
-                }
+    let _ = thread_count;
+    // 6. Snapshot integrity (SPEC-3.0 §11/§12). For each non-orphan
+    //    thread ref, decode `thread.toml` via `snapshot::read_snapshot`.
+    //    Threads still on the legacy event chain (no `thread.toml` at
+    //    the tip tree) emit a `migrate-required` WARN — they continue
+    //    to read correctly via the mixed-chain replay path, but Phase 3
+    //    `git forum migrate` will fold them into the snapshot layout.
+    //    Orphan refs (no usable thread history at all) are handled
+    //    by the replay block below as `orphan ref` WARNs.
+    if let Some(ids) = &thread_ids {
+        let mut snapshot_ok = 0u32;
+        for id in ids {
+            if matches!(event::is_orphan_ref(git, id), Ok(true)) {
+                continue; // orphan refs handled in the replay block
             }
-            Err(e) => {
-                checks.push(fail("index integrity", &e.to_string()));
+            let ref_name = refs::thread_ref(id);
+            match snapshot::read_snapshot(git, id) {
+                Ok(_doc) => {
+                    snapshot_ok += 1;
+                }
+                Err(ForumError::LegacyEventChain) => {
+                    checks.push(warn(
+                        &format!("migrate-required {ref_name}"),
+                        "thread is on the legacy event chain; run `git forum migrate` (Phase 3)",
+                    ));
+                }
+                Err(e) => {
+                    checks.push(fail(&format!("snapshot decode {ref_name}"), &e.to_string()));
+                }
             }
         }
-    } else {
-        checks.push(warn(
-            "index database",
-            "not found; run `git forum reindex` to create",
-        ));
+        if snapshot_ok > 0 {
+            checks.push(ok(&format!(
+                "snapshot integrity: {snapshot_ok} thread.toml decoded"
+            )));
+        }
     }
 
     // 7. Index blob integrity
@@ -361,6 +361,111 @@ fn canonicalize_target(target: &str, known_ids: &std::collections::HashSet<&str>
         canonical
     } else {
         target.to_string()
+    }
+}
+
+// ============================================================
+//  Doctor command — `git forum doctor` orchestration
+// ============================================================
+
+/// Args for [`run`] — `git forum doctor`.
+pub struct DoctorArgs {
+    pub verbose: bool,
+    pub strict: bool,
+}
+
+/// Uniform entry point for the `doctor` subcommand.
+///
+/// Selects lenient vs strict mode, prints the formatted report, and
+/// exits non-zero iff a check failed (warnings and advisories never
+/// gate exit per CORE-VALUE.md "Advisories").
+pub fn run(args: DoctorArgs, ctx: &Context) -> Result<(), ForumError> {
+    let report = if args.strict {
+        run_doctor_strict(&ctx.git, &ctx.paths)?
+    } else {
+        run_doctor(&ctx.git, &ctx.paths)?
+    };
+    print_report(&report, args.verbose);
+    if !report.all_passed() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Render the formatted doctor report. Replay checks collapse into a
+/// single summary line unless one of them failed; non-replay checks
+/// always emit failures and warnings, and emit OK lines only in
+/// `verbose` mode.
+fn print_report(report: &DoctorReport, verbose: bool) {
+    let mut replay_ok = 0u32;
+    let mut replay_fail: Vec<&DoctorCheck> = Vec::new();
+    let mut ok_count = 0u32;
+    let mut warn_count = 0u32;
+    let mut fail_count = 0u32;
+
+    for check in &report.checks {
+        match check.level {
+            CheckLevel::Ok => ok_count += 1,
+            CheckLevel::Warn => warn_count += 1,
+            CheckLevel::Fail => fail_count += 1,
+        }
+        let is_replay = check.name.starts_with("replay ");
+        if is_replay {
+            if check.level == CheckLevel::Ok {
+                replay_ok += 1;
+                continue;
+            } else {
+                replay_fail.push(check);
+                continue;
+            }
+        }
+        if check.level != CheckLevel::Ok || verbose {
+            let marker = match check.level {
+                CheckLevel::Ok => " ok ",
+                CheckLevel::Warn => "WARN",
+                CheckLevel::Fail => "FAIL",
+            };
+            print!("[{marker}] {}", check.name);
+            if let Some(detail) = &check.detail {
+                print!(" -- {detail}");
+            }
+            println!();
+        }
+    }
+
+    let total_replay = replay_ok + replay_fail.len() as u32;
+    if total_replay > 0 {
+        if replay_fail.is_empty() {
+            println!("[ ok ] replay: {replay_ok} threads replayed successfully");
+        } else {
+            for check in &replay_fail {
+                let detail = check.detail.as_deref().unwrap_or("unknown error");
+                println!("[FAIL] {} -- {}", check.name, detail);
+            }
+            if replay_ok > 0 {
+                println!("[ ok ] replay: {replay_ok} other threads ok");
+            }
+        }
+    }
+
+    for advisory in &report.advisories {
+        println!("[ADV ] {advisory}");
+    }
+
+    println!();
+    if fail_count == 0 && warn_count == 0 {
+        println!("All {ok_count} checks passed.");
+    } else {
+        let parts: Vec<String> = [
+            (fail_count, "failed"),
+            (warn_count, "warning"),
+            (ok_count, "passed"),
+        ]
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, label)| format!("{n} {label}"))
+        .collect();
+        println!("{}", parts.join(", "));
     }
 }
 
