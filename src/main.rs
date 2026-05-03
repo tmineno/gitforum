@@ -39,7 +39,6 @@ use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::lint_emit::{self, LintEmitter};
 use git_forum::internal::policy::Policy;
-use git_forum::internal::state_change;
 use git_forum::internal::thread;
 use git_forum::internal::tui as forum_tui;
 
@@ -1660,35 +1659,8 @@ fn main() -> Result<(), ForumError> {
         }
 
         Commands::Verify { thread_id } => {
-            let (git, paths) = discover_repo_with_init_warning()?;
-            let thread_id = resolve_tid(&git, &thread_id)?;
-            let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
-            let report = verify::verify_thread(&git, &thread_id, &policy)?;
-            if report.passed() {
-                println!("{thread_id}: ready");
-            } else {
-                let state = thread::replay_thread(&git, &thread_id)?;
-                println!("{thread_id}: not ready");
-                for v in &report.violations {
-                    println!("  BLOCKED [{}] {}", v.rule, v.reason);
-                    let hint = state_change::remediation_hint(&v.rule, &state, &thread_id);
-                    if !hint.is_empty() {
-                        println!("    fix: {hint}");
-                    }
-                }
-            }
-            for entry in &report.lookahead {
-                println!("  lookahead ({}):", entry.path);
-                for v in &entry.violations {
-                    println!("    [{}] {}", v.rule, v.reason);
-                }
-            }
-            for adv in &report.linked_advisories {
-                println!("  advisory: {}", adv.message);
-            }
-            if !report.passed() {
-                std::process::exit(1);
-            }
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            verify::run(verify::VerifyArgs { thread_id }, &ctx)?;
         }
 
         Commands::Evidence { cmd } => match cmd {

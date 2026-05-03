@@ -1,9 +1,20 @@
-use super::super::error::ForumResult;
+//! `git forum verify <THREAD_ID>` orchestration + the `VerifyReport`
+//! data model.
+//!
+//! Phase 2 slot 7i (RFC `7ymtc4b2`): the `Verify` arm body relocates
+//! from `main.rs` to [`run`] in this module. The
+//! [`remediation_hint`] formatter moves out of `internal::state_change`
+//! into this module — `verify` is its only remaining caller after the
+//! state-change body relocation in slot 3.
+
+use super::super::error::{ForumError, ForumResult};
 use super::super::event::ThreadKind;
 use super::super::event::{self, normalize_state_name};
 use super::super::git_ops::GitOps;
 use super::super::policy::{self, GuardViolation, Policy};
 use super::super::thread;
+use super::context::Context;
+use super::shared::resolve_tid;
 
 /// Result of a preflight check (`git forum verify`).
 ///
@@ -186,4 +197,95 @@ pub fn build_lookahead(
         path: path_parts.join(" → "),
         violations,
     }]
+}
+
+// ============================================================
+//  Verify command — `git forum verify` orchestration
+// ============================================================
+
+/// Args for [`run`] — `git forum verify`.
+pub struct VerifyArgs {
+    pub thread_id: String,
+}
+
+/// Uniform entry point for the `verify` subcommand.
+///
+/// Replays the thread, computes the policy guard preflight via
+/// [`verify_thread`], and emits the same plain-text report shape that
+/// `main.rs` previously hand-rolled. Exits non-zero iff the report
+/// failed the preflight.
+pub fn run(args: VerifyArgs, ctx: &Context) -> Result<(), ForumError> {
+    let thread_id = resolve_tid(&ctx.git, &args.thread_id)?;
+    let policy = Policy::load(&ctx.paths.dot_forum.join("policy.toml"))?;
+    let report = verify_thread(&ctx.git, &thread_id, &policy)?;
+    if report.passed() {
+        println!("{thread_id}: ready");
+    } else {
+        let state = thread::replay_thread(&ctx.git, &thread_id)?;
+        println!("{thread_id}: not ready");
+        for v in &report.violations {
+            println!("  BLOCKED [{}] {}", v.rule, v.reason);
+            let hint = remediation_hint(&v.rule, &state, &thread_id);
+            if !hint.is_empty() {
+                println!("    fix: {hint}");
+            }
+        }
+    }
+    for entry in &report.lookahead {
+        println!("  lookahead ({}):", entry.path);
+        for v in &entry.violations {
+            println!("    [{}] {}", v.rule, v.reason);
+        }
+    }
+    for adv in &report.linked_advisories {
+        println!("  advisory: {}", adv.message);
+    }
+    if !report.passed() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Format a remediation hint for a guard rule violation.
+///
+/// Phase 2 slot 7i (RFC `7ymtc4b2`): relocated from
+/// `internal::state_change`. `verify` is the only remaining caller
+/// after slot 3 (`state` rewire) — the legacy state-change pre-walk
+/// in `state_change.rs` was the other consumer, and it now imports
+/// this back-pointer until Phase 4 deletes that module.
+pub fn remediation_hint(rule: &str, state: &thread::ThreadState, thread_id: &str) -> String {
+    match rule {
+        "no_open_actions" => {
+            let ids: Vec<String> = state
+                .open_actions()
+                .iter()
+                .map(|n| n.node_id[..n.node_id.len().min(16)].to_string())
+                .collect();
+            if ids.is_empty() {
+                return String::new();
+            }
+            format!(
+                "resolve each with `resolve {thread_id} <NODE_ID>` (open: {}) or use --resolve-open-actions",
+                ids.join(", ")
+            )
+        }
+        "no_open_objections" => {
+            let ids: Vec<String> = state
+                .open_objections()
+                .iter()
+                .map(|n| n.node_id[..n.node_id.len().min(16)].to_string())
+                .collect();
+            if ids.is_empty() {
+                return String::new();
+            }
+            format!(
+                "resolve each with `resolve {thread_id} <NODE_ID>` (open: {})",
+                ids.join(", ")
+            )
+        }
+        // `at_least_one_summary` was removed in 2.0 (ADR-006); the rule
+        // never fires after Policy::load strips it. Hint left empty.
+        "one_human_approval" => "supply --approve human/<name>".to_string(),
+        _ => String::new(),
+    }
 }

@@ -295,39 +295,8 @@ pub fn fast_track_state(
     Ok(walked)
 }
 
-pub fn remediation_hint(rule: &str, state: &thread::ThreadState, thread_id: &str) -> String {
-    match rule {
-        "no_open_actions" => {
-            let ids: Vec<String> = state
-                .open_actions()
-                .iter()
-                .map(|n| n.node_id[..n.node_id.len().min(16)].to_string())
-                .collect();
-            if ids.is_empty() {
-                return String::new();
-            }
-            format!(
-                "resolve each with `resolve {thread_id} <NODE_ID>` (open: {}) or use --resolve-open-actions",
-                ids.join(", ")
-            )
-        }
-        "no_open_objections" => {
-            let ids: Vec<String> = state
-                .open_objections()
-                .iter()
-                .map(|n| n.node_id[..n.node_id.len().min(16)].to_string())
-                .collect();
-            if ids.is_empty() {
-                return String::new();
-            }
-            format!(
-                "resolve each with `resolve {thread_id} <NODE_ID>` (open: {})",
-                ids.join(", ")
-            )
-        }
-        // `at_least_one_summary` was removed in 2.0 (ADR-006); the rule
-        // never fires after Policy::load strips it. Hint left empty.
-        "one_human_approval" => "supply --approve human/<name>".to_string(),
-        _ => String::new(),
-    }
-}
+// `remediation_hint` relocated to `commands::verify::remediation_hint`
+// at Phase 2 slot 7i (RFC `7ymtc4b2`). The internal call site below
+// imports the back-pointer; this module is on the Phase 4 DELETE
+// list, so the dependency cycle dissolves with `state_change.rs`.
+pub use crate::internal::commands::verify::remediation_hint;
