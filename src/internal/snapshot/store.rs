@@ -180,8 +180,15 @@ pub fn read_snapshot(git: &GitOps, thread_id: &str) -> Result<ThreadDocument, Fo
     let tip = git
         .resolve_ref(&refname)?
         .ok_or_else(|| ForumError::SnapshotMissing(format!("{refname} does not exist")))?;
+    read_snapshot_at(git, &tip)
+}
 
-    let tree_listing = git.run(&["ls-tree", "-r", "--name-only", &tip])?;
+/// Like [`read_snapshot`] but parses the tree at a specific commit
+/// SHA. Used by the Phase 2 mixed-chain replay
+/// (`thread::replay_thread`) to seed `ThreadState` from a snapshot
+/// commit that is no longer the tip.
+pub fn read_snapshot_at(git: &GitOps, tip: &str) -> Result<ThreadDocument, ForumError> {
+    let tree_listing = git.run(&["ls-tree", "-r", "--name-only", tip])?;
     let paths: Vec<&str> = tree_listing.lines().collect();
 
     // Legacy pre-flight: an event.json blob at tip tree means this is
@@ -192,14 +199,14 @@ pub fn read_snapshot(git: &GitOps, thread_id: &str) -> Result<ThreadDocument, Fo
 
     if !paths.contains(&"thread.toml") {
         return Err(ForumError::SnapshotMissing(format!(
-            "{refname} tip lacks thread.toml"
+            "commit {tip} lacks thread.toml"
         )));
     }
 
-    let snapshot = ThreadSnapshot::from_toml(&git.show_file(&tip, "thread.toml")?)?;
+    let snapshot = ThreadSnapshot::from_toml(&git.show_file(tip, "thread.toml")?)?;
 
     let body = if paths.contains(&"body.md") {
-        let raw = git.show_file_bytes(&tip, "body.md")?;
+        let raw = git.show_file_bytes(tip, "body.md")?;
         Some(
             String::from_utf8(raw)
                 .map_err(|e| ForumError::SnapshotInvalid(format!("body.md utf-8: {e}")))?,
@@ -221,9 +228,9 @@ pub fn read_snapshot(git: &GitOps, thread_id: &str) -> Result<ThreadDocument, Fo
     for nid in node_ids {
         let toml_path = format!("nodes/{nid}.toml");
         let md_path = format!("nodes/{nid}.md");
-        let record = NodeRecord::from_toml(&git.show_file(&tip, &toml_path)?)?;
+        let record = NodeRecord::from_toml(&git.show_file(tip, &toml_path)?)?;
         let body = if paths.contains(&md_path.as_str()) {
-            let raw = git.show_file_bytes(&tip, &md_path)?;
+            let raw = git.show_file_bytes(tip, &md_path)?;
             String::from_utf8(raw)
                 .map_err(|e| ForumError::SnapshotInvalid(format!("nodes/{nid}.md utf-8: {e}")))?
         } else {
@@ -233,13 +240,13 @@ pub fn read_snapshot(git: &GitOps, thread_id: &str) -> Result<ThreadDocument, Fo
     }
 
     let links = if paths.contains(&"links.toml") {
-        Links::from_toml(&git.show_file(&tip, "links.toml")?)?
+        Links::from_toml(&git.show_file(tip, "links.toml")?)?
     } else {
         Links::default()
     };
 
     let evidence = if paths.contains(&"evidence.toml") {
-        EvidenceFile::from_toml(&git.show_file(&tip, "evidence.toml")?)?
+        EvidenceFile::from_toml(&git.show_file(tip, "evidence.toml")?)?
     } else {
         EvidenceFile::default()
     };

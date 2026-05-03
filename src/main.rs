@@ -17,9 +17,9 @@ use git_forum::internal::commands::ls;
 use git_forum::internal::commands::node_bulk::run_node_lifecycle_bulk;
 use git_forum::internal::commands::revise::{self as revise_cmd, ReviseCmd};
 use git_forum::internal::commands::shared::{
-    apply_operation_checks, discover_repo_with_init_warning, parse_lifecycle, parse_since_date,
-    parse_thread_kind, parse_thread_kind_filter, parse_unrecognized_subcommand, resolve_actor,
-    resolve_tid, subcommand_hint, terminal_state_date,
+    apply_operation_checks, discover_repo_with_init_warning, parse_since_date, parse_thread_kind,
+    parse_thread_kind_filter, parse_unrecognized_subcommand, resolve_actor, resolve_tid,
+    subcommand_hint, terminal_state_date,
 };
 use git_forum::internal::commands::shorthand_say::{run_shorthand_say, warn_legacy_node_shorthand};
 use git_forum::internal::commands::show;
@@ -27,6 +27,9 @@ use git_forum::internal::commands::state::run_state_shorthand;
 use git_forum::internal::commands::state::StateCmd;
 use git_forum::internal::commands::thread_new::ThreadCmd;
 use git_forum::internal::commands::thread_new::ThreadNewInline;
+use git_forum::internal::commands::thread_new::{
+    parse_lifecycle, preset_lookup, valid_preset_names,
+};
 use git_forum::internal::commands::verify;
 use git_forum::internal::commands::Context;
 use git_forum::internal::config;
@@ -2747,29 +2750,6 @@ fn main() -> Result<(), ForumError> {
     }
 
     Ok(())
-}
-
-/// SPEC-2.0 §9.1 kind preset registry — re-exported from
-/// [`internal::workflow`](git_forum::internal::workflow).
-///
-/// The data table itself moved to `WorkflowSpec` (#34ith16h); these
-/// type/value aliases keep the call-site spelling unchanged.
-///
-// TODO(phase-4): the `kind` vocabulary is removed when categories
-// replace lifecycle/tag presets (Phase 1 model rewrite); the helpers
-// below disappear with it.
-use git_forum::internal::workflow::{KindPreset, SPEC};
-
-fn preset_lookup(name: &str) -> Option<&'static KindPreset> {
-    SPEC.preset_lookup(name)
-}
-
-fn valid_preset_names() -> String {
-    SPEC.presets()
-        .iter()
-        .map(|p| p.name)
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 // TODO(phase-4): goes with the `Search` arm at slot 11; see

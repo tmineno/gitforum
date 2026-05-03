@@ -10,7 +10,7 @@
 use crate::internal::actor;
 use crate::internal::config::{self, RepoPaths};
 use crate::internal::error::ForumError;
-use crate::internal::event::{Lifecycle, ThreadKind};
+use crate::internal::event::ThreadKind;
 use crate::internal::git_ops::GitOps;
 use crate::internal::operation_check;
 use crate::internal::thread;
@@ -106,19 +106,6 @@ pub fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
 /// when the caller passed `None` (no `--kind` flag).
 pub fn parse_thread_kind_filter(kind: Option<&str>) -> Result<Option<ThreadKind>, ForumError> {
     kind.map(parse_thread_kind).transpose()
-}
-
-/// Parse a lifecycle string (`proposal` / `execution` / `record`) into
-/// its enum.
-///
-/// TODO(phase-4): replaced by `Category` parsing during Phase 1 model
-/// rewrite.
-pub fn parse_lifecycle(s: &str) -> Result<Lifecycle, ForumError> {
-    Lifecycle::parse(s).ok_or_else(|| {
-        ForumError::Config(format!(
-            "unknown lifecycle '{s}'; valid: proposal, execution, record"
-        ))
-    })
 }
 
 /// Parse a `--since` value (ISO date, RFC 3339, or git revision) into

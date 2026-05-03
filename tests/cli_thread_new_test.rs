@@ -470,7 +470,11 @@ fn preset_aliases_resolve_to_canonical_axes() {
         ("job", Lifecycle::Execution, &["task"]),
         ("task", Lifecycle::Execution, &["task"]),
         ("rfc", Lifecycle::Proposal, &["cross-cutting"]),
-        ("dec", Lifecycle::Record, &[]),
+        // Phase 2 slot 1 (RFC `7ymtc4b2`): SPEC-3.0 has two built-in
+        // categories (`rfc`, `task`), so the v2 `Record` lifecycle
+        // collapses onto `Proposal` (both ride the `rfc` category).
+        // Tags carry no distinguishing payload for the `dec` preset.
+        ("dec", Lifecycle::Proposal, &[]),
     ];
 
     let git = GitOps::new(repo.path().to_path_buf());

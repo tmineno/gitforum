@@ -2,32 +2,49 @@
 //! orchestration.
 //!
 //! Owns the clap subcommand enum `ThreadCmd` (moved from `main.rs` by
-//! task `t8o3vnt6`). Both CLI surfaces collapse onto
-//! [`run_canonical_thread_new`]; the kind preset surface
-//! (`Commands::New`) resolves a preset row first via
-//! [`SPEC.preset_lookup`](crate::internal::workflow::WorkflowSpec::preset_lookup)
-//! and feeds the resulting `(lifecycle, tags)` into this function. The
-//! canonical surface (`ThreadCmd::New`) parses lifecycle/tags from the
-//! command line directly.
+//! task `t8o3vnt6`), the kind-preset / lifecycle helpers (relocated
+//! from `main.rs` and `commands/shared.rs` by RFC `7ymtc4b2` Phase 2
+//! slot 1), and the snapshot-write entry point.
+//!
+//! Phase 2 slot 1: write path emits a SPEC-3.0 snapshot tree
+//! (`thread.toml` + optional `body.md` / `nodes/` / `links.toml` /
+//! `evidence.toml`) at `refs/forum/threads/<id>` directly, via
+//! [`crate::internal::snapshot::store::write_snapshot`]. The legacy
+//! `internal::create::create_thread_with_branch` event-write path is
+//! no longer invoked here.
 
 use std::fs;
 use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 
+use chrono::Utc;
 use clap::Subcommand;
 
 use super::context::Context;
 use crate::internal::clock::Clock;
-use crate::internal::commands::show;
-use crate::internal::create;
-use crate::internal::editor;
 use crate::internal::error::ForumError;
-use crate::internal::event::{Lifecycle, NodeType, ThreadKind};
-use crate::internal::evidence::{self, EvidenceKind};
+use crate::internal::evidence::{EvidenceFile, EvidenceKind, EvidenceRecord};
+use crate::internal::git_ops::GitOps;
+use crate::internal::id_alloc;
+use crate::internal::node::{NodeKind, NodeRecord, NodeStatus};
+use crate::internal::policy::{CategoryRegistry, Policy};
+use crate::internal::snapshot::{
+    self, store::write_snapshot, Link, Links, NodeWithBody, ThreadDocument,
+};
+use crate::internal::thread::ThreadSnapshot;
+use crate::internal::workflow::{KindPreset, SPEC};
+
+// Legacy event-side import — used only for operation-check input
+// shape (still keyed on `Lifecycle`/`tags`) and the lifecycle CLI
+// surface. Slot 2 will replace the operation_check call with the
+// 3.0 category surface; slot 1 keeps the existing check in place
+// but routes the write through the snapshot writer.
+use crate::internal::event::Lifecycle;
 use crate::internal::operation_check;
-use crate::internal::policy::Policy;
-use crate::internal::state_change;
-use crate::internal::thread;
+
+use super::shared::{
+    apply_operation_checks, discover_repo_with_init_warning, resolve_actor, resolve_tid,
+};
 
 /// Canonical thread sub-commands per SPEC-2.0 §9.1.
 ///
@@ -77,11 +94,6 @@ pub enum ThreadCmd {
         force: bool,
     },
 }
-use crate::internal::write_ops;
-
-use super::shared::{
-    apply_operation_checks, discover_repo_with_init_warning, resolve_actor, resolve_tid,
-};
 
 /// Inline-node bodies attached during `git forum new <preset>` (kind preset
 /// path only). The canonical `thread new --lifecycle ...` form does not
@@ -142,15 +154,11 @@ pub fn run(args: ThreadNewArgs, ctx: &Context) -> Result<(), ForumError> {
 /// the `git forum new <preset>` everyday surface and the canonical
 /// `git forum thread new --lifecycle ... --tag ...` power-user form.
 ///
-/// Behaviors:
-/// - Picks a backing [`ThreadKind`] (proposal→Rfc, execution→Issue,
-///   record→Dec). The kind survives only on the `Create` event for legacy
-///   reads; the lifecycle/tag set is the canonical 2.0 facet state, applied
-///   via a follow-on `facet_set` event.
-/// - `--from-thread`: rejects creating a thread in `execution` lifecycle
-///   sourced from a `proposal` thread (SPEC-2.0 §9.3 lifecycle restatement
-///   of the 1.x §9.2 RFC→issue rule). Use `link --rel implements` instead.
-/// - Auto-deprecates the source on proposal→proposal supersede.
+/// Phase 2 slot 1 (RFC `7ymtc4b2`): writes a SPEC-3.0 snapshot tree
+/// directly via [`write_snapshot`]. The lifecycle/tag CLI surface
+/// stays in place and is mapped to a 3.0 `category` (`rfc`/`task`)
+/// internally; the kind-preset surface (`git forum new rfc`) maps the
+/// preset name to the same category set.
 #[allow(clippy::too_many_arguments)]
 pub fn run_canonical_thread_new(
     title: Option<String>,
@@ -173,22 +181,30 @@ pub fn run_canonical_thread_new(
     let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
     let actor = resolve_actor(as_actor, &git);
 
-    let kind = match lifecycle {
-        Lifecycle::Proposal => ThreadKind::Rfc,
-        Lifecycle::Execution => ThreadKind::Issue,
-        Lifecycle::Record => ThreadKind::Dec,
-    };
+    let category = lifecycle_to_category(lifecycle).to_string();
+    let registry = CategoryRegistry::built_in();
+    let initial_status = registry
+        .get(&category)
+        .map(|d| d.initial_status.clone())
+        .unwrap_or_else(|| "open".into());
+
     let edit_hint = format!("Compose body for new {lifecycle} thread");
 
     let (effective_title, effective_body, commit_ref, source_thread) = if let Some(ref source_id) =
         from_thread
     {
         let source_id = &resolve_tid(&git, source_id)?;
-        let source = thread::replay_thread(&git, source_id)?;
+        // `replay_thread` is mixed-chain aware (Phase 2 transitional):
+        // accepts pure-event, pure-snapshot, or snapshot+events.
+        // `--from-thread` predates slot 1, so the source is often a
+        // pure event chain when the test harness or migration sets it
+        // up directly via `create::create_thread`.
+        let source = crate::internal::thread::replay_thread(&git, source_id)?;
+        let source_lifecycle = source.lifecycle;
         // SPEC-2.0 §9.3 lifecycle-keyed restatement of 1.x §9.2: an
         // execution thread cannot supersede a proposal. Use
         // `link --rel implements` instead.
-        if source.lifecycle == Lifecycle::Proposal && lifecycle == Lifecycle::Execution {
+        if source_lifecycle == Lifecycle::Proposal && lifecycle == Lifecycle::Execution {
             return Err(ForumError::Config(
                 "cannot create an execution thread --from-thread a proposal thread; \
                      an execution thread does not supersede a proposal. \
@@ -198,7 +214,7 @@ pub fn run_canonical_thread_new(
         }
         let t = title.unwrap_or_else(|| format!("v2: {}", source.title));
         let b = resolve_thread_body(body, body_file, edit, &edit_hint)?.or(source.body.clone());
-        (t, b, None, Some((source_id.clone(), source.lifecycle)))
+        (t, b, None, Some((source_id.clone(), source_lifecycle)))
     } else if let Some(rev) = from_commit {
         let commit_sha = git.resolve_commit(&rev)?;
         let msg = git.run(&["log", "-1", "--format=%B", &commit_sha])?;
@@ -237,99 +253,321 @@ pub fn run_canonical_thread_new(
     let _ = &effective_title; // Title is not consulted by §7.2 rules.
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
-    let thread_id = create::create_thread_with_branch(
-        &git,
-        kind,
-        &effective_title,
-        effective_body.as_deref(),
-        branch.as_deref(),
-        &actor,
-        clock,
-    )?;
+    let now = clock.now();
+    let timestamp_str = now.to_rfc3339();
+    let thread_id = id_alloc::alloc_bare_thread_id(&actor, &effective_title, &timestamp_str);
 
-    // Persist `lifecycle` and the requested tag set as a `facet_set` event so
-    // 2.0 native threads carry the canonical facet state in their chain
-    // rather than only deriving it from `kind` at replay time. Skipped when
-    // there are no tags AND the lifecycle matches the kind's auto-derivation
-    // (the replay fallback handles it).
-    let needs_facet_set = !tags.is_empty() || lifecycle != kind.lifecycle();
-    if needs_facet_set {
-        write_ops::write_facet_set(
-            &git,
-            &thread_id,
-            Some(lifecycle.as_str()),
-            &tags,
-            &[],
-            &actor,
-            clock,
-        )?;
+    // Optional --branch: validate the branch exists before writing.
+    if let Some(b) = branch.as_deref() {
+        let refname = format!("refs/heads/{b}");
+        if git.resolve_ref(&refname)?.is_none() {
+            return Err(ForumError::Repo(format!(
+                "branch '{b}' does not exist in this repository"
+            )));
+        }
     }
 
+    let mut nodes: Vec<NodeWithBody> = Vec::new();
+    push_inline_nodes(
+        &mut nodes,
+        &inline.objection,
+        NodeKind::Objection,
+        None,
+        &actor,
+        now,
+    );
+    push_inline_nodes(
+        &mut nodes,
+        &inline.action,
+        NodeKind::Action,
+        None,
+        &actor,
+        now,
+    );
+    push_inline_nodes(
+        &mut nodes,
+        &inline.claim,
+        NodeKind::Comment,
+        Some("claim"),
+        &actor,
+        now,
+    );
+    push_inline_nodes(
+        &mut nodes,
+        &inline.question,
+        NodeKind::Comment,
+        Some("question"),
+        &actor,
+        now,
+    );
+    push_inline_nodes(
+        &mut nodes,
+        &inline.risk,
+        NodeKind::Comment,
+        Some("risk"),
+        &actor,
+        now,
+    );
+    push_inline_nodes(
+        &mut nodes,
+        &inline.summary,
+        NodeKind::Comment,
+        Some("summary"),
+        &actor,
+        now,
+    );
+
+    let mut links_entries: Vec<Link> = Vec::new();
     if !link_to.is_empty() {
         let rel = rel
             .as_deref()
             .ok_or_else(|| ForumError::Config("--rel is required when --link-to is used".into()))?;
         for target in &link_to {
             let resolved_target = resolve_tid(&git, target)?;
-            evidence::add_thread_link(&git, &thread_id, &resolved_target, rel, &actor, clock)?;
+            links_entries.push(Link {
+                target: resolved_target,
+                rel: rel.into(),
+                created_at: now,
+                created_by: actor.clone(),
+            });
         }
     }
-    if let Some(sha) = commit_ref {
-        evidence::add_evidence(
-            &git,
-            &thread_id,
-            EvidenceKind::Commit,
-            &sha,
-            None,
-            &actor,
-            clock,
-        )?;
+    if let Some((ref source_id, _)) = source_thread {
+        links_entries.push(Link {
+            target: source_id.clone(),
+            rel: "supersedes".into(),
+            created_at: now,
+            created_by: actor.clone(),
+        });
     }
-    // --from-thread supersede: bidirectional link, plus auto-deprecate the
-    // source on proposal→proposal (the 1.x RFC→RFC supersede pattern,
-    // restated in lifecycle terms).
-    if let Some((source_id, source_lifecycle)) = source_thread {
-        evidence::add_thread_link(&git, &thread_id, &source_id, "supersedes", &actor, clock)?;
-        evidence::add_thread_link(&git, &source_id, &thread_id, "superseded-by", &actor, clock)?;
-        let proposal_supersede =
-            source_lifecycle == Lifecycle::Proposal && lifecycle == Lifecycle::Proposal;
-        if proposal_supersede {
-            let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
-            state_change::change_state(
-                &git,
-                &source_id,
-                "deprecated",
-                &[],
-                &actor,
-                clock,
-                &policy,
-                state_change::StateChangeOptions::default(),
-            )?;
-        }
+
+    let mut evidence_entries: Vec<EvidenceRecord> = Vec::new();
+    if let Some(sha) = commit_ref.clone() {
+        evidence_entries.push(EvidenceRecord {
+            id: short_evidence_id(&sha),
+            kind: EvidenceKind::Commit,
+            ref_target: sha,
+            created_at: now,
+            created_by: actor.clone(),
+        });
+    }
+
+    let snapshot_doc = ThreadDocument {
+        snapshot: ThreadSnapshot {
+            schema_version: ThreadSnapshot::SCHEMA_VERSION,
+            id: thread_id.clone(),
+            title: effective_title.clone(),
+            category: category.clone(),
+            status: initial_status.clone(),
+            tags: tags.clone(),
+            created_at: now,
+            created_by: actor.clone(),
+            updated_at: now,
+            updated_by: actor.clone(),
+            branch: branch.clone(),
+            supersedes: source_thread
+                .as_ref()
+                .map(|(sid, _)| vec![sid.clone()])
+                .unwrap_or_default(),
+        },
+        body: effective_body,
+        nodes,
+        links: Links {
+            entries: links_entries,
+        },
+        evidence: EvidenceFile {
+            entries: evidence_entries,
+        },
+    };
+
+    write_snapshot(
+        &git,
+        &thread_id,
+        &snapshot_doc,
+        &format!("create {thread_id}"),
+    )?;
+
+    // Bidirectional supersede link on the SOURCE side. Only proposal-
+    // supersede needs the auto-deprecate; for now we surface the link
+    // and leave deprecation to the operator (slot 3 will rewire
+    // state-change to snapshot writes; until then, calling the
+    // event-write `state_change::*` from the snapshot path would
+    // break the cli regression tests by mixing storage shapes on
+    // the source ref).
+    if let Some((source_id, _source_lifecycle)) = source_thread.as_ref() {
+        write_back_supersede_link(&git, source_id, &thread_id, &actor, now)?;
         println!("Created {thread_id} (supersedes {source_id})");
-        if !proposal_supersede {
-            eprintln!("hint: consider closing {source_id} (now superseded)");
-        }
+        eprintln!("hint: consider closing {source_id} (now superseded)");
     } else {
         println!("Created {thread_id}");
     }
 
-    let inline_nodes: [(NodeType, &[String]); 6] = [
-        (NodeType::Claim, &inline.claim),
-        (NodeType::Question, &inline.question),
-        (NodeType::Objection, &inline.objection),
-        (NodeType::Action, &inline.action),
-        (NodeType::Risk, &inline.risk),
-        (NodeType::Summary, &inline.summary),
-    ];
-    for (node_type, bodies) in &inline_nodes {
-        for body_text in *bodies {
-            let node_id =
-                write_ops::say_node(&git, &thread_id, *node_type, body_text, &actor, clock, None)?;
-            println!("Added {node_type} {}", show::short_oid(&node_id));
-        }
+    // Echo a line for each inline node so the existing CLI output
+    // shape (a `Created …` line followed by `Added …` lines) stays
+    // stable across the cutover.
+    for n in &snapshot_doc.nodes {
+        let label = n
+            .record
+            .legacy_label
+            .as_deref()
+            .unwrap_or(node_kind_label(n.record.kind));
+        println!("Added {label} {}", short_node_id(&n.record.id));
     }
+
     Ok(())
+}
+
+/// Append the symmetric `superseded-by` edge to the SOURCE thread.
+///
+/// Phase 2 transitional dispatch (RFC `7ymtc4b2`): when the source is
+/// a SPEC-3.0 snapshot, the link rides into `links.toml` via a new
+/// snapshot commit (CAS-protected). When the source is still a
+/// legacy v1/v2 event chain, fall back to the event-chain link writer
+/// — the mixed-chain replay reader picks up either form. The
+/// dispatch goes away in Phase 4 once all sources are snapshots.
+fn write_back_supersede_link(
+    git: &GitOps,
+    source_id: &str,
+    new_thread_id: &str,
+    actor: &str,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), ForumError> {
+    match snapshot::read_snapshot(git, source_id) {
+        Ok(mut source) => {
+            source.links.entries.push(Link {
+                target: new_thread_id.into(),
+                rel: "superseded-by".into(),
+                created_at: now,
+                created_by: actor.into(),
+            });
+            source.snapshot.updated_at = now;
+            source.snapshot.updated_by = actor.into();
+            write_snapshot(
+                git,
+                source_id,
+                &source,
+                &format!("link superseded-by {new_thread_id}"),
+            )?;
+            Ok(())
+        }
+        Err(ForumError::LegacyEventChain) => {
+            // Legacy event-chain source: append a Link event so the
+            // back-link materializes through replay. Bypasses the
+            // 3.0 link.toml model — that's fine because the mixed-
+            // chain reader unifies both shapes during Phase 2.
+            crate::internal::evidence::add_thread_link(
+                git,
+                source_id,
+                new_thread_id,
+                "superseded-by",
+                actor,
+                &TimestampClock(now),
+            )?;
+            Ok(())
+        }
+        Err(other) => Err(other),
+    }
+}
+
+/// One-shot fixed-clock adapter so [`write_back_supersede_link`]
+/// can pass the snapshot-write timestamp through to the legacy
+/// event-write helper without re-reading the system clock.
+struct TimestampClock(chrono::DateTime<Utc>);
+
+impl crate::internal::clock::Clock for TimestampClock {
+    fn now(&self) -> chrono::DateTime<Utc> {
+        self.0
+    }
+}
+
+fn push_inline_nodes(
+    out: &mut Vec<NodeWithBody>,
+    bodies: &[String],
+    kind: NodeKind,
+    legacy_label: Option<&'static str>,
+    actor: &str,
+    now: chrono::DateTime<Utc>,
+) {
+    for body in bodies {
+        let id = id_alloc::alloc_bare_thread_id(actor, body, &now.to_rfc3339());
+        out.push(NodeWithBody {
+            record: NodeRecord {
+                id,
+                kind,
+                status: NodeStatus::Open,
+                created_at: now,
+                created_by: actor.into(),
+                updated_at: None,
+                updated_by: None,
+                reply_to: None,
+                legacy_label: legacy_label.map(String::from),
+            },
+            body: body.clone(),
+        });
+    }
+}
+
+fn node_kind_label(kind: NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Comment => "comment",
+        NodeKind::Approval => "approval",
+        NodeKind::Objection => "objection",
+        NodeKind::Action => "action",
+    }
+}
+
+fn short_node_id(id: &str) -> String {
+    id.chars().take(8).collect()
+}
+
+fn short_evidence_id(sha: &str) -> String {
+    format!("c-{}", sha.chars().take(8).collect::<String>())
+}
+
+/// Map a v2-shape [`Lifecycle`] onto a SPEC-3.0 built-in category.
+///
+/// - `Proposal` / `Record` → `rfc` (drafted-then-accepted shape)
+/// - `Execution` → `task` (open-then-done shape)
+pub fn lifecycle_to_category(lifecycle: Lifecycle) -> &'static str {
+    match lifecycle {
+        Lifecycle::Proposal | Lifecycle::Record => "rfc",
+        Lifecycle::Execution => "task",
+    }
+}
+
+/// Inverse of [`lifecycle_to_category`] for the few read paths that
+/// still need a `Lifecycle` value (e.g. supersede-direction guard).
+pub fn legacy_lifecycle_for_category(category: &str) -> Lifecycle {
+    match category {
+        "task" => Lifecycle::Execution,
+        _ => Lifecycle::Proposal,
+    }
+}
+
+/// Parse a kind preset name into the corresponding [`KindPreset`].
+/// Used by `Commands::New { kind, ... }` to map `git forum new rfc`
+/// → preset row → `(lifecycle, tags)`.
+pub fn preset_lookup(name: &str) -> Option<&'static KindPreset> {
+    SPEC.preset_lookup(name)
+}
+
+/// Comma-separated list of valid preset names for error messages.
+pub fn valid_preset_names() -> String {
+    SPEC.presets()
+        .iter()
+        .map(|p| p.name)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Parse a lifecycle string (`proposal` / `execution` / `record`) into
+/// its enum.
+pub fn parse_lifecycle(s: &str) -> Result<Lifecycle, ForumError> {
+    Lifecycle::parse(s).ok_or_else(|| {
+        ForumError::Config(format!(
+            "unknown lifecycle '{s}'; valid: proposal, execution, record"
+        ))
+    })
 }
 
 /// Resolve a body-source flag triple (`--body` / `--body-file` / `--edit`)
@@ -342,7 +580,7 @@ pub fn resolve_thread_body(
     edit_hint: &str,
 ) -> Result<Option<String>, ForumError> {
     if edit {
-        return Ok(Some(editor::edit_body(edit_hint)?));
+        return Ok(Some(crate::internal::editor::edit_body(edit_hint)?));
     }
     match (body, body_file) {
         (Some(body), None) if body == "-" => {

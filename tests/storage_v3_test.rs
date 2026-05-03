@@ -178,11 +178,10 @@ fn v3_empty_snapshot_omits_all_optional_files() {
 
 /// v3 invariant (SPEC-3.0 §4): `git forum new` writes a snapshot tree
 /// containing `thread.toml` (and `links.toml` if links were specified)
-/// at `refs/forum/threads/<id>`. Unblocks at Phase 2 slot 1
-/// (`thread_new` cutover); the v2 counterpart in
+/// at `refs/forum/threads/<id>`. Unblocked at Phase 2 slot 1
+/// (`thread_new` cutover, RFC `7ymtc4b2`); the v2 counterpart in
 /// `tests/storage_v2_test.rs` is removed in the same commit.
 #[test]
-#[ignore = "unblocked at Phase 2 slot 1 (thread_new cutover) per RFC 7ymtc4b2"]
 fn v3_cli_thread_new_writes_thread_toml() {
     let repo = fresh_cli_repo();
     let id = extract_created_id(&run_ok(&repo, &["new", "issue", "v3 shape probe"]));
@@ -204,7 +203,15 @@ fn v3_cli_thread_new_writes_thread_toml() {
         .run(&["cat-file", "-p", &format!("{}:thread.toml", tip.trim())])
         .expect("cat-file thread.toml");
     assert!(
-        body.contains("[thread]"),
-        "v3 thread.toml must contain [thread] section; body was:\n{body}"
+        body.contains("schema_version = 3"),
+        "v3 thread.toml must declare schema_version = 3; body was:\n{body}"
+    );
+    assert!(
+        body.contains(&format!("id = \"{id}\"")),
+        "v3 thread.toml must declare its own id; body was:\n{body}"
+    );
+    assert!(
+        body.contains("category = "),
+        "v3 thread.toml must declare a category; body was:\n{body}"
     );
 }

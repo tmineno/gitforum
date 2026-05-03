@@ -29,4 +29,4 @@ pub mod link;
 pub mod store;
 
 pub use link::{Link, Links};
-pub use store::{read_snapshot, write_snapshot, NodeWithBody, ThreadDocument};
+pub use store::{read_snapshot, read_snapshot_at, write_snapshot, NodeWithBody, ThreadDocument};

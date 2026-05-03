@@ -599,10 +599,182 @@ fn apply_node_flag(
     }
 }
 
-/// Load events from Git and replay to get thread state (lenient).
+/// Walk the chain at `refs/forum/threads/<id>` oldest→newest and
+/// project a [`ThreadState`].
+///
+/// Phase 2 transition (RFC `7ymtc4b2`): every commit's tree is
+/// classified as a SPEC-3.0 *snapshot commit* (`thread.toml` blob) or
+/// a v1/v2 *event commit* (`event.json` blob). The reader copes with
+/// any mixture:
+///
+/// - **Pure snapshot** — single snapshot commit at tip → state is
+///   materialized from the [`ThreadDocument`](super::snapshot::ThreadDocument).
+/// - **Pure event chain** — every commit carries `event.json` →
+///   delegated to [`replay`] over the loaded events.
+/// - **Mixed (snapshot bottom, events on top)** — arises during the
+///   Phase 2 cutover window: e.g. `git forum new` (slot-1 snapshot
+///   write) followed by `git forum comment` (slot-2 event write,
+///   pre-cutover). The snapshot at chain bottom seeds state; the
+///   event tail is folded in via [`apply_event`].
+/// - **Multiple snapshot commits** — each later snapshot supersedes
+///   the earlier (the tree IS the cumulative state); accumulated
+///   tail events are discarded when a fresh snapshot resets state.
+///
+/// This dispatch disappears in Phase 4 along with the event-chain
+/// reader.
 pub fn replay_thread(git: &GitOps, thread_id: &str) -> ForumResult<ThreadState> {
-    let events = event::load_thread_events(git, thread_id)?;
-    replay(&events)
+    let refname = format!("refs/forum/threads/{thread_id}");
+    if git.resolve_ref(&refname)?.is_none() {
+        return Err(ForumError::Repo(format!("thread {thread_id} not found")));
+    }
+
+    // `rev_list` returns newest-first; replay needs oldest-first.
+    let mut shas: Vec<String> = git.rev_list(&refname)?;
+    shas.reverse();
+
+    let mut state: Option<ThreadState> = None;
+    let mut tail_events: Vec<Event> = Vec::new();
+    let mut issues: Vec<StrictReplayIssue> = Vec::new();
+
+    for sha in &shas {
+        let listing = git.run(&["ls-tree", "--name-only", sha])?;
+        let names: Vec<&str> = listing.lines().collect();
+        if names.contains(&"thread.toml") {
+            // SPEC-3.0 snapshot commit — reset state to this snapshot's
+            // view. Any prior tail events are subsumed.
+            let doc = super::snapshot::read_snapshot_at(git, sha)?;
+            state = Some(materialize_thread_state_from_snapshot(doc));
+            tail_events.clear();
+        } else if names.contains(&"event.json") {
+            // Legacy v1/v2 event commit — accumulate for projection.
+            tail_events.push(event::read_event(git, sha)?);
+        }
+        // Unknown tree shapes (e.g. an empty merge) are skipped; they
+        // do not affect state under either storage model.
+    }
+
+    if let Some(mut s) = state {
+        // Apply any events that landed AFTER the most recent snapshot.
+        for ev in &tail_events {
+            s.events.push(ev.clone());
+            match ev.project() {
+                Ok(domain) => apply_event(&mut s, &domain, &mut issues)?,
+                Err(ProjectionError::MissingRequiredField { .. }) => {
+                    // Lenient mode: a malformed event is silently
+                    // skipped. Strict callers route through
+                    // `replay_thread_strict` which surfaces this as
+                    // `MissingRequiredField`.
+                }
+            }
+        }
+        Ok(s)
+    } else if !tail_events.is_empty() {
+        // No snapshot seed — pure legacy event chain.
+        replay(&tail_events)
+    } else {
+        Err(ForumError::Repo(format!(
+            "thread {thread_id} has no replayable content"
+        )))
+    }
+}
+
+/// Materialize a legacy [`ThreadState`] view from a SPEC-3.0
+/// [`ThreadDocument`](super::snapshot::ThreadDocument).
+///
+/// Phase 2 bridge: read paths still consume `ThreadState`. Until each
+/// command is cut over to read snapshots directly (slots 7a–7k), the
+/// snapshot-tip case is translated into the legacy struct. `events`
+/// is left empty — the snapshot model has no event chain, and the
+/// surfaces that display events (legacy `log`, domain timeline) are
+/// on the Phase 4 DELETE list.
+fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocument) -> ThreadState {
+    use super::node::{NodeKind, NodeStatus};
+    use super::snapshot::ThreadDocument;
+
+    let ThreadDocument {
+        snapshot,
+        body,
+        nodes,
+        links,
+        evidence: _,
+    } = doc;
+
+    let kind = category_to_legacy_kind(&snapshot.category, &snapshot.tags);
+    let lifecycle = super::legacy::v1::lifecycle_for_legacy_kind(kind);
+    let status = ThreadStatus::parse_lenient(&snapshot.status).unwrap_or_default();
+
+    let nodes: Vec<Node> = nodes
+        .into_iter()
+        .map(|n| Node {
+            node_id: n.record.id,
+            node_type: match n.record.kind {
+                NodeKind::Comment => NodeType::Comment,
+                NodeKind::Approval => NodeType::Approval,
+                NodeKind::Objection => NodeType::Objection,
+                NodeKind::Action => NodeType::Action,
+            },
+            body: n.body,
+            actor: n.record.created_by,
+            created_at: n.record.created_at,
+            resolved: matches!(n.record.status, NodeStatus::Resolved),
+            retracted: matches!(n.record.status, NodeStatus::Retracted),
+            incorporated: matches!(n.record.status, NodeStatus::Incorporated),
+            reply_to: n.record.reply_to,
+            legacy_subtype: n.record.legacy_label,
+        })
+        .collect();
+
+    let links: Vec<ThreadLink> = links
+        .entries
+        .into_iter()
+        .map(|l| ThreadLink {
+            target_thread_id: l.target,
+            rel: l.rel,
+        })
+        .collect();
+
+    ThreadState {
+        id: snapshot.id,
+        kind,
+        title: snapshot.title,
+        body,
+        branch: snapshot.branch,
+        status,
+        created_at: snapshot.created_at,
+        created_by: snapshot.created_by,
+        events: Vec::new(),
+        nodes,
+        evidence_items: Vec::new(),
+        links,
+        body_revision_count: 0,
+        incorporated_node_ids: Vec::new(),
+        lifecycle,
+        lifecycle_explicit: true,
+        tags: snapshot.tags,
+    }
+}
+
+/// Map a SPEC-3.0 category + tag set back to a legacy [`ThreadKind`]
+/// for `ThreadState` materialization.
+///
+/// Phase 2 transitional: the v2 kind axis (Rfc/Dec/Issue/Task) is
+/// folded onto SPEC-3.0's two built-in categories (`rfc`, `task`).
+/// The kind is preserved through the original kind-preset's tag
+/// fingerprint (`tag:bug` for Issue, `tag:task` for Task) so legacy
+/// `--kind issue` / `--kind task` filters keep working until the
+/// read-side cutover (slot 7a) replaces the kind axis with `category`.
+fn category_to_legacy_kind(category: &str, tags: &[String]) -> ThreadKind {
+    match category {
+        "rfc" => ThreadKind::Rfc,
+        "task" => {
+            if tags.iter().any(|t| t == "bug") {
+                ThreadKind::Issue
+            } else {
+                ThreadKind::Task
+            }
+        }
+        _ => ThreadKind::Issue,
+    }
 }
 
 /// Load events from Git and replay strictly, returning every silent-no-op
