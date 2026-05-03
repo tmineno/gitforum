@@ -909,23 +909,8 @@ fn main() -> Result<(), ForumError> {
         // slot 11 (RFC `7ymtc4b2`); the underlying modules are on the
         // Phase 4 DELETE list (ADR-011 Decision 6: no index in v3.0.0).
         Commands::Migrate { dry_run, as_actor } => {
-            let (git, paths) = discover_repo_with_init_warning()?;
-            let actor = as_actor
-                .or_else(|| git.default_actor().map(str::to_string))
-                .unwrap_or_else(|| "system/migrate".to_string());
-            let outcome =
-                git_forum::internal::commands::migrate::run(&git, &paths, &actor, dry_run)?;
-            // After a write run, the local index can drift (refs renamed,
-            // events rewritten). Rebuild it so subsequent reads see the
-            // migrated state.
-            //
-            // Phase 2 slot 11: the post-migrate reindex step is gone
-            // along with reindex.rs / index.rs (Phase 4 DELETE list).
-            let _ = (paths, dry_run);
-            // Non-zero exit if any thread plan failed — currently `run`
-            // already printed warnings; the outcome counts both successes
-            // and skips. Normal exit unless we want hard errors later.
-            let _ = outcome;
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            commands::migrate::run_arm(commands::migrate::MigrateArgs { dry_run, as_actor }, &ctx)?;
         }
 
         // Repair / Purge / Search arms removed at Phase 2 slot 11

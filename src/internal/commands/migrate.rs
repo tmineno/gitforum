@@ -329,6 +329,32 @@ fn write_commit(git: &GitOps, event: &Event, parent: Option<&str>) -> ForumResul
     git.commit_tree(&tree, &parents, &message)
 }
 
+/// Args for [`run_arm`] — the SPEC-3.0 `git forum migrate` arm.
+///
+/// Phase 2 slot 9 (RFC `7ymtc4b2`): the arm relocates from `main.rs`
+/// to [`run_arm`] in this module. The full v→3.0 implementation is
+/// Phase 3; the arm currently delegates to the existing legacy v1→v2
+/// path (preserved for the sanctioned ADR-011 Decision 3 use case).
+pub struct MigrateArgs {
+    pub dry_run: bool,
+    pub as_actor: Option<String>,
+}
+
+/// Uniform entry point for the `migrate` subcommand.
+///
+/// Resolves the actor (CLI override → git default → `system/migrate`
+/// fallback) and runs the legacy v1→v2 migration. The Phase 3
+/// rewrite to a v→3.0 migrator preserves this dispatcher; only the
+/// migration body itself changes.
+pub fn run_arm(args: MigrateArgs, ctx: &super::context::Context) -> ForumResult<()> {
+    let actor = args
+        .as_actor
+        .or_else(|| ctx.git.default_actor().map(str::to_string))
+        .unwrap_or_else(|| "system/migrate".to_string());
+    let _outcome = run(&ctx.git, &ctx.paths, &actor, args.dry_run)?;
+    Ok(())
+}
+
 /// Public entry point for `git forum migrate [--dry-run]`.
 ///
 /// `actor` is recorded as the author of the synthetic `facet_set` events
