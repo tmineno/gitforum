@@ -64,68 +64,13 @@ fn replay(
 }
 
 // --- Node equivalence tests ---
-
-#[test]
-fn claim_shorthand_equals_node_add_claim() {
-    // Shorthand: git forum claim <ID> "body"
-    let repo_a = support::repo::TestRepo::new();
-    let paths_a = RepoPaths::from_repo_root(repo_a.path());
-    init::init_forum(&paths_a).unwrap();
-    let id_a = setup_rfc(repo_a.path());
-    let out = run(repo_a.path(), &["claim", &id_a, "Shorthand claim"]);
-    assert!(out.status.success());
-    let state_a = replay(repo_a.path(), &id_a);
-
-    // Canonical: git forum node add <ID> --type claim "body"
-    let repo_b = support::repo::TestRepo::new();
-    let paths_b = RepoPaths::from_repo_root(repo_b.path());
-    init::init_forum(&paths_b).unwrap();
-    let id_b = setup_rfc(repo_b.path());
-    let out = run(
-        repo_b.path(),
-        &["node", "add", &id_b, "--type", "claim", "Shorthand claim"],
-    );
-    assert!(out.status.success());
-    let state_b = replay(repo_b.path(), &id_b);
-
-    assert_eq!(state_a.nodes.len(), state_b.nodes.len());
-    // SPEC-2.0 §2.5: legacy `claim` is canonicalized to `comment` on write,
-    // with the rhetorical label preserved as legacy_subtype.
-    assert_eq!(state_a.nodes[0].node_type, NodeType::Comment);
-    assert_eq!(state_b.nodes[0].node_type, NodeType::Comment);
-    assert_eq!(state_a.nodes[0].legacy_subtype.as_deref(), Some("claim"));
-    assert_eq!(state_b.nodes[0].legacy_subtype.as_deref(), Some("claim"));
-    assert_eq!(state_a.nodes[0].body, state_b.nodes[0].body);
-}
-
-#[test]
-fn question_shorthand_equals_node_add_question() {
-    let repo_a = support::repo::TestRepo::new();
-    let paths_a = RepoPaths::from_repo_root(repo_a.path());
-    init::init_forum(&paths_a).unwrap();
-    let id_a = setup_rfc(repo_a.path());
-    let out = run(repo_a.path(), &["question", &id_a, "Is this safe?"]);
-    assert!(out.status.success());
-    let state_a = replay(repo_a.path(), &id_a);
-
-    let repo_b = support::repo::TestRepo::new();
-    let paths_b = RepoPaths::from_repo_root(repo_b.path());
-    init::init_forum(&paths_b).unwrap();
-    let id_b = setup_rfc(repo_b.path());
-    let out = run(
-        repo_b.path(),
-        &["node", "add", &id_b, "--type", "question", "Is this safe?"],
-    );
-    assert!(out.status.success());
-    let state_b = replay(repo_b.path(), &id_b);
-
-    assert_eq!(state_a.nodes.len(), state_b.nodes.len());
-    assert_eq!(state_a.nodes[0].node_type, NodeType::Comment);
-    assert_eq!(state_b.nodes[0].node_type, NodeType::Comment);
-    assert_eq!(state_a.nodes[0].legacy_subtype.as_deref(), Some("question"));
-    assert_eq!(state_b.nodes[0].legacy_subtype.as_deref(), Some("question"));
-    assert_eq!(state_a.nodes[0].body, state_b.nodes[0].body);
-}
+//
+// `claim_shorthand_equals_node_add_claim` and
+// `question_shorthand_equals_node_add_question` were removed at
+// Phase 2 slot 2 (RFC `7ymtc4b2`). The deprecated rhetorical
+// shorthands (`claim`, `question`, `summary`, `risk`, `review`) are
+// no longer in the CLI surface; SPEC-3.0 §2.2 / ADR-006 keeps only
+// the four canonical NodeKinds (Comment, Approval, Objection, Action).
 
 #[test]
 fn objection_shorthand_equals_node_add_objection() {
@@ -263,8 +208,10 @@ fn accept_shorthand_equals_state_accepted() {
     assert!(out.status.success());
     let out = run(repo_a.path(), &["state", &id_a, "under-review"]);
     assert!(out.status.success());
-    // Add required summary
-    let out = run(repo_a.path(), &["summary", &id_a, "Looks good"]);
+    // SPEC-3.0 §2.2 / ADR-006: the rhetorical `summary` shorthand
+    // collapsed onto `comment`. The acceptance guard keys off the
+    // canonical node, not the rhetorical label.
+    let out = run(repo_a.path(), &["comment", &id_a, "Looks good"]);
     assert!(out.status.success());
     let out = run(
         repo_a.path(),
@@ -281,7 +228,7 @@ fn accept_shorthand_equals_state_accepted() {
     assert!(out.status.success());
     let out = run(repo_b.path(), &["state", &id_b, "under-review"]);
     assert!(out.status.success());
-    let out = run(repo_b.path(), &["summary", &id_b, "Looks good"]);
+    let out = run(repo_b.path(), &["comment", &id_b, "Looks good"]);
     assert!(out.status.success());
     let out = run(
         repo_b.path(),

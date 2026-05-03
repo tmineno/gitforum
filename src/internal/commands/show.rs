@@ -747,9 +747,12 @@ fn build_conversations(nodes: &[super::super::node::Node]) -> Vec<Vec<&super::su
         if has_parent.contains(node.node_id.as_str()) {
             continue;
         }
-        if !children.contains_key(node.node_id.as_str()) {
-            continue;
-        }
+        // SPEC-3.0 transitional (RFC `7ymtc4b2`): in the v2 event-chain
+        // model the timeline carried Say bodies inline, so a leaf
+        // comment with no replies could be elided from the
+        // conversations section without losing visibility. Snapshot
+        // threads have no event timeline, so leaf nodes must surface
+        // here too. The pre-Phase-2 leaf-only filter is removed.
         let mut chain = vec![node];
         let mut queue: VecDeque<&str> = VecDeque::new();
         queue.push_back(node.node_id.as_str());

@@ -21,7 +21,7 @@ use git_forum::internal::commands::shared::{
     parse_thread_kind_filter, parse_unrecognized_subcommand, resolve_actor, resolve_tid,
     subcommand_hint, terminal_state_date,
 };
-use git_forum::internal::commands::shorthand_say::{run_shorthand_say, warn_legacy_node_shorthand};
+use git_forum::internal::commands::shorthand_say::run_shorthand_say;
 use git_forum::internal::commands::show;
 use git_forum::internal::commands::state::run_state_shorthand;
 use git_forum::internal::commands::state::StateCmd;
@@ -533,45 +533,6 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// Add a claim node to a thread (deprecated alias for `comment`)
-    Claim {
-        thread_id: String,
-        /// Node body (positional; use --body or --body-file for named alternatives)
-        body_positional: Option<String>,
-        #[arg(long = "body", value_name = "TEXT")]
-        body_flag: Option<String>,
-        #[arg(long = "body-file", value_name = "PATH")]
-        body_file: Option<PathBuf>,
-        /// Open $EDITOR to compose the body
-        #[arg(long, conflicts_with_all = ["body_positional", "body_flag", "body_file"])]
-        edit: bool,
-        #[arg(long = "reply-to", value_name = "NODE_ID")]
-        reply_to: Option<String>,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Bypass warning-level operation checks (does not bypass errors)
-        #[arg(long)]
-        force: bool,
-    },
-    /// Add a question node to a thread (deprecated alias for `comment`)
-    Question {
-        thread_id: String,
-        body_positional: Option<String>,
-        #[arg(long = "body", value_name = "TEXT")]
-        body_flag: Option<String>,
-        #[arg(long = "body-file", value_name = "PATH")]
-        body_file: Option<PathBuf>,
-        /// Open $EDITOR to compose the body
-        #[arg(long, conflicts_with_all = ["body_positional", "body_flag", "body_file"])]
-        edit: bool,
-        #[arg(long = "reply-to", value_name = "NODE_ID")]
-        reply_to: Option<String>,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Bypass warning-level operation checks (does not bypass errors)
-        #[arg(long)]
-        force: bool,
-    },
     /// Add an objection node to a thread
     Objection {
         thread_id: String,
@@ -591,65 +552,8 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// Add a summary node to a thread (deprecated alias for `comment`)
-    Summary {
-        thread_id: String,
-        body_positional: Option<String>,
-        #[arg(long = "body", value_name = "TEXT")]
-        body_flag: Option<String>,
-        #[arg(long = "body-file", value_name = "PATH")]
-        body_file: Option<PathBuf>,
-        /// Open $EDITOR to compose the body
-        #[arg(long, conflicts_with_all = ["body_positional", "body_flag", "body_file"])]
-        edit: bool,
-        #[arg(long = "reply-to", value_name = "NODE_ID")]
-        reply_to: Option<String>,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Bypass warning-level operation checks (does not bypass errors)
-        #[arg(long)]
-        force: bool,
-    },
     /// Add an action node to a thread
     Action {
-        thread_id: String,
-        body_positional: Option<String>,
-        #[arg(long = "body", value_name = "TEXT")]
-        body_flag: Option<String>,
-        #[arg(long = "body-file", value_name = "PATH")]
-        body_file: Option<PathBuf>,
-        /// Open $EDITOR to compose the body
-        #[arg(long, conflicts_with_all = ["body_positional", "body_flag", "body_file"])]
-        edit: bool,
-        #[arg(long = "reply-to", value_name = "NODE_ID")]
-        reply_to: Option<String>,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Bypass warning-level operation checks (does not bypass errors)
-        #[arg(long)]
-        force: bool,
-    },
-    /// Add a risk node to a thread (deprecated alias for `comment`)
-    Risk {
-        thread_id: String,
-        body_positional: Option<String>,
-        #[arg(long = "body", value_name = "TEXT")]
-        body_flag: Option<String>,
-        #[arg(long = "body-file", value_name = "PATH")]
-        body_file: Option<PathBuf>,
-        /// Open $EDITOR to compose the body
-        #[arg(long, conflicts_with_all = ["body_positional", "body_flag", "body_file"])]
-        edit: bool,
-        #[arg(long = "reply-to", value_name = "NODE_ID")]
-        reply_to: Option<String>,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Bypass warning-level operation checks (does not bypass errors)
-        #[arg(long)]
-        force: bool,
-    },
-    /// Add a review node to a thread (deprecated alias for `comment`)
-    Review {
         thread_id: String,
         body_positional: Option<String>,
         #[arg(long = "body", value_name = "TEXT")]
@@ -2117,54 +2021,6 @@ fn main() -> Result<(), ForumError> {
             force,
             &clock,
         )?,
-        Commands::Claim {
-            thread_id,
-            body_positional,
-            body_flag,
-            body_file,
-            edit,
-            reply_to,
-            as_actor,
-            force,
-        } => {
-            warn_legacy_node_shorthand("claim");
-            run_shorthand_say(
-                &thread_id,
-                body_positional,
-                body_flag,
-                body_file,
-                edit,
-                reply_to,
-                as_actor,
-                NodeType::Claim,
-                force,
-                &clock,
-            )?
-        }
-        Commands::Question {
-            thread_id,
-            body_positional,
-            body_flag,
-            body_file,
-            edit,
-            reply_to,
-            as_actor,
-            force,
-        } => {
-            warn_legacy_node_shorthand("question");
-            run_shorthand_say(
-                &thread_id,
-                body_positional,
-                body_flag,
-                body_file,
-                edit,
-                reply_to,
-                as_actor,
-                NodeType::Question,
-                force,
-                &clock,
-            )?
-        }
         Commands::Objection {
             thread_id,
             body_positional,
@@ -2186,30 +2042,6 @@ fn main() -> Result<(), ForumError> {
             force,
             &clock,
         )?,
-        Commands::Summary {
-            thread_id,
-            body_positional,
-            body_flag,
-            body_file,
-            edit,
-            reply_to,
-            as_actor,
-            force,
-        } => {
-            warn_legacy_node_shorthand("summary");
-            run_shorthand_say(
-                &thread_id,
-                body_positional,
-                body_flag,
-                body_file,
-                edit,
-                reply_to,
-                as_actor,
-                NodeType::Summary,
-                force,
-                &clock,
-            )?
-        }
         Commands::Action {
             thread_id,
             body_positional,
@@ -2231,55 +2063,6 @@ fn main() -> Result<(), ForumError> {
             force,
             &clock,
         )?,
-        Commands::Risk {
-            thread_id,
-            body_positional,
-            body_flag,
-            body_file,
-            edit,
-            reply_to,
-            as_actor,
-            force,
-        } => {
-            warn_legacy_node_shorthand("risk");
-            run_shorthand_say(
-                &thread_id,
-                body_positional,
-                body_flag,
-                body_file,
-                edit,
-                reply_to,
-                as_actor,
-                NodeType::Risk,
-                force,
-                &clock,
-            )?
-        }
-        Commands::Review {
-            thread_id,
-            body_positional,
-            body_flag,
-            body_file,
-            edit,
-            reply_to,
-            as_actor,
-            force,
-        } => {
-            warn_legacy_node_shorthand("review");
-            run_shorthand_say(
-                &thread_id,
-                body_positional,
-                body_flag,
-                body_file,
-                edit,
-                reply_to,
-                as_actor,
-                NodeType::Review,
-                force,
-                &clock,
-            )?
-        }
-
         Commands::Retract {
             thread_id,
             node_ids,

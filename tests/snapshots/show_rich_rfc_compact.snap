@@ -18,6 +18,10 @@ Initial thread body.
 **latest summary:**
   Direction is sound; migration evidence needed.
 
+conversations: 2
+  node-0001 objection [open] ai/reviewer — Benchmarks are missing.
+  node-0002 summary [open] human/alice — Direction is sound; migration evidence needed.
+
 ---
 
 **timeline:** 3 events (use 'log RFC-a1b2c3d4' for full view)

@@ -99,26 +99,28 @@ fn edit_flag_creates_node() {
     )
     .unwrap();
 
-    let editor = create_mock_editor(repo.path(), "Claim from editor");
+    // Phase 2 slot 2 (RFC `7ymtc4b2`): the deprecated `claim` arm
+    // is removed; `comment` is the canonical surface.
+    let editor = create_mock_editor(repo.path(), "Comment from editor");
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
         .env("EDITOR", &editor)
         .env_remove("VISUAL")
         .env("GIT_FORUM_EDITOR_FORCE", "1")
-        .args(["claim", &thread_id, "--edit"])
+        .args(["comment", &thread_id, "--edit"])
         .output()
         .expect("failed to run");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "edit claim failed: stdout={stdout}, stderr={stderr}"
+        "edit comment failed: stdout={stdout}, stderr={stderr}"
     );
-    assert!(stdout.contains("Added claim"));
+    assert!(stdout.contains("Added comment"));
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(state.nodes.len(), 1);
-    assert_eq!(state.nodes[0].body, "Claim from editor");
+    assert_eq!(state.nodes[0].body, "Comment from editor");
 }
 
 #[test]

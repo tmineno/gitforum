@@ -18,6 +18,12 @@ Initial thread body.
 **latest summary:**
   Direction is sound; migration evidence needed.
 
+conversations: 2
+  node-0001 objection [open] Benchmarks are missing.
+    reply: git forum claim RFC-a1b2c3d4 --reply-to node-0001 --body "..."
+  node-0002 summary [open] Direction is sound; migration evidence needed.
+    reply: git forum claim RFC-a1b2c3d4 --reply-to node-0002 --body "..."
+
 ---
 
 ### timeline

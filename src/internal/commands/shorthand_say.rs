@@ -1,20 +1,32 @@
-//! `git forum comment | objection | action | claim | question | summary | risk | review`
-//! orchestration. All collapse onto [`run_shorthand_say`]; the rhetorical
-//! 1.x labels (`claim` / `question` / `summary` / `risk` / `review`) are
-//! aliased to `comment` per ADR-006 with the user's chosen label preserved
-//! on the event as `legacy_subtype`.
+//! `git forum comment | objection | action` orchestration.
+//!
+//! SPEC-3.0 §2.2 / ADR-006 keeps four canonical NodeKinds: Comment,
+//! Approval, Objection, Action. The v1.x rhetorical shorthands
+//! (`claim`/`question`/`summary`/`risk`/`review`) were removed at
+//! Phase 2 slot 2 (RFC `7ymtc4b2`); their CLI arms, the `Commands::*`
+//! enum variants, and the `warn_legacy_node_shorthand` helper are no
+//! longer in tree.
+//!
+//! Phase 2 slot 2: `run_shorthand_say` writes a `NodeRecord` + body
+//! through `internal::snapshot::store::write_snapshot`. The legacy
+//! `internal::write_ops::say_node` event-write path is no longer
+//! invoked here.
 
 use std::path::PathBuf;
+
+use chrono::Utc;
 
 use super::context::Context;
 use crate::internal::clock::Clock;
 use crate::internal::commands::show;
 use crate::internal::error::ForumError;
 use crate::internal::event::NodeType;
+use crate::internal::id_alloc;
+use crate::internal::node::{NodeKind, NodeRecord, NodeStatus};
 use crate::internal::operation_check;
 use crate::internal::policy::Policy;
+use crate::internal::snapshot::{self, store::write_snapshot, NodeWithBody};
 use crate::internal::thread;
-use crate::internal::write_ops;
 
 use super::revise::resolve_reply_to;
 use super::shared::{
@@ -22,9 +34,8 @@ use super::shared::{
 };
 use super::thread_new::resolve_body_required;
 
-/// Args for `commands::shorthand_say::run` — the shared field set used
-/// by `comment` / `objection` / `action` / `claim` / `question` /
-/// `summary` / `risk` / `review` / `node add`.
+/// Args for `commands::shorthand_say::run` — shared field set used by
+/// `comment` / `objection` / `action` (and `node add` after slot 7f).
 pub struct ShorthandSayArgs {
     pub thread_id: String,
     pub body_positional: Option<String>,
@@ -53,19 +64,6 @@ pub fn run(args: ShorthandSayArgs, ctx: &Context) -> Result<(), ForumError> {
     )
 }
 
-/// Print a deprecation warning for legacy node-type shorthand commands.
-///
-/// Per SPEC-2.0 §9.3 / ADR-006, the rhetorical-only shorthands
-/// `claim` / `question` / `summary` / `risk` / `review` are aliased to
-/// `comment` for one minor release and removed in 3.0. The user's chosen
-/// label is preserved on the event as `legacy_subtype`.
-pub fn warn_legacy_node_shorthand(name: &str) {
-    eprintln!(
-        "warning: `git forum {name}` is deprecated; the canonical 2.0 form is `git forum comment` \
-         (the rhetorical label is preserved). This shorthand will be removed in 3.0."
-    );
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn run_shorthand_say(
     thread_id: &str,
@@ -91,21 +89,39 @@ pub fn run_shorthand_say(
         &format!("Compose a {node_type} node"),
     )?;
 
-    // Operation check: is this node type allowed in the current state?
+    // Operation check is keyed on the v2 ThreadStatus + NodeType. The
+    // mixed-chain replay reader produces a `ThreadState` that satisfies
+    // both shapes during the Phase 2 cutover window.
     let state = thread::replay_thread(&git, thread_id)?;
     let violations = operation_check::check_say(&policy, state.status.as_str(), node_type);
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
     let resolved_reply = resolve_reply_to(&git, thread_id, reply_to.as_deref())?;
-    let node_id = write_ops::say_node(
+    let kind = node_kind_for_type(node_type)?;
+    let now = clock.now();
+    let node_id = id_alloc::alloc_bare_thread_id(&actor, &body_text, &now.to_rfc3339());
+
+    write_node_to_snapshot(
         &git,
         thread_id,
-        node_type,
-        &body_text,
+        NodeWithBody {
+            record: NodeRecord {
+                id: node_id.clone(),
+                kind,
+                status: NodeStatus::Open,
+                created_at: now,
+                created_by: actor.clone(),
+                updated_at: None,
+                updated_by: None,
+                reply_to: resolved_reply.clone(),
+                legacy_label: None,
+            },
+            body: body_text.clone(),
+        },
         &actor,
-        clock,
-        resolved_reply.as_deref(),
+        now,
     )?;
+
     println!("Added {node_type} {}", show::short_oid(&node_id));
     if let Ok(state) = thread::replay_thread(&git, thread_id) {
         eprintln!(
@@ -121,4 +137,134 @@ pub fn run_shorthand_say(
         );
     }
     Ok(())
+}
+
+/// Append `node` to the thread's snapshot and write a new snapshot
+/// commit. Falls back to migrating-on-write: a legacy event-chain
+/// thread is first read via `replay_thread` (mixed-chain aware), the
+/// resulting state seeds a fresh `ThreadDocument`, and the new node
+/// joins it. This keeps slot-2's storage gate (snapshot tip) without
+/// leaving event-chain threads stranded mid-Phase-2.
+fn write_node_to_snapshot(
+    git: &crate::internal::git_ops::GitOps,
+    thread_id: &str,
+    node: NodeWithBody,
+    actor: &str,
+    now: chrono::DateTime<Utc>,
+) -> Result<(), ForumError> {
+    let mut doc = match snapshot::read_snapshot(git, thread_id) {
+        Ok(doc) => doc,
+        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(git, thread_id)?,
+        Err(other) => return Err(other),
+    };
+    doc.nodes.push(node);
+    doc.snapshot.updated_at = now;
+    doc.snapshot.updated_by = actor.into();
+    write_snapshot(git, thread_id, &doc, "node add")?;
+    Ok(())
+}
+
+/// Read a legacy event-chain thread via the mixed-chain replay
+/// reader and project the resulting state back into a SPEC-3.0
+/// `ThreadDocument`. Used by Phase 2 write-side cutovers as a
+/// migrate-on-write bridge — the next read round-trips through the
+/// snapshot path.
+pub(crate) fn migrate_legacy_to_snapshot(
+    git: &crate::internal::git_ops::GitOps,
+    thread_id: &str,
+) -> Result<snapshot::ThreadDocument, ForumError> {
+    use crate::internal::evidence::EvidenceFile;
+    use crate::internal::snapshot::{Links, ThreadDocument};
+    use crate::internal::thread::ThreadSnapshot;
+
+    let state = thread::replay_thread(git, thread_id)?;
+    let category = super::thread_new::lifecycle_to_category(state.lifecycle).to_string();
+
+    let nodes: Vec<NodeWithBody> = state
+        .nodes
+        .iter()
+        .filter_map(|n| {
+            let kind = match n.node_type.canonical() {
+                NodeType::Comment => NodeKind::Comment,
+                NodeType::Approval => NodeKind::Approval,
+                NodeType::Objection => NodeKind::Objection,
+                NodeType::Action => NodeKind::Action,
+                _ => return None, // canonical() always returns one of the four
+            };
+            let status = if n.retracted {
+                NodeStatus::Retracted
+            } else if n.incorporated {
+                NodeStatus::Incorporated
+            } else if n.resolved {
+                NodeStatus::Resolved
+            } else {
+                NodeStatus::Open
+            };
+            Some(NodeWithBody {
+                record: NodeRecord {
+                    id: n.node_id.clone(),
+                    kind,
+                    status,
+                    created_at: n.created_at,
+                    created_by: n.actor.clone(),
+                    updated_at: None,
+                    updated_by: None,
+                    reply_to: n.reply_to.clone(),
+                    legacy_label: n.legacy_subtype.clone(),
+                },
+                body: n.body.clone(),
+            })
+        })
+        .collect();
+
+    let links = Links {
+        entries: state
+            .links
+            .iter()
+            .map(|l| crate::internal::snapshot::Link {
+                target: l.target_thread_id.clone(),
+                rel: l.rel.clone(),
+                created_at: state.created_at,
+                created_by: state.created_by.clone(),
+            })
+            .collect(),
+    };
+
+    Ok(ThreadDocument {
+        snapshot: ThreadSnapshot {
+            schema_version: ThreadSnapshot::SCHEMA_VERSION,
+            id: state.id,
+            title: state.title,
+            category,
+            status: state.status.as_str().to_string(),
+            tags: state.tags,
+            created_at: state.created_at,
+            created_by: state.created_by.clone(),
+            updated_at: state.created_at,
+            updated_by: state.created_by,
+            branch: state.branch,
+            supersedes: Vec::new(),
+        },
+        body: state.body,
+        nodes,
+        links,
+        evidence: EvidenceFile::default(),
+    })
+}
+
+/// Map a v2 [`NodeType`] (post-`canonical()` collapse) to the SPEC-3.0
+/// [`NodeKind`]. `claim`/`question`/`summary`/`risk`/`review`/
+/// `evidence`/`alternative`/`assumption` no longer reach this path —
+/// the deprecated CLI arms are deleted in slot 2 — but the canonical
+/// fold still runs in case a legacy migration tool routes through here.
+fn node_kind_for_type(node_type: NodeType) -> Result<NodeKind, ForumError> {
+    match node_type.canonical() {
+        NodeType::Comment => Ok(NodeKind::Comment),
+        NodeType::Approval => Ok(NodeKind::Approval),
+        NodeType::Objection => Ok(NodeKind::Objection),
+        NodeType::Action => Ok(NodeKind::Action),
+        other => Err(ForumError::Config(format!(
+            "node type `{other}` cannot be expressed as a SPEC-3.0 NodeKind"
+        ))),
+    }
 }
