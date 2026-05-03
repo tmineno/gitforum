@@ -212,14 +212,18 @@ non-goal §1).
    is the primary linkage from a thread to the working tree.
 2. **Branch binding.** The optional `branch` field on `thread.toml` (§2.1)
    records the Git branch a thread concerns. It is advisory: it does not gate
-   any operation, but readers can use it to surface threads relevant to the
-   current branch, and CLIs MAY default `<THREAD>` arguments to a thread
-   bound to the current branch when the argument is omitted.
+   any operation. Readers and listing commands MAY use it to surface threads
+   relevant to the current branch. 3.0 does not define `<THREAD>`-argument
+   defaulting from the bound branch; every CLI invocation that takes a
+   `<THREAD>` argument requires it explicitly.
 3. **Commit-message validation.** An optional `commit-msg` Git hook installed
-   by git-forum validates that any thread IDs mentioned in a commit message
-   resolve to threads in `refs/forum/threads/*`. The hook MUST NOT block
-   commits that reference no thread. It MUST fail commits that reference an
-   undefined thread ID.
+   by git-forum validates thread IDs that appear on a `Refs:` trailer line in
+   a commit message. The trailer takes the form `Refs: <id>[, <id>...]`,
+   where each `<id>` is a bare 3.0 thread ID (no `@` prefix; §6). The hook
+   MUST NOT scan the commit message body for bare IDs — base36 thread tokens
+   collide with abbreviated commit hashes and free-form prose. The hook MUST
+   NOT block commits that have no `Refs:` trailer. It MUST fail commits
+   whose `Refs:` trailer names an undefined thread ID.
 
 These mechanisms are required surface (CORE-VALUE "Connection to code (always
 in scope)"). Their CLI entry points are listed in §7.
@@ -319,8 +323,8 @@ body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
 review = ["comment", "approval", "objection", "action"]
 
 [categories.rfc.revise]
-allow_body_revise = ["draft", "open", "working", "review"]
-allow_node_revise = ["draft", "open", "working", "review"]
+allow_body_revise = ["draft", "open", "review"]
+allow_node_revise = ["draft", "open", "review"]
 
 [categories.rfc.evidence]
 allow_evidence = ["draft", "open", "working", "review", "done", "rejected", "deprecated"]
@@ -653,11 +657,18 @@ Migration uses a fixed built-in mapping from 1.x/2.x thread kind or lifecycle to
 | `record` | `task` |
 | unrecognized | `task` |
 
-Migration MUST NOT require repository-specific category mapping logic. The
-source kind or lifecycle SHOULD also be preserved as a tag when it satisfies the
-tag grammar in §2.4. In particular, `bug`, `issue`, `dec`, and `record` source kinds SHOULD be
-preserved as tags so defect and decision classification are not lost when
-collapsed into `task`.
+Migration MUST NOT require repository-specific category mapping logic. To
+preserve the defect/decision classifications that the category collapse
+removes, migration MUST also add the following canonical 3.0 tags:
+
+| 1.x/2.x source | Added 3.0 tag |
+|---|---|
+| `bug`, `issue` | `bug` |
+| `dec`, `record` | `decision` |
+
+The source kind or lifecycle MAY additionally be preserved verbatim as a tag
+when it satisfies the grammar in §2.4 and differs from the canonical tag
+above.
 
 ### 8.4 Unmigrated event-chain refs
 
