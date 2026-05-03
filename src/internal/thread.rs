@@ -1061,15 +1061,28 @@ impl ThreadSnapshot {
     }
 
     pub fn from_toml(s: &str) -> Result<Self, ForumError> {
-        let snap: Self = toml::from_str(s)?;
-        if snap.schema_version != Self::SCHEMA_VERSION {
+        // Pre-flight: probe `schema_version` through an intermediate
+        // struct with `Option<u32>` so an *absent* field maps to
+        // SnapshotSchemaUnsupported (per SPEC-3.0 §11) rather than a
+        // generic TOML missing-field error. Codex objection
+        // `2890e3edd4983bd3` on qa8u71j9.
+        #[derive(serde::Deserialize)]
+        struct SchemaVersionProbe {
+            schema_version: Option<u32>,
+        }
+        let probe: SchemaVersionProbe = toml::from_str(s)?;
+        let v = probe.schema_version.ok_or_else(|| {
+            ForumError::SnapshotSchemaUnsupported(
+                "thread.toml is missing required `schema_version` field".into(),
+            )
+        })?;
+        if v != Self::SCHEMA_VERSION {
             return Err(ForumError::SnapshotSchemaUnsupported(format!(
-                "thread.toml schema_version={} (this build supports {})",
-                snap.schema_version,
+                "thread.toml schema_version={v} (this build supports {})",
                 Self::SCHEMA_VERSION
             )));
         }
-        Ok(snap)
+        Ok(toml::from_str(s)?)
     }
 }
 
@@ -1127,7 +1140,9 @@ mod thread_snapshot_tests {
     }
 
     #[test]
-    fn missing_schema_version_rejected_as_toml_error() {
+    fn missing_schema_version_rejected_as_snapshot_schema_unsupported() {
+        // Per SPEC-3.0 §11 SnapshotSchemaUnsupported triggers on
+        // either an *absent* or *unsupported* `schema_version`.
         let bad = r#"
             id = "fg61bcmp"
             title = "T"
@@ -1140,7 +1155,10 @@ mod thread_snapshot_tests {
             updated_by = "ai/codex"
         "#;
         let err = ThreadSnapshot::from_toml(bad).unwrap_err();
-        assert!(matches!(err, ForumError::Toml(_)));
+        assert!(
+            matches!(err, ForumError::SnapshotSchemaUnsupported(_)),
+            "expected SnapshotSchemaUnsupported for absent schema_version, got {err}"
+        );
     }
 
     #[test]

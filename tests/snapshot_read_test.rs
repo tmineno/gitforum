@@ -165,6 +165,41 @@ fn read_legacy_event_chain_returns_legacy_event_chain() {
 }
 
 #[test]
+fn read_absent_schema_version_returns_snapshot_schema_unsupported() {
+    // Per SPEC-3.0 §11 SnapshotSchemaUnsupported triggers on either
+    // an *absent* or *unsupported* `schema_version`. Codex objection
+    // 2890e3edd4983bd3 on qa8u71j9: the absent case must not fall
+    // through to a generic TOML missing-field error.
+    let repo = fresh_repo();
+    let git = GitOps::new(repo.path().to_path_buf());
+
+    let bad_toml = r#"
+        id = "NOVER1"
+        title = "no schema_version"
+        category = "rfc"
+        status = "draft"
+        tags = []
+        created_at = "2026-05-03T00:00:00Z"
+        created_by = "human/alice"
+        updated_at = "2026-05-03T00:00:00Z"
+        updated_by = "human/alice"
+    "#;
+    let blob = git.hash_object(bad_toml.as_bytes()).unwrap();
+    let tree = git.mktree_single("thread.toml", &blob).unwrap();
+    let commit = git
+        .commit_tree(&tree, &[], "absent schema_version")
+        .unwrap();
+    git.create_ref("refs/forum/threads/NOVER1", &commit)
+        .unwrap();
+
+    let err = read_snapshot(&git, "NOVER1").unwrap_err();
+    assert!(
+        matches!(err, ForumError::SnapshotSchemaUnsupported(_)),
+        "expected SnapshotSchemaUnsupported for absent schema_version, got {err:?}"
+    );
+}
+
+#[test]
 fn read_unsupported_schema_version_is_rejected() {
     let repo = fresh_repo();
     let git = GitOps::new(repo.path().to_path_buf());
