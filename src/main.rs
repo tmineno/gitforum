@@ -14,7 +14,7 @@ use git_forum::internal::commands::diff;
 use git_forum::internal::commands::doctor;
 use git_forum::internal::commands::hook;
 use git_forum::internal::commands::ls;
-use git_forum::internal::commands::node_bulk::run_node_lifecycle_bulk;
+use git_forum::internal::commands::node_bulk::{run_node_lifecycle_bulk, NodeLifecycleOp};
 use git_forum::internal::commands::revise::{self as revise_cmd, ReviseCmd};
 use git_forum::internal::commands::shared::{
     apply_operation_checks, discover_repo_with_init_warning, parse_since_date, parse_thread_kind,
@@ -2071,7 +2071,7 @@ fn main() -> Result<(), ForumError> {
             &thread_id,
             &node_ids,
             as_actor,
-            git_forum::internal::event::EventType::Retract,
+            NodeLifecycleOp::Retract,
             "Retracted",
             &clock,
         )?,
@@ -2084,7 +2084,7 @@ fn main() -> Result<(), ForumError> {
             &thread_id,
             &node_ids,
             as_actor,
-            git_forum::internal::event::EventType::Resolve,
+            NodeLifecycleOp::Resolve,
             "Resolved",
             &clock,
         )?,
@@ -2113,7 +2113,7 @@ fn main() -> Result<(), ForumError> {
                     &thread_id,
                     &node_ids,
                     as_actor,
-                    git_forum::internal::event::EventType::Reopen,
+                    NodeLifecycleOp::Reopen,
                     "Reopened",
                     &clock,
                 )?;
