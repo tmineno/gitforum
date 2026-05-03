@@ -1358,19 +1358,8 @@ fn main() -> Result<(), ForumError> {
         }
 
         Commands::Status { thread_id } => {
-            let (git, _paths) = discover_repo_with_init_warning()?;
-            let thread_id = resolve_tid(&git, &thread_id)?;
-            let state = thread::replay_thread(&git, &thread_id)?;
-            print!(
-                "{}",
-                show::render_show(
-                    &state,
-                    &show::ShowOptions {
-                        mode: show::ShowMode::Status,
-                        ..show::ShowOptions::default()
-                    }
-                )
-            );
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            commands::status::run(commands::status::StatusArgs { thread_id }, &ctx)?;
         }
 
         Commands::Node { cmd } => match cmd {

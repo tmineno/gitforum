@@ -26,6 +26,7 @@ pub mod shorthand_say;
 pub mod shortlog;
 pub mod show;
 pub mod state;
+pub mod status;
 pub mod thread_new;
 pub mod verify;
 
