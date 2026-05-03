@@ -53,7 +53,7 @@ pub struct ThreadState {
     ///
     /// Phase 2c (Finding 1 follow-up): typed and always populated. Initial
     /// value is derived from
-    /// [`super::compat::v1::lifecycle_for_legacy_kind`] (the §2.3.3
+    /// [`super::legacy::v1::lifecycle_for_legacy_kind`] (the §2.3.3
     /// legacy mapping) at replay start; the first `facet_set` event
     /// carrying `lifecycle` overrides it and sets
     /// [`lifecycle_explicit`](Self::lifecycle_explicit).
@@ -227,7 +227,7 @@ fn replay_with_issues_inner(
         // kind-derived value (a 1.x compat fallback for chains without
         // an explicit `facet_set`); the first explicit `facet_set` then
         // overrides it and flips `lifecycle_explicit` below.
-        lifecycle: super::compat::v1::lifecycle_for_legacy_kind(kind),
+        lifecycle: super::legacy::v1::lifecycle_for_legacy_kind(kind),
         lifecycle_explicit: false,
         tags: Vec::new(),
     };

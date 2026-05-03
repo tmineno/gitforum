@@ -331,9 +331,9 @@ impl Policy {
         let mut policy: Self = toml::from_str(&text)
             .map_err(|e| ForumError::Config(format!("invalid policy.toml: {e}")))?;
         // 1.x → 2.0 shape rewrites (predicate strip, guard scopes,
-        // creation rules) all live in `compat::v1`; they emit deprecation
+        // creation rules) all live in `legacy::v1`; they emit deprecation
         // warnings through the supplied emitter.
-        super::compat::v1::rewrite_legacy_policy(&mut policy, emitter, path);
+        super::legacy::v1::rewrite_legacy_policy(&mut policy, emitter, path);
         Ok(policy)
     }
 
@@ -879,10 +879,10 @@ fn lint_allow_list_coverage(
 /// fails to parse.
 /// Parse a guard's `on` field into a (predicate, transition, optional
 /// rewrite-warning) triple. Legacy kind-prefixed scopes route through
-/// [`super::compat::v1::legacy_kind_prefix_to_lifecycle`] for the
+/// [`super::legacy::v1::legacy_kind_prefix_to_lifecycle`] for the
 /// `kind:from->to` → `lifecycle=...` rewrite.
 ///
-/// Visibility: crate-internal so [`super::compat::v1::rewrite_legacy_policy`]
+/// Visibility: crate-internal so [`super::legacy::v1::rewrite_legacy_policy`]
 /// can dispatch through it without re-exporting the parser pipeline.
 pub(crate) fn parse_guard_on(on: &str) -> Result<(FacetPredicate, String, Option<String>), String> {
     let Some((scope, transition)) = on.split_once(':') else {
@@ -894,7 +894,7 @@ pub(crate) fn parse_guard_on(on: &str) -> Result<(FacetPredicate, String, Option
     // word with no `=` and matching one of the four legacy kinds.
     if !scope_trimmed.contains('=') && !scope_trimmed.contains(' ') && !scope_trimmed.contains('(')
     {
-        if let Some(lifecycle) = super::compat::v1::legacy_kind_prefix_to_lifecycle(scope_trimmed) {
+        if let Some(lifecycle) = super::legacy::v1::legacy_kind_prefix_to_lifecycle(scope_trimmed) {
             let warning = format!(
                 "guard {:?}: legacy kind-prefixed scope `{scope_trimmed}:` rewritten to \
                  `lifecycle={lifecycle}` (SPEC-2.0 §7.1 / §10.4)",
@@ -956,15 +956,15 @@ pub fn scan_at_least_one_summary_warnings(text: &str) -> Vec<AtLeastOneSummaryHi
 /// spaces around the `:` separator (`lifecycle=X : from->to`) match
 /// query strings produced by the state machine.
 ///
-/// Visibility: crate-internal so [`super::compat::v1::rewrite_legacy_policy`]
+/// Visibility: crate-internal so [`super::legacy::v1::rewrite_legacy_policy`]
 /// shares the same canonicalisation as `guards_for`.
 pub(crate) fn normalize_transition_str(transition: &str) -> String {
     let trimmed = transition.trim();
     if let Some((from, to)) = trimmed.split_once("->") {
         format!(
             "{}->{}",
-            super::compat::v1::normalize_state_name(from.trim()),
-            super::compat::v1::normalize_state_name(to.trim()),
+            super::legacy::v1::normalize_state_name(from.trim()),
+            super::legacy::v1::normalize_state_name(to.trim()),
         )
     } else {
         trimmed.to_string()
@@ -1071,7 +1071,7 @@ mod tests {
             ..Default::default()
         };
         let emitter = lint_emit::LintEmitter::new_capturing(None);
-        super::super::compat::v1::rewrite_legacy_policy(
+        super::super::legacy::v1::rewrite_legacy_policy(
             &mut p,
             &emitter,
             std::path::Path::new("policy.toml"),
@@ -1325,7 +1325,7 @@ mod tests {
             ..Default::default()
         };
         let emitter = lint_emit::LintEmitter::new_capturing(None);
-        super::super::compat::v1::rewrite_legacy_policy(
+        super::super::legacy::v1::rewrite_legacy_policy(
             &mut p,
             &emitter,
             std::path::Path::new("policy.toml"),

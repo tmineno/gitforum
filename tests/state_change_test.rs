@@ -626,7 +626,7 @@ requires = ["no_open_actions"]
     .unwrap();
     {
         let emitter = git_forum::internal::lint_emit::LintEmitter::new_capturing(None);
-        git_forum::internal::compat::v1::rewrite_legacy_policy(
+        git_forum::internal::legacy::v1::rewrite_legacy_policy(
             &mut custom_policy,
             &emitter,
             std::path::Path::new("policy.toml"),

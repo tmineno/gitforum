@@ -298,20 +298,20 @@ pub fn unified_transitions() -> &'static [(&'static str, &'static str)] {
 
 /// SPEC-2.0 §3.1.2 — pure text-level normalization of 1.x state names to 2.0.
 ///
-/// Thin wrapper that re-exports [`super::compat::v1::normalize_state_name`]
+/// Thin wrapper that re-exports [`super::legacy::v1::normalize_state_name`]
 /// so existing call sites keep their `event::normalize_state_name`
-/// import path. New domain code should call into [`super::compat::v1`]
+/// import path. New domain code should call into [`super::legacy::v1`]
 /// directly per RFC 915yuegd P1.
 pub fn normalize_state_name(s: &str) -> &str {
-    super::compat::v1::normalize_state_name(s)
+    super::legacy::v1::normalize_state_name(s)
 }
 
 /// SPEC-2.0 §3.1.1 / §3.1.2 — kind-aware migration of a 1.x state name to a
 /// 2.0 state in the lifecycle's allowed set.
 ///
-/// Thin wrapper over [`super::compat::v1::migrate_legacy_state`].
+/// Thin wrapper over [`super::legacy::v1::migrate_legacy_state`].
 pub fn migrate_legacy_state(kind: ThreadKind, state: &str) -> &str {
-    super::compat::v1::migrate_legacy_state(kind, state)
+    super::legacy::v1::migrate_legacy_state(kind, state)
 }
 
 /// Shortest path from `from` to `to` for `lifecycle`. Thin wrapper over
@@ -423,26 +423,26 @@ pub enum NodeType {
 impl NodeType {
     /// Map any variant to its 2.0 canonical form.
     ///
-    /// Thin delegator over [`super::compat::v1::canonical_node_type`];
+    /// Thin delegator over [`super::legacy::v1::canonical_node_type`];
     /// the rule body (which legacy variants collapse to which canonical
-    /// node) lives in `compat::v1` per RFC 915yuegd P1.
+    /// node) lives in `legacy::v1` per RFC 915yuegd P1.
     pub fn canonical(self) -> Self {
-        super::compat::v1::canonical_node_type(self)
+        super::legacy::v1::canonical_node_type(self)
     }
 
     /// Returns true if this is a 2.0 canonical variant.
     pub fn is_canonical(self) -> bool {
-        super::compat::v1::is_canonical_node_type(self)
+        super::legacy::v1::is_canonical_node_type(self)
     }
 
     /// Legacy 1.x label for non-canonical variants, or `None` if already canonical.
     ///
-    /// Thin delegator over [`super::compat::v1::legacy_subtype_label`].
+    /// Thin delegator over [`super::legacy::v1::legacy_subtype_label`].
     /// Used by 2.0 write paths to record the user's stated rhetorical
     /// type in `Event.legacy_subtype` while persisting the canonical
     /// `node_type` on the event (SPEC-2.0 §2.5 / §9.3 / §10.1).
     pub fn legacy_subtype_label(self) -> Option<&'static str> {
-        super::compat::v1::legacy_subtype_label(self)
+        super::legacy::v1::legacy_subtype_label(self)
     }
 }
 
