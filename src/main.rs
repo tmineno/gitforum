@@ -1353,11 +1353,8 @@ fn main() -> Result<(), ForumError> {
         // additive arm landing alongside or after slot 11, not an
         // extraction of this body.
         Commands::Diff { thread_id, rev } => {
-            let (git, _paths) = discover_repo_with_init_warning()?;
-            let thread_id = resolve_tid(&git, &thread_id)?;
-            let state = thread::replay_thread(&git, &thread_id)?;
-            let output = diff::diff_body(&git, &state, rev.as_deref())?;
-            println!("{output}");
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            diff::run(diff::DiffArgs { thread_id, rev }, &ctx)?;
         }
 
         Commands::Status { thread_id } => {

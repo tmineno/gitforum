@@ -1,3 +1,11 @@
+//! `git forum diff <THREAD_ID> [--rev N|N..M]` orchestration.
+//!
+//! Phase 2 slot 7d (RFC `7ymtc4b2`): the `Diff` arm body relocates
+//! from `main.rs` to [`run`] in this module. The diff renderer
+//! ([`diff_body`]) is unchanged — it operates on a replayed
+//! `ThreadState`, which `replay_thread` already produces correctly
+//! from a snapshot tip.
+
 use std::io::Write;
 
 use tempfile::NamedTempFile;
@@ -5,7 +13,24 @@ use tempfile::NamedTempFile;
 use super::super::error::{ForumError, ForumResult};
 use super::super::event::EventType;
 use super::super::git_ops::GitOps;
-use super::super::thread::ThreadState;
+use super::super::thread::{self, ThreadState};
+use super::context::Context;
+use super::shared::resolve_tid;
+
+/// Args for [`run`] — `git forum diff`.
+pub struct DiffArgs {
+    pub thread_id: String,
+    pub rev: Option<String>,
+}
+
+/// Uniform entry point for the `diff` subcommand.
+pub fn run(args: DiffArgs, ctx: &Context) -> Result<(), ForumError> {
+    let thread_id = resolve_tid(&ctx.git, &args.thread_id)?;
+    let state = thread::replay_thread(&ctx.git, &thread_id)?;
+    let output = diff_body(&ctx.git, &state, args.rev.as_deref())?;
+    println!("{output}");
+    Ok(())
+}
 
 /// A body revision extracted from the event history.
 struct BodyRevision {
