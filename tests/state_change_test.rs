@@ -938,9 +938,9 @@ fn state_change_with_comment_attaches_body_no_summary_node() {
 
     assert!(state.nodes.is_empty());
 
-    let out = git_forum::internal::show::render_show(
+    let out = git_forum::internal::commands::show::render_show(
         &state,
-        &git_forum::internal::show::ShowOptions::default(),
+        &git_forum::internal::commands::show::ShowOptions::default(),
     );
     assert!(out.contains("done — closing because resolved"));
 }

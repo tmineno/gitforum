@@ -8,9 +8,9 @@
 use std::fs;
 use std::path::Path;
 
-use super::error::{ForumError, ForumResult};
-use super::git_ops::GitOps;
-use super::refs;
+use super::super::error::{ForumError, ForumResult};
+use super::super::git_ops::GitOps;
+use super::super::refs;
 
 // ── commit-msg hook ─────────────────────────────────────────────────
 

@@ -8,10 +8,10 @@ mod support;
 
 use std::fs;
 
+use git_forum::internal::commands::show;
 use git_forum::internal::evidence;
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::show;
 use git_forum::internal::thread;
 
 use support::forum::{fixed_clock, make_rfc as make_thread, setup_no_init as setup_with_paths};

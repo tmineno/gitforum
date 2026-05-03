@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use crate::internal::actor;
 use crate::internal::clock::SystemClock;
+use crate::internal::commands::show;
 use crate::internal::create;
 use crate::internal::error::ForumResult;
 use crate::internal::event::{self, Lifecycle, NodeType, ThreadKind};
@@ -12,7 +13,6 @@ use crate::internal::index::{self, ThreadRow};
 use crate::internal::node::Node;
 use crate::internal::refs;
 use crate::internal::reindex;
-use crate::internal::show;
 use crate::internal::thread;
 use crate::internal::write_ops;
 

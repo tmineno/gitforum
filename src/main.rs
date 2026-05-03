@@ -3,13 +3,17 @@ use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use git_forum::internal::actor;
-use git_forum::internal::branch_ops;
-use git_forum::internal::brief;
 use git_forum::internal::clock::SystemClock;
 use git_forum::internal::commands;
+use git_forum::internal::commands::branch;
+use git_forum::internal::commands::brief;
 use git_forum::internal::commands::bulk::{
     list_thread_states, print_bulk_report, run_bulk_state_change, BulkSelectors,
 };
+use git_forum::internal::commands::diff;
+use git_forum::internal::commands::doctor;
+use git_forum::internal::commands::hook;
+use git_forum::internal::commands::ls;
 use git_forum::internal::commands::node_bulk::run_node_lifecycle_bulk;
 use git_forum::internal::commands::revise::{self as revise_cmd, ReviseCmd};
 use git_forum::internal::commands::shared::{
@@ -18,15 +22,15 @@ use git_forum::internal::commands::shared::{
     resolve_tid, subcommand_hint, terminal_state_date,
 };
 use git_forum::internal::commands::shorthand_say::{run_shorthand_say, warn_legacy_node_shorthand};
+use git_forum::internal::commands::show;
 use git_forum::internal::commands::state::run_state_shorthand;
 use git_forum::internal::commands::state::StateCmd;
 use git_forum::internal::commands::thread_new::ThreadCmd;
 use git_forum::internal::commands::thread_new::ThreadNewInline;
+use git_forum::internal::commands::verify;
 use git_forum::internal::commands::Context;
 use git_forum::internal::config;
 use git_forum::internal::config::RepoPaths;
-use git_forum::internal::diff;
-use git_forum::internal::doctor;
 use git_forum::internal::error::ForumError;
 use git_forum::internal::event;
 use git_forum::internal::event::NodeType;
@@ -36,22 +40,18 @@ use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::github;
 use git_forum::internal::github_export;
 use git_forum::internal::github_import;
-use git_forum::internal::hook;
 use git_forum::internal::index;
 use git_forum::internal::init;
 use git_forum::internal::lint_emit::{self, LintEmitter};
-use git_forum::internal::ls;
 use git_forum::internal::operation_check;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::purge;
 use git_forum::internal::reindex;
 use git_forum::internal::repair;
-use git_forum::internal::show;
 use git_forum::internal::state_change;
 use git_forum::internal::thread;
 use git_forum::internal::timeline;
 use git_forum::internal::tui as forum_tui;
-use git_forum::internal::verify;
 use git_forum::internal::write_ops;
 
 const GROUPED_HELP: &str = "\
@@ -1295,7 +1295,8 @@ fn main() -> Result<(), ForumError> {
             let actor = as_actor
                 .or_else(|| git.default_actor().map(str::to_string))
                 .unwrap_or_else(|| "system/migrate".to_string());
-            let outcome = git_forum::internal::migrate::run(&git, &paths, &actor, dry_run)?;
+            let outcome =
+                git_forum::internal::commands::migrate::run(&git, &paths, &actor, dry_run)?;
             // After a write run, the local index can drift (refs renamed,
             // events rewritten). Rebuild it so subsequent reads see the
             // migrated state.
@@ -2052,7 +2053,7 @@ fn main() -> Result<(), ForumError> {
                 let (git, _paths) = discover_repo_with_init_warning()?;
                 let thread_id = resolve_tid(&git, &thread_id)?;
                 let actor = resolve_actor(as_actor, &git);
-                branch_ops::set_branch(&git, &thread_id, Some(&branch), &actor, &clock)?;
+                branch::set_branch(&git, &thread_id, Some(&branch), &actor, &clock)?;
                 println!("{thread_id} -> branch {branch}");
             }
             BranchCmd::Clear {
@@ -2062,7 +2063,7 @@ fn main() -> Result<(), ForumError> {
                 let (git, _paths) = discover_repo_with_init_warning()?;
                 let thread_id = resolve_tid(&git, &thread_id)?;
                 let actor = resolve_actor(as_actor, &git);
-                branch_ops::set_branch(&git, &thread_id, None, &actor, &clock)?;
+                branch::set_branch(&git, &thread_id, None, &actor, &clock)?;
                 println!("{thread_id} -> branch <cleared>");
             }
         },

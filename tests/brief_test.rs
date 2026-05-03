@@ -4,7 +4,7 @@
 
 mod support;
 
-use git_forum::internal::brief;
+use git_forum::internal::commands::brief;
 use git_forum::internal::event::ThreadKind;
 use git_forum::internal::index;
 use git_forum::internal::thread;

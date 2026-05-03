@@ -761,12 +761,12 @@ fn resolve_alias(git: &GitOps, user_input: &str) -> ForumResult<Option<String>> 
 
 fn canonical_for_legacy_id(git: &GitOps, legacy_id: &str) -> ForumResult<Option<String>> {
     if git
-        .resolve_ref(&super::migrate::alias_ref(legacy_id))?
+        .resolve_ref(&super::commands::migrate::alias_ref(legacy_id))?
         .is_none()
     {
         return Ok(None);
     }
-    let token = super::migrate::bare_token_for(legacy_id);
+    let token = super::commands::migrate::bare_token_for(legacy_id);
     if git.resolve_ref(&refs::thread_ref(&token))?.is_some() {
         Ok(Some(token))
     } else {
@@ -775,11 +775,11 @@ fn canonical_for_legacy_id(git: &GitOps, legacy_id: &str) -> ForumResult<Option<
 }
 
 fn resolve_alias_case_insensitive(git: &GitOps, user_input: &str) -> ForumResult<Option<String>> {
-    let aliases = git.list_refs(super::migrate::ALIASES_PREFIX)?;
+    let aliases = git.list_refs(super::commands::migrate::ALIASES_PREFIX)?;
     let target = user_input.to_ascii_uppercase();
     let mut hits: Vec<String> = aliases
         .iter()
-        .filter_map(|r| r.strip_prefix(super::migrate::ALIASES_PREFIX))
+        .filter_map(|r| r.strip_prefix(super::commands::migrate::ALIASES_PREFIX))
         .filter(|name| name.to_ascii_uppercase() == target)
         .map(|s| s.to_string())
         .collect();

@@ -1,7 +1,7 @@
-use super::clock::Clock;
-use super::error::{ForumError, ForumResult};
-use super::event::{Event, EventType};
-use super::git_ops::GitOps;
+use super::super::clock::Clock;
+use super::super::error::{ForumError, ForumResult};
+use super::super::event::{Event, EventType};
+use super::super::git_ops::GitOps;
 
 /// Bind or clear a thread's branch scope.
 ///
@@ -26,6 +26,6 @@ pub fn set_branch(
     }
 
     let ev = Event::base(thread_id, EventType::Scope, actor, clock).with_branch(branch);
-    super::event::write_event(git, &ev)?;
+    super::super::event::write_event(git, &ev)?;
     Ok(())
 }

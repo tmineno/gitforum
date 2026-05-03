@@ -18,6 +18,7 @@ use clap::Subcommand;
 
 use super::context::Context;
 use crate::internal::clock::Clock;
+use crate::internal::commands::show;
 use crate::internal::create;
 use crate::internal::editor;
 use crate::internal::error::ForumError;
@@ -25,7 +26,6 @@ use crate::internal::event::{Lifecycle, NodeType, ThreadKind};
 use crate::internal::evidence::{self, EvidenceKind};
 use crate::internal::operation_check;
 use crate::internal::policy::Policy;
-use crate::internal::show;
 use crate::internal::state_change;
 use crate::internal::thread;
 

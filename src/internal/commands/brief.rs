@@ -17,9 +17,9 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use super::event::NodeType;
-use super::node::Node;
-use super::thread::ThreadState;
+use super::super::event::NodeType;
+use super::super::node::Node;
+use super::super::thread::ThreadState;
 
 /// Tally of incoming `--rel <X>` link counts grouped by relation, sourced from
 /// the SQLite reverse-link index.
@@ -159,7 +159,7 @@ pub fn build_json(state: &ThreadState, incoming: &IncomingLinkCounts) -> BriefJs
     }
 }
 
-fn group_links_by_rel(links: &[super::thread::ThreadLink]) -> Vec<(String, usize)> {
+fn group_links_by_rel(links: &[super::super::thread::ThreadLink]) -> Vec<(String, usize)> {
     let mut acc: BTreeMap<String, usize> = BTreeMap::new();
     for l in links {
         *acc.entry(l.rel.clone()).or_default() += 1;

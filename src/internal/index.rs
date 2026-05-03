@@ -351,7 +351,7 @@ fn canonicalize_link_target(target: &str, known_ids: &std::collections::HashSet<
     if known_ids.contains(target) {
         return target.to_string();
     }
-    let canonical = super::migrate::bare_token_for(target);
+    let canonical = super::commands::migrate::bare_token_for(target);
     if canonical != target && known_ids.contains(&canonical) {
         canonical
     } else {

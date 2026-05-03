@@ -10,11 +10,11 @@ use clap::Subcommand;
 
 use super::context::Context;
 use crate::internal::clock::Clock;
+use crate::internal::commands::show;
 use crate::internal::error::ForumError;
 use crate::internal::event::Lifecycle;
 use crate::internal::evidence;
 use crate::internal::policy::Policy;
-use crate::internal::show;
 use crate::internal::state_change;
 use crate::internal::thread;
 use crate::internal::workflow::SPEC;

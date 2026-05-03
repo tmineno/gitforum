@@ -5,7 +5,7 @@
 mod support;
 
 use chrono::{TimeZone, Utc};
-use git_forum::internal::doctor::{self, CheckLevel};
+use git_forum::internal::commands::doctor::{self, CheckLevel};
 use git_forum::internal::event::ThreadKind;
 use git_forum::internal::id_alloc;
 use git_forum::internal::init;

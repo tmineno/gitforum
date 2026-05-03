@@ -1,12 +1,12 @@
-use super::config::RepoPaths;
-use super::error::ForumResult;
-use super::event;
-use super::git_ops::GitOps;
+use super::super::config::RepoPaths;
+use super::super::error::ForumResult;
+use super::super::event;
+use super::super::git_ops::GitOps;
+use super::super::index;
+use super::super::init;
+use super::super::refs;
+use super::super::thread;
 use super::hook;
-use super::index;
-use super::init;
-use super::refs;
-use super::thread;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckLevel {
@@ -58,7 +58,7 @@ pub fn run_doctor(git: &GitOps, paths: &RepoPaths) -> ForumResult<DoctorReport> 
 
 /// Run health checks with strict event-replay validation enabled.
 ///
-/// Each [`validate::StrictReplayIssue`](super::validate::StrictReplayIssue)
+/// Each [`validate::StrictReplayIssue`](super::super::validate::StrictReplayIssue)
 /// becomes its own `strict-replay <ref>` FAIL check, so triage knows exactly
 /// which event broke which invariant. Intended for migration verification,
 /// CI gates, and audit runs — default `run_doctor` stays lenient so existing

@@ -1,9 +1,9 @@
-use super::error::ForumResult;
-use super::event::ThreadKind;
-use super::event::{self, normalize_state_name};
-use super::git_ops::GitOps;
-use super::policy::{self, GuardViolation, Policy};
-use super::thread;
+use super::super::error::ForumResult;
+use super::super::event::ThreadKind;
+use super::super::event::{self, normalize_state_name};
+use super::super::git_ops::GitOps;
+use super::super::policy::{self, GuardViolation, Policy};
+use super::super::thread;
 
 /// Result of a preflight check (`git forum verify`).
 ///

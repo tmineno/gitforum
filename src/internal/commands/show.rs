@@ -2,11 +2,11 @@
 //! `shortlog`, and search results. Per RFC-lmr3wfcm Track E, the thread-detail
 //! renderers all collapse to a single [`render_show`] driven by [`ShowOptions`].
 
-use super::event::{self, Lifecycle};
-use super::policy::{self, Policy};
-use super::thread::{NodeLookup, ThreadState};
-use super::timeline;
-use super::workflow::SPEC;
+use super::super::event::{self, Lifecycle};
+use super::super::policy::{self, Policy};
+use super::super::thread::{NodeLookup, ThreadState};
+use super::super::timeline;
+use super::super::workflow::SPEC;
 
 // ============================================================
 //  Public surface — ShowOptions and the unified entry point
@@ -175,7 +175,7 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
     }
 
     if !compact {
-        let incorporated: Vec<&super::node::Node> =
+        let incorporated: Vec<&super::super::node::Node> =
             state.nodes.iter().filter(|n| n.incorporated).collect();
         render_item_list(&mut lines, "incorporated nodes", &incorporated, |node| {
             format!(
@@ -294,7 +294,7 @@ fn push_open_items(
     lines: &mut Vec<String>,
     thread_id: &str,
     label: &str,
-    items: &[&super::node::Node],
+    items: &[&super::super::node::Node],
     compact: bool,
     with_reply: bool,
 ) {
@@ -431,10 +431,10 @@ fn render_status_block(state: &ThreadState) -> String {
 
     let open_obj = state.open_objections();
     let open_act = state.open_actions();
-    let open_questions: Vec<&super::node::Node> = state
+    let open_questions: Vec<&super::super::node::Node> = state
         .nodes
         .iter()
-        .filter(|n| n.node_type == super::event::NodeType::Question && n.is_open())
+        .filter(|n| n.node_type == super::super::event::NodeType::Question && n.is_open())
         .collect();
 
     if open_obj.is_empty() && open_act.is_empty() && open_questions.is_empty() {
@@ -448,7 +448,7 @@ fn render_status_block(state: &ThreadState) -> String {
     lines.join("\n")
 }
 
-fn push_status_group(lines: &mut Vec<String>, label: &str, items: &[&super::node::Node]) {
+fn push_status_group(lines: &mut Vec<String>, label: &str, items: &[&super::super::node::Node]) {
     if items.is_empty() {
         return;
     }
@@ -727,11 +727,11 @@ fn spine_indent(spine: &[&str], src: &str, current: &str) -> String {
 /// A conversation is a root node (no in-thread parent) plus all transitive
 /// replies, in chronological order. Only nodes participating in a reply
 /// chain appear; standalone nodes are shown elsewhere.
-fn build_conversations(nodes: &[super::node::Node]) -> Vec<Vec<&super::node::Node>> {
+fn build_conversations(nodes: &[super::super::node::Node]) -> Vec<Vec<&super::super::node::Node>> {
     use std::collections::{HashMap, HashSet, VecDeque};
 
     let node_ids: HashSet<&str> = nodes.iter().map(|n| n.node_id.as_str()).collect();
-    let mut children: HashMap<&str, Vec<&super::node::Node>> = HashMap::new();
+    let mut children: HashMap<&str, Vec<&super::super::node::Node>> = HashMap::new();
     let mut has_parent: HashSet<&str> = HashSet::new();
     for node in nodes {
         if let Some(ref parent_id) = node.reply_to {
@@ -818,7 +818,7 @@ fn size_summary(size: usize) -> String {
     }
 }
 
-fn node_status(node: &super::node::Node) -> &'static str {
+fn node_status(node: &super::super::node::Node) -> &'static str {
     if node.retracted {
         "retracted"
     } else if node.incorporated {

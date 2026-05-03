@@ -10,10 +10,10 @@ use clap::Subcommand;
 
 use super::context::Context;
 use crate::internal::clock::Clock;
+use crate::internal::commands::show;
 use crate::internal::error::ForumError;
 use crate::internal::operation_check;
 use crate::internal::policy::Policy;
-use crate::internal::show;
 use crate::internal::thread;
 use crate::internal::write_ops;
 

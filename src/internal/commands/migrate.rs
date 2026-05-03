@@ -33,17 +33,17 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use super::config::RepoPaths;
-use super::error::{ForumError, ForumResult};
-use super::event::{self, Event, EventType, Lifecycle, ThreadKind};
-use super::git_ops::GitOps;
-use super::id_alloc;
-use super::lint_emit::format_path_repo_relative;
-use super::refs;
+use super::super::config::RepoPaths;
+use super::super::error::{ForumError, ForumResult};
+use super::super::event::{self, Event, EventType, Lifecycle, ThreadKind};
+use super::super::git_ops::GitOps;
+use super::super::id_alloc;
+use super::super::lint_emit::format_path_repo_relative;
+use super::super::refs;
 
 /// SPEC-2.0 §10: 2.0 alias entries live under `refs/forum/aliases/<old-id>`
 /// and point at the same commit as the canonical thread ref. They are
-/// consulted by [`super::thread::resolve_thread_id`] so legacy IDs continue
+/// consulted by [`super::super::thread::resolve_thread_id`] so legacy IDs continue
 /// to resolve after migration.
 pub const ALIASES_PREFIX: &str = "refs/forum/aliases/";
 
@@ -793,7 +793,7 @@ pub fn predicted_token_map(ids: &[String]) -> BTreeMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::event::NodeType;
+    use super::super::super::event::NodeType;
     use super::*;
 
     #[test]

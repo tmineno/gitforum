@@ -2,10 +2,10 @@ use std::io::Write;
 
 use tempfile::NamedTempFile;
 
-use super::error::{ForumError, ForumResult};
-use super::event::EventType;
-use super::git_ops::GitOps;
-use super::thread::ThreadState;
+use super::super::error::{ForumError, ForumResult};
+use super::super::event::EventType;
+use super::super::git_ops::GitOps;
+use super::super::thread::ThreadState;
 
 /// A body revision extracted from the event history.
 struct BodyRevision {

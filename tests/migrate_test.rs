@@ -13,12 +13,12 @@
 mod support;
 
 use chrono::{TimeZone, Utc};
+use git_forum::internal::commands::migrate;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::event::{self, Event, EventType, NodeType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id_alloc;
 use git_forum::internal::init;
-use git_forum::internal::migrate;
 use git_forum::internal::refs;
 use git_forum::internal::thread;
 
@@ -475,7 +475,7 @@ fn commit_msg_hook_recognizes_legacy_alias_and_at_marker() {
     // and the 2.0 `@<token>` display form. Before the fix, both were
     // reported as `not found` because the checker only consulted
     // `refs/forum/threads/<id>` and didn't know about the alias namespace.
-    use git_forum::internal::hook;
+    use git_forum::internal::commands::hook;
     let (_repo, git, paths) = setup();
     let legacy = "RFC-0001".to_string();
     build_legacy_thread(&git, &legacy, ThreadKind::Rfc, vec![]);

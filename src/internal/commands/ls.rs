@@ -4,10 +4,10 @@
 
 use chrono::{DateTime, Utc};
 
-use super::event::Lifecycle;
-use super::index::SearchRow;
+use super::super::event::Lifecycle;
+use super::super::index::SearchRow;
+use super::super::thread::ThreadState;
 use super::show::short_oid;
-use super::thread::ThreadState;
 
 /// Render search results from the local index.
 ///
