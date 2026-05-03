@@ -624,7 +624,14 @@ requires = ["no_open_actions"]
 "#,
     )
     .unwrap();
-    let _ = custom_policy.resolve_guard_scopes();
+    {
+        let emitter = git_forum::internal::lint_emit::LintEmitter::new_capturing(None);
+        git_forum::internal::compat::v1::rewrite_legacy_policy(
+            &mut custom_policy,
+            &emitter,
+            std::path::Path::new("policy.toml"),
+        );
+    }
 
     write_ops::say_node(
         &git,

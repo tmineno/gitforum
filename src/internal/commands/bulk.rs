@@ -1,0 +1,228 @@
+//! `git forum state bulk` orchestration: bulk state-change with selectors
+//! (`--branch` / `--kind` / `--status`) and per-thread report.
+
+use crate::internal::clock::Clock;
+use crate::internal::error::ForumError;
+use crate::internal::event::ThreadKind;
+use crate::internal::git_ops::GitOps;
+use crate::internal::policy::Policy;
+use crate::internal::refs;
+use crate::internal::state_change;
+use crate::internal::thread;
+
+#[derive(Clone, Copy)]
+pub struct BulkSelectors<'a> {
+    pub branch: Option<&'a str>,
+    pub kind: Option<ThreadKind>,
+    pub status: Option<&'a str>,
+}
+
+pub struct BulkStateOutcome {
+    pub thread_id: String,
+    pub from_state: String,
+    pub to_state: String,
+    pub ok: bool,
+    pub dry_run: bool,
+    pub detail: Option<String>,
+}
+
+pub struct BulkStateReport {
+    pub outcomes: Vec<BulkStateOutcome>,
+    pub failures: usize,
+}
+
+/// Replay every thread (or every thread in `kind`/`branch` filter) and
+/// return the materialised states sorted by creation time.
+pub fn list_thread_states(
+    git: &GitOps,
+    kind: Option<ThreadKind>,
+    branch: Option<&str>,
+) -> Result<Vec<thread::ThreadState>, ForumError> {
+    let all_ids = thread::list_thread_ids(git)?;
+    let mut states = Vec::new();
+    for id in &all_ids {
+        match thread::replay_thread(git, id) {
+            Ok(state) => {
+                if thread_matches_filters(&state, kind, branch, None) {
+                    states.push(state);
+                }
+            }
+            Err(e) => {
+                let ref_name = refs::thread_ref(id);
+                eprintln!(
+                    "warning: skipping {id}: failed to replay {ref_name}: {e}\n  \
+                     hint: run `git forum doctor` to diagnose, \
+                     or `git forum repair` to attempt recovery"
+                );
+            }
+        }
+    }
+    states.sort_by_key(|s| s.created_at);
+    Ok(states)
+}
+
+/// Predicate for `state.kind == ?` AND `state.branch == ?` AND `state.status == ?`.
+/// Each filter is `None` to skip; non-`None` matches the field.
+pub fn thread_matches_filters(
+    state: &thread::ThreadState,
+    kind: Option<ThreadKind>,
+    branch: Option<&str>,
+    status: Option<&str>,
+) -> bool {
+    kind.is_none_or(|kind| state.kind == kind)
+        && branch.is_none_or(|branch| state.branch.as_deref() == Some(branch))
+        && status.is_none_or(|status| state.status.as_str() == status)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn run_bulk_state_change(
+    git: &GitOps,
+    policy: &Policy,
+    explicit_ids: &[String],
+    selectors: BulkSelectors<'_>,
+    new_state: &str,
+    approve: &[String],
+    actor: &str,
+    clock: &dyn Clock,
+    options: state_change::StateChangeOptions,
+    dry_run: bool,
+) -> Result<BulkStateReport, ForumError> {
+    if explicit_ids.is_empty()
+        && selectors.branch.is_none()
+        && selectors.kind.is_none()
+        && selectors.status.is_none()
+    {
+        return Err(ForumError::Config(
+            "state bulk requires at least one THREAD_ID or selector (--branch/--kind/--status)"
+                .into(),
+        ));
+    }
+
+    let candidate_ids = if explicit_ids.is_empty() {
+        thread::list_thread_ids(git)?
+    } else {
+        explicit_ids.to_vec()
+    };
+
+    let mut outcomes = Vec::new();
+    for thread_id in candidate_ids {
+        let state = match thread::replay_thread(git, &thread_id) {
+            Ok(state) => state,
+            Err(err) => {
+                outcomes.push(BulkStateOutcome {
+                    thread_id,
+                    from_state: "?".into(),
+                    to_state: new_state.to_string(),
+                    ok: false,
+                    dry_run,
+                    detail: Some(err.to_string()),
+                });
+                continue;
+            }
+        };
+
+        if !thread_matches_filters(&state, selectors.kind, selectors.branch, selectors.status) {
+            continue;
+        }
+
+        // Normalize both sides so 1.x verbs (e.g. `proposed`, `closed`)
+        // collapse onto their 2.0 canonical names before the self-loop check;
+        // otherwise `state bulk --to closed` against a thread already in
+        // canonical `done` would fall through to validation and error.
+        let canonical_target = crate::internal::event::normalize_state_name(new_state);
+        if crate::internal::event::normalize_state_name(state.status.as_str()) == canonical_target {
+            outcomes.push(BulkStateOutcome {
+                thread_id,
+                from_state: state.status.to_string(),
+                to_state: new_state.to_string(),
+                ok: true,
+                dry_run,
+                detail: Some(format!(
+                    "already in '{canonical_target}'; no transition recorded"
+                )),
+            });
+            continue;
+        }
+
+        match state_change::prepare_state_change(
+            git,
+            &thread_id,
+            new_state,
+            approve,
+            clock,
+            policy,
+            options.clone(),
+        ) {
+            Ok(plan) => {
+                if !dry_run {
+                    if let Err(err) = state_change::change_state(
+                        git,
+                        &thread_id,
+                        new_state,
+                        approve,
+                        actor,
+                        clock,
+                        policy,
+                        options.clone(),
+                    ) {
+                        outcomes.push(BulkStateOutcome {
+                            thread_id,
+                            from_state: state.status.to_string(),
+                            to_state: new_state.to_string(),
+                            ok: false,
+                            dry_run,
+                            detail: Some(err.to_string()),
+                        });
+                        continue;
+                    }
+                }
+                outcomes.push(BulkStateOutcome {
+                    thread_id,
+                    from_state: plan.from_state,
+                    to_state: new_state.to_string(),
+                    ok: true,
+                    dry_run,
+                    detail: None,
+                });
+            }
+            Err(err) => outcomes.push(BulkStateOutcome {
+                thread_id,
+                from_state: state.status.to_string(),
+                to_state: new_state.to_string(),
+                ok: false,
+                dry_run,
+                detail: Some(err.to_string()),
+            }),
+        }
+    }
+
+    if outcomes.is_empty() {
+        return Err(ForumError::Config(
+            "state bulk matched no threads for the given selectors".into(),
+        ));
+    }
+
+    let failures = outcomes.iter().filter(|o| !o.ok).count();
+    Ok(BulkStateReport { outcomes, failures })
+}
+
+pub fn print_bulk_report(report: &BulkStateReport) {
+    for outcome in &report.outcomes {
+        let marker = match (outcome.dry_run, outcome.ok) {
+            (false, true) => "OK",
+            (false, false) => "FAIL",
+            (true, true) => "WOULD-OK",
+            (true, false) => "WOULD-FAIL",
+        };
+        match &outcome.detail {
+            Some(detail) => println!(
+                "{marker:<10} {:<12} {} -> {}  {}",
+                outcome.thread_id, outcome.from_state, outcome.to_state, detail
+            ),
+            None => println!(
+                "{marker:<10} {:<12} {} -> {}",
+                outcome.thread_id, outcome.from_state, outcome.to_state
+            ),
+        }
+    }
+}

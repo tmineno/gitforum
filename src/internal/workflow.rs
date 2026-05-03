@@ -1,4 +1,5 @@
-//! SPEC-2.0 §3.1 / §9.1 — single source of truth for workflow metadata.
+//! SPEC-2.0 §3.1 / §9.1 — single source of truth for 2.0 workflow
+//! metadata.
 //!
 //! Before #34ith16h, lifecycle/state metadata lived across five
 //! data-holding sites (`Lifecycle::allowed_states`, `UNIFIED_TRANSITIONS`,
@@ -9,14 +10,20 @@
 //! and any consumer that failed to route through them silently
 //! diverged.
 //!
-//! [`WorkflowSpec`] is the single home for all of that data. Every
-//! lifecycle/state/preset/alias query in the codebase routes through
-//! [`SPEC`]. Adding a new lifecycle now requires editing the
-//! [`Lifecycle`] enum (one variant + the four trivial conversion arms —
-//! `Display`, `as_str`, `parse`, `Default` / `match`-exhaustiveness)
-//! and one row in the relevant data table here. The five former
-//! data-holding sites and their read-side consumers require zero
-//! per-lifecycle edit.
+//! [`WorkflowSpec`] is the single home for the 2.0-native data: per-
+//! lifecycle allowed states, the unified transition graph, the kind
+//! preset registry, and shorthand resolution. Adding a new lifecycle
+//! requires editing the [`Lifecycle`] enum (one variant + the four
+//! trivial conversion arms — `Display`, `as_str`, `parse`, `Default`
+//! / `match`-exhaustiveness) and one row in the relevant data table
+//! here.
+//!
+//! 1.x → 2.0 compatibility rules (state-name aliases,
+//! `migrate_legacy_state`, `kind:`-prefixed guard scopes, etc.) live
+//! one level over in [`super::compat::v1`] per RFC 915yuegd P1.
+//! `WorkflowSpec` calls into compat to keep its lifecycle-aware query
+//! methods forgiving of legacy state names while the alias data
+//! itself stays out of the 2.0 source of truth.
 
 use std::collections::VecDeque;
 
@@ -85,24 +92,6 @@ const LIFECYCLES: &[LifecycleData] = &[
         initial_state: "open",
         allowed_states: &["open", "done", "rejected", "deprecated"],
     },
-];
-
-/// SPEC-2.0 §3.1.2 — pure text-level normalization of 1.x state names to 2.0.
-///
-/// `designing` and `implementing` both fold to `working`; this is lossy on
-/// the 1.x→2.0 direction and intentional per the spec. Withdrawn passes
-/// through (it's a 2.0-valid state name); kind-aware adjustments for
-/// withdrawn-execution / withdrawn-record live in
-/// [`WorkflowSpec::migrate_legacy_state`].
-const STATE_ALIASES: &[(&str, &str)] = &[
-    ("proposed", "open"),
-    ("under-review", "review"),
-    ("reviewing", "review"),
-    ("accepted", "done"),
-    ("closed", "done"),
-    ("pending", "working"),
-    ("designing", "working"),
-    ("implementing", "working"),
 ];
 
 /// SPEC-2.0 §9.1 — kind preset registry (`git forum new <preset>`).
@@ -199,12 +188,13 @@ impl WorkflowSpec {
 
     /// `true` iff `from -> to` is a valid edge for `lifecycle`.
     ///
-    /// Inputs may be 1.x state names; they are normalized internally.
-    /// Both endpoints must be in the lifecycle's allowed set (§3.1.1)
-    /// and the edge must exist in the unified §3.1 graph.
+    /// Inputs may be 1.x state names; the 1.x → 2.0 alias fold is done
+    /// via [`super::compat::v1::normalize_state_name`]. Both endpoints
+    /// must be in the lifecycle's allowed set (§3.1.1) and the edge
+    /// must exist in the unified §3.1 graph.
     pub fn is_valid_transition(&self, lifecycle: Lifecycle, from: &str, to: &str) -> bool {
-        let from = self.normalize_state_name(from);
-        let to = self.normalize_state_name(to);
+        let from = super::compat::v1::normalize_state_name(from);
+        let to = super::compat::v1::normalize_state_name(to);
         self.allows_state(lifecycle, from)
             && self.allows_state(lifecycle, to)
             && UNIFIED_TRANSITIONS
@@ -213,10 +203,10 @@ impl WorkflowSpec {
     }
 
     /// Destination states reachable in one step from `from` for `lifecycle`.
-    /// Returns 2.0 state names; `from` may be a 1.x name (normalized
-    /// internally).
+    /// Returns 2.0 state names; `from` may be a 1.x name (folded via
+    /// [`super::compat::v1::normalize_state_name`]).
     pub fn valid_targets(&self, lifecycle: Lifecycle, from: &str) -> Vec<&'static str> {
-        let from = self.normalize_state_name(from);
+        let from = super::compat::v1::normalize_state_name(from);
         UNIFIED_TRANSITIONS
             .iter()
             .filter_map(|&(s, d)| (s == from && self.allows_state(lifecycle, d)).then_some(d))
@@ -225,15 +215,15 @@ impl WorkflowSpec {
 
     /// Shortest path from `from` to `to` via BFS over the unified graph,
     /// restricted to states allowed for `lifecycle`. `from`/`to` may be
-    /// 1.x names (normalized internally).
+    /// 1.x names (folded via [`super::compat::v1::normalize_state_name`]).
     pub fn find_path(
         &self,
         lifecycle: Lifecycle,
         from: &str,
         to: &str,
     ) -> Option<Vec<&'static str>> {
-        let from = self.normalize_state_name(from);
-        let to = self.normalize_state_name(to);
+        let from = super::compat::v1::normalize_state_name(from);
+        let to = super::compat::v1::normalize_state_name(to);
         if from == to {
             return Some(vec![]);
         }
@@ -267,33 +257,6 @@ impl WorkflowSpec {
             }
         }
         None
-    }
-
-    /// SPEC-2.0 §3.1.2 — fold a 1.x state synonym onto its 2.0 canonical name.
-    ///
-    /// Returns `s` unchanged if it is not in the alias table. The lifetime
-    /// borrows from the input so a 2.0-already-canonical input is returned
-    /// without allocation.
-    pub fn normalize_state_name<'a>(&self, s: &'a str) -> &'a str {
-        STATE_ALIASES
-            .iter()
-            .find_map(|&(legacy, canonical)| (legacy == s).then_some(canonical))
-            .unwrap_or(s)
-    }
-
-    /// SPEC-2.0 §3.1.1 / §3.1.2 — kind-aware migration of a 1.x state name to a
-    /// 2.0 state in the lifecycle's allowed set. Composes
-    /// [`Self::normalize_state_name`] with one further per-lifecycle trim:
-    /// execution/record lifecycles do not allow `withdrawn`, so legacy
-    /// `withdrawn` Issue/Task/Dec threads remap to `rejected` (closest 2.0
-    /// semantic — work was abandoned without being deprecated).
-    pub fn migrate_legacy_state<'a>(&self, kind: ThreadKind, state: &'a str) -> &'a str {
-        let normalized = self.normalize_state_name(state);
-        if normalized == "withdrawn" && !self.allows_state(self.kind_lifecycle(kind), "withdrawn") {
-            "rejected"
-        } else {
-            normalized
-        }
     }
 
     /// SPEC-2.0 §2.3.3 / §9.1 — the canonical lifecycle facet for a 1.x

@@ -298,18 +298,20 @@ pub fn unified_transitions() -> &'static [(&'static str, &'static str)] {
 
 /// SPEC-2.0 §3.1.2 — pure text-level normalization of 1.x state names to 2.0.
 ///
-/// Thin wrapper over [`SPEC::normalize_state_name`](super::workflow::WorkflowSpec::normalize_state_name);
-/// the alias table lives in `workflow.rs`.
+/// Thin wrapper that re-exports [`super::compat::v1::normalize_state_name`]
+/// so existing call sites keep their `event::normalize_state_name`
+/// import path. New domain code should call into [`super::compat::v1`]
+/// directly per RFC 915yuegd P1.
 pub fn normalize_state_name(s: &str) -> &str {
-    SPEC.normalize_state_name(s)
+    super::compat::v1::normalize_state_name(s)
 }
 
 /// SPEC-2.0 §3.1.1 / §3.1.2 — kind-aware migration of a 1.x state name to a
 /// 2.0 state in the lifecycle's allowed set.
 ///
-/// Thin wrapper over [`SPEC::migrate_legacy_state`](super::workflow::WorkflowSpec::migrate_legacy_state).
+/// Thin wrapper over [`super::compat::v1::migrate_legacy_state`].
 pub fn migrate_legacy_state(kind: ThreadKind, state: &str) -> &str {
-    SPEC.migrate_legacy_state(kind, state)
+    super::compat::v1::migrate_legacy_state(kind, state)
 }
 
 /// Shortest path from `from` to `to` for `lifecycle`. Thin wrapper over
@@ -421,49 +423,26 @@ pub enum NodeType {
 impl NodeType {
     /// Map any variant to its 2.0 canonical form.
     ///
-    /// - The seven 1.x prose-only variants collapse to `Comment`.
-    /// - `Evidence` collapses to `Comment` (the evidence-pointer surface
-    ///   moves out of the node namespace entirely; see `evidence add`).
-    /// - `Comment`, `Approval`, `Objection`, `Action` are unchanged.
+    /// Thin delegator over [`super::compat::v1::canonical_node_type`];
+    /// the rule body (which legacy variants collapse to which canonical
+    /// node) lives in `compat::v1` per RFC 915yuegd P1.
     pub fn canonical(self) -> Self {
-        match self {
-            Self::Comment | Self::Approval | Self::Objection | Self::Action => self,
-            Self::Claim
-            | Self::Question
-            | Self::Evidence
-            | Self::Summary
-            | Self::Risk
-            | Self::Review
-            | Self::Alternative
-            | Self::Assumption => Self::Comment,
-        }
+        super::compat::v1::canonical_node_type(self)
     }
 
     /// Returns true if this is a 2.0 canonical variant.
     pub fn is_canonical(self) -> bool {
-        matches!(
-            self,
-            Self::Comment | Self::Approval | Self::Objection | Self::Action
-        )
+        super::compat::v1::is_canonical_node_type(self)
     }
 
     /// Legacy 1.x label for non-canonical variants, or `None` if already canonical.
     ///
-    /// Used by 2.0 write paths to record the user's stated rhetorical type in
-    /// `Event.legacy_subtype` while persisting the canonical `node_type` on
-    /// the event (SPEC-2.0 §2.5 / §9.3 / §10.1).
+    /// Thin delegator over [`super::compat::v1::legacy_subtype_label`].
+    /// Used by 2.0 write paths to record the user's stated rhetorical
+    /// type in `Event.legacy_subtype` while persisting the canonical
+    /// `node_type` on the event (SPEC-2.0 §2.5 / §9.3 / §10.1).
     pub fn legacy_subtype_label(self) -> Option<&'static str> {
-        match self {
-            Self::Comment | Self::Approval | Self::Objection | Self::Action => None,
-            Self::Claim => Some("claim"),
-            Self::Question => Some("question"),
-            Self::Evidence => Some("evidence"),
-            Self::Summary => Some("summary"),
-            Self::Risk => Some("risk"),
-            Self::Review => Some("review"),
-            Self::Alternative => Some("alternative"),
-            Self::Assumption => Some("assumption"),
-        }
+        super::compat::v1::legacy_subtype_label(self)
     }
 }
 
@@ -732,6 +711,348 @@ impl Event {
             }
         }
         Ok(())
+    }
+}
+
+// ============================================================================
+// Stored / Domain split (P2 #wlqhi8xh, ADR-010)
+//
+// `Event` is the storage bag (~17 Optional fields shaped for serde
+// round-trips and forward compat). `DomainEvent` is the typed sum
+// projected from `Event` for replay / domain logic — each variant
+// carries only the fields its `EventType` actually uses, so consumers
+// stop unwrapping defensively. The bag is intentionally preserved
+// (event.rs:519 cascading-edit shield) for storage and construction.
+// ============================================================================
+
+/// Common metadata every event variant carries. Carved out of
+/// `DomainEvent` so each variant declares only its payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventMeta {
+    pub event_id: String,
+    pub thread_id: String,
+    /// Stored event_type. Useful for issue reporting (`MissingRequiredField`
+    /// includes the offending event_type) and for the
+    /// [`DomainEvent::Unknown`] case once Phase B (ADR-010) lands.
+    pub event_type: EventType,
+    pub created_at: DateTime<Utc>,
+    pub actor: String,
+    pub base_rev: Option<String>,
+    pub parents: Vec<String>,
+}
+
+/// Two valid shapes for a `Link` event payload (SPEC-2.0 §2.6 / §2.6.1):
+/// either it carries an `Evidence` bundle, or it carries
+/// `target_thread_id` + relation kind.
+#[derive(Debug, Clone)]
+pub enum LinkPayload {
+    Evidence(super::evidence::Evidence),
+    Thread {
+        target_thread_id: String,
+        link_rel: String,
+    },
+}
+
+/// Typed projection of a stored [`Event`].
+///
+/// Construct via [`Event::project`]. Replay matches on this enum
+/// instead of unwrapping bag fields case-by-case; the compiler
+/// enforces that every domain consumer handles every variant.
+///
+/// Adding a new domain-meaningful event variant requires four edits:
+/// the [`EventType`] enum, this enum, the [`Event::project`] arm, and
+/// the `apply_event` arm in `internal::thread`. No optional fields
+/// cascade across the codebase.
+///
+/// The [`Self::Unknown`] variant is reserved per ADR-010 option (a):
+/// today every `EventType` has an explicit projection arm so it is
+/// never constructed; Phase B (ADR-010) will add
+/// `EventType::Other(String)` and route it here.
+#[derive(Debug, Clone)]
+pub enum DomainEvent {
+    Create {
+        meta: EventMeta,
+        title: String,
+        kind: ThreadKind,
+        body: Option<String>,
+        branch: Option<String>,
+    },
+    Edit {
+        meta: EventMeta,
+        target_node_id: String,
+        body: String,
+    },
+    Retract {
+        meta: EventMeta,
+        target_node_id: String,
+    },
+    Resolve {
+        meta: EventMeta,
+        target_node_id: String,
+    },
+    Reopen {
+        meta: EventMeta,
+        target_node_id: String,
+    },
+    Say {
+        meta: EventMeta,
+        node_type: NodeType,
+        body: String,
+        reply_to: Option<String>,
+        legacy_subtype: Option<String>,
+        /// Optional pre-allocated node id. When `Some`, the materialised
+        /// node uses this id; when `None`, the node id is the event's
+        /// commit SHA (the common case for native 2.0 writes).
+        target_node_id: Option<String>,
+    },
+    Link {
+        meta: EventMeta,
+        payload: LinkPayload,
+    },
+    /// `new_state` is intentionally left as the raw stored string —
+    /// `parse_lenient` (and the `InvalidStateValue` strict-issue path)
+    /// runs at apply time so projection's failure mode stays narrow
+    /// (only structural shape).
+    State {
+        meta: EventMeta,
+        new_state: String,
+        approvals: Vec<Approval>,
+    },
+    Scope {
+        meta: EventMeta,
+        branch: Option<String>,
+    },
+    Verify {
+        meta: EventMeta,
+    },
+    Merge {
+        meta: EventMeta,
+    },
+    ReviseBody {
+        meta: EventMeta,
+        body: String,
+        incorporated_node_ids: Vec<String>,
+    },
+    Retype {
+        meta: EventMeta,
+        target_node_id: String,
+        node_type: NodeType,
+        old_node_type: Option<NodeType>,
+    },
+    /// `lifecycle` is left as the raw stored string for the same
+    /// reason as `State::new_state` — `Lifecycle::parse` and the
+    /// `InvalidLifecycleValue` issue path run at apply time.
+    FacetSet {
+        meta: EventMeta,
+        lifecycle: Option<String>,
+        tags_add: Vec<String>,
+        tags_remove: Vec<String>,
+    },
+    /// Reserved per ADR-010 option (a). Unreachable today; Phase B
+    /// will route `EventType::Other(String)` to this variant.
+    #[allow(dead_code)]
+    Unknown {
+        meta: EventMeta,
+        raw: Box<Event>,
+    },
+}
+
+impl DomainEvent {
+    /// Borrow the common event metadata regardless of variant.
+    pub fn meta(&self) -> &EventMeta {
+        match self {
+            Self::Create { meta, .. }
+            | Self::Edit { meta, .. }
+            | Self::Retract { meta, .. }
+            | Self::Resolve { meta, .. }
+            | Self::Reopen { meta, .. }
+            | Self::Say { meta, .. }
+            | Self::Link { meta, .. }
+            | Self::State { meta, .. }
+            | Self::Scope { meta, .. }
+            | Self::Verify { meta }
+            | Self::Merge { meta }
+            | Self::ReviseBody { meta, .. }
+            | Self::Retype { meta, .. }
+            | Self::FacetSet { meta, .. }
+            | Self::Unknown { meta, .. } => meta,
+        }
+    }
+}
+
+/// Reason a stored [`Event`] failed to project to a [`DomainEvent`].
+///
+/// Mirrors [`super::validate::StrictReplayIssue::MissingRequiredField`]
+/// — replay catches the error and turns it into the corresponding
+/// strict issue while letting lenient replay continue with no state
+/// change for that event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectionError {
+    MissingRequiredField { field: &'static str },
+}
+
+impl Event {
+    /// Project this stored event into its typed [`DomainEvent`].
+    ///
+    /// Failure surfaces structural shape mismatches only (a required
+    /// field is absent). Semantic validity — unparseable state names,
+    /// out-of-set lifecycle values, unknown target node IDs — is
+    /// left to `apply_event`, mirroring how lenient replay applies
+    /// best-effort and strict replay collects issues.
+    pub fn project(&self) -> Result<DomainEvent, ProjectionError> {
+        let meta = EventMeta {
+            event_id: self.event_id.clone(),
+            thread_id: self.thread_id.clone(),
+            event_type: self.event_type,
+            created_at: self.created_at,
+            actor: self.actor.clone(),
+            base_rev: self.base_rev.clone(),
+            parents: self.parents.clone(),
+        };
+        match self.event_type {
+            EventType::Create => {
+                let title = self
+                    .title
+                    .clone()
+                    .ok_or(ProjectionError::MissingRequiredField { field: "title" })?;
+                let kind = self
+                    .kind
+                    .ok_or(ProjectionError::MissingRequiredField { field: "kind" })?;
+                Ok(DomainEvent::Create {
+                    meta,
+                    title,
+                    kind,
+                    body: self.body.clone(),
+                    branch: self.branch.clone(),
+                })
+            }
+            EventType::Edit => {
+                let target_node_id =
+                    self.target_node_id
+                        .clone()
+                        .ok_or(ProjectionError::MissingRequiredField {
+                            field: "target_node_id",
+                        })?;
+                let body = self
+                    .body
+                    .clone()
+                    .ok_or(ProjectionError::MissingRequiredField { field: "body" })?;
+                Ok(DomainEvent::Edit {
+                    meta,
+                    target_node_id,
+                    body,
+                })
+            }
+            EventType::Retract => Ok(DomainEvent::Retract {
+                target_node_id: self.target_node_id.clone().ok_or(
+                    ProjectionError::MissingRequiredField {
+                        field: "target_node_id",
+                    },
+                )?,
+                meta,
+            }),
+            EventType::Resolve => Ok(DomainEvent::Resolve {
+                target_node_id: self.target_node_id.clone().ok_or(
+                    ProjectionError::MissingRequiredField {
+                        field: "target_node_id",
+                    },
+                )?,
+                meta,
+            }),
+            EventType::Reopen => Ok(DomainEvent::Reopen {
+                target_node_id: self.target_node_id.clone().ok_or(
+                    ProjectionError::MissingRequiredField {
+                        field: "target_node_id",
+                    },
+                )?,
+                meta,
+            }),
+            EventType::Say => {
+                // Mirrors apply_event's prior arm-ordering: node_type
+                // missing reports first, body second.
+                let node_type = self
+                    .node_type
+                    .ok_or(ProjectionError::MissingRequiredField { field: "node_type" })?;
+                let body = self
+                    .body
+                    .clone()
+                    .ok_or(ProjectionError::MissingRequiredField { field: "body" })?;
+                Ok(DomainEvent::Say {
+                    meta,
+                    node_type,
+                    body,
+                    reply_to: self.reply_to.clone(),
+                    legacy_subtype: self.legacy_subtype.clone(),
+                    target_node_id: self.target_node_id.clone(),
+                })
+            }
+            EventType::Link => {
+                let payload = if let Some(ev_data) = &self.evidence {
+                    LinkPayload::Evidence(ev_data.clone())
+                } else if let (Some(target), Some(rel)) = (&self.target_node_id, &self.link_rel) {
+                    LinkPayload::Thread {
+                        target_thread_id: target.clone(),
+                        link_rel: rel.clone(),
+                    }
+                } else {
+                    return Err(ProjectionError::MissingRequiredField {
+                        field: "evidence_or_target_link",
+                    });
+                };
+                Ok(DomainEvent::Link { meta, payload })
+            }
+            EventType::State => {
+                let new_state = self
+                    .new_state
+                    .clone()
+                    .ok_or(ProjectionError::MissingRequiredField { field: "new_state" })?;
+                Ok(DomainEvent::State {
+                    meta,
+                    new_state,
+                    approvals: self.approvals.clone(),
+                })
+            }
+            EventType::Scope => Ok(DomainEvent::Scope {
+                meta,
+                branch: self.branch.clone(),
+            }),
+            EventType::Verify => Ok(DomainEvent::Verify { meta }),
+            EventType::Merge => Ok(DomainEvent::Merge { meta }),
+            EventType::ReviseBody => {
+                let body = self
+                    .body
+                    .clone()
+                    .ok_or(ProjectionError::MissingRequiredField { field: "body" })?;
+                Ok(DomainEvent::ReviseBody {
+                    meta,
+                    body,
+                    incorporated_node_ids: self.incorporated_node_ids.clone(),
+                })
+            }
+            EventType::Retype => {
+                let target_node_id =
+                    self.target_node_id
+                        .clone()
+                        .ok_or(ProjectionError::MissingRequiredField {
+                            field: "target_node_id",
+                        })?;
+                let node_type = self
+                    .node_type
+                    .ok_or(ProjectionError::MissingRequiredField { field: "node_type" })?;
+                Ok(DomainEvent::Retype {
+                    meta,
+                    target_node_id,
+                    node_type,
+                    old_node_type: self.old_node_type,
+                })
+            }
+            EventType::FacetSet => Ok(DomainEvent::FacetSet {
+                meta,
+                lifecycle: self.lifecycle.clone(),
+                tags_add: self.tags_add.clone(),
+                tags_remove: self.tags_remove.clone(),
+            }),
+        }
     }
 }
 
@@ -1344,5 +1665,162 @@ mod tests {
         assert_eq!(normalize_state_name("rejected"), "rejected");
         assert_eq!(normalize_state_name("withdrawn"), "withdrawn");
         assert_eq!(normalize_state_name("deprecated"), "deprecated");
+    }
+
+    // ---- P2 #wlqhi8xh: Stored / Domain projection ----
+
+    #[test]
+    fn project_create_carries_payload_and_meta() {
+        let event = sample_create_event();
+        let dom = event.project().expect("create projects");
+        match dom {
+            DomainEvent::Create {
+                meta,
+                title,
+                kind,
+                body,
+                branch,
+            } => {
+                assert_eq!(meta.event_id, event.event_id);
+                assert_eq!(meta.thread_id, event.thread_id);
+                assert_eq!(meta.event_type, EventType::Create);
+                assert_eq!(meta.actor, event.actor);
+                assert_eq!(title, "Test RFC");
+                assert_eq!(kind, ThreadKind::Rfc);
+                assert_eq!(body.as_deref(), Some("Thread body"));
+                assert!(branch.is_none());
+            }
+            _ => panic!("expected Create variant"),
+        }
+    }
+
+    #[test]
+    fn project_say_requires_node_type_then_body() {
+        // node_type missing comes first per the original apply_event arm
+        // ordering; project must preserve that priority.
+        let mut ev = sample_create_event();
+        ev.event_type = EventType::Say;
+        ev.title = None;
+        ev.kind = None;
+        ev.node_type = None;
+        ev.body = None;
+        let err = ev.project().expect_err("missing fields");
+        assert_eq!(
+            err,
+            ProjectionError::MissingRequiredField { field: "node_type" }
+        );
+        ev.node_type = Some(NodeType::Comment);
+        let err = ev.project().expect_err("missing body");
+        assert_eq!(err, ProjectionError::MissingRequiredField { field: "body" });
+        ev.body = Some("hi".into());
+        let dom = ev.project().expect("now valid");
+        assert!(matches!(dom, DomainEvent::Say { ref body, .. } if body == "hi"));
+    }
+
+    #[test]
+    fn project_link_validates_either_evidence_or_target_pair() {
+        let mut ev = sample_create_event();
+        ev.event_type = EventType::Link;
+        ev.title = None;
+        ev.kind = None;
+        ev.body = None;
+        // neither evidence nor (target+rel)
+        let err = ev.project().expect_err("link missing payload");
+        assert_eq!(
+            err,
+            ProjectionError::MissingRequiredField {
+                field: "evidence_or_target_link"
+            }
+        );
+        // target without rel still fails (project mirrors apply_event's
+        // both-or-neither rule).
+        ev.target_node_id = Some("xyz".into());
+        let err = ev.project().expect_err("link missing rel");
+        assert_eq!(
+            err,
+            ProjectionError::MissingRequiredField {
+                field: "evidence_or_target_link"
+            }
+        );
+        ev.link_rel = Some("implements".into());
+        let dom = ev.project().expect("link with target+rel");
+        assert!(matches!(
+            dom,
+            DomainEvent::Link {
+                payload: LinkPayload::Thread { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn project_facetset_passes_through_unparsed_lifecycle() {
+        // Projection keeps lifecycle as the raw stored string; apply_event
+        // is the place that calls Lifecycle::parse and emits
+        // InvalidLifecycleValue. Test that an unparseable string still
+        // projects (so strict replay sees it).
+        let mut ev = sample_create_event();
+        ev.event_type = EventType::FacetSet;
+        ev.title = None;
+        ev.kind = None;
+        ev.body = None;
+        ev.lifecycle = Some("nonsense".into());
+        let dom = ev.project().expect("facetset projects");
+        match dom {
+            DomainEvent::FacetSet { lifecycle, .. } => {
+                assert_eq!(lifecycle.as_deref(), Some("nonsense"));
+            }
+            _ => panic!("expected FacetSet"),
+        }
+    }
+
+    /// SPEC-2.0 §B.6 / ticket acceptance: projecting and re-serialising
+    /// a stored Event must reproduce the original on-disk shape
+    /// byte-for-byte. Confirms `project()` is non-destructive: it reads
+    /// the bag without mutating it.
+    #[test]
+    fn stored_event_roundtrip_through_projection() {
+        // Cover several representative variants that exercise different
+        // optional-field combinations.
+        let mut create = sample_create_event();
+        create.branch = Some("main".into());
+        let mut state_ev = sample_create_event();
+        state_ev.event_type = EventType::State;
+        state_ev.title = None;
+        state_ev.kind = None;
+        state_ev.body = None;
+        state_ev.new_state = Some("done".into());
+        state_ev.approvals = vec![Approval {
+            actor_id: "human/alice".into(),
+            approved_at: state_ev.created_at,
+            mechanism: ApprovalMechanism::Recorded,
+            key_id: None,
+            proof_ref: None,
+        }];
+        let mut facet = sample_create_event();
+        facet.event_type = EventType::FacetSet;
+        facet.title = None;
+        facet.kind = None;
+        facet.body = None;
+        facet.lifecycle = Some("execution".into());
+        facet.tags_add = vec!["task".into()];
+        facet.tags_remove = vec!["bug".into()];
+
+        for original in [create, state_ev, facet] {
+            let json_before = serde_json::to_string_pretty(&original).unwrap();
+            // Round-trip through serde to drop the skip_serializing
+            // event_id and pick up canonical field ordering.
+            let reloaded: Event = serde_json::from_str(&json_before).unwrap();
+            // Project once — must succeed and not mutate the bag.
+            let _dom = reloaded.project().expect("projects");
+            // Re-serialise the original (untouched) Event and compare
+            // byte-for-byte.
+            let json_after = serde_json::to_string_pretty(&reloaded).unwrap();
+            assert_eq!(
+                json_before, json_after,
+                "projection mutated the stored event for {:?}",
+                reloaded.event_type
+            );
+        }
     }
 }

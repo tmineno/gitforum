@@ -219,7 +219,12 @@ pub fn make_policy(guards: Vec<GuardEntry>) -> Policy {
         guards,
         ..Default::default()
     };
-    p.resolve_guard_scopes();
+    let emitter = git_forum::internal::lint_emit::LintEmitter::new_capturing(None);
+    git_forum::internal::compat::v1::rewrite_legacy_policy(
+        &mut p,
+        &emitter,
+        std::path::Path::new("policy.toml"),
+    );
     p
 }
 
