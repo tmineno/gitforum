@@ -13,6 +13,7 @@ pub mod context;
 pub mod diff;
 pub mod doctor;
 pub mod evidence;
+pub mod help;
 pub mod hook;
 pub mod init;
 pub mod link;

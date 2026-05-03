@@ -752,28 +752,7 @@ fn main() -> Result<(), ForumError> {
             .and_then(|pos| pos.checked_sub(1))
             .and_then(|prev| args.get(prev))
             .map(|s| s.as_str());
-
-        use git_forum::internal::help;
-        match context {
-            Some(
-                "claim" | "question" | "objection" | "summary" | "action" | "risk" | "review"
-                | "alternative" | "assumption" | "node",
-            ) => {
-                print!("{}", help::node_type_taxonomy());
-            }
-            Some(
-                "state" | "close" | "reject" | "accept" | "propose" | "deprecate" | "pend"
-                | "withdraw",
-            ) => {
-                print!("{}", help::state_transition_map());
-            }
-            Some("evidence") => {
-                print!("{}", help::evidence_kinds_reference());
-            }
-            _ => {
-                print!("{}", include_str!("../doc/MANUAL.md"));
-            }
-        }
+        commands::help::run(context);
         return Ok(());
     }
 
@@ -794,7 +773,7 @@ fn main() -> Result<(), ForumError> {
         }
     };
     if cli.help_llm {
-        print!("{}", include_str!("../doc/MANUAL.md"));
+        commands::help::run(None);
         return Ok(());
     }
 
