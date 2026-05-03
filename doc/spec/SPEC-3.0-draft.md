@@ -178,8 +178,7 @@ that defines a thread's initial status, valid states, valid transitions,
 transition guards, and operation checks.
 
 Categories are policy-controlled and MUST satisfy the same grammar as tags.
-Native 3.0 implementations MUST provide these built-in categories when no
-repository policy overrides them:
+Native 3.0 implementations MUST always provide these built-in categories:
 
 | Category | Meaning |
 |---|---|
@@ -189,6 +188,9 @@ repository policy overrides them:
 | `bug` | Defect tracking with the same default state model as `task`. |
 
 Repositories MAY define additional categories in `.forum/policy.toml`.
+Repositories MAY also override built-in category definitions category-by-category.
+An override affects the category's policy definition, but it does not remove the
+category name from the built-in set.
 
 `tags` are free-form labels for filtering, search, and display. Tags MUST NOT be
 used as policy enforcement selectors in 3.0 core behavior.
@@ -641,6 +643,9 @@ Migration uses a fixed built-in mapping from 1.x/2.x thread kind or lifecycle to
 | `task` | `task` |
 | `issue` | `bug` |
 | `bug` | `bug` |
+| `proposal` | `rfc` |
+| `execution` | `task` |
+| `record` | `decision` |
 | unrecognized | `task` |
 
 Migration MUST NOT require repository-specific category mapping logic. The
