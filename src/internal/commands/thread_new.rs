@@ -174,7 +174,7 @@ pub fn run_canonical_thread_new(
     inline: ThreadNewInline,
     force: bool,
     lifecycle: Lifecycle,
-    tags: Vec<String>,
+    mut tags: Vec<String>,
     clock: &dyn Clock,
 ) -> Result<(), ForumError> {
     let (git, paths) = discover_repo_with_init_warning()?;
@@ -182,6 +182,9 @@ pub fn run_canonical_thread_new(
     let actor = resolve_actor(as_actor, &git);
 
     let category = lifecycle_to_category(lifecycle).to_string();
+    // SPEC-3.0 §8.3: preserve dec/record classification with a
+    // canonical `decision` tag when collapsing to the task category.
+    augment_tags_for_lifecycle(lifecycle, &mut tags);
     let registry = CategoryRegistry::built_in();
     let initial_status = registry
         .get(&category)
@@ -526,17 +529,45 @@ fn short_evidence_id(sha: &str) -> String {
 
 /// Map a v2-shape [`Lifecycle`] onto a SPEC-3.0 built-in category.
 ///
-/// - `Proposal` / `Record` → `rfc` (drafted-then-accepted shape)
-/// - `Execution` → `task` (open-then-done shape)
+/// Per SPEC-3.0 §8.3 (category mapping table):
+/// - `Proposal` → `rfc` (drafted-then-accepted)
+/// - `Execution` → `task` (open-then-done)
+/// - `Record` → `task` (decisions ride the task category; the
+///   classification is preserved via the canonical `decision` tag,
+///   not via a separate category).
 pub fn lifecycle_to_category(lifecycle: Lifecycle) -> &'static str {
     match lifecycle {
-        Lifecycle::Proposal | Lifecycle::Record => "rfc",
-        Lifecycle::Execution => "task",
+        Lifecycle::Proposal => "rfc",
+        Lifecycle::Execution | Lifecycle::Record => "task",
+    }
+}
+
+/// SPEC-3.0 §8.3 canonical-tag augmentation. Adds the
+/// classification tags that the category collapse would otherwise
+/// erase, without overriding tags the caller has already set.
+///
+/// - `Lifecycle::Record` → ensures `decision` is in `tags`
+///
+/// `Lifecycle::Execution` is split further by the kind preset
+/// (`issue`/`bug` get tag `bug` from the preset row, `task`/`job`
+/// get `task`); no augmentation needed here.
+pub fn augment_tags_for_lifecycle(lifecycle: Lifecycle, tags: &mut Vec<String>) {
+    let extra: Option<&'static str> = match lifecycle {
+        Lifecycle::Record => Some("decision"),
+        Lifecycle::Proposal | Lifecycle::Execution => None,
+    };
+    if let Some(t) = extra {
+        if !tags.iter().any(|x| x == t) {
+            tags.push(t.into());
+        }
     }
 }
 
 /// Inverse of [`lifecycle_to_category`] for the few read paths that
 /// still need a `Lifecycle` value (e.g. supersede-direction guard).
+///
+/// Per §8.3 the `task` category covers both Execution and Record;
+/// the `decision` tag distinguishes the two on read.
 pub fn legacy_lifecycle_for_category(category: &str) -> Lifecycle {
     match category {
         "task" => Lifecycle::Execution,

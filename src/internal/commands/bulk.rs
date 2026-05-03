@@ -1,5 +1,11 @@
 //! `git forum state bulk` orchestration: bulk state-change with selectors
 //! (`--branch` / `--kind` / `--status`) and per-thread report.
+//!
+//! Phase 2 slot 3 (RFC `7ymtc4b2`): state changes go through
+//! `commands::state::apply_state_change_snapshot`, which writes
+//! `thread.toml.status` directly. The legacy
+//! `state_change::change_state` event-write path is no longer
+//! invoked from the bulk arm.
 
 use super::context::Context;
 use super::shared::resolve_actor;
@@ -9,7 +15,6 @@ use crate::internal::event::ThreadKind;
 use crate::internal::git_ops::GitOps;
 use crate::internal::policy::Policy;
 use crate::internal::refs;
-use crate::internal::state_change;
 use crate::internal::thread;
 
 /// Args for `commands::bulk::run` — `state bulk` selector + transition.
@@ -42,10 +47,7 @@ pub fn run(args: BulkArgs, ctx: &Context) -> Result<(), ForumError> {
         &args.approve,
         &actor,
         ctx.clock.as_ref(),
-        state_change::StateChangeOptions {
-            resolve_open_actions: args.resolve_open_actions,
-            ..Default::default()
-        },
+        args.resolve_open_actions,
         args.dry_run,
     )?;
     print_bulk_report(&report);
@@ -129,7 +131,7 @@ pub fn run_bulk_state_change(
     approve: &[String],
     actor: &str,
     clock: &dyn Clock,
-    options: state_change::StateChangeOptions,
+    resolve_open_actions: bool,
     dry_run: bool,
 ) -> Result<BulkStateReport, ForumError> {
     if explicit_ids.is_empty()
@@ -170,10 +172,9 @@ pub fn run_bulk_state_change(
             continue;
         }
 
-        // Normalize both sides so 1.x verbs (e.g. `proposed`, `closed`)
-        // collapse onto their 2.0 canonical names before the self-loop check;
-        // otherwise `state bulk --to closed` against a thread already in
-        // canonical `done` would fall through to validation and error.
+        // Self-loop fast-path: avoid touching the snapshot tip when
+        // the thread is already in the target. Normalize both sides
+        // so 1.x verbs collapse onto canonical 2.0 names first.
         let canonical_target = crate::internal::event::normalize_state_name(new_state);
         if crate::internal::event::normalize_state_name(state.status.as_str()) == canonical_target {
             outcomes.push(BulkStateOutcome {
@@ -189,47 +190,36 @@ pub fn run_bulk_state_change(
             continue;
         }
 
-        match state_change::prepare_state_change(
+        if dry_run {
+            outcomes.push(BulkStateOutcome {
+                thread_id,
+                from_state: state.status.to_string(),
+                to_state: new_state.to_string(),
+                ok: true,
+                dry_run,
+                detail: None,
+            });
+            continue;
+        }
+
+        match super::state::apply_state_change_snapshot(
             git,
+            policy,
             &thread_id,
             new_state,
             approve,
+            actor,
             clock,
-            policy,
-            options.clone(),
+            resolve_open_actions,
         ) {
-            Ok(plan) => {
-                if !dry_run {
-                    if let Err(err) = state_change::change_state(
-                        git,
-                        &thread_id,
-                        new_state,
-                        approve,
-                        actor,
-                        clock,
-                        policy,
-                        options.clone(),
-                    ) {
-                        outcomes.push(BulkStateOutcome {
-                            thread_id,
-                            from_state: state.status.to_string(),
-                            to_state: new_state.to_string(),
-                            ok: false,
-                            dry_run,
-                            detail: Some(err.to_string()),
-                        });
-                        continue;
-                    }
-                }
-                outcomes.push(BulkStateOutcome {
-                    thread_id,
-                    from_state: plan.from_state,
-                    to_state: new_state.to_string(),
-                    ok: true,
-                    dry_run,
-                    detail: None,
-                });
-            }
+            Ok((from, to)) => outcomes.push(BulkStateOutcome {
+                thread_id,
+                from_state: from,
+                to_state: to.to_string(),
+                ok: true,
+                dry_run,
+                detail: None,
+            }),
             Err(err) => outcomes.push(BulkStateOutcome {
                 thread_id,
                 from_state: state.status.to_string(),

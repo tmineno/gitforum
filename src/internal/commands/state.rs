@@ -270,6 +270,103 @@ pub fn run_state_shorthand(
     Ok(())
 }
 
+/// Snapshot-native state change applied to one thread.
+///
+/// Mirrors the single-thread shorthand path (resolve target,
+/// validate transition, mutate `thread.toml.status` + companion
+/// fields, write one snapshot commit) but without the surrounding
+/// stdout / action-hint chatter — the bulk caller owns its own
+/// reporting. Returns the resolved `(from, to)` pair on success
+/// (with an empty Vec when the thread is already in the target
+/// state).
+#[allow(clippy::too_many_arguments)]
+pub fn apply_state_change_snapshot(
+    git: &crate::internal::git_ops::GitOps,
+    policy: &Policy,
+    thread_id: &str,
+    new_state: &str,
+    approve: &[String],
+    actor: &str,
+    clock: &dyn Clock,
+    resolve_open_actions: bool,
+) -> Result<(String, &'static str), ForumError> {
+    let pre_state = thread::replay_thread(git, thread_id)?;
+    let target = resolve_target_state(new_state, pre_state.lifecycle)?;
+
+    let mut doc = match snapshot::read_snapshot(git, thread_id) {
+        Ok(doc) => doc,
+        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(git, thread_id)?,
+        Err(other) => return Err(other),
+    };
+    let from = doc.snapshot.status.clone();
+    if from == target {
+        return Ok((from, target));
+    }
+
+    if !SPEC.is_valid_transition(pre_state.lifecycle, &from, target) {
+        return Err(ForumError::Config(format!(
+            "transition '{from}' → '{target}' is not allowed for {} lifecycle",
+            pre_state.lifecycle
+        )));
+    }
+
+    // Project the post-transition state so policy guards see the
+    // synthetic Approval nodes / resolved actions the transition is
+    // about to write — `--resolve-open-actions` cures `no_open_actions`,
+    // and explicit `--approve <ACTOR>` cures `one_human_approval`.
+    let mut projected = pre_state.clone();
+    projected.status =
+        crate::internal::event::ThreadStatus::parse_lenient(target).unwrap_or(projected.status);
+    if resolve_open_actions {
+        for n in projected.nodes.iter_mut() {
+            if n.node_type == crate::internal::event::NodeType::Action && n.is_open() {
+                n.resolved = true;
+            }
+        }
+    }
+    for approver in approve {
+        projected.nodes.push(crate::internal::node::Node {
+            node_id: format!("approval-{approver}"),
+            node_type: crate::internal::event::NodeType::Approval,
+            actor: approver.clone(),
+            ..Default::default()
+        });
+    }
+    let guard_violations = crate::internal::policy::check_guards(policy, &projected, &from, target);
+    if !guard_violations.is_empty() {
+        let parts: Vec<String> = guard_violations
+            .iter()
+            .map(|v| format!("[{}] {}", v.rule, v.reason))
+            .collect();
+        return Err(ForumError::Policy(parts.join("; ")));
+    }
+
+    let now = clock.now();
+    doc.snapshot.status = target.into();
+    doc.snapshot.updated_at = now;
+    doc.snapshot.updated_by = actor.into();
+
+    if resolve_open_actions {
+        for n in doc.nodes.iter_mut() {
+            if matches!(n.record.kind, NodeKind::Action)
+                && matches!(n.record.status, NodeStatus::Open)
+            {
+                n.record.status = NodeStatus::Resolved;
+                n.record.updated_at = Some(now);
+                n.record.updated_by = Some(actor.into());
+            }
+        }
+    }
+
+    for approver in approve {
+        doc.nodes.push(approval_node(approver, now));
+    }
+
+    write_snapshot(git, thread_id, &doc, &format!("state {from} -> {target}"))?;
+
+    Ok((from, target))
+}
+
 fn comment_node(actor: &str, body: &str, now: chrono::DateTime<Utc>) -> NodeWithBody {
     NodeWithBody {
         record: NodeRecord {

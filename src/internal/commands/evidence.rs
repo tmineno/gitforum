@@ -47,11 +47,19 @@ pub fn run_evidence_add(
 
     let mut added: Vec<String> = Vec::new();
     for ref_target in ref_targets {
-        let id = id_alloc::alloc_bare_thread_id(&actor, ref_target, &now.to_rfc3339());
+        // SPEC-3.0 / parity with legacy `evidence::add_evidence`:
+        // commit refs are canonicalized via `git rev-parse` so the
+        // stored value is a 40-char SHA, not the user-supplied
+        // `HEAD`/branch name (which would not survive history rewrite).
+        let canonical_ref = match kind {
+            EvidenceKind::Commit => git.resolve_commit(ref_target)?,
+            _ => ref_target.clone(),
+        };
+        let id = id_alloc::alloc_bare_thread_id(&actor, &canonical_ref, &now.to_rfc3339());
         doc.evidence.entries.push(EvidenceRecord {
             id: id.clone(),
             kind: kind.clone(),
-            ref_target: ref_target.clone(),
+            ref_target: canonical_ref,
             created_at: now,
             created_by: actor.clone(),
         });

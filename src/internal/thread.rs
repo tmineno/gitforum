@@ -688,6 +688,7 @@ pub fn replay_thread(git: &GitOps, thread_id: &str) -> ForumResult<ThreadState> 
 /// surfaces that display events (legacy `log`, domain timeline) are
 /// on the Phase 4 DELETE list.
 fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocument) -> ThreadState {
+    use super::evidence::Evidence;
     use super::node::{NodeKind, NodeStatus};
     use super::snapshot::ThreadDocument;
 
@@ -696,7 +697,7 @@ fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocument) 
         body,
         nodes,
         links,
-        evidence: _,
+        evidence,
     } = doc;
 
     let kind = category_to_legacy_kind(&snapshot.category, &snapshot.tags);
@@ -733,6 +734,17 @@ fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocument) 
         })
         .collect();
 
+    let evidence_items: Vec<Evidence> = evidence
+        .entries
+        .into_iter()
+        .map(|e| Evidence {
+            evidence_id: e.id,
+            kind: e.kind,
+            ref_target: e.ref_target,
+            locator: None,
+        })
+        .collect();
+
     ThreadState {
         id: snapshot.id,
         kind,
@@ -744,7 +756,7 @@ fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocument) 
         created_by: snapshot.created_by,
         events: Vec::new(),
         nodes,
-        evidence_items: Vec::new(),
+        evidence_items,
         links,
         body_revision_count: 0,
         incorporated_node_ids: Vec::new(),
@@ -759,15 +771,20 @@ fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocument) 
 ///
 /// Phase 2 transitional: the v2 kind axis (Rfc/Dec/Issue/Task) is
 /// folded onto SPEC-3.0's two built-in categories (`rfc`, `task`).
-/// The kind is preserved through the original kind-preset's tag
-/// fingerprint (`tag:bug` for Issue, `tag:task` for Task) so legacy
-/// `--kind issue` / `--kind task` filters keep working until the
-/// read-side cutover (slot 7a) replaces the kind axis with `category`.
+/// The kind is recovered from the canonical tag fingerprint defined
+/// by SPEC-3.0 §8.3:
+///
+/// - `task` + `decision` → `Dec` (record lifecycle)
+/// - `task` + `bug`      → `Issue`
+/// - `task` otherwise    → `Task`
+/// - `rfc`               → `Rfc`
 fn category_to_legacy_kind(category: &str, tags: &[String]) -> ThreadKind {
     match category {
         "rfc" => ThreadKind::Rfc,
         "task" => {
-            if tags.iter().any(|t| t == "bug") {
+            if tags.iter().any(|t| t == "decision") {
+                ThreadKind::Dec
+            } else if tags.iter().any(|t| t == "bug") {
                 ThreadKind::Issue
             } else {
                 ThreadKind::Task

@@ -173,11 +173,13 @@ pub(crate) fn migrate_legacy_to_snapshot(
     git: &crate::internal::git_ops::GitOps,
     thread_id: &str,
 ) -> Result<snapshot::ThreadDocument, ForumError> {
-    use crate::internal::evidence::EvidenceFile;
+    use crate::internal::evidence::{EvidenceFile, EvidenceRecord};
     use crate::internal::snapshot::{Links, ThreadDocument};
     use crate::internal::thread::ThreadSnapshot;
 
     let state = thread::replay_thread(git, thread_id)?;
+    let mut tags = state.tags.clone();
+    super::thread_new::augment_tags_for_lifecycle(state.lifecycle, &mut tags);
     let category = super::thread_new::lifecycle_to_category(state.lifecycle).to_string();
 
     let nodes: Vec<NodeWithBody> = state
@@ -230,6 +232,20 @@ pub(crate) fn migrate_legacy_to_snapshot(
             .collect(),
     };
 
+    let evidence = EvidenceFile {
+        entries: state
+            .evidence_items
+            .iter()
+            .map(|e| EvidenceRecord {
+                id: e.evidence_id.clone(),
+                kind: e.kind.clone(),
+                ref_target: e.ref_target.clone(),
+                created_at: state.created_at,
+                created_by: state.created_by.clone(),
+            })
+            .collect(),
+    };
+
     Ok(ThreadDocument {
         snapshot: ThreadSnapshot {
             schema_version: ThreadSnapshot::SCHEMA_VERSION,
@@ -237,7 +253,7 @@ pub(crate) fn migrate_legacy_to_snapshot(
             title: state.title,
             category,
             status: state.status.as_str().to_string(),
-            tags: state.tags,
+            tags,
             created_at: state.created_at,
             created_by: state.created_by.clone(),
             updated_at: state.created_at,
@@ -248,7 +264,7 @@ pub(crate) fn migrate_legacy_to_snapshot(
         body: state.body,
         nodes,
         links,
-        evidence: EvidenceFile::default(),
+        evidence,
     })
 }
 

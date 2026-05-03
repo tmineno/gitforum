@@ -1666,10 +1666,7 @@ fn main() -> Result<(), ForumError> {
                         &approve,
                         &actor,
                         &clock,
-                        state_change::StateChangeOptions {
-                            resolve_open_actions,
-                            ..Default::default()
-                        },
+                        resolve_open_actions,
                         dry_run,
                     )?;
                     print_bulk_report(&report);
