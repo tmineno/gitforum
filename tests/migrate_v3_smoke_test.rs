@@ -352,3 +352,109 @@ fn migrate_with_missing_facet_set_succeeds_for_1x_chain() {
     assert_eq!(doc.snapshot.status, "open");
     assert!(doc.snapshot.tags.iter().any(|t| t == "bug"));
 }
+
+// ---------------------------------------------------------------
+// --dry-run (task `9635buy0` step 5 / item 15).
+// ---------------------------------------------------------------
+
+#[test]
+fn migrate_dry_run_does_not_advance_the_ref_tip() {
+    // SPEC-3.0 §8.1: `git forum migrate --to 3.0 --dry-run` reports
+    // the planned work without writing anything. The ref tip OID
+    // MUST be byte-identical before and after.
+    let (repo, git, _paths) = setup();
+    let id = id_alloc::alloc_thread_id_with_nonce(
+        ThreadKind::Rfc,
+        "human/alice",
+        "DryRun",
+        "2026-01-01T00:00:00Z",
+        &[5, 5, 5, 5, 5, 5, 5, 5],
+    );
+    event::write_event(&git, &create_event(&id, ThreadKind::Rfc, "DryRun")).unwrap();
+
+    let refname = format!("refs/forum/threads/{id}");
+    let before = git
+        .resolve_ref(&refname)
+        .unwrap()
+        .expect("ref must exist after the legacy write");
+
+    let bin = env!("CARGO_BIN_EXE_git-forum");
+    let out = Command::new(bin)
+        .current_dir(repo.path())
+        .args(["migrate", "--to", "3.0", "--dry-run"])
+        .output()
+        .expect("git-forum migrate --dry-run should run");
+    assert!(
+        out.status.success(),
+        "dry-run exited non-zero:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("[DRY-RUN]"),
+        "dry-run output must be flagged as such:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("[plan]") && stdout.contains(&id),
+        "dry-run must enumerate planned migrations:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("[migrated]"),
+        "dry-run must NOT record any actual migration:\n{stdout}"
+    );
+
+    // The critical invariant: ref OID unchanged.
+    let after = git.resolve_ref(&refname).unwrap().unwrap();
+    assert_eq!(
+        before, after,
+        "ref tip OID changed during --dry-run (before={before}, after={after})"
+    );
+
+    // And the tip is still legacy — read_snapshot still rejects.
+    let probe = snapshot::read_snapshot(&git, &id).unwrap_err();
+    assert!(
+        matches!(
+            probe,
+            git_forum::internal::error::ForumError::LegacyEventChain
+        ),
+        "post-dry-run read_snapshot must still return LegacyEventChain, got {probe:?}"
+    );
+}
+
+#[test]
+fn migrate_dry_run_followed_by_real_run_writes_snapshot() {
+    // Sanity: --dry-run is repeatable and does not poison the
+    // subsequent real run.
+    let (repo, git, _paths) = setup();
+    let id = id_alloc::alloc_thread_id_with_nonce(
+        ThreadKind::Issue,
+        "human/alice",
+        "PlanThenGo",
+        "2026-01-01T00:00:00Z",
+        &[6, 6, 6, 6, 6, 6, 6, 6],
+    );
+    event::write_event(&git, &create_event(&id, ThreadKind::Issue, "PlanThenGo")).unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_git-forum");
+
+    let dry = Command::new(bin)
+        .current_dir(repo.path())
+        .args(["migrate", "--to", "3.0", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(dry.status.success());
+    assert!(snapshot::read_snapshot(&git, &id).is_err()); // still legacy
+
+    let real = Command::new(bin)
+        .current_dir(repo.path())
+        .args(["migrate", "--to", "3.0"])
+        .output()
+        .unwrap();
+    assert!(real.status.success());
+    let stdout = String::from_utf8_lossy(&real.stdout);
+    assert!(stdout.contains("[migrated]"));
+
+    let doc = snapshot::read_snapshot(&git, &id).expect("real run must complete the migration");
+    assert_eq!(doc.snapshot.category, "task");
+}
