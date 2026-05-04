@@ -335,22 +335,35 @@ fn write_commit(git: &GitOps, event: &Event, parent: Option<&str>) -> ForumResul
 
 /// Args for [`run_arm`] — the SPEC-3.0 `git forum migrate` arm.
 ///
-/// Phase 2 slot 9 (RFC `7ymtc4b2`): the arm relocates from `main.rs`
-/// to [`run_arm`] in this module. The full v→3.0 implementation is
-/// Phase 3; the arm currently delegates to the existing legacy v1→v2
-/// path (preserved for the sanctioned ADR-011 Decision 3 use case).
+/// `to` is the target storage format. v3.0.0 only accepts `"3.0"`.
+/// The clap layer (`src/main.rs`) already constrains the value to
+/// `"3.0"` via a `PossibleValuesParser`; this struct stores the
+/// validated string so the migration body can branch on it if a
+/// future v3.x adds new targets.
 pub struct MigrateArgs {
+    pub to: String,
     pub dry_run: bool,
     pub as_actor: Option<String>,
 }
 
+/// The only migration target accepted in v3.0.0 (SPEC-3.0 §8.1).
+pub const SUPPORTED_TARGET: &str = "3.0";
+
 /// Uniform entry point for the `migrate` subcommand.
 ///
 /// Resolves the actor (CLI override → git default → `system/migrate`
-/// fallback) and runs the legacy v1→v2 migration. The Phase 3
-/// rewrite to a v→3.0 migrator preserves this dispatcher; only the
-/// migration body itself changes.
+/// fallback) and runs the v→3.0 migration. The clap layer rejects
+/// any `--to` other than `3.0` before we reach this entry point;
+/// the explicit re-check here defends against direct callers (tests,
+/// future programmatic use) and produces a structured
+/// [`ForumError::Config`] with a fix hint.
 pub fn run_arm(args: MigrateArgs, ctx: &super::context::Context) -> ForumResult<()> {
+    if args.to != SUPPORTED_TARGET {
+        return Err(ForumError::Config(format!(
+            "unsupported migration target `{}`; v3.0.0 only accepts `--to {SUPPORTED_TARGET}`",
+            args.to
+        )));
+    }
     let actor = args
         .as_actor
         .or_else(|| ctx.git.default_actor().map(str::to_string))

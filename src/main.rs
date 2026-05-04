@@ -132,8 +132,15 @@ enum Commands {
         #[arg(long)]
         strict: bool,
     },
-    /// Migrate a 1.x repo to the 2.0 storage format (ADR-004 / SPEC-2.0 §10)
+    /// Migrate 1.x/2.x event chains to 3.0 snapshots (SPEC-3.0 §8)
     Migrate {
+        /// Target storage format. Only `3.0` is accepted.
+        #[arg(
+            long = "to",
+            value_name = "VERSION",
+            value_parser = clap::builder::PossibleValuesParser::new(["3.0"]),
+        )]
+        to: String,
         /// Report planned changes without writing anything
         #[arg(long)]
         dry_run: bool,
@@ -761,9 +768,20 @@ fn main() -> Result<(), ForumError> {
         // Reindex/PruneOrphans/PruneStaleEvents arms removed at Phase 2
         // slot 11 (RFC `7ymtc4b2`); the underlying modules are on the
         // Phase 4 DELETE list (ADR-011 Decision 6: no index in v3.0.0).
-        Commands::Migrate { dry_run, as_actor } => {
+        Commands::Migrate {
+            to,
+            dry_run,
+            as_actor,
+        } => {
             let ctx = Context::discover(Box::new(SystemClock))?;
-            commands::migrate::run_arm(commands::migrate::MigrateArgs { dry_run, as_actor }, &ctx)?;
+            commands::migrate::run_arm(
+                commands::migrate::MigrateArgs {
+                    to,
+                    dry_run,
+                    as_actor,
+                },
+                &ctx,
+            )?;
         }
 
         // Repair / Purge / Search arms removed at Phase 2 slot 11

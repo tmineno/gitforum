@@ -187,3 +187,55 @@ fn revise_body_visible_in_show() {
         "old body should not be present in show output:\n{show}"
     );
 }
+
+// --- commands::migrate (CLI surface only) -------------------------------
+//
+// SPEC-3.0 §8.1: `git forum migrate --to 3.0` is the only accepted
+// invocation in v3.0.0. Bare `git forum migrate` (no `--to`) and
+// unsupported targets (`--to 99.0`) MUST be rejected at the CLI layer
+// with an actionable message. Body coverage (the actual walk + report)
+// lives in `tests/migrate_validity_test.rs` (task `9635buy0` step 7).
+
+#[test]
+fn migrate_to_3_0_is_accepted_by_cli() {
+    let repo = fresh_repo();
+    // No legacy refs: the run is a no-op, but the CLI must accept the
+    // invocation (exit 0, no clap error).
+    let out = run(&repo, &["migrate", "--to", "3.0"]);
+    assert!(
+        out.status.success(),
+        "git-forum migrate --to 3.0 should succeed on a fresh repo:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
+#[test]
+fn migrate_rejects_unsupported_to_value() {
+    let repo = fresh_repo();
+    let out = run(&repo, &["migrate", "--to", "99.0"]);
+    assert!(
+        !out.status.success(),
+        "git-forum migrate --to 99.0 must be rejected"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("3.0"),
+        "rejection should point the user at `--to 3.0`:\n{stderr}"
+    );
+}
+
+#[test]
+fn migrate_without_to_is_rejected() {
+    let repo = fresh_repo();
+    let out = run(&repo, &["migrate"]);
+    assert!(
+        !out.status.success(),
+        "bare `git forum migrate` must be rejected; --to is required"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--to"),
+        "rejection should mention the missing --to argument:\n{stderr}"
+    );
+}
