@@ -784,3 +784,201 @@ fn migrate_handles_legacy_approval_node_ids_with_slashes() {
         approval.record.id
     );
 }
+
+#[test]
+fn migrate_drops_invalid_tags_and_records_them_in_report() {
+    // Task `9635buy0` objection `e285682f`: migration MUST validate
+    // every projected tag against SPEC-3.0 §2.4 grammar. Invalid
+    // tags are dropped from the snapshot and recorded as
+    // `kind: "tag"` omissions in the per-thread report. Without
+    // this gate, a v2 chain with a 1-char tag (legal under earlier
+    // loose validators) would produce a 3.0 snapshot that violates
+    // its own tag grammar.
+    let (repo, git, paths) = setup();
+    let id = id_alloc::alloc_thread_id_with_nonce(
+        ThreadKind::Issue,
+        "human/alice",
+        "InvalidTag",
+        "2026-01-01T00:00:00Z",
+        &[12, 12, 12, 12, 12, 12, 12, 12],
+    );
+    event::write_event(&git, &create_event(&id, ThreadKind::Issue, "InvalidTag")).unwrap();
+    // facet_set adds a mix of valid + invalid tags. Per §2.4:
+    // - "x" — too short (length must be 2..=32)
+    // - "all" — reserved literal
+    // - "Bug" — uppercase; first char must be lowercase
+    // - "needs-review" — valid
+    let facet = Event {
+        thread_id: id.clone(),
+        event_type: EventType::FacetSet,
+        created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
+        actor: "system/migrate".into(),
+        lifecycle: Some("execution".into()),
+        tags_add: vec![
+            "x".into(),
+            "all".into(),
+            "Bug".into(),
+            "needs-review".into(),
+        ],
+        ..Event::default()
+    };
+    event::write_event(&git, &facet).unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_git-forum");
+    let out = Command::new(bin)
+        .current_dir(repo.path())
+        .args(["migrate", "--to", "3.0"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "invalid tags should not fail migration"
+    );
+
+    // Snapshot must NOT carry the invalid tags.
+    let doc = snapshot::read_snapshot(&git, &id).unwrap();
+    assert!(
+        doc.snapshot.tags.iter().any(|t| t == "needs-review"),
+        "valid tag should survive, got {:?}",
+        doc.snapshot.tags
+    );
+    for bad in ["x", "all", "Bug"] {
+        assert!(
+            !doc.snapshot.tags.iter().any(|t| t == bad),
+            "invalid tag `{bad}` must be dropped, got {:?}",
+            doc.snapshot.tags
+        );
+    }
+
+    // Report must list each invalid tag as a `kind: "tag"` omission.
+    let report: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(paths.git_forum.join("migration-report.json")).unwrap(),
+    )
+    .unwrap();
+    let entry = report["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["thread_id"] == id)
+        .unwrap();
+    let omissions = entry["omissions"]
+        .as_array()
+        .expect("omissions array must be present");
+    let tag_omissions: Vec<&str> = omissions
+        .iter()
+        .filter(|o| o["kind"] == "tag")
+        .filter_map(|o| o["item"].as_str())
+        .collect();
+    for bad in ["x", "all", "Bug"] {
+        assert!(
+            tag_omissions.contains(&bad),
+            "tag omission for `{bad}` missing from report; got {tag_omissions:?}"
+        );
+    }
+}
+
+#[test]
+fn migrate_handles_mixed_chain_with_snapshot_bottom_and_event_tail() {
+    // Task `9635buy0` objection `bf678561`: a Phase-2 cutover
+    // produced refs whose tip is an event commit but whose ancestor
+    // is a SPEC-3.0 snapshot commit. `read_snapshot` checks only the
+    // tip tree, so it routes such refs to migration as
+    // `LegacyEventChain`. The strict pinned reader MUST mirror
+    // `replay_thread_at`'s mixed-chain walk: seed from the snapshot
+    // ancestor and apply the event tail. A pure-event chain still
+    // routes through `replay_strict`.
+    use git_forum::internal::commands::migrate;
+    use git_forum::internal::node::{NodeKind, NodeRecord, NodeStatus};
+    use git_forum::internal::snapshot::{NodeWithBody, ThreadDocument};
+    use git_forum::internal::thread::ThreadSnapshot;
+
+    let (_repo, git, _paths) = setup();
+    let id = "mixchain";
+    let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+
+    // Bottom commit: a SPEC-3.0 snapshot at the ref.
+    let mut doc = ThreadDocument::new(ThreadSnapshot {
+        schema_version: ThreadSnapshot::SCHEMA_VERSION,
+        id: id.into(),
+        title: "Mixed".into(),
+        category: "rfc".into(),
+        status: "draft".into(),
+        tags: vec!["pre-existing".into()],
+        created_at: now,
+        created_by: "human/alice".into(),
+        updated_at: now,
+        updated_by: "human/alice".into(),
+        branch: None,
+        supersedes: vec![],
+    });
+    // Add a node so the tail's reply can target it (not used here
+    // but exercises the snapshot-seed path).
+    doc.nodes.push(NodeWithBody {
+        record: NodeRecord {
+            id: "seedcomment".into(),
+            kind: NodeKind::Comment,
+            status: NodeStatus::Open,
+            created_at: now,
+            created_by: "human/alice".into(),
+            updated_at: None,
+            updated_by: None,
+            reply_to: None,
+            legacy_label: None,
+        },
+        body: "seeded".into(),
+    });
+    snapshot::write_snapshot(&git, id, &doc, "create snapshot").unwrap();
+
+    // Tail: append a legacy event commit to the same ref.
+    let refname = format!("refs/forum/threads/{id}");
+    let parent_oid = git.resolve_ref(&refname).unwrap().unwrap();
+    let tail = Event {
+        thread_id: id.into(),
+        event_type: EventType::Say,
+        created_at: now + chrono::Duration::minutes(1),
+        actor: "human/bob".into(),
+        body: Some("after-snapshot comment".into()),
+        node_type: Some(git_forum::internal::event::NodeType::Comment),
+        ..Event::default()
+    };
+    let blob = git
+        .hash_object(serde_json::to_string(&tail).unwrap().as_bytes())
+        .unwrap();
+    let tree = git.mktree_single("event.json", &blob).unwrap();
+    let tail_commit = git
+        .commit_tree(&tree, &[&parent_oid], "tail event")
+        .unwrap();
+    git.update_ref_cas(&refname, &tail_commit, &parent_oid)
+        .unwrap();
+
+    // The tip is now an event commit → read_snapshot returns
+    // LegacyEventChain → migration must handle it.
+    let pre = snapshot::read_snapshot(&git, id).unwrap_err();
+    assert!(matches!(
+        pre,
+        git_forum::internal::error::ForumError::LegacyEventChain
+    ));
+
+    // Direct projection check: strict path must NOT fail.
+    let projection = migrate::migrate_legacy_to_snapshot_strict_at(&git, id, &tail_commit).unwrap();
+    // Snapshot's pre-existing tags survive the seeding.
+    assert!(
+        projection
+            .doc
+            .snapshot
+            .tags
+            .iter()
+            .any(|t| t == "pre-existing"),
+        "snapshot-bottom tags must seed the projection, got {:?}",
+        projection.doc.snapshot.tags
+    );
+    // Tail event's comment should appear as a node.
+    assert!(
+        projection
+            .doc
+            .nodes
+            .iter()
+            .any(|n| n.body == "after-snapshot comment"),
+        "tail event must be applied to the seeded state"
+    );
+}

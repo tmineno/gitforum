@@ -398,6 +398,9 @@ fn process_one(git: &GitOps, thread_id: &str, dry_run: bool) -> ThreadReport {
     for issue in &projection.issues {
         report.omissions.push(strict_issue_to_omission(issue));
     }
+    report
+        .omissions
+        .extend(projection.omissions.iter().cloned());
     if projection.lifecycle_inferred {
         report.inferred_metadata = Some(
             "lifecycle inferred from legacy kind (no facet_set in chain — normal for 1.x)".into(),
@@ -583,9 +586,10 @@ pub fn migrate_legacy_to_snapshot(
 }
 
 /// Lenient projection from a pinned tip. Drops [`StrictReplayIssue`]s
-/// silently — only the migrate path's strict variant
-/// ([`migrate_legacy_to_snapshot_strict_at`]) surfaces them. Kept
-/// for projection unit tests that don't care about issue surfacing.
+/// and projection [`Omission`]s silently — only the migrate path's
+/// strict variant ([`migrate_legacy_to_snapshot_strict_at`])
+/// surfaces them. Kept for projection unit tests that don't care
+/// about issue surfacing.
 pub fn migrate_legacy_to_snapshot_at(
     git: &GitOps,
     thread_id: &str,
@@ -598,7 +602,8 @@ pub fn migrate_legacy_to_snapshot_at(
             state.id
         )));
     }
-    project_state_to_doc(state)
+    let (doc, _omissions) = project_state_to_doc(state)?;
+    Ok(doc)
 }
 
 /// Output of [`migrate_legacy_to_snapshot_strict_at`].
@@ -612,6 +617,10 @@ pub fn migrate_legacy_to_snapshot_at(
 ///   transition, etc.). Item 7: these flow into the per-thread
 ///   omissions list, NOT into a hard error — migration still
 ///   succeeds for the thread.
+/// - `omissions` — projection-time omissions that don't belong on
+///   the [`StrictReplayIssue`] enum: invalid tags dropped per
+///   §2.4, in particular (objection `e285682f`). Surfaced
+///   alongside `issues` in the per-thread report.
 /// - `lifecycle_inferred` — true when the source chain had no
 ///   `facet_set` event and the lifecycle/category were derived
 ///   from the legacy kind. Item 7 calls this an
@@ -621,6 +630,7 @@ pub fn migrate_legacy_to_snapshot_at(
 pub struct MigrationProjection {
     pub doc: ThreadDocument,
     pub issues: Vec<StrictReplayIssue>,
+    pub omissions: Vec<Omission>,
     pub lifecycle_inferred: bool,
 }
 
@@ -649,10 +659,11 @@ pub fn migrate_legacy_to_snapshot_strict_at(
         )));
     }
     let lifecycle_inferred = !state.lifecycle_explicit;
-    let doc = project_state_to_doc(state)?;
+    let (doc, omissions) = project_state_to_doc(state)?;
     Ok(MigrationProjection {
         doc,
         issues,
+        omissions,
         lifecycle_inferred,
     })
 }
@@ -681,8 +692,36 @@ fn tree_safe_node_id(legacy_id: &str) -> String {
 /// Project a replayed legacy [`ThreadState`] to a SPEC-3.0
 /// [`ThreadDocument`]. Shared by the lenient and strict pinned
 /// projection paths.
-fn project_state_to_doc(state: ThreadState) -> Result<ThreadDocument, ForumError> {
-    let mut tags = state.tags.clone();
+///
+/// Returns `(doc, omissions)` so the strict path can surface
+/// projection-time omissions in the report. The lenient
+/// pinned wrapper (`migrate_legacy_to_snapshot_at`) discards
+/// them.
+///
+/// Tag validation (SPEC-2.0 §2.4 / SPEC-3.0 §2.4): legacy chains
+/// can carry tags that violate the 3.0 grammar (length, leading
+/// letter, allowed character set, reserved literal). Migration
+/// drops invalid tags from the projected snapshot's `tags` and
+/// records each as a `kind: "tag"` omission, per task `9635buy0`
+/// objection `e285682f`. The legacy event chain still has the
+/// original tag visible via `legacy/events.ndjson`.
+fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omission>), ForumError> {
+    let mut omissions: Vec<Omission> = Vec::new();
+    let mut tags: Vec<String> = Vec::with_capacity(state.tags.len());
+    for tag in &state.tags {
+        match super::super::event::validate_tag(tag) {
+            Ok(()) => {
+                if !tags.iter().any(|t| t == tag) {
+                    tags.push(tag.clone());
+                }
+            }
+            Err(reason) => omissions.push(Omission {
+                kind: "tag".into(),
+                item: tag.clone(),
+                reason,
+            }),
+        }
+    }
     super::thread_new::augment_tags_for_lifecycle(state.lifecycle, &mut tags);
     if let Some(canon) = legacy_kind_to_canonical_tag(state.kind) {
         if !tags.iter().any(|t| t == canon) {
@@ -769,26 +808,29 @@ fn project_state_to_doc(state: ThreadState) -> Result<ThreadDocument, ForumError
             .collect(),
     };
 
-    Ok(ThreadDocument {
-        snapshot: ThreadSnapshot {
-            schema_version: ThreadSnapshot::SCHEMA_VERSION,
-            id: state.id,
-            title: state.title,
-            category,
-            status: initial_status,
-            tags,
-            created_at: state.created_at,
-            created_by: state.created_by.clone(),
-            updated_at: state.created_at,
-            updated_by: state.created_by,
-            branch: state.branch,
-            supersedes: Vec::new(),
+    Ok((
+        ThreadDocument {
+            snapshot: ThreadSnapshot {
+                schema_version: ThreadSnapshot::SCHEMA_VERSION,
+                id: state.id,
+                title: state.title,
+                category,
+                status: initial_status,
+                tags,
+                created_at: state.created_at,
+                created_by: state.created_by.clone(),
+                updated_at: state.created_at,
+                updated_by: state.created_by,
+                branch: state.branch,
+                supersedes: Vec::new(),
+            },
+            body: state.body,
+            nodes,
+            links,
+            evidence,
         },
-        body: state.body,
-        nodes,
-        links,
-        evidence,
-    })
+        omissions,
+    ))
 }
 
 #[cfg(test)]

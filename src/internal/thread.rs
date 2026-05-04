@@ -564,6 +564,14 @@ fn apply_event(
             // Within a single event, tags_add is applied before tags_remove
             // (an event that simultaneously adds and removes the same tag
             // is a removal). Insertion is set-style (no duplicates).
+            //
+            // Tag-grammar validation happens at the migration boundary
+            // (`commands::migrate::project_state_to_doc`), NOT here:
+            // legacy display surfaces want to render tags verbatim even
+            // when they violate the 3.0 grammar (e.g. a 1-char tag
+            // accepted by an earlier loose validator). Migration drops
+            // invalid tags and records them as `kind: "tag"` omissions
+            // in the report (task `9635buy0` objection `e285682f`).
             for tag in tags_add {
                 if !state.tags.iter().any(|t| t == tag) {
                     state.tags.push(tag.clone());
@@ -820,12 +828,68 @@ pub fn replay_thread_strict(
 /// the same chain that the eventual CAS write will guard against —
 /// `replay_thread_strict` against the live ref would re-introduce
 /// the read/write race fixed by objection `e630f01f`.
+///
+/// Mirrors the mixed-chain walk of [`replay_thread_at`]: a chain
+/// whose bottom is a SPEC-3.0 snapshot commit (Phase-2 cutover
+/// shape) seeds state from the snapshot and applies any event tail
+/// strictly. A pure-event chain routes through [`replay_strict`].
+/// `read_snapshot` only inspects the tip tree, so a tip that is an
+/// event commit dispatches through migrate even when an ancestor
+/// is a snapshot — the `_at` reader MUST handle that case
+/// (task `9635buy0`, objection `bf678561`).
 pub fn replay_thread_strict_at(
     git: &GitOps,
     start_rev: &str,
 ) -> ForumResult<(ThreadState, Vec<StrictReplayIssue>)> {
-    let events = event::load_thread_events_at(git, start_rev)?;
-    replay_strict(&events)
+    let mut shas: Vec<String> = git.rev_list(start_rev)?;
+    shas.reverse();
+
+    let mut state: Option<ThreadState> = None;
+    let mut tail_events: Vec<Event> = Vec::new();
+
+    for sha in &shas {
+        let listing = git.run(&["ls-tree", "--name-only", sha])?;
+        let names: Vec<&str> = listing.lines().collect();
+        if names.contains(&"thread.toml") {
+            // SPEC-3.0 snapshot ancestor — reset state to its view.
+            // Anything before is subsumed; the snapshot's tags/links
+            // were already validated at write time, so they enter
+            // the strict path without further checks.
+            let doc = super::snapshot::read_snapshot_at(git, sha)?;
+            state = Some(materialize_thread_state_from_snapshot(doc));
+            tail_events.clear();
+        } else if names.contains(&"event.json") {
+            tail_events.push(event::read_event(git, sha)?);
+        }
+        // Unknown tree shapes (empty merges, etc.) are skipped —
+        // same lenience as `replay_thread_at`.
+    }
+
+    if let Some(mut s) = state {
+        // Snapshot-bottom + event-tail. Apply tail events strictly.
+        let mut issues = Vec::new();
+        for ev in &tail_events {
+            s.events.push(ev.clone());
+            match ev.project() {
+                Ok(domain) => apply_event(&mut s, &domain, &mut issues)?,
+                Err(super::event::ProjectionError::MissingRequiredField { field }) => {
+                    issues.push(StrictReplayIssue::MissingRequiredField {
+                        event_id: ev.event_id.clone(),
+                        event_type: ev.event_type,
+                        field,
+                    });
+                }
+            }
+        }
+        Ok((s, issues))
+    } else if !tail_events.is_empty() {
+        // Pure legacy event chain.
+        replay_strict(&tail_events)
+    } else {
+        Err(ForumError::Repo(format!(
+            "rev {start_rev} has no replayable content"
+        )))
+    }
 }
 
 /// Resolve a node reference across all threads.
