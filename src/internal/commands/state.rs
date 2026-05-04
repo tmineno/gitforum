@@ -29,7 +29,6 @@ use crate::internal::thread;
 use crate::internal::workflow::SPEC;
 
 use super::shared::{discover_repo_with_init_warning, resolve_actor, resolve_tid};
-use super::shorthand_say::migrate_legacy_to_snapshot;
 
 /// `git forum state` sub-commands.
 #[derive(Subcommand)]
@@ -152,11 +151,7 @@ pub fn run_state_shorthand(
     let pre_state = thread::replay_thread(&git, thread_id)?;
     let target = resolve_target_state(new_state, pre_state.lifecycle)?;
 
-    let mut doc = match snapshot::read_snapshot(&git, thread_id) {
-        Ok(doc) => doc,
-        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(&git, thread_id)?,
-        Err(other) => return Err(other),
-    };
+    let mut doc = snapshot::read_snapshot(&git, thread_id)?;
     let from = doc.snapshot.status.clone();
     let now = clock.now();
 
@@ -293,11 +288,7 @@ pub fn apply_state_change_snapshot(
     let pre_state = thread::replay_thread(git, thread_id)?;
     let target = resolve_target_state(new_state, pre_state.lifecycle)?;
 
-    let mut doc = match snapshot::read_snapshot(git, thread_id) {
-        Ok(doc) => doc,
-        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(git, thread_id)?,
-        Err(other) => return Err(other),
-    };
+    let mut doc = snapshot::read_snapshot(git, thread_id)?;
     let from = doc.snapshot.status.clone();
     if from == target {
         return Ok((from, target));

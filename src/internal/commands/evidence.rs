@@ -17,7 +17,6 @@ use crate::internal::thread;
 use super::shared::{
     apply_operation_checks, discover_repo_with_init_warning, resolve_actor, resolve_tid,
 };
-use super::shorthand_say::migrate_legacy_to_snapshot;
 
 pub fn run_evidence_add(
     thread_id: &str,
@@ -38,11 +37,7 @@ pub fn run_evidence_add(
     let violations = operation_check::check_evidence(&policy, state.status.as_str());
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
-    let mut doc = match snapshot::read_snapshot(&git, &thread_id) {
-        Ok(doc) => doc,
-        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(&git, &thread_id)?,
-        Err(other) => return Err(other),
-    };
+    let mut doc = snapshot::read_snapshot(&git, &thread_id)?;
     let now = clock.now();
 
     let mut added: Vec<String> = Vec::new();

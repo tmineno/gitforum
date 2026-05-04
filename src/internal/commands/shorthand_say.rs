@@ -34,6 +34,13 @@ use super::shared::{
 };
 use super::thread_new::resolve_body_required;
 
+// Note on `internal::event::NodeType`: imported only for
+// `operation_check::check_say` (policy is keyed on NodeType) — the
+// import does not bridge legacy event-chain reads/writes. ADR-011
+// Decision 3 forbids non-migrate paths from consuming legacy event
+// chains; this module honors that by bailing on `LegacyEventChain`
+// instead of migrating-on-write.
+
 /// Args for `commands::shorthand_say::run` — shared field set used by
 /// `comment` / `objection` / `action` (and `node add` after slot 7f).
 pub struct ShorthandSayArgs {
@@ -145,11 +152,10 @@ pub fn run_shorthand_say(
 }
 
 /// Append `node` to the thread's snapshot and write a new snapshot
-/// commit. Falls back to migrating-on-write: a legacy event-chain
-/// thread is first read via `replay_thread` (mixed-chain aware), the
-/// resulting state seeds a fresh `ThreadDocument`, and the new node
-/// joins it. This keeps slot-2's storage gate (snapshot tip) without
-/// leaving event-chain threads stranded mid-Phase-2.
+/// commit. ADR-011 Decision 3: non-migrate paths must NOT consume
+/// legacy event chains. If the source is still on the legacy chain,
+/// bail with `LegacyEventChain` so the user runs `git forum migrate`
+/// before mutating.
 fn write_node_to_snapshot(
     git: &crate::internal::git_ops::GitOps,
     thread_id: &str,
@@ -157,120 +163,12 @@ fn write_node_to_snapshot(
     actor: &str,
     now: chrono::DateTime<Utc>,
 ) -> Result<(), ForumError> {
-    let mut doc = match snapshot::read_snapshot(git, thread_id) {
-        Ok(doc) => doc,
-        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(git, thread_id)?,
-        Err(other) => return Err(other),
-    };
+    let mut doc = snapshot::read_snapshot(git, thread_id)?;
     doc.nodes.push(node);
     doc.snapshot.updated_at = now;
     doc.snapshot.updated_by = actor.into();
     write_snapshot(git, thread_id, &doc, "node add")?;
     Ok(())
-}
-
-/// Read a legacy event-chain thread via the mixed-chain replay
-/// reader and project the resulting state back into a SPEC-3.0
-/// `ThreadDocument`. Used by Phase 2 write-side cutovers as a
-/// migrate-on-write bridge — the next read round-trips through the
-/// snapshot path.
-pub(crate) fn migrate_legacy_to_snapshot(
-    git: &crate::internal::git_ops::GitOps,
-    thread_id: &str,
-) -> Result<snapshot::ThreadDocument, ForumError> {
-    use crate::internal::evidence::{EvidenceFile, EvidenceRecord};
-    use crate::internal::snapshot::{Links, ThreadDocument};
-    use crate::internal::thread::ThreadSnapshot;
-
-    let state = thread::replay_thread(git, thread_id)?;
-    let mut tags = state.tags.clone();
-    super::thread_new::augment_tags_for_lifecycle(state.lifecycle, &mut tags);
-    let category = super::thread_new::lifecycle_to_category(state.lifecycle).to_string();
-
-    let nodes: Vec<NodeWithBody> = state
-        .nodes
-        .iter()
-        .filter_map(|n| {
-            let kind = match n.node_type.canonical() {
-                NodeType::Comment => NodeKind::Comment,
-                NodeType::Approval => NodeKind::Approval,
-                NodeType::Objection => NodeKind::Objection,
-                NodeType::Action => NodeKind::Action,
-                _ => return None, // canonical() always returns one of the four
-            };
-            let status = if n.retracted {
-                NodeStatus::Retracted
-            } else if n.incorporated {
-                NodeStatus::Incorporated
-            } else if n.resolved {
-                NodeStatus::Resolved
-            } else {
-                NodeStatus::Open
-            };
-            Some(NodeWithBody {
-                record: NodeRecord {
-                    id: n.node_id.clone(),
-                    kind,
-                    status,
-                    created_at: n.created_at,
-                    created_by: n.actor.clone(),
-                    updated_at: None,
-                    updated_by: None,
-                    reply_to: n.reply_to.clone(),
-                    legacy_label: n.legacy_subtype.clone(),
-                },
-                body: n.body.clone(),
-            })
-        })
-        .collect();
-
-    let links = Links {
-        entries: state
-            .links
-            .iter()
-            .map(|l| crate::internal::snapshot::Link {
-                target: l.target_thread_id.clone(),
-                rel: l.rel.clone(),
-                created_at: state.created_at,
-                created_by: state.created_by.clone(),
-            })
-            .collect(),
-    };
-
-    let evidence = EvidenceFile {
-        entries: state
-            .evidence_items
-            .iter()
-            .map(|e| EvidenceRecord {
-                id: e.evidence_id.clone(),
-                kind: e.kind.clone(),
-                ref_target: e.ref_target.clone(),
-                created_at: state.created_at,
-                created_by: state.created_by.clone(),
-            })
-            .collect(),
-    };
-
-    Ok(ThreadDocument {
-        snapshot: ThreadSnapshot {
-            schema_version: ThreadSnapshot::SCHEMA_VERSION,
-            id: state.id,
-            title: state.title,
-            category,
-            status: state.status.as_str().to_string(),
-            tags,
-            created_at: state.created_at,
-            created_by: state.created_by.clone(),
-            updated_at: state.created_at,
-            updated_by: state.created_by,
-            branch: state.branch,
-            supersedes: Vec::new(),
-        },
-        body: state.body,
-        nodes,
-        links,
-        evidence,
-    })
 }
 
 /// Project a SPEC-3.0 [`NodeKind`] back to the v2 [`NodeType`]

@@ -3,20 +3,13 @@ mod support;
 use std::process::Command;
 
 use chrono::{TimeZone, Utc};
-use git_forum::internal::clock::FixedClock;
 use git_forum::internal::config::RepoPaths;
-use git_forum::internal::create;
-use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
+use git_forum::internal::id_alloc;
 use git_forum::internal::init;
-use git_forum::internal::thread;
-use git_forum::internal::write_ops;
-
-fn fixed_clock() -> FixedClock {
-    FixedClock {
-        instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-    }
-}
+use git_forum::internal::node::{NodeKind, NodeRecord, NodeStatus};
+use git_forum::internal::snapshot::{self, store::write_snapshot, NodeWithBody, ThreadDocument};
+use git_forum::internal::thread::{self, ThreadSnapshot};
 
 fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
     let repo = support::repo::TestRepo::new();
@@ -26,39 +19,98 @@ fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
     (repo, git, paths)
 }
 
+/// Snapshot fixture: write a fresh SPEC-3.0 thread with the given
+/// category and title. Replaces the legacy `create::create_thread`
+/// fixture path now that ADR-011 Decision 3 forbids non-migrate code
+/// paths from consuming legacy event chains.
+fn make_snapshot_thread(git: &GitOps, category: &str, title: &str, seed: u8) -> String {
+    let id = format!("blk{seed:02x}{seed:02x}{seed:02x}", seed = seed.max(1));
+    let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let initial_status = match category {
+        "rfc" => "draft",
+        _ => "open",
+    };
+    let doc = ThreadDocument::new(ThreadSnapshot {
+        schema_version: ThreadSnapshot::SCHEMA_VERSION,
+        id: id.clone(),
+        title: title.to_string(),
+        category: category.to_string(),
+        status: initial_status.to_string(),
+        tags: vec![],
+        created_at: now,
+        created_by: "human/alice".into(),
+        updated_at: now,
+        updated_by: "human/alice".into(),
+        branch: None,
+        supersedes: vec![],
+    });
+    write_snapshot(git, &id, &doc, "create test thread").unwrap();
+    id
+}
+
+/// Append a node to a snapshot thread; returns the new node id.
+fn append_snapshot_node(
+    git: &GitOps,
+    thread_id: &str,
+    kind: NodeKind,
+    body: &str,
+    actor: &str,
+) -> String {
+    let mut doc = snapshot::read_snapshot(git, thread_id).unwrap();
+    let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap();
+    let id = id_alloc::alloc_bare_thread_id(actor, body, &now.to_rfc3339());
+    doc.nodes.push(NodeWithBody {
+        record: NodeRecord {
+            id: id.clone(),
+            kind,
+            status: NodeStatus::Open,
+            created_at: now,
+            created_by: actor.into(),
+            updated_at: None,
+            updated_by: None,
+            reply_to: None,
+            legacy_label: None,
+        },
+        body: body.into(),
+    });
+    doc.snapshot.updated_at = now;
+    doc.snapshot.updated_by = actor.into();
+    write_snapshot(git, thread_id, &doc, "append test node").unwrap();
+    id
+}
+
+/// Mark a node as resolved on a snapshot thread.
+fn resolve_snapshot_node(git: &GitOps, thread_id: &str, node_id: &str, actor: &str) {
+    let mut doc = snapshot::read_snapshot(git, thread_id).unwrap();
+    let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 2, 0).unwrap();
+    if let Some(node) = doc.nodes.iter_mut().find(|n| n.record.id == node_id) {
+        node.record.status = NodeStatus::Resolved;
+        node.record.updated_at = Some(now);
+        node.record.updated_by = Some(actor.into());
+    }
+    doc.snapshot.updated_at = now;
+    doc.snapshot.updated_by = actor.into();
+    write_snapshot(git, thread_id, &doc, "resolve test node").unwrap();
+}
+
 #[test]
 fn retract_multiple_nodes() {
     let (repo, git, _paths) = setup();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Rfc,
-        "Bulk retract test",
-        None,
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap();
-
-    let n1 = write_ops::say_node(
+    let thread_id = make_snapshot_thread(&git, "rfc", "Bulk retract test", 0x01);
+    let n1 = append_snapshot_node(
         &git,
         &thread_id,
-        NodeType::Summary,
+        NodeKind::Comment,
         "Summary 1",
         "human/alice",
-        &fixed_clock(),
-        None,
-    )
-    .unwrap();
-    let n2 = write_ops::say_node(
+    );
+    let n2 = append_snapshot_node(
         &git,
         &thread_id,
-        NodeType::Summary,
+        NodeKind::Comment,
         "Summary 2",
         "human/alice",
-        &fixed_clock(),
-        None,
-    )
-    .unwrap();
+    );
 
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
@@ -81,36 +133,21 @@ fn retract_multiple_nodes() {
 #[test]
 fn resolve_multiple_nodes() {
     let (repo, git, _paths) = setup();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Rfc,
-        "Bulk resolve test",
-        None,
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap();
-
-    let n1 = write_ops::say_node(
+    let thread_id = make_snapshot_thread(&git, "rfc", "Bulk resolve test", 0x02);
+    let n1 = append_snapshot_node(
         &git,
         &thread_id,
-        NodeType::Objection,
+        NodeKind::Objection,
         "Objection 1",
         "human/bob",
-        &fixed_clock(),
-        None,
-    )
-    .unwrap();
-    let n2 = write_ops::say_node(
+    );
+    let n2 = append_snapshot_node(
         &git,
         &thread_id,
-        NodeType::Objection,
+        NodeKind::Objection,
         "Objection 2",
         "human/bob",
-        &fixed_clock(),
-        None,
-    )
-    .unwrap();
+    );
 
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
@@ -132,42 +169,27 @@ fn resolve_multiple_nodes() {
 #[test]
 fn reopen_multiple_nodes() {
     let (repo, git, _paths) = setup();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Rfc,
-        "Bulk reopen test",
-        None,
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap();
-
-    let n1 = write_ops::say_node(
+    let thread_id = make_snapshot_thread(&git, "rfc", "Bulk reopen test", 0x03);
+    let n1 = append_snapshot_node(
         &git,
         &thread_id,
-        NodeType::Objection,
+        NodeKind::Objection,
         "Objection 1",
         "human/bob",
-        &fixed_clock(),
-        None,
-    )
-    .unwrap();
-    let n2 = write_ops::say_node(
+    );
+    let n2 = append_snapshot_node(
         &git,
         &thread_id,
-        NodeType::Objection,
+        NodeKind::Objection,
         "Objection 2",
         "human/bob",
-        &fixed_clock(),
-        None,
-    )
-    .unwrap();
+    );
 
-    // Resolve both first
-    write_ops::resolve_node(&git, &thread_id, &n1, "human/alice", &fixed_clock()).unwrap();
-    write_ops::resolve_node(&git, &thread_id, &n2, "human/alice", &fixed_clock()).unwrap();
+    // Resolve both first.
+    resolve_snapshot_node(&git, &thread_id, &n1, "human/alice");
+    resolve_snapshot_node(&git, &thread_id, &n2, "human/alice");
 
-    // Reopen both
+    // Reopen both.
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
         .args(["reopen", &thread_id, &n1, &n2])
@@ -188,26 +210,14 @@ fn reopen_multiple_nodes() {
 #[test]
 fn single_node_id_still_works() {
     let (repo, git, _paths) = setup();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Issue,
-        "Single node test",
-        None,
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap();
-
-    let n1 = write_ops::say_node(
+    let thread_id = make_snapshot_thread(&git, "issue", "Single node test", 0x04);
+    let n1 = append_snapshot_node(
         &git,
         &thread_id,
-        NodeType::Action,
+        NodeKind::Action,
         "Do something",
         "human/alice",
-        &fixed_clock(),
-        None,
-    )
-    .unwrap();
+    );
 
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
@@ -225,28 +235,16 @@ fn single_node_id_still_works() {
 #[test]
 fn bulk_retract_reports_failures_inline() {
     let (repo, git, _paths) = setup();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Rfc,
-        "Failure test",
-        None,
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap();
-
-    let n1 = write_ops::say_node(
+    let thread_id = make_snapshot_thread(&git, "rfc", "Failure test", 0x05);
+    let n1 = append_snapshot_node(
         &git,
         &thread_id,
-        NodeType::Summary,
+        NodeKind::Comment,
         "Good node",
         "human/alice",
-        &fixed_clock(),
-        None,
-    )
-    .unwrap();
+    );
 
-    // Use a valid node and a bogus one
+    // Use a valid node and a bogus one.
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
         .args(["retract", &thread_id, &n1, "bogus_node_id_does_not_exist"])
@@ -255,14 +253,14 @@ fn bulk_retract_reports_failures_inline() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Should exit non-zero
+    // Should exit non-zero.
     assert!(!output.status.success());
-    // The valid node should still be retracted
+    // The valid node should still be retracted.
     assert!(stdout.contains("Retracted"));
-    // The bogus one should report an error
+    // The bogus one should report an error.
     assert!(stderr.contains("error:"));
 
-    // Verify the valid node was retracted despite the failure
+    // Verify the valid node was retracted despite the failure.
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert!(state.nodes[0].retracted);
 }
@@ -270,17 +268,9 @@ fn bulk_retract_reports_failures_inline() {
 #[test]
 fn reopen_without_node_ids_is_rejected() {
     let (repo, git, _paths) = setup();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Issue,
-        "Thread reopen test",
-        None,
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap();
+    let thread_id = make_snapshot_thread(&git, "issue", "Thread reopen test", 0x06);
 
-    // Close the thread
+    // Close the thread.
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
         .args(["close", &thread_id])
@@ -288,7 +278,7 @@ fn reopen_without_node_ids_is_rejected() {
         .expect("failed to run");
     assert!(output.status.success());
 
-    // Reopen without node IDs should reopen the thread itself
+    // Reopen without node IDs should reopen the thread itself.
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
         .args(["reopen", &thread_id])
@@ -306,17 +296,9 @@ fn reopen_without_node_ids_is_rejected() {
 #[test]
 fn thread_reopen_via_issue_subcommand() {
     let (repo, git, _paths) = setup();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Issue,
-        "Thread reopen test",
-        None,
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap();
+    let thread_id = make_snapshot_thread(&git, "issue", "Thread reopen test", 0x07);
 
-    // Close the thread
+    // Close the thread.
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
         .args(["close", &thread_id])
@@ -324,7 +306,7 @@ fn thread_reopen_via_issue_subcommand() {
         .expect("failed to run");
     assert!(output.status.success());
 
-    // Reopen via top-level shorthand
+    // Reopen via top-level shorthand.
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
         .args(["reopen", &thread_id])

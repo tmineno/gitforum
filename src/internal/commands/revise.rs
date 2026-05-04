@@ -28,7 +28,6 @@ use crate::internal::thread;
 use super::shared::{
     apply_operation_checks, discover_repo_with_init_warning, resolve_actor, resolve_tid,
 };
-use super::shorthand_say::migrate_legacy_to_snapshot;
 use super::thread_new::resolve_body_required;
 
 /// Args for the top-level `revise` arm — captures the optional thread_id +
@@ -185,11 +184,7 @@ pub fn run_revise_body(
     let violations = operation_check::check_revise(&policy, state.status.as_str(), true);
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
-    let mut doc = match snapshot::read_snapshot(&git, &thread_id) {
-        Ok(doc) => doc,
-        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(&git, &thread_id)?,
-        Err(other) => return Err(other),
-    };
+    let mut doc = snapshot::read_snapshot(&git, &thread_id)?;
     let now = clock.now();
     doc.body = Some(body_text);
     doc.snapshot.updated_at = now;
@@ -242,11 +237,7 @@ pub fn run_revise_node(
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
     let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;
-    let mut doc = match snapshot::read_snapshot(&git, &thread_id) {
-        Ok(doc) => doc,
-        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(&git, &thread_id)?,
-        Err(other) => return Err(other),
-    };
+    let mut doc = snapshot::read_snapshot(&git, &thread_id)?;
     let now = clock.now();
     let node = doc
         .nodes

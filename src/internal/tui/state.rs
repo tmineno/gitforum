@@ -3,7 +3,6 @@ use std::time::Instant;
 
 use crate::internal::actor;
 use crate::internal::clock::{Clock, SystemClock};
-use crate::internal::commands::shorthand_say::migrate_legacy_to_snapshot;
 use crate::internal::commands::show;
 use crate::internal::error::{ForumError, ForumResult};
 use crate::internal::event::{self, Lifecycle, NodeType};
@@ -527,9 +526,10 @@ pub(super) fn auto_refresh(
 // The CLI orchestration layer's run() helpers print to stdout and
 // `std::process::exit` on failure, both of which collide with
 // ratatui's terminal session. Slot 10c keeps the TUI shape and
-// inlines the snapshot-tip mutations here. Shared bridges
-// (`migrate_legacy_to_snapshot`) are reused from the CLI side so
-// legacy event-chain threads still cut over on first write.
+// inlines the snapshot-tip mutations here. ADR-011 Decision 3:
+// the TUI is a non-migrate consumer, so reads of legacy event
+// chains bail with LegacyEventChain — the user runs
+// `git forum migrate` from the CLI before reopening the TUI.
 
 fn snapshot_update_node_status(
     git: &GitOps,
@@ -539,11 +539,7 @@ fn snapshot_update_node_status(
     actor: &str,
     clock: &dyn Clock,
 ) -> ForumResult<()> {
-    let mut doc = match snapshot::read_snapshot(git, thread_id) {
-        Ok(doc) => doc,
-        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(git, thread_id)?,
-        Err(other) => return Err(other),
-    };
+    let mut doc = snapshot::read_snapshot(git, thread_id)?;
     let now = clock.now();
     let resolved = thread::resolve_node_id_in_thread(git, thread_id, node_id)?;
     if let Some(node) = doc.nodes.iter_mut().find(|n| n.record.id == resolved) {
@@ -569,11 +565,7 @@ fn snapshot_append_node(
     actor: &str,
     clock: &dyn Clock,
 ) -> ForumResult<String> {
-    let mut doc = match snapshot::read_snapshot(git, thread_id) {
-        Ok(doc) => doc,
-        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(git, thread_id)?,
-        Err(other) => return Err(other),
-    };
+    let mut doc = snapshot::read_snapshot(git, thread_id)?;
     let now = clock.now();
     let kind = match node_type.canonical() {
         NodeType::Comment => NodeKind::Comment,
@@ -610,11 +602,7 @@ pub(super) fn snapshot_revise_body(
     actor: &str,
     clock: &dyn Clock,
 ) -> ForumResult<()> {
-    let mut doc = match snapshot::read_snapshot(git, thread_id) {
-        Ok(doc) => doc,
-        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(git, thread_id)?,
-        Err(other) => return Err(other),
-    };
+    let mut doc = snapshot::read_snapshot(git, thread_id)?;
     let now = clock.now();
     doc.body = Some(new_body.to_string());
     doc.snapshot.updated_at = now;
@@ -631,11 +619,7 @@ fn snapshot_append_link(
     actor: &str,
     clock: &dyn Clock,
 ) -> ForumResult<()> {
-    let mut doc = match snapshot::read_snapshot(git, thread_id) {
-        Ok(doc) => doc,
-        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(git, thread_id)?,
-        Err(other) => return Err(other),
-    };
+    let mut doc = snapshot::read_snapshot(git, thread_id)?;
     let now = clock.now();
     doc.links.entries.push(Link {
         target: target_thread_id.to_string(),

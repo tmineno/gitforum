@@ -3,14 +3,9 @@ mod support;
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
-use git_forum::internal::clock::SystemClock;
 use git_forum::internal::config::RepoPaths;
-use git_forum::internal::create;
-use git_forum::internal::event::ThreadKind;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
-use git_forum::internal::policy::Policy;
-use git_forum::internal::state_change;
 use git_forum::internal::thread;
 
 fn extract_created_id(output: &Output) -> String {
@@ -23,6 +18,42 @@ fn extract_created_id(output: &Output) -> String {
         .next()
         .unwrap()
         .to_string()
+}
+
+/// Snapshot fixture: invoke `git forum new` to write a fresh SPEC-3.0
+/// thread. Replaces the legacy `create::create_thread` fixture path
+/// now that ADR-011 Decision 3 forbids non-migrate code paths from
+/// consuming legacy event chains.
+fn make_thread_via_cli(repo_path: &std::path::Path, kind: &str, title: &str, body: &str) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo_path)
+        .args(["new", kind, title, "--body", body])
+        .output()
+        .expect("failed to run");
+    assert!(
+        output.status.success(),
+        "make_thread_via_cli failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    extract_created_id(&output)
+}
+
+/// Drive a fresh RFC to `accepted` via the CLI state arms (used by
+/// the `--from-thread` regression that wants the source already
+/// accepted).
+fn drive_rfc_to_accepted(repo_path: &std::path::Path, thread_id: &str) {
+    for state in &["proposed", "under-review", "accepted"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+            .current_dir(repo_path)
+            .args(["state", thread_id, state])
+            .output()
+            .expect("failed to run git-forum state");
+        assert!(
+            output.status.success(),
+            "drive_rfc_to_accepted({state}) failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 #[test]
@@ -169,52 +200,15 @@ fn from_thread_without_title_uses_default() {
     let paths = RepoPaths::from_repo_root(repo.path());
     init::init_forum(&paths).unwrap();
 
-    // Create source RFC and move to accepted (so auto-deprecation works)
+    // Create source RFC and drive it to `accepted` via the CLI.
     let git = GitOps::new(repo.path().to_path_buf());
-    let clock = SystemClock;
-    let empty_policy = Policy::default();
-    let rfc_id = create::create_thread(
-        &git,
-        ThreadKind::Rfc,
+    let rfc_id = make_thread_via_cli(
+        repo.path(),
+        "rfc",
         "Original design",
-        Some("Body of original RFC"),
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
-    state_change::change_state(
-        &git,
-        &rfc_id,
-        "proposed",
-        &[],
-        "human/alice",
-        &clock,
-        &empty_policy,
-        state_change::StateChangeOptions::default(),
-    )
-    .unwrap();
-    state_change::change_state(
-        &git,
-        &rfc_id,
-        "under-review",
-        &[],
-        "human/alice",
-        &clock,
-        &empty_policy,
-        state_change::StateChangeOptions::default(),
-    )
-    .unwrap();
-    state_change::change_state(
-        &git,
-        &rfc_id,
-        "accepted",
-        &[],
-        "human/alice",
-        &clock,
-        &empty_policy,
-        state_change::StateChangeOptions::default(),
-    )
-    .unwrap();
+        "Body of original RFC",
+    );
+    drive_rfc_to_accepted(repo.path(), &rfc_id);
 
     // Create new RFC from source without explicit title (regression for finding #2)
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
@@ -241,16 +235,12 @@ fn from_thread_issue_to_issue_does_not_deprecate_source() {
     init::init_forum(&paths).unwrap();
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let clock = SystemClock;
-    let source_id = create::create_thread(
-        &git,
-        ThreadKind::Issue,
+    let source_id = make_thread_via_cli(
+        repo.path(),
+        "issue",
         "Original bug",
-        Some("Body of original issue"),
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
+        "Body of original issue",
+    );
 
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
@@ -287,16 +277,12 @@ fn from_thread_issue_to_rfc_does_not_deprecate_source() {
     init::init_forum(&paths).unwrap();
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let clock = SystemClock;
-    let source_id = create::create_thread(
-        &git,
-        ThreadKind::Issue,
+    let source_id = make_thread_via_cli(
+        repo.path(),
+        "issue",
         "Feature request",
-        Some("We need a better API"),
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
+        "We need a better API",
+    );
 
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
@@ -332,17 +318,8 @@ fn from_thread_rfc_to_issue_is_rejected() {
     let paths = RepoPaths::from_repo_root(repo.path());
     init::init_forum(&paths).unwrap();
 
-    let git = GitOps::new(repo.path().to_path_buf());
-    let clock = SystemClock;
-    let rfc_id = create::create_thread(
-        &git,
-        ThreadKind::Rfc,
-        "Some RFC",
-        Some("RFC body"),
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
+    let _git = GitOps::new(repo.path().to_path_buf());
+    let rfc_id = make_thread_via_cli(repo.path(), "rfc", "Some RFC", "RFC body");
 
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())

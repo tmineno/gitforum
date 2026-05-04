@@ -1201,7 +1201,9 @@ mod tests {
     use ratatui::backend::TestBackend;
     use tempfile::TempDir;
 
+    use crate::internal::id_alloc;
     use crate::internal::index;
+    use crate::internal::node::NodeKind;
     use crate::internal::reindex;
 
     use super::input::{
@@ -1310,6 +1312,69 @@ mod tests {
         let db_path = repo_paths.git_forum.join("index.db");
         let conn = index::open_db(&db_path).unwrap();
         (dir, git, repo_paths, conn, db_path)
+    }
+
+    /// Snapshot fixture: write a fresh SPEC-3.0 thread snapshot with
+    /// the given category/title. Replaces `create::create_thread`
+    /// callers in TUI tests after ADR-011 Decision 3 made the bridge
+    /// in non-migrate paths bail on legacy chains.
+    fn make_snapshot_thread(git: &GitOps, category: &str, title: &str, seed: u8) -> String {
+        use crate::internal::snapshot::{write_snapshot, ThreadDocument};
+        use crate::internal::thread::ThreadSnapshot;
+        let id = format!(
+            "tui{seed:02x}{seed:02x}{seed:02x}",
+            seed = seed.max(1) // tokens cannot be all-zero
+        );
+        let now = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let initial_status = match category {
+            "rfc" => "draft",
+            _ => "open",
+        };
+        let doc = ThreadDocument::new(ThreadSnapshot {
+            schema_version: ThreadSnapshot::SCHEMA_VERSION,
+            id: id.clone(),
+            title: title.to_string(),
+            category: category.to_string(),
+            status: initial_status.to_string(),
+            tags: vec![],
+            created_at: now,
+            created_by: "human/test-user".into(),
+            updated_at: now,
+            updated_by: "human/test-user".into(),
+            branch: None,
+            supersedes: vec![],
+        });
+        write_snapshot(git, &id, &doc, "create test thread").unwrap();
+        id
+    }
+
+    /// Snapshot fixture: append a node to an existing snapshot thread
+    /// and return the new node id. Replaces `write_ops::say_node` in
+    /// TUI tests.
+    fn append_snapshot_node(git: &GitOps, thread_id: &str, kind: NodeKind, body: &str) -> String {
+        use crate::internal::node::{NodeRecord, NodeStatus};
+        use crate::internal::snapshot::{read_snapshot, write_snapshot, NodeWithBody};
+        let mut doc = read_snapshot(git, thread_id).unwrap();
+        let now = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap();
+        let id = id_alloc::alloc_bare_thread_id("human/test-user", body, &now.to_rfc3339());
+        doc.nodes.push(NodeWithBody {
+            record: NodeRecord {
+                id: id.clone(),
+                kind,
+                status: NodeStatus::Open,
+                created_at: now,
+                created_by: "human/test-user".into(),
+                updated_at: None,
+                updated_by: None,
+                reply_to: None,
+                legacy_label: None,
+            },
+            body: body.into(),
+        });
+        doc.snapshot.updated_at = now;
+        doc.snapshot.updated_by = "human/test-user".into();
+        write_snapshot(git, thread_id, &doc, "append test node").unwrap();
+        id
     }
 
     #[test]
@@ -1860,17 +1925,7 @@ mod tests {
     #[test]
     fn submit_create_node_adds_node_and_keeps_thread_detail() {
         let (_dir, git, _paths, conn, db_path) = setup_repo();
-        let thread_id = crate::internal::create::create_thread(
-            &git,
-            crate::internal::event::ThreadKind::Rfc,
-            "RFC from setup",
-            None,
-            "human/test-user",
-            &crate::internal::clock::FixedClock {
-                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-            },
-        )
-        .unwrap();
+        let thread_id = make_snapshot_thread(&git, "rfc", "RFC from setup", 0xa0);
         reindex::run_reindex(&git, &db_path).unwrap();
 
         let mut app = App::new(index::list_threads(&conn).unwrap());
@@ -1899,28 +1954,8 @@ mod tests {
     #[test]
     fn submit_create_link_from_thread_adds_link_and_returns_to_thread_detail() {
         let (_dir, git, _paths, conn, db_path) = setup_repo();
-        let source_id = crate::internal::create::create_thread(
-            &git,
-            crate::internal::event::ThreadKind::Rfc,
-            "Source RFC",
-            None,
-            "human/test-user",
-            &crate::internal::clock::FixedClock {
-                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-            },
-        )
-        .unwrap();
-        crate::internal::create::create_thread(
-            &git,
-            crate::internal::event::ThreadKind::Issue,
-            "Implementation issue",
-            None,
-            "human/test-user",
-            &crate::internal::clock::FixedClock {
-                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
-            },
-        )
-        .unwrap();
+        let source_id = make_snapshot_thread(&git, "rfc", "Source RFC", 0xa1);
+        make_snapshot_thread(&git, "issue", "Implementation issue", 0xa2);
         reindex::run_reindex(&git, &db_path).unwrap();
 
         let mut app = App::new(index::list_threads(&conn).unwrap());
@@ -1950,40 +1985,14 @@ mod tests {
     #[test]
     fn submit_create_link_from_node_returns_to_node_detail() {
         let (_dir, git, _paths, conn, db_path) = setup_repo();
-        let source_id = crate::internal::create::create_thread(
-            &git,
-            crate::internal::event::ThreadKind::Rfc,
-            "Source RFC",
-            None,
-            "human/test-user",
-            &crate::internal::clock::FixedClock {
-                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-            },
-        )
-        .unwrap();
-        crate::internal::create::create_thread(
-            &git,
-            crate::internal::event::ThreadKind::Issue,
-            "Implementation issue",
-            None,
-            "human/test-user",
-            &crate::internal::clock::FixedClock {
-                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
-            },
-        )
-        .unwrap();
-        let node_id = crate::internal::write_ops::say_node(
+        let source_id = make_snapshot_thread(&git, "rfc", "Source RFC", 0xa3);
+        make_snapshot_thread(&git, "issue", "Implementation issue", 0xa4);
+        let node_id = append_snapshot_node(
             &git,
             &source_id,
-            crate::internal::event::NodeType::Claim,
+            NodeKind::Comment,
             "Investigate parser shape",
-            "human/test-user",
-            &crate::internal::clock::FixedClock {
-                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 2, 0).unwrap(),
-            },
-            None,
-        )
-        .unwrap();
+        );
         reindex::run_reindex(&git, &db_path).unwrap();
 
         let mut app = App::new(index::list_threads(&conn).unwrap());
@@ -2019,29 +2028,9 @@ mod tests {
     #[test]
     fn apply_node_status_action_updates_node_detail() {
         let (_dir, git, _paths, _conn, _db_path) = setup_repo();
-        let thread_id = crate::internal::create::create_thread(
-            &git,
-            crate::internal::event::ThreadKind::Rfc,
-            "RFC from setup",
-            None,
-            "human/test-user",
-            &crate::internal::clock::FixedClock {
-                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-            },
-        )
-        .unwrap();
-        let node_id = crate::internal::write_ops::say_node(
-            &git,
-            &thread_id,
-            crate::internal::event::NodeType::Objection,
-            "Needs more evidence",
-            "human/test-user",
-            &crate::internal::clock::FixedClock {
-                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
-            },
-            None,
-        )
-        .unwrap();
+        let thread_id = make_snapshot_thread(&git, "rfc", "RFC from setup", 0xa5);
+        let node_id =
+            append_snapshot_node(&git, &thread_id, NodeKind::Objection, "Needs more evidence");
 
         let mut app = App::new(vec![]);
         open_node_detail(&mut app, &git, &thread_id, &node_id).unwrap();
@@ -2437,22 +2426,12 @@ mod tests {
         assert!(rows.is_empty(), "no thread should be written on tag error");
     }
 
-    /// AC#10: create-node form default selection writes a `Comment` Say event
+    /// AC#10: create-node form default selection writes a `Comment` node
     /// (no `legacy_subtype`).
     #[test]
     fn create_node_form_default_writes_comment() {
         let (_dir, git, _paths, conn, db_path) = setup_repo();
-        let thread_id = crate::internal::create::create_thread(
-            &git,
-            crate::internal::event::ThreadKind::Rfc,
-            "Comment default",
-            None,
-            "human/test-user",
-            &crate::internal::clock::FixedClock {
-                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-            },
-        )
-        .unwrap();
+        let thread_id = make_snapshot_thread(&git, "rfc", "Comment default", 0xa6);
         reindex::run_reindex(&git, &db_path).unwrap();
 
         let mut app = App::new(index::list_threads(&conn).unwrap());

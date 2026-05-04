@@ -4,15 +4,10 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Output};
 
-use git_forum::internal::clock::FixedClock;
 use git_forum::internal::config::RepoPaths;
-use git_forum::internal::create;
-use git_forum::internal::event::ThreadKind;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::thread;
-
-use chrono::{TimeZone, Utc};
 
 fn extract_created_id(output: &Output) -> String {
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -26,18 +21,30 @@ fn extract_created_id(output: &Output) -> String {
         .to_string()
 }
 
-fn fixed_clock() -> FixedClock {
-    FixedClock {
-        instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-    }
-}
-
 fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
     let repo = support::repo::TestRepo::new();
     let git = GitOps::new(repo.path().to_path_buf());
     let paths = RepoPaths::from_repo_root(repo.path());
     init::init_forum(&paths).unwrap();
     (repo, git, paths)
+}
+
+/// Snapshot fixture: invoke `git forum new` to write a fresh SPEC-3.0
+/// thread. Replaces the legacy `create::create_thread` fixture path
+/// now that ADR-011 Decision 3 forbids non-migrate code paths from
+/// consuming legacy event chains.
+fn make_thread_via_cli(repo_path: &std::path::Path, kind: &str, title: &str, body: &str) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo_path)
+        .args(["new", kind, title, "--body", body])
+        .output()
+        .expect("failed to run");
+    assert!(
+        output.status.success(),
+        "make_thread_via_cli failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    extract_created_id(&output)
 }
 
 /// Create a mock editor script that writes known content to the file.
@@ -88,16 +95,7 @@ fn edit_flag_creates_thread() {
 #[test]
 fn edit_flag_creates_node() {
     let (repo, git, _paths) = setup();
-    let clock = fixed_clock();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Issue,
-        "Test issue",
-        Some("body"),
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
+    let thread_id = make_thread_via_cli(repo.path(), "issue", "Test issue", "body");
 
     // Phase 2 slot 2 (RFC `7ymtc4b2`): the deprecated `claim` arm
     // is removed; `comment` is the canonical surface.
@@ -126,16 +124,7 @@ fn edit_flag_creates_node() {
 #[test]
 fn edit_flag_revises_body() {
     let (repo, git, _paths) = setup();
-    let clock = fixed_clock();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Issue,
-        "Test issue",
-        Some("original"),
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
+    let thread_id = make_thread_via_cli(repo.path(), "issue", "Test issue", "original");
 
     let editor = create_mock_editor(repo.path(), "Revised from editor");
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
@@ -295,16 +284,7 @@ fn edit_uses_visual_env_var() {
 #[test]
 fn edit_flag_with_revise_body_subcommand() {
     let (repo, git, _paths) = setup();
-    let clock = fixed_clock();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Issue,
-        "Test issue",
-        Some("original"),
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
+    let thread_id = make_thread_via_cli(repo.path(), "issue", "Test issue", "original");
 
     let editor = create_mock_editor(repo.path(), "Revised via subcommand");
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))

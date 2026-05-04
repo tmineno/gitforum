@@ -10,8 +10,6 @@ use super::super::error::{ForumError, ForumResult};
 use super::super::git_ops::GitOps;
 use super::super::snapshot::{self, store::write_snapshot};
 
-use super::shorthand_say::migrate_legacy_to_snapshot;
-
 /// Bind or clear a thread's branch scope.
 ///
 /// Preconditions: thread_id exists; when `branch` is Some, the branch
@@ -37,11 +35,7 @@ pub fn set_branch(
         }
     }
 
-    let mut doc = match snapshot::read_snapshot(git, thread_id) {
-        Ok(doc) => doc,
-        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(git, thread_id)?,
-        Err(other) => return Err(other),
-    };
+    let mut doc = snapshot::read_snapshot(git, thread_id)?;
     let now = clock.now();
     doc.snapshot.branch = branch.map(String::from);
     doc.snapshot.updated_at = now;

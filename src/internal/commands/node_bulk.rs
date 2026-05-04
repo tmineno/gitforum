@@ -17,7 +17,6 @@ use crate::internal::snapshot::{self, store::write_snapshot};
 use crate::internal::thread;
 
 use super::shared::{discover_repo_with_init_warning, resolve_actor, resolve_tid};
-use super::shorthand_say::migrate_legacy_to_snapshot;
 
 /// Lifecycle update applied to a list of nodes by `git forum
 /// {retract|resolve|reopen}`. SPEC-3.0 §2.2: each maps to a
@@ -73,11 +72,7 @@ pub fn run_node_lifecycle_bulk(
     let thread_id = &resolve_tid(&git, thread_id)?;
     let actor = resolve_actor(as_actor, &git);
 
-    let mut doc = match snapshot::read_snapshot(&git, thread_id) {
-        Ok(doc) => doc,
-        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(&git, thread_id)?,
-        Err(other) => return Err(other),
-    };
+    let mut doc = snapshot::read_snapshot(&git, thread_id)?;
 
     let now = clock.now();
     let target = op.target_status();

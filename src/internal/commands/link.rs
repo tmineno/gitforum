@@ -10,7 +10,6 @@ use crate::internal::error::ForumError;
 use crate::internal::snapshot::{self, store::write_snapshot, Link};
 
 use super::shared::{discover_repo_with_init_warning, resolve_actor, resolve_tid};
-use super::shorthand_say::migrate_legacy_to_snapshot;
 
 pub fn run_link(
     thread_id: &str,
@@ -24,11 +23,7 @@ pub fn run_link(
     let target_thread_id = resolve_tid(&git, target_thread_id)?;
     let actor = resolve_actor(as_actor, &git);
 
-    let mut doc = match snapshot::read_snapshot(&git, &thread_id) {
-        Ok(doc) => doc,
-        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(&git, &thread_id)?,
-        Err(other) => return Err(other),
-    };
+    let mut doc = snapshot::read_snapshot(&git, &thread_id)?;
     let now = clock.now();
     doc.links.entries.push(Link {
         target: target_thread_id.clone(),

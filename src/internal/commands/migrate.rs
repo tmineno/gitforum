@@ -35,11 +35,15 @@ use sha2::{Digest, Sha256};
 
 use super::super::config::RepoPaths;
 use super::super::error::{ForumError, ForumResult};
-use super::super::event::{self, Event, EventType, Lifecycle, ThreadKind};
+use super::super::event::{self, Event, EventType, Lifecycle, NodeType, ThreadKind};
+use super::super::evidence::{EvidenceFile, EvidenceRecord};
 use super::super::git_ops::GitOps;
 use super::super::id_alloc;
 use super::super::lint_emit::format_path_repo_relative;
+use super::super::node::{NodeKind, NodeRecord, NodeStatus};
 use super::super::refs;
+use super::super::snapshot::{Link, Links, NodeWithBody, ThreadDocument};
+use super::super::thread::{self, ThreadSnapshot};
 
 /// SPEC-2.0 §10: 2.0 alias entries live under `refs/forum/aliases/<old-id>`
 /// and point at the same commit as the canonical thread ref. They are
@@ -817,9 +821,113 @@ pub fn predicted_token_map(ids: &[String]) -> BTreeMap<String, String> {
         .collect()
 }
 
+// ---------- v→3.0 snapshot bridge ----------
+
+/// Read a legacy event-chain thread via the mixed-chain replay reader
+/// and project the resulting state back into a SPEC-3.0
+/// [`ThreadDocument`]. The migrate command uses this as its v→3.0
+/// projection; non-migrate code paths MUST NOT call it (ADR-011
+/// Decision 3 — only the migrate command may consume legacy
+/// representations). Phase 3 will wire this into `run_arm` as the
+/// v→3.0 migrator body.
+#[allow(dead_code)]
+pub(super) fn migrate_legacy_to_snapshot(
+    git: &GitOps,
+    thread_id: &str,
+) -> Result<ThreadDocument, ForumError> {
+    let state = thread::replay_thread(git, thread_id)?;
+    let mut tags = state.tags.clone();
+    super::thread_new::augment_tags_for_lifecycle(state.lifecycle, &mut tags);
+    let category = super::thread_new::lifecycle_to_category(state.lifecycle).to_string();
+
+    let nodes: Vec<NodeWithBody> = state
+        .nodes
+        .iter()
+        .filter_map(|n| {
+            let kind = match n.node_type.canonical() {
+                NodeType::Comment => NodeKind::Comment,
+                NodeType::Approval => NodeKind::Approval,
+                NodeType::Objection => NodeKind::Objection,
+                NodeType::Action => NodeKind::Action,
+                _ => return None, // canonical() always returns one of the four
+            };
+            let status = if n.retracted {
+                NodeStatus::Retracted
+            } else if n.incorporated {
+                NodeStatus::Incorporated
+            } else if n.resolved {
+                NodeStatus::Resolved
+            } else {
+                NodeStatus::Open
+            };
+            Some(NodeWithBody {
+                record: NodeRecord {
+                    id: n.node_id.clone(),
+                    kind,
+                    status,
+                    created_at: n.created_at,
+                    created_by: n.actor.clone(),
+                    updated_at: None,
+                    updated_by: None,
+                    reply_to: n.reply_to.clone(),
+                    legacy_label: n.legacy_subtype.clone(),
+                },
+                body: n.body.clone(),
+            })
+        })
+        .collect();
+
+    let links = Links {
+        entries: state
+            .links
+            .iter()
+            .map(|l| Link {
+                target: l.target_thread_id.clone(),
+                rel: l.rel.clone(),
+                created_at: state.created_at,
+                created_by: state.created_by.clone(),
+            })
+            .collect(),
+    };
+
+    let evidence = EvidenceFile {
+        entries: state
+            .evidence_items
+            .iter()
+            .map(|e| EvidenceRecord {
+                id: e.evidence_id.clone(),
+                kind: e.kind.clone(),
+                ref_target: e.ref_target.clone(),
+                created_at: state.created_at,
+                created_by: state.created_by.clone(),
+            })
+            .collect(),
+    };
+
+    Ok(ThreadDocument {
+        snapshot: ThreadSnapshot {
+            schema_version: ThreadSnapshot::SCHEMA_VERSION,
+            id: state.id,
+            title: state.title,
+            category,
+            status: state.status.as_str().to_string(),
+            tags,
+            created_at: state.created_at,
+            created_by: state.created_by.clone(),
+            updated_at: state.created_at,
+            updated_by: state.created_by,
+            branch: state.branch,
+            supersedes: Vec::new(),
+        },
+        body: state.body,
+        nodes,
+        links,
+        evidence,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::super::super::event::NodeType;
     use super::*;
 
     #[test]

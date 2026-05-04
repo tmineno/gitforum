@@ -422,12 +422,12 @@ pub fn run_canonical_thread_new(
 
 /// Append the symmetric `superseded-by` edge to the SOURCE thread.
 ///
-/// Phase 2 transitional dispatch (RFC `7ymtc4b2`): when the source is
-/// a SPEC-3.0 snapshot, the link rides into `links.toml` via a new
-/// snapshot commit (CAS-protected). When the source is still a
-/// legacy v1/v2 event chain, fall back to the event-chain link writer
-/// — the mixed-chain replay reader picks up either form. The
-/// dispatch goes away in Phase 4 once all sources are snapshots.
+/// ADR-011 Decision 3: non-migrate paths must NOT consume legacy
+/// event chains. When the source is on a legacy chain we bail with
+/// `LegacyEventChain`; the user runs `git forum migrate` first and
+/// retries. The new thread (already a snapshot) has been written by
+/// the caller; only the back-link is rejected, so the user's data is
+/// not lost — they just need to re-attempt the link after migration.
 fn write_back_supersede_link(
     git: &GitOps,
     source_id: &str,
@@ -435,52 +435,22 @@ fn write_back_supersede_link(
     actor: &str,
     now: chrono::DateTime<Utc>,
 ) -> Result<(), ForumError> {
-    match snapshot::read_snapshot(git, source_id) {
-        Ok(mut source) => {
-            source.links.entries.push(Link {
-                target: new_thread_id.into(),
-                rel: "superseded-by".into(),
-                created_at: now,
-                created_by: actor.into(),
-            });
-            source.snapshot.updated_at = now;
-            source.snapshot.updated_by = actor.into();
-            write_snapshot(
-                git,
-                source_id,
-                &source,
-                &format!("link superseded-by {new_thread_id}"),
-            )?;
-            Ok(())
-        }
-        Err(ForumError::LegacyEventChain) => {
-            // Legacy event-chain source: append a Link event so the
-            // back-link materializes through replay. Bypasses the
-            // 3.0 link.toml model — that's fine because the mixed-
-            // chain reader unifies both shapes during Phase 2.
-            crate::internal::evidence::add_thread_link(
-                git,
-                source_id,
-                new_thread_id,
-                "superseded-by",
-                actor,
-                &TimestampClock(now),
-            )?;
-            Ok(())
-        }
-        Err(other) => Err(other),
-    }
-}
-
-/// One-shot fixed-clock adapter so [`write_back_supersede_link`]
-/// can pass the snapshot-write timestamp through to the legacy
-/// event-write helper without re-reading the system clock.
-struct TimestampClock(chrono::DateTime<Utc>);
-
-impl crate::internal::clock::Clock for TimestampClock {
-    fn now(&self) -> chrono::DateTime<Utc> {
-        self.0
-    }
+    let mut source = snapshot::read_snapshot(git, source_id)?;
+    source.links.entries.push(Link {
+        target: new_thread_id.into(),
+        rel: "superseded-by".into(),
+        created_at: now,
+        created_by: actor.into(),
+    });
+    source.snapshot.updated_at = now;
+    source.snapshot.updated_by = actor.into();
+    write_snapshot(
+        git,
+        source_id,
+        &source,
+        &format!("link superseded-by {new_thread_id}"),
+    )?;
+    Ok(())
 }
 
 fn push_inline_nodes(
