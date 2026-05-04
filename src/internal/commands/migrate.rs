@@ -92,21 +92,33 @@ pub fn bare_token_for(legacy_id: &str) -> String {
 /// Hash `seed` to a deterministic 8-char base36 token whose leading
 /// character is forced to a letter so the result satisfies the
 /// bare-token grammar (`is_bare_token` returns true).
+///
+/// The algorithm is byte-exact identical to the v2 migrator. Repos
+/// that already ran v→2 migration recorded alias entries minted by
+/// this exact function (salt + slot for the forced letter prefix);
+/// changing it would silently break alias resolution for sequential
+/// legacy IDs (e.g. `RFC-0001`). Do NOT alter the salt, slot indices,
+/// or alphabet without a coordinated change to every existing alias
+/// ref in the wild.
 fn derive_token_from_seed(seed: &str) -> String {
     const ALPHABET: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
-    let digest = Sha256::digest(seed.as_bytes());
-    let mut out = String::with_capacity(8);
-    for byte in digest.iter().take(8) {
-        out.push(ALPHABET[(*byte as usize) % 36] as char);
+    let mut hasher = Sha256::new();
+    hasher.update(b"git-forum/migrate/v2.0\n");
+    hasher.update(seed.as_bytes());
+    let hash = hasher.finalize();
+    let mut chars = Vec::with_capacity(8);
+    for &b in hash.iter().take(8) {
+        chars.push(ALPHABET[(b as usize) % 36]);
     }
-    if out.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-        // Force a letter prefix.
-        let mut chars: Vec<char> = out.chars().collect();
-        let first_byte = digest[0];
-        chars[0] = ALPHABET[10 + (first_byte as usize) % 26] as char;
-        out = chars.into_iter().collect();
+    // Force first character to a letter so the token is never
+    // all-digit (id_alloc::is_bare_token rejects all-digit tokens).
+    // The replacement letter is selected from `hash[8]` — NOT
+    // `hash[0]` — to match the v2 algorithm byte-for-byte.
+    if !(chars[0] as char).is_ascii_lowercase() {
+        let h = hash[8] as usize;
+        chars[0] = ALPHABET[10 + (h % 26)];
     }
-    out
+    String::from_utf8(chars).expect("base36 alphabet is ASCII")
 }
 
 /// Args for [`run_arm`] — the SPEC-3.0 `git forum migrate` arm.
@@ -243,19 +255,37 @@ pub fn run(
 }
 
 /// Migrate one legacy thread to a 3.0 snapshot. Returns the number
-/// of source events archived. Source events MUST be loaded before
-/// writing the snapshot commit because writing makes the snapshot
-/// commit the new ref tip; `event::load_thread_events` walks from
-/// the tip and would fail to parse the snapshot commit as an event.
+/// of source events archived.
+///
+/// Concurrency: pins the chain tip before reading. The captured
+/// OID is the source for both the projection (via
+/// `migrate_legacy_to_snapshot_at` / `load_thread_events_at`) and
+/// the CAS write (via `write_snapshot_with_archive_pinned`). If
+/// another event lands between the pin and the write, the CAS
+/// rejects with [`ForumError::SnapshotWriteConflict`] — better than
+/// committing a snapshot whose archive is missing the racer's
+/// event (task `9635buy0` objection `e630f01f`).
 fn migrate_one(git: &GitOps, thread_id: &str, _actor: &str) -> ForumResult<usize> {
-    let events = event::load_thread_events(git, thread_id)?;
+    let refname = refs::thread_ref(thread_id);
+    let expected_tip = git.resolve_ref(&refname)?.ok_or_else(|| {
+        ForumError::Repo(format!("ref {refname} disappeared during migration walk"))
+    })?;
+
+    let events = event::load_thread_events_at(git, &expected_tip)?;
     let archive = build_archive_ndjson(&events)?;
-    let doc = migrate_legacy_to_snapshot(git, thread_id)?;
+    let doc = migrate_legacy_to_snapshot_at(git, thread_id, &expected_tip)?;
     let message = format!(
         "[git-forum] migrate {thread_id} to 3.0 ({} legacy event(s) archived)",
         events.len()
     );
-    snapshot::write_snapshot_with_archive(git, thread_id, &doc, &message, &archive)?;
+    snapshot::write_snapshot_with_archive_pinned(
+        git,
+        thread_id,
+        &doc,
+        &message,
+        &archive,
+        &expected_tip,
+    )?;
     Ok(events.len())
 }
 
@@ -320,7 +350,31 @@ pub fn migrate_legacy_to_snapshot(
     git: &GitOps,
     thread_id: &str,
 ) -> Result<ThreadDocument, ForumError> {
-    let state = thread::replay_thread(git, thread_id)?;
+    let refname = refs::thread_ref(thread_id);
+    let tip = git
+        .resolve_ref(&refname)?
+        .ok_or_else(|| ForumError::Repo(format!("thread {thread_id} not found")))?;
+    migrate_legacy_to_snapshot_at(git, thread_id, &tip)
+}
+
+/// Like [`migrate_legacy_to_snapshot`], but replays the chain from
+/// a caller-supplied rev (typically a tip OID captured before the
+/// migrate write). Pinning the read against the same OID used for
+/// the eventual CAS write closes the read/write race that would
+/// otherwise let a concurrent event land between projection and
+/// write — see task `9635buy0` objection `e630f01f`.
+pub fn migrate_legacy_to_snapshot_at(
+    git: &GitOps,
+    thread_id: &str,
+    start_rev: &str,
+) -> Result<ThreadDocument, ForumError> {
+    let state = thread::replay_thread_at(git, start_rev)?;
+    if state.id != thread_id {
+        return Err(ForumError::Repo(format!(
+            "rev {start_rev} replays as thread `{}`, not `{thread_id}` — refs out of sync",
+            state.id
+        )));
+    }
     let mut tags = state.tags.clone();
     super::thread_new::augment_tags_for_lifecycle(state.lifecycle, &mut tags);
     if let Some(canon) = legacy_kind_to_canonical_tag(state.kind) {
@@ -446,5 +500,49 @@ mod tests {
         // the category itself is the classification.
         assert_eq!(legacy_kind_to_canonical_tag(ThreadKind::Rfc), None);
         assert_eq!(legacy_kind_to_canonical_tag(ThreadKind::Task), None);
+    }
+
+    // Pin the v→2 alias-token algorithm to its byte-exact original.
+    // Repos already migrated to 2.0 wrote alias entries at
+    // `refs/forum/aliases/<legacy-id>` that point at
+    // `refs/forum/threads/<derive_token_from_seed(legacy-id)>`. The
+    // 2.0 alias-resolution path in `internal::thread::resolve_thread_id`
+    // recomputes this mapping at read time, so any drift here
+    // silently breaks alias resolution for sequential legacy IDs.
+    #[test]
+    fn bare_token_for_pinned_v2_mappings() {
+        // Sequential IDs that hit `derive_token_from_seed` (the
+        // common shape for repos that ran v2 migration).
+        assert_eq!(bare_token_for("RFC-0001"), "sb7fmsjj");
+        assert_eq!(bare_token_for("RFC-0042"), "eid815ln");
+        assert_eq!(bare_token_for("ASK-0001"), "rd3gy4j9");
+        assert_eq!(bare_token_for("JOB-0001"), "ogvib034");
+        assert_eq!(bare_token_for("DEC-0001"), "yek2fmxc");
+        // RFC-0007 is the smallest sequential RFC whose seed-hash
+        // first byte was a digit — this exercises the forced-letter
+        // branch that uses `hash[8]` (NOT `hash[0]`) to pick the
+        // replacement letter.
+        assert_eq!(bare_token_for("RFC-0007"), "bki6w227");
+    }
+
+    #[test]
+    fn bare_token_for_strips_opaque_prefix() {
+        assert_eq!(bare_token_for("RFC-a7f3b2x1"), "a7f3b2x1");
+        assert_eq!(bare_token_for("ASK-q3kfj49v"), "q3kfj49v");
+        assert_eq!(bare_token_for("JOB-x8n2q1d4"), "x8n2q1d4");
+    }
+
+    #[test]
+    fn bare_token_for_passthrough_already_bare() {
+        assert_eq!(bare_token_for("a7f3b2x1"), "a7f3b2x1");
+    }
+
+    #[test]
+    fn bare_token_for_sequential_yields_legal_bare_token() {
+        let token = bare_token_for("RFC-0007");
+        assert!(
+            id_alloc::is_bare_token(&token),
+            "must satisfy bare-token grammar: {token}"
+        );
     }
 }

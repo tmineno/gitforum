@@ -150,3 +150,79 @@ fn migrate_skips_already_3_0_threads() {
         "v3-native thread must not be migrated:\n{stdout}"
     );
 }
+
+#[test]
+fn migrate_pinned_write_rejects_concurrent_event() {
+    // Regression test for objection `e630f01f` (task `9635buy0`):
+    // simulate a concurrent legacy event landing between the pin
+    // capture (`load_thread_events_at` reads from the captured tip)
+    // and the snapshot write. The CAS in
+    // `write_snapshot_with_archive_pinned` MUST reject the second
+    // write rather than silently overwrite — better to fail loud
+    // than to commit a snapshot whose archive is missing the
+    // racer's event.
+    use git_forum::internal::commands::migrate;
+    use git_forum::internal::error::ForumError;
+    use git_forum::internal::refs;
+    use git_forum::internal::snapshot;
+
+    let (_repo, git, _paths) = setup();
+    let id = id_alloc::alloc_thread_id_with_nonce(
+        ThreadKind::Issue,
+        "human/alice",
+        "Race",
+        "2026-01-01T00:00:00Z",
+        &[2, 2, 2, 2, 2, 2, 2, 2],
+    );
+    event::write_event(&git, &create_event(&id, ThreadKind::Issue, "Race")).unwrap();
+
+    // Capture the pin (mimics what migrate_one does).
+    let refname = refs::thread_ref(&id);
+    let expected_tip = git.resolve_ref(&refname).unwrap().unwrap();
+
+    // Project from the pinned tip — at this point the tip matches.
+    let events = event::load_thread_events_at(&git, &expected_tip).unwrap();
+    let archive_bytes = events
+        .iter()
+        .map(|e| serde_json::to_string(e).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let doc = migrate::migrate_legacy_to_snapshot_at(&git, &id, &expected_tip).unwrap();
+
+    // Simulate a concurrent legacy event landing AFTER the pin.
+    let racer = Event {
+        thread_id: id.clone(),
+        event_type: EventType::Say,
+        created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 5, 0).unwrap(),
+        actor: "human/bob".into(),
+        body: Some("a comment that races migration".into()),
+        node_type: Some(git_forum::internal::event::NodeType::Comment),
+        ..Event::default()
+    };
+    event::write_event(&git, &racer).unwrap();
+
+    // Now try the pinned write. CAS expected to reject because the
+    // ref is at the racer's commit, not at expected_tip.
+    let result = snapshot::write_snapshot_with_archive_pinned(
+        &git,
+        &id,
+        &doc,
+        "migrate (should fail under race)",
+        archive_bytes.as_bytes(),
+        &expected_tip,
+    );
+    match result {
+        Err(ForumError::SnapshotWriteConflict(_)) => {
+            // expected
+        }
+        Err(other) => panic!("expected SnapshotWriteConflict, got {other:?}"),
+        Ok(_) => panic!(
+            "pinned write must NOT silently overwrite a concurrent legacy event \
+             (objection e630f01f); the snapshot would be missing the racer's event"
+        ),
+    }
+
+    // Sanity: the racer event is still readable on the chain.
+    let events_after = event::load_thread_events(&git, &id).unwrap();
+    assert_eq!(events_after.len(), 2, "racer event should be present");
+}

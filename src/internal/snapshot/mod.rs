@@ -30,6 +30,6 @@ pub mod store;
 
 pub use link::{Link, Links};
 pub use store::{
-    read_snapshot, read_snapshot_at, write_snapshot, write_snapshot_with_archive, NodeWithBody,
-    ThreadDocument,
+    read_snapshot, read_snapshot_at, write_snapshot, write_snapshot_with_archive,
+    write_snapshot_with_archive_pinned, NodeWithBody, ThreadDocument,
 };

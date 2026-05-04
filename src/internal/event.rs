@@ -1105,7 +1105,18 @@ pub fn read_event(git: &GitOps, commit_sha: &str) -> ForumResult<Event> {
 /// Load all events for a thread in chronological order (oldest first).
 pub fn load_thread_events(git: &GitOps, thread_id: &str) -> ForumResult<Vec<Event>> {
     let ref_name = refs::thread_ref(thread_id);
-    let shas = git.rev_list(&ref_name)?; // newest first
+    load_thread_events_at(git, &ref_name)
+}
+
+/// Like [`load_thread_events`], but walks from a caller-supplied
+/// rev (typically a captured commit OID) instead of resolving the
+/// thread ref live. Used by migrate to pin the read against the
+/// exact tip recorded for the eventual CAS write — so a concurrent
+/// event landing between read and write fails the CAS instead of
+/// silently dropping events from the archive (task `9635buy0`,
+/// objection `e630f01f`).
+pub fn load_thread_events_at(git: &GitOps, start_rev: &str) -> ForumResult<Vec<Event>> {
+    let shas = git.rev_list(start_rev)?; // newest first
     let mut events = Vec::with_capacity(shas.len());
     for sha in &shas {
         events.push(read_event(git, sha)?);

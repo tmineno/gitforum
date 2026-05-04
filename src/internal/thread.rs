@@ -624,12 +624,22 @@ fn apply_node_flag(
 /// reader.
 pub fn replay_thread(git: &GitOps, thread_id: &str) -> ForumResult<ThreadState> {
     let refname = format!("refs/forum/threads/{thread_id}");
-    if git.resolve_ref(&refname)?.is_none() {
-        return Err(ForumError::Repo(format!("thread {thread_id} not found")));
-    }
+    let tip = git
+        .resolve_ref(&refname)?
+        .ok_or_else(|| ForumError::Repo(format!("thread {thread_id} not found")))?;
+    replay_thread_at(git, &tip)
+}
 
+/// Like [`replay_thread`], but walks from a caller-supplied rev
+/// (typically a captured commit OID) instead of resolving the live
+/// thread ref. Used by migrate to pin the legacy-chain replay
+/// against the exact tip recorded for the eventual CAS write so a
+/// concurrent event landing between read and write fails the CAS
+/// instead of silently dropping events from the projected snapshot
+/// (task `9635buy0`, objection `e630f01f`).
+pub fn replay_thread_at(git: &GitOps, start_rev: &str) -> ForumResult<ThreadState> {
     // `rev_list` returns newest-first; replay needs oldest-first.
-    let mut shas: Vec<String> = git.rev_list(&refname)?;
+    let mut shas: Vec<String> = git.rev_list(start_rev)?;
     shas.reverse();
 
     let mut state: Option<ThreadState> = None;
@@ -673,7 +683,7 @@ pub fn replay_thread(git: &GitOps, thread_id: &str) -> ForumResult<ThreadState> 
         replay(&tail_events)
     } else {
         Err(ForumError::Repo(format!(
-            "thread {thread_id} has no replayable content"
+            "rev {start_rev} has no replayable content"
         )))
     }
 }

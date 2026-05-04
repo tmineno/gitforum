@@ -97,6 +97,11 @@ pub fn write_snapshot(
 /// [`write_snapshot`], which preserves the parent's `legacy/`
 /// verbatim. SPEC-3.0 §8.2: the archive is written for inspection
 /// and export tooling and MUST NOT be required by the read path.
+///
+/// Resolves the parent at write time. Use
+/// [`write_snapshot_with_archive_pinned`] when the caller has
+/// already captured a tip OID (the migrate path does so to close
+/// the read-then-write race against concurrent legacy events).
 pub fn write_snapshot_with_archive(
     git: &GitOps,
     thread_id: &str,
@@ -105,6 +110,37 @@ pub fn write_snapshot_with_archive(
     archive_bytes: &[u8],
 ) -> Result<String, ForumError> {
     write_snapshot_inner(git, thread_id, doc, message, Some(archive_bytes))
+}
+
+/// Write `doc` as a snapshot commit, embed `archive_bytes` as
+/// `legacy/events.ndjson`, and CAS the ref against
+/// `expected_parent`.
+///
+/// `expected_parent` is the OID the caller observed at the moment
+/// they read the source events. The new commit is parented on it,
+/// and the ref CAS uses it as the expected old value — so any
+/// concurrent write that landed between the caller's read and this
+/// write fails with [`ForumError::SnapshotWriteConflict`] instead
+/// of silently overwriting and dropping events from the projected
+/// archive (task `9635buy0` objection `e630f01f`).
+pub fn write_snapshot_with_archive_pinned(
+    git: &GitOps,
+    thread_id: &str,
+    doc: &ThreadDocument,
+    message: &str,
+    archive_bytes: &[u8],
+    expected_parent: &str,
+) -> Result<String, ForumError> {
+    let refname = format!("refs/forum/threads/{thread_id}");
+    let tree_sha = build_tree(git, doc, ArchiveSource::Supplied(archive_bytes))?;
+    let commit_sha = git.commit_tree(&tree_sha, &[expected_parent], message)?;
+    git.update_ref_cas(&refname, &commit_sha, expected_parent)
+        .map_err(|_| {
+            ForumError::SnapshotWriteConflict(format!(
+                "stale parent on {refname}: expected {expected_parent}, ref was updated by another writer"
+            ))
+        })?;
+    Ok(commit_sha)
 }
 
 fn write_snapshot_inner(
