@@ -28,6 +28,8 @@
 //! writes the snapshot at the same ref name and is a no-op for the
 //! ref topology.
 
+use chrono::{DateTime, Utc};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::super::config::RepoPaths;
@@ -145,6 +147,10 @@ pub const SUPPORTED_TARGET: &str = "3.0";
 /// `--to` other than `3.0` before we reach this entry point; the
 /// explicit re-check defends against direct callers (tests, future
 /// programmatic use).
+///
+/// Exit code: non-zero only when at least one thread's outcome is
+/// [`ThreadOutcome::Error`]. `migrated-with-omissions` is success
+/// (SPEC-3.0 §8 + task item 10).
 pub fn run_arm(args: MigrateArgs, ctx: &super::context::Context) -> ForumResult<()> {
     if args.to != SUPPORTED_TARGET {
         return Err(ForumError::Config(format!(
@@ -156,54 +162,111 @@ pub fn run_arm(args: MigrateArgs, ctx: &super::context::Context) -> ForumResult<
         .as_actor
         .or_else(|| ctx.git.default_actor().map(str::to_string))
         .unwrap_or_else(|| "system/migrate".to_string());
-    let outcome = run(&ctx.git, &ctx.paths, &actor, args.dry_run)?;
-    if outcome.threads_with_errors > 0 {
+    let report = run(&ctx.git, &ctx.paths, &actor, args.dry_run)?;
+    let errors = report
+        .threads
+        .iter()
+        .filter(|t| matches!(t.outcome, ThreadOutcome::Error))
+        .count();
+    if errors > 0 {
         return Err(ForumError::Config(format!(
-            "{} thread(s) failed to migrate; see error lines above",
-            outcome.threads_with_errors
+            "{errors} thread(s) failed to migrate; see error lines above and report at \
+             {}",
+            ctx.paths.git_forum.join(REPORT_FILENAME).display(),
         )));
     }
     Ok(())
 }
 
-/// Outcome counts for one `git forum migrate` invocation.
+/// JSON file name under `RepoPaths::git_forum` for the
+/// machine-readable migration report (SPEC-3.0 §4.3 local clone
+/// state; task `9635buy0` item 10).
+pub const REPORT_FILENAME: &str = "migration-report.json";
+
+/// Per-ref outcome of a migration walk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreadOutcome {
+    /// Legacy chain projected and snapshot written (or, in
+    /// `--dry-run`, would be written). May carry omissions.
+    Migrated,
+    /// Tip already a SPEC-3.0 snapshot; no action needed.
+    AlreadyMigrated,
+    /// Read, projection, or write failed irrecoverably for this
+    /// ref. Other refs continue; the run as a whole returns a
+    /// non-zero exit code.
+    Error,
+}
+
+/// One projection-time anomaly that survived in the report.
 ///
-/// Phase 3 step 6 (item 9-10) replaces this with a structured
-/// per-ref report; for now it is a flat counter set used by the
-/// summary line and the `run_arm` exit-code computation.
-#[derive(Debug, Default)]
-pub struct MigrationOutcome {
-    pub threads_migrated: usize,
-    pub threads_already_migrated: usize,
-    pub threads_with_errors: usize,
+/// SPEC-3.0 §8.2 / task `9635buy0` item 9: every strict-replay
+/// issue or otherwise-dropped material on a successfully-migrated
+/// thread is recorded here so post-migration inspection has a
+/// machine-readable trail.
+#[derive(Debug, Clone, Serialize)]
+pub struct Omission {
+    pub kind: String,
+    pub item: String,
+    pub reason: String,
+}
+
+/// Per-thread report entry written to `migration-report.json`.
+///
+/// Fields with `skip_serializing_if` collapse to absent JSON keys
+/// when empty so the on-disk file stays compact.
+#[derive(Debug, Clone, Serialize)]
+pub struct ThreadReport {
+    pub thread_id: String,
+    pub ref_name: String,
+    pub outcome: ThreadOutcome,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub omissions: Vec<Omission>,
+    /// Present only when `outcome == Error`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Present when category/tags were inferred from the legacy
+    /// kind (1.x chain with no facet_set). Informational —
+    /// objection `efe64dba` requires this NOT to fail.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inferred_metadata: Option<String>,
+    /// Number of legacy events archived (only for migrated outcomes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived_events: Option<usize>,
+}
+
+/// Top-level migration report (SPEC-3.0 §8 / task item 9).
+#[derive(Debug, Clone, Serialize)]
+pub struct MigrationReport {
+    pub generated_at: DateTime<Utc>,
+    pub dry_run: bool,
+    pub threads: Vec<ThreadReport>,
 }
 
 /// Public entry point for `git forum migrate --to 3.0 [--dry-run]`.
 ///
-/// Walks `refs/forum/threads/*`. For each ref tip:
+/// Walks `refs/forum/threads/*`. Per-ref:
 ///
-/// - `read_snapshot` succeeds → already on 3.0; record + skip.
+/// - `read_snapshot` succeeds → `outcome = AlreadyMigrated`; skip.
 /// - `read_snapshot` returns [`ForumError::LegacyEventChain`] →
-///   project the legacy chain to a 3.0 [`ThreadDocument`] via
-///   [`migrate_legacy_to_snapshot`], serialize the source events to
-///   NDJSON, and call
-///   [`crate::internal::snapshot::store::write_snapshot_with_archive`]
-///   to write the snapshot commit on top of the legacy tip. The
-///   legacy commits remain reachable as ancestors of the new tip.
-/// - any other `read_snapshot` error → record + continue (one bad
-///   ref does not abort the run).
+///   project (strict, pinned tip), in non-dry-run mode write the
+///   snapshot via [`snapshot::store::write_snapshot_with_archive_pinned`].
+///   Strict-replay issues record as `omissions`; outcome is
+///   `Migrated`.
+/// - any other `read_snapshot` / load / project / write error →
+///   `outcome = Error`; subsequent refs continue.
 ///
-/// `dry_run` skips writes; the same plan/skip/error lines print.
-///
-/// Phase 3 step 6 (items 9-10) folds in the structured per-ref
-/// report; this commit prints flat status lines and returns a
-/// counter [`MigrationOutcome`].
+/// Persists the structured report as JSON at
+/// `paths.git_forum.join("migration-report.json")` (SPEC-3.0 §4.3
+/// local-clone state). `dry_run` skips snapshot writes but the
+/// report is still produced and persisted so callers can inspect
+/// the planned work.
 pub fn run(
     git: &GitOps,
-    _paths: &RepoPaths,
-    actor: &str,
+    paths: &RepoPaths,
+    _actor: &str,
     dry_run: bool,
-) -> ForumResult<MigrationOutcome> {
+) -> ForumResult<MigrationReport> {
     let prefix = if dry_run { "[DRY-RUN] " } else { "" };
     println!("{prefix}git forum migrate --to 3.0");
 
@@ -214,99 +277,241 @@ pub fn run(
         .collect();
     thread_ids.sort();
 
-    let mut outcome = MigrationOutcome::default();
+    let mut threads: Vec<ThreadReport> = Vec::with_capacity(thread_ids.len());
     for thread_id in &thread_ids {
-        match snapshot::read_snapshot(git, thread_id) {
-            Ok(_) => {
-                outcome.threads_already_migrated += 1;
-                println!("[skip] {thread_id} (already 3.0)");
+        let report = process_one(git, thread_id, dry_run);
+        // Surface skip/error to user-facing streams; migrated +
+        // plan lines are printed inside `process_one`.
+        match report.outcome {
+            ThreadOutcome::AlreadyMigrated => {
+                println!("[skip] {} (already 3.0)", report.thread_id);
             }
-            Err(ForumError::LegacyEventChain) => {
-                if dry_run {
-                    outcome.threads_migrated += 1;
-                    println!("[plan] {thread_id} -> 3.0 snapshot");
-                } else {
-                    match migrate_one(git, thread_id, actor) {
-                        Ok(n_events) => {
-                            outcome.threads_migrated += 1;
-                            println!(
-                                "[migrated] {thread_id} -> 3.0 snapshot \
-                                 ({n_events} legacy event(s) archived)"
-                            );
-                        }
-                        Err(e) => {
-                            outcome.threads_with_errors += 1;
-                            eprintln!("error: {thread_id}: {e}");
-                        }
-                    }
+            ThreadOutcome::Error => {
+                if let Some(err) = &report.error {
+                    eprintln!("error: {}: {err}", report.thread_id);
                 }
             }
-            Err(e) => {
-                outcome.threads_with_errors += 1;
-                eprintln!("error: {thread_id}: {e}");
-            }
+            ThreadOutcome::Migrated => {}
+        }
+        threads.push(report);
+    }
+
+    let migrated = threads
+        .iter()
+        .filter(|t| matches!(t.outcome, ThreadOutcome::Migrated))
+        .count();
+    let already = threads
+        .iter()
+        .filter(|t| matches!(t.outcome, ThreadOutcome::AlreadyMigrated))
+        .count();
+    let errors = threads
+        .iter()
+        .filter(|t| matches!(t.outcome, ThreadOutcome::Error))
+        .count();
+    println!("{prefix}migrated={migrated} already={already} errors={errors}");
+
+    let report = MigrationReport {
+        generated_at: Utc::now(),
+        dry_run,
+        threads,
+    };
+
+    // Persist under `.git/forum/` (SPEC-3.0 §4.3 local-clone state;
+    // never the working tree). The directory is created by
+    // `init_forum`; create defensively in case migrate is invoked
+    // pre-init or the directory was removed manually.
+    std::fs::create_dir_all(&paths.git_forum)?;
+    let report_path = paths.git_forum.join(REPORT_FILENAME);
+    let json = serde_json::to_string_pretty(&report)?;
+    std::fs::write(&report_path, json)?;
+    println!("{prefix}wrote report to {}", report_path.display());
+
+    Ok(report)
+}
+
+/// Build a [`ThreadReport`] for one ref. Handles probe → project →
+/// (write if not dry-run). All error paths fold into
+/// `outcome = Error` with `error` populated; the walk in [`run`]
+/// continues to the next ref.
+///
+/// Concurrency: pins the chain tip before reading. The captured
+/// OID feeds both the projection (`migrate_legacy_to_snapshot_strict_at` /
+/// `load_thread_events_at`) and the CAS write
+/// (`write_snapshot_with_archive_pinned`). If another event lands
+/// between the pin and the write, the CAS rejects with
+/// [`ForumError::SnapshotWriteConflict`] — recorded here as
+/// `outcome = Error` instead of silently committing a snapshot
+/// whose archive is missing the racer's event (task `9635buy0`
+/// objection `e630f01f`).
+fn process_one(git: &GitOps, thread_id: &str, dry_run: bool) -> ThreadReport {
+    let ref_name = refs::thread_ref(thread_id);
+    let mut report = ThreadReport {
+        thread_id: thread_id.to_string(),
+        ref_name: ref_name.clone(),
+        outcome: ThreadOutcome::Error,
+        omissions: Vec::new(),
+        error: None,
+        inferred_metadata: None,
+        archived_events: None,
+    };
+
+    match snapshot::read_snapshot(git, thread_id) {
+        Ok(_) => {
+            report.outcome = ThreadOutcome::AlreadyMigrated;
+            return report;
+        }
+        Err(ForumError::LegacyEventChain) => {} // proceed
+        Err(e) => {
+            report.error = Some(format!("{e}"));
+            return report;
         }
     }
 
-    println!(
-        "{prefix}migrated={} already={} errors={}",
-        outcome.threads_migrated, outcome.threads_already_migrated, outcome.threads_with_errors
-    );
-    Ok(outcome)
-}
+    let expected_tip = match git.resolve_ref(&ref_name) {
+        Ok(Some(tip)) => tip,
+        Ok(None) => {
+            report.error = Some(format!("ref {ref_name} disappeared during migration walk"));
+            return report;
+        }
+        Err(e) => {
+            report.error = Some(format!("resolve_ref({ref_name}): {e}"));
+            return report;
+        }
+    };
 
-/// Migrate one legacy thread to a 3.0 snapshot. Returns the number
-/// of source events archived.
-///
-/// Concurrency: pins the chain tip before reading. The captured
-/// OID is the source for both the projection (via
-/// `migrate_legacy_to_snapshot_at` / `load_thread_events_at`) and
-/// the CAS write (via `write_snapshot_with_archive_pinned`). If
-/// another event lands between the pin and the write, the CAS
-/// rejects with [`ForumError::SnapshotWriteConflict`] — better than
-/// committing a snapshot whose archive is missing the racer's
-/// event (task `9635buy0` objection `e630f01f`).
-fn migrate_one(git: &GitOps, thread_id: &str, _actor: &str) -> ForumResult<usize> {
-    let refname = refs::thread_ref(thread_id);
-    let expected_tip = git.resolve_ref(&refname)?.ok_or_else(|| {
-        ForumError::Repo(format!("ref {refname} disappeared during migration walk"))
-    })?;
+    let events = match event::load_thread_events_at(git, &expected_tip) {
+        Ok(ev) => ev,
+        Err(e) => {
+            report.error = Some(format!("load_thread_events_at: {e}"));
+            return report;
+        }
+    };
 
-    let events = event::load_thread_events_at(git, &expected_tip)?;
-    let archive = build_archive_ndjson(&events)?;
-    let projection = migrate_legacy_to_snapshot_strict_at(git, thread_id, &expected_tip)?;
+    let projection = match migrate_legacy_to_snapshot_strict_at(git, thread_id, &expected_tip) {
+        Ok(p) => p,
+        Err(e) => {
+            report.error = Some(format!("projection: {e}"));
+            return report;
+        }
+    };
 
-    // Item 7 (task `9635buy0`): malformed events surface to stderr
-    // as warnings — they do NOT fail migration. Step 6 will route
-    // these into a structured per-thread report; until then the
-    // inline print is the surface so users still see them.
     for issue in &projection.issues {
-        eprintln!("warning: {thread_id}: {issue}");
+        report.omissions.push(strict_issue_to_omission(issue));
     }
-    // Inferred-metadata note for 1.x chains (objection `efe64dba`):
-    // category/tags came from kind inference rather than an
-    // explicit `facet_set`. Informational, NOT a validation
-    // failure.
     if projection.lifecycle_inferred {
-        eprintln!(
-            "note: {thread_id}: lifecycle inferred from legacy kind \
-             (no facet_set event in chain — normal for 1.x)"
+        report.inferred_metadata = Some(
+            "lifecycle inferred from legacy kind (no facet_set in chain — normal for 1.x)".into(),
         );
     }
 
+    // Inline surface — keeps the user-facing stream useful even
+    // before they crack open the JSON report.
+    for o in &report.omissions {
+        eprintln!(
+            "warning: {thread_id}: [{}] {} — {}",
+            o.kind, o.item, o.reason
+        );
+    }
+    if let Some(note) = &report.inferred_metadata {
+        eprintln!("note: {thread_id}: {note}");
+    }
+
+    if dry_run {
+        report.outcome = ThreadOutcome::Migrated;
+        report.archived_events = Some(events.len());
+        println!("[plan] {thread_id} -> 3.0 snapshot");
+        return report;
+    }
+
+    let archive = match build_archive_ndjson(&events) {
+        Ok(a) => a,
+        Err(e) => {
+            report.error = Some(format!("build_archive_ndjson: {e}"));
+            return report;
+        }
+    };
     let message = format!(
         "[git-forum] migrate {thread_id} to 3.0 ({} legacy event(s) archived)",
         events.len()
     );
-    snapshot::write_snapshot_with_archive_pinned(
+    if let Err(e) = snapshot::write_snapshot_with_archive_pinned(
         git,
         thread_id,
         &projection.doc,
         &message,
         &archive,
         &expected_tip,
-    )?;
-    Ok(events.len())
+    ) {
+        report.error = Some(format!("write_snapshot_with_archive_pinned: {e}"));
+        return report;
+    }
+
+    report.outcome = ThreadOutcome::Migrated;
+    report.archived_events = Some(events.len());
+    println!(
+        "[migrated] {thread_id} -> 3.0 snapshot ({} legacy event(s) archived)",
+        events.len()
+    );
+    report
+}
+
+/// Project a [`StrictReplayIssue`] into an [`Omission`] entry for
+/// the structured report. Each variant maps to a `(kind, item,
+/// reason)` triple so JSON consumers can filter by `kind` without
+/// pattern-matching on free-form text.
+fn strict_issue_to_omission(issue: &StrictReplayIssue) -> Omission {
+    use StrictReplayIssue::*;
+    match issue {
+        UnknownTargetNode {
+            event_id,
+            event_type,
+            target_node_id,
+        } => Omission {
+            kind: "node".into(),
+            item: target_node_id.clone(),
+            reason: format!("{event_type} event {event_id} targets unknown node"),
+        },
+        MissingRequiredField {
+            event_id,
+            event_type,
+            field,
+        } => Omission {
+            kind: "field".into(),
+            item: (*field).into(),
+            reason: format!("{event_type} event {event_id} is missing required field"),
+        },
+        LifecycleResetAttempted {
+            event_id,
+            existing,
+            attempted,
+        } => Omission {
+            kind: "lifecycle".into(),
+            item: attempted.clone(),
+            reason: format!(
+                "facet_set event {event_id} attempted to reset lifecycle from `{existing}`"
+            ),
+        },
+        InvalidLifecycleValue { event_id, value } => Omission {
+            kind: "lifecycle".into(),
+            item: value.clone(),
+            reason: format!("facet_set event {event_id} carries unknown lifecycle"),
+        },
+        InvalidStateValue { event_id, value } => Omission {
+            kind: "state".into(),
+            item: value.clone(),
+            reason: format!("state event {event_id} carries unparseable status"),
+        },
+        InvalidTransition {
+            event_id,
+            from,
+            to,
+            lifecycle,
+        } => Omission {
+            kind: "transition".into(),
+            item: format!("{from}->{to}"),
+            reason: format!("state event {event_id} edge not legal under lifecycle `{lifecycle}`"),
+        },
+    }
 }
 
 /// Serialize legacy events as NDJSON in chain order (oldest first)

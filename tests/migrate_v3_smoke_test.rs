@@ -458,3 +458,252 @@ fn migrate_dry_run_followed_by_real_run_writes_snapshot() {
     let doc = snapshot::read_snapshot(&git, &id).expect("real run must complete the migration");
     assert_eq!(doc.snapshot.category, "task");
 }
+
+// ---------------------------------------------------------------
+// Structured migration report (task `9635buy0` step 6, items 9-10,
+// 10a, 16, 17, 20).
+// ---------------------------------------------------------------
+
+#[test]
+fn migrate_writes_machine_readable_report_under_git_dir() {
+    // Item 10 / 20: report lives at `.git/forum/migration-report.json`,
+    // never in the working tree.
+    let (repo, _git, paths) = setup();
+    // Build one legacy thread + one v3-native thread so the report
+    // exercises both Migrated and AlreadyMigrated outcomes.
+    let legacy_id = id_alloc::alloc_thread_id_with_nonce(
+        ThreadKind::Issue,
+        "human/alice",
+        "Legacy",
+        "2026-01-01T00:00:00Z",
+        &[7, 7, 7, 7, 7, 7, 7, 7],
+    );
+    event::write_event(
+        &_git,
+        &create_event(&legacy_id, ThreadKind::Issue, "Legacy"),
+    )
+    .unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_git-forum");
+    Command::new(bin)
+        .current_dir(repo.path())
+        .args([
+            "new",
+            "rfc",
+            "Native",
+            "--body",
+            "rfc body",
+            "--as",
+            "human/alice",
+        ])
+        .output()
+        .unwrap();
+
+    let out = Command::new(bin)
+        .current_dir(repo.path())
+        .args(["migrate", "--to", "3.0"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let report_path = paths.git_forum.join("migration-report.json");
+    assert!(
+        report_path.exists(),
+        "report file MUST be written at {} (SPEC-3.0 §4.3 local clone state)",
+        report_path.display()
+    );
+    // Critical: report MUST NOT land in the working tree under `.forum/`.
+    assert!(
+        !paths.dot_forum.join("migration-report.json").exists(),
+        "report MUST NOT be written under .forum/ (working tree)"
+    );
+
+    let body = std::fs::read_to_string(&report_path).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&body).expect("report must be valid JSON");
+    assert!(json.get("generated_at").is_some(), "missing generated_at");
+    assert_eq!(json["dry_run"], false);
+    let threads = json["threads"]
+        .as_array()
+        .expect("threads must be an array");
+    assert_eq!(threads.len(), 2, "expected two thread reports");
+
+    let legacy_entry = threads
+        .iter()
+        .find(|t| t["thread_id"] == legacy_id)
+        .expect("legacy thread missing from report");
+    assert_eq!(legacy_entry["outcome"], "migrated");
+    assert!(
+        legacy_entry["archived_events"].as_u64().unwrap() >= 1,
+        "archived_events should be set on migrated entry"
+    );
+
+    let native_entry = threads
+        .iter()
+        .find(|t| t["outcome"] == "already_migrated")
+        .expect("native thread should be already_migrated");
+    assert!(native_entry["thread_id"].as_str().unwrap() != legacy_id);
+}
+
+#[test]
+fn migrate_is_idempotent_second_run_is_all_already_migrated() {
+    // Item 16: running migrate on a repo that's already 3.0 is a
+    // no-op. Every ref reports already_migrated; no new commits;
+    // exit 0.
+    let (repo, git, _paths) = setup();
+    let id = id_alloc::alloc_thread_id_with_nonce(
+        ThreadKind::Rfc,
+        "human/alice",
+        "Idem",
+        "2026-01-01T00:00:00Z",
+        &[8, 8, 8, 8, 8, 8, 8, 8],
+    );
+    event::write_event(&git, &create_event(&id, ThreadKind::Rfc, "Idem")).unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_git-forum");
+    let first = Command::new(bin)
+        .current_dir(repo.path())
+        .args(["migrate", "--to", "3.0"])
+        .output()
+        .unwrap();
+    assert!(first.status.success());
+    let tip_after_first = git
+        .run(&["rev-parse", &format!("refs/forum/threads/{id}")])
+        .unwrap()
+        .trim()
+        .to_string();
+
+    let second = Command::new(bin)
+        .current_dir(repo.path())
+        .args(["migrate", "--to", "3.0"])
+        .output()
+        .unwrap();
+    assert!(
+        second.status.success(),
+        "second migrate should be a clean no-op:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&second.stdout),
+        String::from_utf8_lossy(&second.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(
+        stdout.contains("[skip]") && !stdout.contains("[migrated]"),
+        "second run must show skip for the migrated thread:\n{stdout}"
+    );
+    let tip_after_second = git
+        .run(&["rev-parse", &format!("refs/forum/threads/{id}")])
+        .unwrap()
+        .trim()
+        .to_string();
+    assert_eq!(
+        tip_after_first, tip_after_second,
+        "second migrate must not advance the ref tip"
+    );
+}
+
+#[test]
+fn migrate_strict_issue_records_omission_in_report() {
+    // Item 17: a malformed legacy event surfaces in the report's
+    // omissions list. Outcome is still `migrated` (strict-replay
+    // issues don't fail the thread — only unrecoverable read/
+    // project/write errors do, per item 10).
+    let (repo, git, paths) = setup();
+    let id = id_alloc::alloc_thread_id_with_nonce(
+        ThreadKind::Rfc,
+        "human/alice",
+        "Strict",
+        "2026-01-01T00:00:00Z",
+        &[9, 9, 9, 9, 9, 9, 9, 9],
+    );
+    event::write_event(&git, &create_event(&id, ThreadKind::Rfc, "Strict")).unwrap();
+    event::write_event(&git, &state_event(&id, "xyz-not-a-state", 1)).unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_git-forum");
+    let out = Command::new(bin)
+        .current_dir(repo.path())
+        .args(["migrate", "--to", "3.0"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "strict issues do not fail the run");
+
+    let body = std::fs::read_to_string(paths.git_forum.join("migration-report.json")).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let entry = json["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["thread_id"] == id)
+        .unwrap();
+    assert_eq!(entry["outcome"], "migrated");
+    let omissions = entry["omissions"]
+        .as_array()
+        .expect("omissions array must exist for a thread with strict issues");
+    assert!(
+        omissions
+            .iter()
+            .any(|o| o["kind"] == "state" && o["item"] == "xyz-not-a-state"),
+        "expected a state omission for `xyz-not-a-state`, got {omissions:?}"
+    );
+}
+
+#[test]
+fn migrate_unparseable_event_payload_records_error_outcome() {
+    // Item 10 / 17: a ref whose chain has an unparseable event
+    // payload becomes `outcome = error` and the run exits non-zero.
+    // Other refs still complete.
+    let (repo, git, paths) = setup();
+    // A healthy thread that should still migrate cleanly.
+    let healthy_id = id_alloc::alloc_thread_id_with_nonce(
+        ThreadKind::Rfc,
+        "human/alice",
+        "Healthy",
+        "2026-01-01T00:00:00Z",
+        &[10, 10, 10, 10, 10, 10, 10, 10],
+    );
+    event::write_event(&git, &create_event(&healthy_id, ThreadKind::Rfc, "Healthy")).unwrap();
+
+    // Hand-craft a ref whose tip commit has an `event.json` blob
+    // containing garbage JSON. `read_event` will fail on it.
+    let blob = git
+        .hash_object(b"this is not valid json at all }{")
+        .unwrap();
+    let tree = git.mktree_single("event.json", &blob).unwrap();
+    let commit = git.commit_tree(&tree, &[], "garbage event").unwrap();
+    let bad_id = "badbadbad";
+    git.create_ref(&format!("refs/forum/threads/{bad_id}"), &commit)
+        .unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_git-forum");
+    let out = Command::new(bin)
+        .current_dir(repo.path())
+        .args(["migrate", "--to", "3.0"])
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "migrate must exit non-zero when any thread's outcome is error"
+    );
+
+    let body = std::fs::read_to_string(paths.git_forum.join("migration-report.json")).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let bad_entry = json["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["thread_id"] == bad_id)
+        .expect("bad thread missing from report");
+    assert_eq!(bad_entry["outcome"], "error");
+    assert!(
+        bad_entry["error"]
+            .as_str()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false),
+        "error string must be populated"
+    );
+    // The healthy thread must still have completed.
+    let healthy_entry = json["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["thread_id"] == healthy_id)
+        .unwrap();
+    assert_eq!(healthy_entry["outcome"], "migrated");
+}
