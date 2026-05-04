@@ -554,14 +554,17 @@ the unresolved subset.
 ```text
 git forum evidence add @1hg98odf --kind commit --ref HEAD
 git forum evidence add @1hg98odf --kind commit --ref a1b2c3d --ref e4f5
-git forum evidence add @1hg98odf --kind pr --ref https://github.com/org/repo/pull/123
 git forum evidence add @1hg98odf --kind file --ref src/auth/jwt.rs
+git forum evidence add @1hg98odf --kind test --ref tests/jwt_test.rs
+git forum evidence add @1hg98odf --kind benchmark --ref bench/result.csv
+git forum evidence add @1hg98odf --kind external --ref https://example.com/postmortem
 ```
 
 Each `--ref` writes one row to `evidence.toml`. The supported
-kinds are `commit`, `pr`, `file`, `url`. For `kind=commit`, the
-ref string is canonicalized through `git rev-parse` before
-storing — `--ref HEAD` becomes the resolved 40-char SHA.
+kinds are `commit`, `file`, `hunk`, `test`, `benchmark`, `doc`,
+`thread`, `external`. For `kind=commit`, the ref string is
+canonicalized through `git rev-parse` before storing — `--ref HEAD`
+becomes the resolved 40-char SHA.
 
 ### Linking implementation commits
 
