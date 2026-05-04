@@ -1041,7 +1041,6 @@ where
     use super::editor;
     use super::reindex;
     use super::thread;
-    use super::write_ops;
 
     // Replay thread to get the current body
     let state = thread::replay_thread(git, thread_id)?;
@@ -1078,7 +1077,7 @@ where
 
     let actor_id = actor::current_actor(git, git.default_actor());
     let clock = SystemClock;
-    write_ops::revise_body(git, thread_id, &new_body, &[], &actor_id, &clock)?;
+    state::snapshot_revise_body(git, thread_id, &new_body, &actor_id, &clock)?;
 
     reindex::run_reindex(git, db_path)?;
     let selected = app.selected_node_id();
@@ -2373,15 +2372,17 @@ mod tests {
         );
     }
 
-    /// AC#10: create-thread form integration — `(execution, [bug])` produces
-    /// the same on-disk Event shape as `git forum new bug --title …`.
-    /// The kind preset path emits exactly one `create` event (no facet_set).
+    /// AC#10: create-thread form integration — `(execution, [bug])` writes
+    /// a SPEC-3.0 snapshot with `category=task` and the `bug` tag.
+    /// Phase 2 slot 10c (RFC `7ymtc4b2`): the legacy preset / facet_set
+    /// fork is gone; tests that pinned the v2.x event count are
+    /// rewritten to assert the snapshot shape.
     #[test]
-    fn create_thread_form_execution_bug_matches_kind_preset() {
+    fn create_thread_form_execution_bug_writes_snapshot() {
         let (_dir, git, _paths, conn, db_path) = setup_repo();
         let mut app = App::new(vec![]);
         app.begin_create_thread();
-        // Lifecycle 1 = execution; tag = bug → Issue preset (§2.3.3).
+        // Lifecycle 1 = execution; tag = bug → category=task + tag=bug.
         app.thread_form.lifecycle_index = 1;
         app.thread_form.tags = "bug".into();
         app.thread_form.title = "fix the bug".into();
@@ -2389,28 +2390,20 @@ mod tests {
 
         let rows = index::list_threads(&conn).unwrap();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].kind, "issue");
         assert_eq!(rows[0].title, "fix the bug");
 
-        // The on-disk thread has exactly one event (the create event).
-        // Preset path means no follow-up facet_set was written.
-        let state = crate::internal::thread::replay_thread(&git, &rows[0].id).unwrap();
-        assert_eq!(
-            state.events.len(),
-            1,
-            "preset path must produce a single create event (no facet_set)"
-        );
-        assert!(matches!(
-            state.events[0].event_type,
-            crate::internal::event::EventType::Create
-        ));
+        // SPEC-3.0 snapshot tip: `thread.toml` decodes, category=task, bug tag.
+        let doc = crate::internal::snapshot::read_snapshot(&git, &rows[0].id).unwrap();
+        assert_eq!(doc.snapshot.category, "task");
+        assert!(doc.snapshot.tags.contains(&"bug".to_string()));
+        assert_eq!(doc.snapshot.title, "fix the bug");
     }
 
-    /// AC#10: when (lifecycle, tags) doesn't match a §9.1 preset, the form
-    /// falls back to the canonical path: kind-by-lifecycle plus a facet_set
-    /// event recording the user's tag list.
+    /// AC#10: multi-tag form input lands all tags in `thread.toml.tags`.
+    /// Phase 2 slot 10c (RFC `7ymtc4b2`): the previous facet_set event
+    /// is gone — tags are written directly into the snapshot.
     #[test]
-    fn create_thread_form_non_preset_writes_facet_set() {
+    fn create_thread_form_non_preset_writes_tags_in_snapshot() {
         let (_dir, git, _paths, conn, db_path) = setup_repo();
         let mut app = App::new(vec![]);
         app.begin_create_thread();
@@ -2422,11 +2415,9 @@ mod tests {
         let rows = index::list_threads(&conn).unwrap();
         assert_eq!(rows.len(), 1);
 
-        let state = crate::internal::thread::replay_thread(&git, &rows[0].id).unwrap();
-        // Two events: create + facet_set
-        assert_eq!(state.events.len(), 2);
-        assert!(state.tags.contains(&"bug".to_string()));
-        assert!(state.tags.contains(&"urgent".to_string()));
+        let doc = crate::internal::snapshot::read_snapshot(&git, &rows[0].id).unwrap();
+        assert!(doc.snapshot.tags.contains(&"bug".to_string()));
+        assert!(doc.snapshot.tags.contains(&"urgent".to_string()));
     }
 
     /// AC#10: invalid tag input blocks submission and records a form-level

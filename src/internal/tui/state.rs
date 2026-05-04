@@ -2,19 +2,20 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::internal::actor;
-use crate::internal::clock::SystemClock;
+use crate::internal::clock::{Clock, SystemClock};
+use crate::internal::commands::shorthand_say::migrate_legacy_to_snapshot;
 use crate::internal::commands::show;
-use crate::internal::create;
-use crate::internal::error::ForumResult;
-use crate::internal::event::{self, Lifecycle, NodeType, ThreadKind};
-use crate::internal::evidence;
+use crate::internal::error::{ForumError, ForumResult};
+use crate::internal::event::{self, Lifecycle, NodeType};
+use crate::internal::evidence::EvidenceFile;
 use crate::internal::git_ops::GitOps;
+use crate::internal::id_alloc;
 use crate::internal::index::{self, ThreadRow};
-use crate::internal::node::Node;
+use crate::internal::node::{Node, NodeKind, NodeRecord, NodeStatus};
 use crate::internal::refs;
 use crate::internal::reindex;
-use crate::internal::thread;
-use crate::internal::write_ops;
+use crate::internal::snapshot::{self, store::write_snapshot, Link, Links, NodeWithBody};
+use crate::internal::thread::{self, ThreadSnapshot};
 
 use super::{App, LinkOrigin, LinkTargetKind, NodeStatusAction, TreeEntry, View};
 
@@ -79,19 +80,20 @@ pub(super) fn apply_node_status_action(
     let actor = actor::current_actor(git, git.default_actor());
     let clock = SystemClock;
 
-    match action {
+    let new_status = match action {
         NodeStatusAction::Resolve if !lookup.node.resolved && !lookup.node.retracted => {
-            write_ops::resolve_node(git, thread_id, &lookup.node.node_id, &actor, &clock)?;
+            Some(NodeStatus::Resolved)
         }
         NodeStatusAction::Reopen
             if lookup.node.resolved || lookup.node.retracted || lookup.node.incorporated =>
         {
-            write_ops::reopen_node(git, thread_id, &lookup.node.node_id, &actor, &clock)?;
+            Some(NodeStatus::Open)
         }
-        NodeStatusAction::Retract if !lookup.node.retracted => {
-            write_ops::retract_node(git, thread_id, &lookup.node.node_id, &actor, &clock)?;
-        }
-        _ => {}
+        NodeStatusAction::Retract if !lookup.node.retracted => Some(NodeStatus::Retracted),
+        _ => None,
+    };
+    if let Some(status) = new_status {
+        snapshot_update_node_status(git, thread_id, &lookup.node.node_id, status, &actor, &clock)?;
     }
 
     open_node_detail(app, git, thread_id, &lookup.node.node_id)
@@ -127,16 +129,11 @@ pub(super) fn submit_create_thread(
         Some(app.thread_form.body.trim())
     };
 
-    // §2.3.3 / §9.1: when (lifecycle, tags) matches a kind preset shape, the
-    // form invokes the preset path (no facet_set). Otherwise it falls back to
-    // a kind-by-lifecycle default and writes a facet_set for the user's tags.
-    let preset = match_kind_preset(lifecycle, &parsed_tags);
-    let kind = preset.unwrap_or_else(|| default_kind_for_lifecycle(lifecycle));
-
-    let thread_id = create::create_thread(git, kind, title, body, &actor, &clock)?;
-    if preset.is_none() {
-        write_ops::write_facet_set(git, &thread_id, None, &parsed_tags, &[], &actor, &clock)?;
-    }
+    // SPEC-3.0 §8.3: lifecycle drives the canonical category + decision tag;
+    // user-supplied tags merge in. The legacy preset / write_facet_set
+    // fork is gone — slot 10c writes the snapshot directly.
+    let thread_id =
+        snapshot_create_thread(git, title, body, lifecycle, &parsed_tags, &actor, &clock)?;
     reindex::run_reindex(git, db_path)?;
     app.threads = index::list_threads(conn)?;
     if let Some(pos) = app.threads.iter().position(|row| row.id == thread_id) {
@@ -160,7 +157,7 @@ pub(super) fn submit_create_node(
     let actor = actor::current_actor(git, git.default_actor());
     let clock = SystemClock;
     let node_type = node_type_values()[app.node_form.node_type_index];
-    let node_id = write_ops::say_node(git, thread_id, node_type, body, &actor, &clock, None)?;
+    let node_id = snapshot_append_node(git, thread_id, node_type, body, &actor, &clock)?;
     reindex::run_reindex(git, db_path)?;
     app.threads = index::list_threads(conn)?;
     open_thread_detail(app, git, thread_id, Some(&node_id))
@@ -179,7 +176,7 @@ pub(super) fn submit_create_link(
     let actor = actor::current_actor(git, git.default_actor());
     let clock = SystemClock;
     let relation = link_relation_labels()[app.link_form.relation_index];
-    evidence::add_thread_link(git, thread_id, &target_thread_id, relation, &actor, &clock)?;
+    snapshot_append_link(git, thread_id, &target_thread_id, relation, &actor, &clock)?;
     return_from_link_form(app, git, thread_id, origin)
 }
 
@@ -338,27 +335,10 @@ pub(super) fn parse_tag_input(input: &str) -> Result<Vec<String>, String> {
     Ok(tags)
 }
 
-/// SPEC-2.0 §2.3.3 + §9.1: detect whether (lifecycle, tags) matches one of
-/// the four kind-preset shapes so the form can invoke the preset path.
-pub(super) fn match_kind_preset(lifecycle: Lifecycle, tags: &[String]) -> Option<ThreadKind> {
-    match (lifecycle, tags) {
-        (Lifecycle::Proposal, t) if t == ["cross-cutting"] => Some(ThreadKind::Rfc),
-        (Lifecycle::Record, []) => Some(ThreadKind::Dec),
-        (Lifecycle::Execution, t) if t == ["task"] => Some(ThreadKind::Task),
-        (Lifecycle::Execution, t) if t == ["bug"] => Some(ThreadKind::Issue),
-        _ => None,
-    }
-}
-
-/// Fallback kind when the form's (lifecycle, tags) combination doesn't match
-/// a §2.3.3 preset. The kind only needs to share the chosen lifecycle.
-pub(super) fn default_kind_for_lifecycle(lifecycle: Lifecycle) -> ThreadKind {
-    match lifecycle {
-        Lifecycle::Proposal => ThreadKind::Rfc,
-        Lifecycle::Execution => ThreadKind::Issue,
-        Lifecycle::Record => ThreadKind::Dec,
-    }
-}
+// `match_kind_preset` / `default_kind_for_lifecycle` removed at slot 10c
+// (RFC `7ymtc4b2`). The TUI form's create-thread path now writes a
+// SPEC-3.0 snapshot directly via `snapshot_create_thread`; the legacy
+// preset / write_facet_set fork (kind axis selection) is gone.
 
 pub(super) fn link_relation_labels() -> [&'static str; 4] {
     ["implements", "relates-to", "depends-on", "blocks"]
@@ -538,4 +518,178 @@ pub(super) fn auto_refresh(
         _ => {}
     }
     Ok(())
+}
+
+// ============================================================
+//  Slot 10c: snapshot-write helpers (TUI mutation cutover)
+// ============================================================
+//
+// The CLI orchestration layer's run() helpers print to stdout and
+// `std::process::exit` on failure, both of which collide with
+// ratatui's terminal session. Slot 10c keeps the TUI shape and
+// inlines the snapshot-tip mutations here. Shared bridges
+// (`migrate_legacy_to_snapshot`) are reused from the CLI side so
+// legacy event-chain threads still cut over on first write.
+
+fn snapshot_update_node_status(
+    git: &GitOps,
+    thread_id: &str,
+    node_id: &str,
+    target: NodeStatus,
+    actor: &str,
+    clock: &dyn Clock,
+) -> ForumResult<()> {
+    let mut doc = match snapshot::read_snapshot(git, thread_id) {
+        Ok(doc) => doc,
+        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(git, thread_id)?,
+        Err(other) => return Err(other),
+    };
+    let now = clock.now();
+    let resolved = thread::resolve_node_id_in_thread(git, thread_id, node_id)?;
+    if let Some(node) = doc.nodes.iter_mut().find(|n| n.record.id == resolved) {
+        node.record.status = target;
+        node.record.updated_at = Some(now);
+        node.record.updated_by = Some(actor.to_string());
+    } else {
+        return Err(ForumError::Repo(format!(
+            "node {resolved} not found in snapshot"
+        )));
+    }
+    doc.snapshot.updated_at = now;
+    doc.snapshot.updated_by = actor.to_string();
+    write_snapshot(git, thread_id, &doc, "tui: node status update")?;
+    Ok(())
+}
+
+fn snapshot_append_node(
+    git: &GitOps,
+    thread_id: &str,
+    node_type: NodeType,
+    body: &str,
+    actor: &str,
+    clock: &dyn Clock,
+) -> ForumResult<String> {
+    let mut doc = match snapshot::read_snapshot(git, thread_id) {
+        Ok(doc) => doc,
+        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(git, thread_id)?,
+        Err(other) => return Err(other),
+    };
+    let now = clock.now();
+    let kind = match node_type.canonical() {
+        NodeType::Comment => NodeKind::Comment,
+        NodeType::Approval => NodeKind::Approval,
+        NodeType::Objection => NodeKind::Objection,
+        NodeType::Action => NodeKind::Action,
+        _ => NodeKind::Comment,
+    };
+    let id = id_alloc::alloc_bare_thread_id(actor, body, &now.to_rfc3339());
+    doc.nodes.push(NodeWithBody {
+        record: NodeRecord {
+            id: id.clone(),
+            kind,
+            status: NodeStatus::Open,
+            created_at: now,
+            created_by: actor.to_string(),
+            updated_at: None,
+            updated_by: None,
+            reply_to: None,
+            legacy_label: None,
+        },
+        body: body.to_string(),
+    });
+    doc.snapshot.updated_at = now;
+    doc.snapshot.updated_by = actor.to_string();
+    write_snapshot(git, thread_id, &doc, "tui: node add")?;
+    Ok(id)
+}
+
+pub(super) fn snapshot_revise_body(
+    git: &GitOps,
+    thread_id: &str,
+    new_body: &str,
+    actor: &str,
+    clock: &dyn Clock,
+) -> ForumResult<()> {
+    let mut doc = match snapshot::read_snapshot(git, thread_id) {
+        Ok(doc) => doc,
+        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(git, thread_id)?,
+        Err(other) => return Err(other),
+    };
+    let now = clock.now();
+    doc.body = Some(new_body.to_string());
+    doc.snapshot.updated_at = now;
+    doc.snapshot.updated_by = actor.to_string();
+    write_snapshot(git, thread_id, &doc, "tui: revise body")?;
+    Ok(())
+}
+
+fn snapshot_append_link(
+    git: &GitOps,
+    thread_id: &str,
+    target_thread_id: &str,
+    rel: &str,
+    actor: &str,
+    clock: &dyn Clock,
+) -> ForumResult<()> {
+    let mut doc = match snapshot::read_snapshot(git, thread_id) {
+        Ok(doc) => doc,
+        Err(ForumError::LegacyEventChain) => migrate_legacy_to_snapshot(git, thread_id)?,
+        Err(other) => return Err(other),
+    };
+    let now = clock.now();
+    doc.links.entries.push(Link {
+        target: target_thread_id.to_string(),
+        rel: rel.to_string(),
+        created_at: now,
+        created_by: actor.to_string(),
+    });
+    doc.snapshot.updated_at = now;
+    doc.snapshot.updated_by = actor.to_string();
+    write_snapshot(git, thread_id, &doc, "tui: link add")?;
+    Ok(())
+}
+
+fn snapshot_create_thread(
+    git: &GitOps,
+    title: &str,
+    body: Option<&str>,
+    lifecycle: Lifecycle,
+    tags: &[String],
+    actor: &str,
+    clock: &dyn Clock,
+) -> ForumResult<String> {
+    use crate::internal::commands::thread_new::{
+        augment_tags_for_lifecycle, lifecycle_to_category,
+    };
+    let now = clock.now();
+    let mut tags = tags.to_vec();
+    augment_tags_for_lifecycle(lifecycle, &mut tags);
+    let category = lifecycle_to_category(lifecycle).to_string();
+    let thread_id = id_alloc::alloc_bare_thread_id(actor, title, &now.to_rfc3339());
+    let doc = snapshot::ThreadDocument {
+        snapshot: ThreadSnapshot {
+            schema_version: ThreadSnapshot::SCHEMA_VERSION,
+            id: thread_id.clone(),
+            title: title.to_string(),
+            category,
+            status: "draft".to_string(),
+            tags,
+            created_at: now,
+            created_by: actor.to_string(),
+            updated_at: now,
+            updated_by: actor.to_string(),
+            branch: None,
+            supersedes: Vec::new(),
+        },
+        body: body.map(|b| b.to_string()),
+        nodes: Vec::new(),
+        links: Links {
+            entries: Vec::new(),
+        },
+        evidence: EvidenceFile {
+            entries: Vec::new(),
+        },
+    };
+    write_snapshot(git, &thread_id, &doc, "tui: create thread")?;
+    Ok(thread_id)
 }
