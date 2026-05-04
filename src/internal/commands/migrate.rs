@@ -39,7 +39,8 @@ use super::super::id_alloc;
 use super::super::node::{NodeKind, NodeRecord, NodeStatus};
 use super::super::refs;
 use super::super::snapshot::{self, Link, Links, NodeWithBody, ThreadDocument};
-use super::super::thread::{self, ThreadSnapshot};
+use super::super::thread::{self, ThreadSnapshot, ThreadState};
+use super::super::validate::StrictReplayIssue;
 
 /// SPEC-2.0 §10: v→2 alias entries live under
 /// `refs/forum/aliases/<old-id>` and point at the same commit as the
@@ -273,7 +274,26 @@ fn migrate_one(git: &GitOps, thread_id: &str, _actor: &str) -> ForumResult<usize
 
     let events = event::load_thread_events_at(git, &expected_tip)?;
     let archive = build_archive_ndjson(&events)?;
-    let doc = migrate_legacy_to_snapshot_at(git, thread_id, &expected_tip)?;
+    let projection = migrate_legacy_to_snapshot_strict_at(git, thread_id, &expected_tip)?;
+
+    // Item 7 (task `9635buy0`): malformed events surface to stderr
+    // as warnings — they do NOT fail migration. Step 6 will route
+    // these into a structured per-thread report; until then the
+    // inline print is the surface so users still see them.
+    for issue in &projection.issues {
+        eprintln!("warning: {thread_id}: {issue}");
+    }
+    // Inferred-metadata note for 1.x chains (objection `efe64dba`):
+    // category/tags came from kind inference rather than an
+    // explicit `facet_set`. Informational, NOT a validation
+    // failure.
+    if projection.lifecycle_inferred {
+        eprintln!(
+            "note: {thread_id}: lifecycle inferred from legacy kind \
+             (no facet_set event in chain — normal for 1.x)"
+        );
+    }
+
     let message = format!(
         "[git-forum] migrate {thread_id} to 3.0 ({} legacy event(s) archived)",
         events.len()
@@ -281,7 +301,7 @@ fn migrate_one(git: &GitOps, thread_id: &str, _actor: &str) -> ForumResult<usize
     snapshot::write_snapshot_with_archive_pinned(
         git,
         thread_id,
-        &doc,
+        &projection.doc,
         &message,
         &archive,
         &expected_tip,
@@ -357,12 +377,10 @@ pub fn migrate_legacy_to_snapshot(
     migrate_legacy_to_snapshot_at(git, thread_id, &tip)
 }
 
-/// Like [`migrate_legacy_to_snapshot`], but replays the chain from
-/// a caller-supplied rev (typically a tip OID captured before the
-/// migrate write). Pinning the read against the same OID used for
-/// the eventual CAS write closes the read/write race that would
-/// otherwise let a concurrent event land between projection and
-/// write — see task `9635buy0` objection `e630f01f`.
+/// Lenient projection from a pinned tip. Drops [`StrictReplayIssue`]s
+/// silently — only the migrate path's strict variant
+/// ([`migrate_legacy_to_snapshot_strict_at`]) surfaces them. Kept
+/// for projection unit tests that don't care about issue surfacing.
 pub fn migrate_legacy_to_snapshot_at(
     git: &GitOps,
     thread_id: &str,
@@ -375,6 +393,69 @@ pub fn migrate_legacy_to_snapshot_at(
             state.id
         )));
     }
+    project_state_to_doc(state)
+}
+
+/// Output of [`migrate_legacy_to_snapshot_strict_at`].
+///
+/// Carries the projected document plus enough side-channel data to
+/// feed the structured migration report (task `9635buy0` step 6 /
+/// items 9-10):
+///
+/// - `issues` — every [`StrictReplayIssue`] surfaced by strict
+///   replay (unknown target node, malformed lifecycle, illegal
+///   transition, etc.). Item 7: these flow into the per-thread
+///   omissions list, NOT into a hard error — migration still
+///   succeeds for the thread.
+/// - `lifecycle_inferred` — true when the source chain had no
+///   `facet_set` event and the lifecycle/category were derived
+///   from the legacy kind. Item 7 calls this an
+///   `inferred-metadata` note: informational for 1.x chains, NOT
+///   an error (objection `efe64dba`).
+#[derive(Debug)]
+pub struct MigrationProjection {
+    pub doc: ThreadDocument,
+    pub issues: Vec<StrictReplayIssue>,
+    pub lifecycle_inferred: bool,
+}
+
+/// Strict projection from a pinned tip. Routes through
+/// [`thread::replay_thread_strict_at`] so malformed events surface
+/// in the returned [`MigrationProjection::issues`] vector instead
+/// of being silently dropped (task `9635buy0` item 7).
+///
+/// 1.x chains without a `facet_set` event are NOT an error here:
+/// they reach this function with `state.lifecycle_explicit = false`
+/// (lifecycle inferred from the create event's `kind`). The
+/// returned `lifecycle_inferred` flag exposes this so the caller
+/// can record an informational note in the migration report
+/// without conflating it with a real validation failure
+/// (objection `efe64dba`).
+pub fn migrate_legacy_to_snapshot_strict_at(
+    git: &GitOps,
+    thread_id: &str,
+    start_rev: &str,
+) -> Result<MigrationProjection, ForumError> {
+    let (state, issues) = thread::replay_thread_strict_at(git, start_rev)?;
+    if state.id != thread_id {
+        return Err(ForumError::Repo(format!(
+            "rev {start_rev} replays as thread `{}`, not `{thread_id}` — refs out of sync",
+            state.id
+        )));
+    }
+    let lifecycle_inferred = !state.lifecycle_explicit;
+    let doc = project_state_to_doc(state)?;
+    Ok(MigrationProjection {
+        doc,
+        issues,
+        lifecycle_inferred,
+    })
+}
+
+/// Project a replayed legacy [`ThreadState`] to a SPEC-3.0
+/// [`ThreadDocument`]. Shared by the lenient and strict pinned
+/// projection paths.
+fn project_state_to_doc(state: ThreadState) -> Result<ThreadDocument, ForumError> {
     let mut tags = state.tags.clone();
     super::thread_new::augment_tags_for_lifecycle(state.lifecycle, &mut tags);
     if let Some(canon) = legacy_kind_to_canonical_tag(state.kind) {

@@ -226,3 +226,129 @@ fn migrate_pinned_write_rejects_concurrent_event() {
     let events_after = event::load_thread_events(&git, &id).unwrap();
     assert_eq!(events_after.len(), 2, "racer event should be present");
 }
+
+// ---------------------------------------------------------------
+// Strict / reporting replay (task `9635buy0` step 4 / item 7).
+// Migration uses strict replay so malformed legacy events surface
+// instead of being silently dropped, but missing facet_set on 1.x
+// chains is NOT an error.
+// ---------------------------------------------------------------
+
+fn say_event(thread_id: &str, body: &str, ts_offset_min: i64) -> Event {
+    Event {
+        thread_id: thread_id.into(),
+        event_type: EventType::Say,
+        created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+            + chrono::Duration::minutes(ts_offset_min),
+        actor: "human/bob".into(),
+        body: Some(body.into()),
+        node_type: Some(git_forum::internal::event::NodeType::Comment),
+        ..Event::default()
+    }
+}
+
+fn state_event(thread_id: &str, new_state: &str, ts_offset_min: i64) -> Event {
+    Event {
+        thread_id: thread_id.into(),
+        event_type: EventType::State,
+        created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+            + chrono::Duration::minutes(ts_offset_min),
+        actor: "human/alice".into(),
+        new_state: Some(new_state.into()),
+        ..Event::default()
+    }
+}
+
+#[test]
+fn migrate_strict_surfaces_invalid_state_event_as_warning() {
+    // SPEC-3.0 §8 + task item 7: a malformed legacy event (here, a
+    // state event with an unparseable new_state) does NOT abort
+    // migration, but it MUST surface as a warning instead of being
+    // silently dropped.
+    use std::process::Command;
+    let (repo, git, _paths) = setup();
+    let id = id_alloc::alloc_thread_id_with_nonce(
+        ThreadKind::Rfc,
+        "human/alice",
+        "Strict",
+        "2026-01-01T00:00:00Z",
+        &[3, 3, 3, 3, 3, 3, 3, 3],
+    );
+    event::write_event(&git, &create_event(&id, ThreadKind::Rfc, "Strict")).unwrap();
+    // `xyz-not-a-state` parses neither as canonical 3.0 nor as any
+    // 1.x synonym → InvalidStateValue under strict replay.
+    event::write_event(&git, &state_event(&id, "xyz-not-a-state", 1)).unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_git-forum");
+    let out = Command::new(bin)
+        .current_dir(repo.path())
+        .args(["migrate", "--to", "3.0"])
+        .output()
+        .expect("git-forum migrate should run");
+    assert!(
+        out.status.success(),
+        "migration MUST succeed even with a malformed event;\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("warning:") && stderr.contains(&id) && stderr.contains("xyz-not-a-state"),
+        "strict replay must surface the malformed state value as a warning:\n{stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("[migrated]"),
+        "thread should still appear as migrated:\n{stdout}"
+    );
+}
+
+#[test]
+fn migrate_with_missing_facet_set_succeeds_for_1x_chain() {
+    // Task item 7 / objection `efe64dba`: a 1.x chain has no
+    // facet_set event by design. Migration MUST succeed and infer
+    // category/tags from the legacy kind. The surface is an
+    // informational `note:` line, NOT a `warning:` line.
+    use std::process::Command;
+    let (repo, git, _paths) = setup();
+    let id = id_alloc::alloc_thread_id_with_nonce(
+        ThreadKind::Issue,
+        "human/alice",
+        "Pre-2.0",
+        "2026-01-01T00:00:00Z",
+        &[4, 4, 4, 4, 4, 4, 4, 4],
+    );
+    // Pure 1.x chain: just a create event + a comment. No facet_set
+    // anywhere — `state.lifecycle_explicit` stays false.
+    event::write_event(&git, &create_event(&id, ThreadKind::Issue, "Pre-2.0")).unwrap();
+    event::write_event(&git, &say_event(&id, "a comment", 1)).unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_git-forum");
+    let out = Command::new(bin)
+        .current_dir(repo.path())
+        .args(["migrate", "--to", "3.0"])
+        .output()
+        .expect("git-forum migrate should run");
+    assert!(
+        out.status.success(),
+        "1.x chain (no facet_set) MUST migrate successfully;\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("note:") && stderr.contains(&id) && stderr.contains("inferred"),
+        "missing facet_set should produce an inferred-metadata `note:`:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("warning:"),
+        "missing facet_set must NOT be surfaced as a warning (objection efe64dba):\n{stderr}"
+    );
+
+    // Sanity: the projected snapshot has the expected category/tags.
+    let doc = git_forum::internal::snapshot::read_snapshot(&git, &id)
+        .expect("post-migrate read_snapshot must succeed");
+    assert_eq!(doc.snapshot.category, "task");
+    assert_eq!(doc.snapshot.status, "open");
+    assert!(doc.snapshot.tags.iter().any(|t| t == "bug"));
+}

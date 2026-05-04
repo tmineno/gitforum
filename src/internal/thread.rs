@@ -814,6 +814,20 @@ pub fn replay_thread_strict(
     replay_strict(&events)
 }
 
+/// Like [`replay_thread_strict`], but reads events from a caller-
+/// supplied rev (typically a captured tip OID) instead of resolving
+/// the live thread ref. Used by migrate so the strict replay walks
+/// the same chain that the eventual CAS write will guard against —
+/// `replay_thread_strict` against the live ref would re-introduce
+/// the read/write race fixed by objection `e630f01f`.
+pub fn replay_thread_strict_at(
+    git: &GitOps,
+    start_rev: &str,
+) -> ForumResult<(ThreadState, Vec<StrictReplayIssue>)> {
+    let events = event::load_thread_events_at(git, start_rev)?;
+    replay_strict(&events)
+}
+
 /// Resolve a node reference across all threads.
 ///
 /// Exact matches are preferred. If there is no exact match, a unique prefix
