@@ -44,7 +44,7 @@ pub struct ShorthandSayArgs {
     pub edit: bool,
     pub reply_to: Option<String>,
     pub as_actor: Option<String>,
-    pub node_type: NodeType,
+    pub kind: NodeKind,
     pub force: bool,
 }
 
@@ -58,7 +58,7 @@ pub fn run(args: ShorthandSayArgs, ctx: &Context) -> Result<(), ForumError> {
         args.edit,
         args.reply_to,
         args.as_actor,
-        args.node_type,
+        args.kind,
         args.force,
         ctx.clock.as_ref(),
     )
@@ -73,7 +73,7 @@ pub fn run_shorthand_say(
     edit: bool,
     reply_to: Option<String>,
     as_actor: Option<String>,
-    node_type: NodeType,
+    kind: NodeKind,
     force: bool,
     clock: &dyn Clock,
 ) -> Result<(), ForumError> {
@@ -86,18 +86,19 @@ pub fn run_shorthand_say(
         body,
         body_file,
         edit,
-        &format!("Compose a {node_type} node"),
+        &format!("Compose a {} node", node_kind_label(kind)),
     )?;
 
-    // Operation check is keyed on the v2 ThreadStatus + NodeType. The
-    // mixed-chain replay reader produces a `ThreadState` that satisfies
-    // both shapes during the Phase 2 cutover window.
+    // Operation check is still keyed on the v2 ThreadStatus + NodeType.
+    // Project the SPEC-3.0 NodeKind back into the four canonical NodeType
+    // variants for policy lookup; the conversion is internal to this
+    // helper so main.rs stays free of `internal::event` imports.
+    let policy_node_type = node_kind_to_policy_type(kind);
     let state = thread::replay_thread(&git, thread_id)?;
-    let violations = operation_check::check_say(&policy, state.status.as_str(), node_type);
+    let violations = operation_check::check_say(&policy, state.status.as_str(), policy_node_type);
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
     let resolved_reply = resolve_reply_to(&git, thread_id, reply_to.as_deref())?;
-    let kind = node_kind_for_type(node_type)?;
     let now = clock.now();
     let node_id = id_alloc::alloc_bare_thread_id(&actor, &body_text, &now.to_rfc3339());
 
@@ -122,7 +123,11 @@ pub fn run_shorthand_say(
         now,
     )?;
 
-    println!("Added {node_type} {}", show::short_oid(&node_id));
+    println!(
+        "Added {} {}",
+        node_kind_label(kind),
+        show::short_oid(&node_id)
+    );
     if let Ok(state) = thread::replay_thread(&git, thread_id) {
         eprintln!(
             "{}",
@@ -268,19 +273,27 @@ pub(crate) fn migrate_legacy_to_snapshot(
     })
 }
 
-/// Map a v2 [`NodeType`] (post-`canonical()` collapse) to the SPEC-3.0
-/// [`NodeKind`]. `claim`/`question`/`summary`/`risk`/`review`/
-/// `evidence`/`alternative`/`assumption` no longer reach this path —
-/// the deprecated CLI arms are deleted in slot 2 — but the canonical
-/// fold still runs in case a legacy migration tool routes through here.
-fn node_kind_for_type(node_type: NodeType) -> Result<NodeKind, ForumError> {
-    match node_type.canonical() {
-        NodeType::Comment => Ok(NodeKind::Comment),
-        NodeType::Approval => Ok(NodeKind::Approval),
-        NodeType::Objection => Ok(NodeKind::Objection),
-        NodeType::Action => Ok(NodeKind::Action),
-        other => Err(ForumError::Config(format!(
-            "node type `{other}` cannot be expressed as a SPEC-3.0 NodeKind"
-        ))),
+/// Project a SPEC-3.0 [`NodeKind`] back to the v2 [`NodeType`]
+/// vocabulary used by `policy.toml`. Phase 2 keeps the policy schema
+/// keyed on NodeType; the conversion is total because the four
+/// canonical NodeKind variants each map 1:1 to the four canonical
+/// NodeType variants. This is the only consumer of `internal::event`
+/// in this module, and it stays internal so main.rs no longer imports
+/// `event::NodeType` (audit grep contract).
+fn node_kind_to_policy_type(kind: NodeKind) -> NodeType {
+    match kind {
+        NodeKind::Comment => NodeType::Comment,
+        NodeKind::Approval => NodeType::Approval,
+        NodeKind::Objection => NodeType::Objection,
+        NodeKind::Action => NodeType::Action,
+    }
+}
+
+fn node_kind_label(kind: NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Comment => "comment",
+        NodeKind::Approval => "approval",
+        NodeKind::Objection => "objection",
+        NodeKind::Action => "action",
     }
 }

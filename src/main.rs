@@ -31,10 +31,10 @@ use git_forum::internal::commands::verify;
 use git_forum::internal::commands::Context;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::error::ForumError;
-use git_forum::internal::event::NodeType;
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::lint_emit::{self, LintEmitter};
+use git_forum::internal::node::NodeKind;
 use git_forum::internal::policy::Policy;
 use git_forum::internal::tui as forum_tui;
 
@@ -620,9 +620,9 @@ enum NodeCmd {
     /// Add a typed node to a thread
     Add {
         thread_id: String,
-        /// Node type (claim, question, objection, evidence, summary, action, risk, review, alternative, assumption)
+        /// Node type (comment, approval, objection, action; legacy aliases collapse)
         #[arg(long = "type", value_name = "TYPE")]
-        node_type: NodeType,
+        node_type: String,
         /// Node body (positional)
         #[arg(allow_hyphen_values = true)]
         body_positional: Option<String>,
@@ -1208,7 +1208,7 @@ fn main() -> Result<(), ForumError> {
             edit,
             reply_to,
             as_actor,
-            NodeType::Comment,
+            NodeKind::Comment,
             force,
             &clock,
         )?,
@@ -1229,7 +1229,7 @@ fn main() -> Result<(), ForumError> {
             edit,
             reply_to,
             as_actor,
-            NodeType::Objection,
+            NodeKind::Objection,
             force,
             &clock,
         )?,
@@ -1250,7 +1250,7 @@ fn main() -> Result<(), ForumError> {
             edit,
             reply_to,
             as_actor,
-            NodeType::Action,
+            NodeKind::Action,
             force,
             &clock,
         )?,
