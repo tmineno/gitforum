@@ -836,6 +836,29 @@ pub fn predicted_token_map(ids: &[String]) -> BTreeMap<String, String> {
 
 // ---------- v→3.0 snapshot bridge ----------
 
+/// SPEC-3.0 §8.3 canonical-tag augmentation by **legacy kind**, which
+/// is finer-grained than the lifecycle augmentation in
+/// `thread_new::augment_tags_for_lifecycle`. `Lifecycle::Execution`
+/// collapses `bug`/`issue`/`task`/`job`, so a lifecycle-only mapping
+/// cannot distinguish a `bug`-source thread from a plain `task`.
+///
+/// Migration uses the legacy kind to recover the §8.3 canonical tag:
+/// - `Issue` (covers v1 `bug`/`issue`/`ASK-*`) → `Some("bug")`
+/// - `Dec` (covers v1 `dec`/`record`/`DEC-*`) → `Some("decision")`
+/// - `Rfc` and `Task` → `None` (no canonical augmentation; the source
+///   kind is already the category itself)
+///
+/// Migration-only helper: non-migrate code paths see SPEC-3.0
+/// snapshots already and do not need legacy-kind awareness
+/// (ADR-011 Decision 3).
+pub fn legacy_kind_to_canonical_tag(kind: ThreadKind) -> Option<&'static str> {
+    match kind {
+        ThreadKind::Issue => Some("bug"),
+        ThreadKind::Dec => Some("decision"),
+        ThreadKind::Rfc | ThreadKind::Task => None,
+    }
+}
+
 /// Read a legacy event-chain thread via the mixed-chain replay reader
 /// and project the resulting state back into a SPEC-3.0
 /// [`ThreadDocument`]. The migrate command uses this as its v→3.0
@@ -843,15 +866,52 @@ pub fn predicted_token_map(ids: &[String]) -> BTreeMap<String, String> {
 /// Decision 3 — only the migrate command may consume legacy
 /// representations). Phase 3 will wire this into `run_arm` as the
 /// v→3.0 migrator body.
+///
+/// Per SPEC-3.0 §8.1 step 4 (and task `9635buy0` item 5), the
+/// projected snapshot's `status` is the target category's
+/// `initial_status` from `CategoryRegistry::built_in()`, NOT the
+/// replayed legacy final status. Migration is intentionally lossy on
+/// state: a closed v1 RFC migrates to `draft`, a working v2 task to
+/// `open`, and so on. The legacy events themselves remain reachable
+/// as ancestor commits and in `legacy/events.ndjson`.
+///
+/// Per SPEC-3.0 §8.3 (and task item 6), the projected `tags` include
+/// canonical augmentation by **legacy kind** (`bug` for `bug`/`issue`,
+/// `decision` for `dec`/`record`). The lifecycle-only augmentation is
+/// not enough because `Lifecycle::Execution` collapses `bug` and
+/// `task` into the same value.
 #[allow(dead_code)]
-pub(super) fn migrate_legacy_to_snapshot(
+pub fn migrate_legacy_to_snapshot(
     git: &GitOps,
     thread_id: &str,
 ) -> Result<ThreadDocument, ForumError> {
     let state = thread::replay_thread(git, thread_id)?;
     let mut tags = state.tags.clone();
+    // Lifecycle-derived augmentation handles `Record → decision` for
+    // chains where the kind has already been collapsed; the
+    // kind-keyed helper below covers the `Execution` ambiguity that
+    // the lifecycle-only map cannot resolve.
     super::thread_new::augment_tags_for_lifecycle(state.lifecycle, &mut tags);
+    if let Some(canon) = legacy_kind_to_canonical_tag(state.kind) {
+        if !tags.iter().any(|t| t == canon) {
+            tags.push(canon.into());
+        }
+    }
     let category = super::thread_new::lifecycle_to_category(state.lifecycle).to_string();
+    // SPEC-3.0 §8.1 step 4: target-category `initial_status`, not
+    // the replayed legacy final status. `CategoryRegistry::built_in()`
+    // is the right registry here (NOT `policy.effective_registry()`):
+    // at migration time a v2 `policy.toml` may not parse under the
+    // v3 parser, and the v3 built-ins are the authoritative migration
+    // target by SPEC.
+    let initial_status = super::super::policy::CategoryRegistry::built_in()
+        .get(&category)
+        .map(|def| def.initial_status.clone())
+        .ok_or_else(|| {
+            ForumError::Config(format!(
+                "migration target category `{category}` not in built-in registry"
+            ))
+        })?;
 
     let nodes: Vec<NodeWithBody> = state
         .nodes
@@ -923,7 +983,7 @@ pub(super) fn migrate_legacy_to_snapshot(
             id: state.id,
             title: state.title,
             category,
-            status: state.status.as_str().to_string(),
+            status: initial_status,
             tags,
             created_at: state.created_at,
             created_by: state.created_by.clone(),
@@ -1165,5 +1225,19 @@ requires = []
         assert_eq!(map.get("a7f3b2x1").map(String::as_str), Some("a7f3b2x1"));
         let derived = map.get("RFC-0001").unwrap();
         assert!(id_alloc::is_bare_token(derived));
+    }
+
+    // SPEC-3.0 §8.3 canonical-tag table — kind-keyed augmentation.
+    #[test]
+    fn legacy_kind_to_canonical_tag_covers_spec_table() {
+        assert_eq!(legacy_kind_to_canonical_tag(ThreadKind::Issue), Some("bug"));
+        assert_eq!(
+            legacy_kind_to_canonical_tag(ThreadKind::Dec),
+            Some("decision")
+        );
+        // RFC and Task source kinds carry no canonical extra tag —
+        // the category itself is the classification.
+        assert_eq!(legacy_kind_to_canonical_tag(ThreadKind::Rfc), None);
+        assert_eq!(legacy_kind_to_canonical_tag(ThreadKind::Task), None);
     }
 }
