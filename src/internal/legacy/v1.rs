@@ -5,11 +5,7 @@
 //! these functions instead of duplicating the rule bodies inline; tests
 //! at the bottom of this module pin every rule.
 
-use std::path::Path;
-
 use super::super::event::{Event, Lifecycle, NodeType, ThreadKind};
-use super::super::lint_emit::LintEmitter;
-use super::super::policy::{FacetPredicate, GuardRule, Policy};
 use super::super::workflow::SPEC;
 
 // =============================================================================
@@ -76,145 +72,7 @@ pub fn lifecycle_for_legacy_kind(kind: ThreadKind) -> Lifecycle {
 }
 
 // =============================================================================
-// 3. policy.toml shape rewrites
-// =============================================================================
-
-/// Apply every 1.x → 2.0 `policy.toml` rewrite in load order, emitting
-/// deprecation warnings through `emitter`.
-///
-/// Rewrites applied (in order):
-///   1. Drop the removed `AtLeastOneSummary` rule from every guard's
-///      `requires` list (ADR-006).
-///   2. Translate `kind:from->to` legacy guard scopes to
-///      `lifecycle=...` predicates (SPEC-2.0 §7.1 / §10.4).
-///   3. Translate `creation_rules.<kind>` entries to
-///      `creation_rules.<lifecycle>.tag.<conventional-tag>` overlays
-///      (SPEC-2.0 §2.3.3 / §7.2 / §10.4).
-pub fn rewrite_legacy_policy(policy: &mut Policy, emitter: &LintEmitter, path: &Path) {
-    strip_removed_predicates(policy);
-    for warning in resolve_guard_scopes(policy) {
-        emitter.emit("legacy_guard_scope", Some(path), None, &warning);
-    }
-    for warning in translate_legacy_creation_rules(policy) {
-        emitter.emit("legacy_creation_rules", Some(path), None, &warning);
-    }
-}
-
-/// Map a bare 1.x kind prefix used in legacy `kind:from->to` guard scopes
-/// onto its 2.0 lifecycle. Returns `None` for unknown prefixes; callers
-/// surface those as parse errors per SPEC-2.0 §7.1.
-pub fn legacy_kind_prefix_to_lifecycle(prefix: &str) -> Option<Lifecycle> {
-    match prefix {
-        "issue" | "task" => Some(Lifecycle::Execution),
-        "rfc" => Some(Lifecycle::Proposal),
-        "dec" => Some(Lifecycle::Record),
-        _ => None,
-    }
-}
-
-/// ADR-006: drop `AtLeastOneSummary` entries from every guard's
-/// `requires` list. The predicate is no longer enforced; stripping at
-/// load time keeps 1.x policies loadable while ensuring the runtime
-/// never tries to evaluate the removed rule.
-fn strip_removed_predicates(policy: &mut Policy) {
-    for guard in &mut policy.guards {
-        guard
-            .requires
-            .retain(|r| !matches!(r, GuardRule::AtLeastOneSummary));
-    }
-}
-
-/// Parse the predicate scope and transition from each guard's `on`
-/// field. Normalises 1.x state names so guards loaded from legacy
-/// `policy.toml` line up with the 2.0 state names produced by the
-/// unified state machine (§3.1). Legacy `kind:from->to` forms
-/// auto-rewrite to `lifecycle=<...>` predicates with a warning.
-fn resolve_guard_scopes(policy: &mut Policy) -> Vec<String> {
-    let mut warnings = Vec::new();
-    for guard in &mut policy.guards {
-        match super::super::policy::parse_guard_on(&guard.on) {
-            Ok((predicate, transition, warning)) => {
-                guard.predicate = predicate;
-                guard.transition = super::super::policy::normalize_transition_str(&transition);
-                if let Some(w) = warning {
-                    warnings.push(w);
-                }
-            }
-            Err(_) => {
-                // Lint surfaces parse errors with file context; the
-                // predicate falls back to Always so the transition
-                // string still matches and `lint_policy` can report.
-                guard.predicate = FacetPredicate::Always;
-                guard.transition = guard
-                    .on
-                    .split_once(':')
-                    .map(|(_, t)| super::super::policy::normalize_transition_str(t))
-                    .unwrap_or_else(|| super::super::policy::normalize_transition_str(&guard.on));
-            }
-        }
-    }
-    warnings
-}
-
-/// SPEC-2.0 §2.3.3 / §7.2 / §10.4: rewrite any legacy kind-keyed
-/// `creation_rules.<kind>` entry into the equivalent
-/// `creation_rules.<lifecycle>.tag.<conventional-tag>` overlay so
-/// existing 1.x policy.toml files keep their semantics post-migration.
-/// Returns the warnings emitted.
-fn translate_legacy_creation_rules(policy: &mut Policy) -> Vec<String> {
-    let mut warnings = Vec::new();
-    let legacy_keys: Vec<String> = policy
-        .creation_rules
-        .keys()
-        .filter(|k| matches!(k.as_str(), "rfc" | "issue" | "dec" | "task"))
-        .cloned()
-        .collect();
-    for key in legacy_keys {
-        let Some(rules) = policy.creation_rules.remove(&key) else {
-            continue;
-        };
-        let (lifecycle, conventional_tag): (&str, Option<&str>) = match key.as_str() {
-            "rfc" => ("proposal", Some("cross-cutting")),
-            "issue" => ("execution", Some("bug")),
-            "task" => ("execution", Some("task")),
-            "dec" => ("record", None),
-            _ => unreachable!(),
-        };
-        let entry = policy
-            .creation_rules
-            .entry(lifecycle.to_string())
-            .or_default();
-        match conventional_tag {
-            Some(tag) => {
-                let target = format!("creation_rules.{lifecycle}.tag.{tag} (SPEC-2.0 §2.3.3)");
-                warnings.push(format!("creation_rules.{key}: rewritten to {target}"));
-                entry.tag.insert(tag.to_string(), rules.base);
-                // Preserve any nested tag overlays the legacy
-                // entry happened to carry.
-                for (t, r) in rules.tag {
-                    entry.tag.insert(t, r);
-                }
-            }
-            None => {
-                warnings.push(format!(
-                    "creation_rules.{key}: rewritten to creation_rules.{lifecycle}"
-                ));
-                if entry.base.body_sections.is_empty() {
-                    entry.base = rules.base;
-                } else {
-                    // Don't overwrite an explicit lifecycle entry; tag overlays only.
-                }
-                for (t, r) in rules.tag {
-                    entry.tag.insert(t, r);
-                }
-            }
-        }
-    }
-    warnings
-}
-
-// =============================================================================
-// 4. NodeType canonicalisation
+// 3. NodeType canonicalisation
 // =============================================================================
 
 /// SPEC-2.0 §2.5 / §10.1 — project any `NodeType` to its 2.0 canonical
@@ -376,26 +234,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn legacy_kind_prefix_lookup() {
-        assert_eq!(
-            legacy_kind_prefix_to_lifecycle("rfc"),
-            Some(Lifecycle::Proposal)
-        );
-        assert_eq!(
-            legacy_kind_prefix_to_lifecycle("issue"),
-            Some(Lifecycle::Execution)
-        );
-        assert_eq!(
-            legacy_kind_prefix_to_lifecycle("task"),
-            Some(Lifecycle::Execution)
-        );
-        assert_eq!(
-            legacy_kind_prefix_to_lifecycle("dec"),
-            Some(Lifecycle::Record)
-        );
-        assert_eq!(legacy_kind_prefix_to_lifecycle("nope"), None);
-    }
+    // legacy_kind_prefix_to_lifecycle test removed: the helper is no
+    // longer used (3.0 policy parser rejects scope-string guards
+    // entirely instead of translating kind prefixes).
 
     #[test]
     fn canonical_collapses_legacy_to_comment() {

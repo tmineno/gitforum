@@ -34,7 +34,8 @@ pub fn run_evidence_add(
     let actor = resolve_actor(as_actor, &git);
     let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
     let state = thread::replay_thread(&git, &thread_id)?;
-    let violations = operation_check::check_evidence(&policy, state.status.as_str());
+    let category = crate::internal::policy::category_for_state(&state);
+    let violations = operation_check::check_evidence(&policy, category, state.status.as_str());
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
     let mut doc = snapshot::read_snapshot(&git, &thread_id)?;

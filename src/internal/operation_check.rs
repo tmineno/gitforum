@@ -1,13 +1,18 @@
-use super::event::{normalize_state_name, Lifecycle, NodeType};
+//! SPEC-3.0 §3.3 operation checks: per-category creation / allowed-node-
+//! type / revise / evidence rules.
+//!
+//! 3.0 operation checks are category-keyed (no lifecycle / facet
+//! selectors). Callers pass the thread's `category` (`"rfc"` or
+//! `"task"`) along with the relevant status / node kind for dispatch.
+
+use super::event::{normalize_state_name, NodeType};
+use super::node::NodeKind;
 use super::policy::Policy;
 
-/// State-name allow-list match that tolerates 1.x↔2.0 name mismatches.
-///
-/// State events store 2.0 canonical names (per `state_change`), but
-/// user policies may still carry 1.x names (`under-review`, `reviewing`,
-/// `closed`, `accepted`, `implementing`, `designing`, `pending`).
-/// Normalizing both sides via `normalize_state_name` lets either form
-/// in the policy match either form on the live thread.
+/// State-name allow-list match that tolerates 1.x↔2.0 name mismatches
+/// inherited from migrated chains. State stored in 3.0 snapshots is
+/// always 2.0-canonical, but the helper preserves migration tolerance
+/// for legacy fixtures.
 fn allow_list_contains(allow: &[String], status: &str) -> bool {
     let target = normalize_state_name(status);
     allow
@@ -15,12 +20,6 @@ fn allow_list_contains(allow: &[String], status: &str) -> bool {
         .any(|s| normalize_state_name(s.as_str()) == target)
 }
 
-/// Render a policy allow-list for human-readable error hints, using 2.0
-/// canonical state names with deduplication. Without this, hints can
-/// echo a legacy-only allow-list and read as "evidence not allowed in
-/// state 'review'; allowed in: ..., reviewing, ..." — which lists the
-/// user's current state under a different name and reads as
-/// self-contradictory.
 fn render_allow_list_for_hint(allow: &[String]) -> String {
     let mut seen: Vec<&str> = Vec::new();
     for entry in allow {
@@ -32,62 +31,76 @@ fn render_allow_list_for_hint(allow: &[String]) -> String {
     seen.join(", ")
 }
 
-/// SPEC-2.0 §7.2 / RFC-nm3d31yk Track D — table-driven dispatch over the
-/// four operation check kinds. Each variant carries the context the
-/// corresponding rule-table lookup needs.
+/// Map a v2 [`NodeType`] to its 3.0 [`NodeKind`] for policy dispatch.
+fn node_type_to_kind(nt: NodeType) -> NodeKind {
+    match nt.canonical() {
+        NodeType::Comment => NodeKind::Comment,
+        NodeType::Approval => NodeKind::Approval,
+        NodeType::Objection => NodeKind::Objection,
+        NodeType::Action => NodeKind::Action,
+        // canonical() always returns one of the four, but be safe.
+        _ => NodeKind::Comment,
+    }
+}
+
+fn node_kind_str(k: NodeKind) -> &'static str {
+    match k {
+        NodeKind::Comment => "comment",
+        NodeKind::Approval => "approval",
+        NodeKind::Objection => "objection",
+        NodeKind::Action => "action",
+    }
+}
+
+/// SPEC-3.0 §3.3 — table-driven dispatch over the four operation check
+/// kinds. Each variant carries the category-scoped context the
+/// corresponding rule lookup needs.
 #[derive(Debug)]
 pub enum Op<'a> {
-    /// New thread under creation. Resolution is most-specific-match
-    /// over `creation_rules.<lifecycle>` ± `.tag.<name>` (SPEC-2.0 §7.2).
+    /// New thread under creation. Resolution: `categories.<C>.creation`.
     Create {
-        lifecycle: Lifecycle,
-        tags: &'a [String],
+        category: &'a str,
         body: Option<&'a str>,
     },
-    /// Adding a node (`say`) to an existing thread.
+    /// Adding a node to an existing thread.
     Say {
+        category: &'a str,
         status: &'a str,
         node_type: NodeType,
     },
     /// Revising the body or a node body of an existing thread.
-    Revise { status: &'a str, is_body: bool },
+    Revise {
+        category: &'a str,
+        status: &'a str,
+        is_body: bool,
+    },
     /// Attaching evidence to an existing thread.
-    Evidence { status: &'a str },
+    Evidence { category: &'a str, status: &'a str },
 }
 
-/// SPEC-2.0 §7.2 unified entry point: one operation check function
-/// dispatches to the rule-table lookup for the requested op kind.
-///
-/// Preconditions: `policy` is loaded; `op` carries the operation
-/// context (lifecycle / tags / status / etc. depending on the variant).
-/// Postconditions: returns the list of violations the per-op rule
-/// table produced; an empty vec means all checks pass.
 pub fn check_op(policy: &Policy, op: Op<'_>) -> Vec<OperationViolation> {
     match op {
-        Op::Create {
-            lifecycle,
-            tags,
-            body,
-        } => check_create_inner(policy, lifecycle, tags, body),
-        Op::Say { status, node_type } => check_say_inner(policy, status, node_type),
-        Op::Revise { status, is_body } => check_revise_inner(policy, status, is_body),
-        Op::Evidence { status } => check_evidence_inner(policy, status),
+        Op::Create { category, body } => check_create_inner(policy, category, body),
+        Op::Say {
+            category,
+            status,
+            node_type,
+        } => check_say_inner(policy, category, status, node_type),
+        Op::Revise {
+            category,
+            status,
+            is_body,
+        } => check_revise_inner(policy, category, status, is_body),
+        Op::Evidence { category, status } => check_evidence_inner(policy, category, status),
     }
 }
 
-/// Severity of an operation check violation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
     Error,
     Warning,
 }
 
-/// A violation detected by an operation check.
-///
-/// Preconditions: none.
-/// Postconditions: describes one violation with rule name, reason, optional hint and fix command.
-/// Failure modes: none (value type).
-/// Side effects: none.
 #[derive(Debug, Clone)]
 pub struct OperationViolation {
     pub severity: Severity,
@@ -97,28 +110,23 @@ pub struct OperationViolation {
     pub fix_command: Option<String>,
 }
 
-/// Backward-compatibility shim. Prefer `check_op(Op::Create { .. })`
-/// for new call sites; this thin wrapper exists so legacy callers keep
-/// compiling during the §7.2 dispatch transition.
 pub fn check_create(
     policy: &Policy,
-    lifecycle: Lifecycle,
-    tags: &[String],
+    category: &str,
     _title: &str,
     body: Option<&str>,
 ) -> Vec<OperationViolation> {
-    check_create_inner(policy, lifecycle, tags, body)
+    check_create_inner(policy, category, body)
 }
 
 fn check_create_inner(
     policy: &Policy,
-    lifecycle: Lifecycle,
-    tags: &[String],
+    category: &str,
     body: Option<&str>,
 ) -> Vec<OperationViolation> {
     let mut violations = Vec::new();
 
-    let Some(rules) = policy.resolve_creation_rules(lifecycle, tags) else {
+    let Some(rules) = policy.creation_rules_for(category) else {
         return violations;
     };
 
@@ -126,11 +134,10 @@ fn check_create_inner(
         violations.push(OperationViolation {
             severity: Severity::Error,
             rule: "required_body".into(),
-            reason: format!("{lifecycle} threads require a body"),
+            reason: format!("category `{category}` threads require a body"),
             hint: Some("provide --body or --body-file".into()),
             fix_command: None,
         });
-        // If body is entirely missing, skip section checks
         return violations;
     }
 
@@ -151,7 +158,6 @@ fn check_create_inner(
                         fix_command: None,
                     });
                 } else {
-                    // Check for empty section
                     let is_empty = found_sections
                         .iter()
                         .any(|(text, empty)| text.to_lowercase() == required_lower && *empty);
@@ -172,53 +178,87 @@ fn check_create_inner(
     violations
 }
 
-/// Backward-compatibility shim — see `check_op`.
-pub fn check_say(policy: &Policy, status: &str, node_type: NodeType) -> Vec<OperationViolation> {
-    check_say_inner(policy, status, node_type)
+pub fn check_say(
+    policy: &Policy,
+    category: &str,
+    status: &str,
+    node_type: NodeType,
+) -> Vec<OperationViolation> {
+    check_say_inner(policy, category, status, node_type)
 }
 
-fn check_say_inner(policy: &Policy, status: &str, node_type: NodeType) -> Vec<OperationViolation> {
+fn check_say_inner(
+    policy: &Policy,
+    category: &str,
+    status: &str,
+    node_type: NodeType,
+) -> Vec<OperationViolation> {
     let mut violations = Vec::new();
+    let target_kind = node_type_to_kind(node_type);
+    let target_status = normalize_state_name(status);
 
-    if policy.node_rules.is_empty() {
+    // 3.0 lookup is direct on the canonical status name; allow_list_contains
+    // remains in case migrated fixtures still carry 1.x state names.
+    let category_policy = policy.category(category);
+    let Some(cat) = category_policy else {
         return violations;
-    }
+    };
 
-    let target = normalize_state_name(status);
-    let matched = policy
-        .node_rules
+    // Find an allowed_node_types entry whose key normalizes to target.
+    let entry = cat
+        .allowed_node_types
         .iter()
-        .find(|(key, _)| normalize_state_name(key.as_str()) == target);
-    if let Some((_, allowed)) = matched {
-        if !allowed.contains(&node_type) {
+        .find(|(k, _)| normalize_state_name(k.as_str()) == target_status);
+    if let Some((_, allowed)) = entry {
+        if !allowed.contains(&target_kind) {
             violations.push(OperationViolation {
                 severity: Severity::Error,
                 rule: "node_type_restricted".into(),
-                reason: format!("{node_type} nodes are not allowed in state '{target}'"),
+                reason: format!(
+                    "{} nodes are not allowed in state '{target_status}'",
+                    node_kind_str(target_kind)
+                ),
                 hint: if allowed.is_empty() {
-                    Some(format!("no node types are allowed in state '{target}'"))
+                    Some(format!(
+                        "no node types are allowed in state '{target_status}'"
+                    ))
                 } else {
-                    let allowed_str: Vec<String> = allowed.iter().map(|n| n.to_string()).collect();
-                    Some(format!("allowed in '{target}': {}", allowed_str.join(", ")))
+                    let allowed_str: Vec<String> = allowed
+                        .iter()
+                        .map(|k| node_kind_str(*k).to_string())
+                        .collect();
+                    Some(format!(
+                        "allowed in '{target_status}': {}",
+                        allowed_str.join(", ")
+                    ))
                 },
                 fix_command: None,
             });
         }
     }
-    // If the state is not listed in node_rules, all node types are allowed
+    // If the status is not listed, all node types are allowed.
 
     violations
 }
 
-/// Backward-compatibility shim — see `check_op`.
-pub fn check_revise(policy: &Policy, status: &str, is_body: bool) -> Vec<OperationViolation> {
-    check_revise_inner(policy, status, is_body)
+pub fn check_revise(
+    policy: &Policy,
+    category: &str,
+    status: &str,
+    is_body: bool,
+) -> Vec<OperationViolation> {
+    check_revise_inner(policy, category, status, is_body)
 }
 
-fn check_revise_inner(policy: &Policy, status: &str, is_body: bool) -> Vec<OperationViolation> {
+fn check_revise_inner(
+    policy: &Policy,
+    category: &str,
+    status: &str,
+    is_body: bool,
+) -> Vec<OperationViolation> {
     let mut violations = Vec::new();
 
-    let Some(rules) = &policy.revise_rules else {
+    let Some(rules) = policy.revise_rules_for(category) else {
         return violations;
     };
 
@@ -228,7 +268,6 @@ fn check_revise_inner(policy: &Policy, status: &str, is_body: bool) -> Vec<Opera
         &rules.allow_node_revise
     };
 
-    // Empty list means no restrictions configured for this target
     if allowed.is_empty() {
         return violations;
     }
@@ -251,15 +290,14 @@ fn check_revise_inner(policy: &Policy, status: &str, is_body: bool) -> Vec<Opera
     violations
 }
 
-/// Backward-compatibility shim — see `check_op`.
-pub fn check_evidence(policy: &Policy, status: &str) -> Vec<OperationViolation> {
-    check_evidence_inner(policy, status)
+pub fn check_evidence(policy: &Policy, category: &str, status: &str) -> Vec<OperationViolation> {
+    check_evidence_inner(policy, category, status)
 }
 
-fn check_evidence_inner(policy: &Policy, status: &str) -> Vec<OperationViolation> {
+fn check_evidence_inner(policy: &Policy, category: &str, status: &str) -> Vec<OperationViolation> {
     let mut violations = Vec::new();
 
-    let Some(rules) = &policy.evidence_rules else {
+    let Some(rules) = policy.evidence_rules_for(category) else {
         return violations;
     };
 
@@ -284,17 +322,13 @@ fn check_evidence_inner(policy: &Policy, status: &str) -> Vec<OperationViolation
     violations
 }
 
-/// Extract heading texts from markdown body.
-/// Returns vec of (heading_text, is_empty) tuples.
-/// A section is considered empty if there's no non-whitespace content between it and the next heading (or EOF).
 fn extract_heading_texts(body: &str) -> Vec<(String, bool)> {
     let lines: Vec<&str> = body.lines().collect();
-    let mut headings: Vec<(String, usize, usize)> = Vec::new(); // (text, line_idx, level)
+    let mut headings: Vec<(String, usize, usize)> = Vec::new();
 
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix('#') {
-            // Count leading # characters and extract text
             let mut hashes = 1;
             let mut chars = rest.chars();
             while chars.as_str().starts_with('#') {
@@ -312,7 +346,6 @@ fn extract_heading_texts(body: &str) -> Vec<(String, bool)> {
         .iter()
         .enumerate()
         .map(|(idx, (text, line_idx, level))| {
-            // Find the next heading at the same or higher level (lower number)
             let next_heading_line = headings[idx + 1..]
                 .iter()
                 .find(|(_, _, l)| *l <= *level)
@@ -326,7 +359,6 @@ fn extract_heading_texts(body: &str) -> Vec<(String, bool)> {
         .collect()
 }
 
-/// Format operation violations for display on stderr.
 pub fn format_violations(violations: &[OperationViolation]) -> String {
     let mut out = String::new();
     for v in violations {
@@ -345,8 +377,6 @@ pub fn format_violations(violations: &[OperationViolation]) -> String {
     out
 }
 
-/// Partition violations and determine whether to proceed.
-/// Returns (has_errors, formatted_output).
 pub fn evaluate_violations(
     violations: &[OperationViolation],
     force: bool,
@@ -361,7 +391,7 @@ pub fn evaluate_violations(
 
     for v in violations {
         let effective_severity = match v.severity {
-            Severity::Error => Severity::Error, // --force never bypasses errors
+            Severity::Error => Severity::Error,
             Severity::Warning if strict && !force => Severity::Error,
             Severity::Warning => Severity::Warning,
         };
@@ -389,368 +419,212 @@ pub fn evaluate_violations(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::internal::policy::{CategoryPolicy, CreationRules, EvidenceRules, ReviseRules};
     use std::collections::HashMap;
 
     fn policy_with_creation_rules() -> Policy {
-        use super::super::policy::{CreationRules, LifecycleCreationRules};
-        let mut creation_rules = HashMap::new();
-        // SPEC-2.0 §7.2: rules keyed by lifecycle, with optional tag overlays.
-        creation_rules.insert(
-            "proposal".into(),
-            LifecycleCreationRules {
-                base: CreationRules {
-                    required_body: true,
-                    body_sections: vec!["Goal".into(), "Non-goals".into(), "Design".into()],
-                },
-                tag: HashMap::new(),
-            },
-        );
-        creation_rules.insert(
-            "execution".into(),
-            LifecycleCreationRules {
-                base: CreationRules {
-                    required_body: false,
-                    body_sections: vec![],
-                },
-                tag: HashMap::new(),
-            },
-        );
-        Policy {
-            creation_rules,
-            ..Default::default()
-        }
+        let mut policy = Policy::default();
+        let rfc = CategoryPolicy {
+            creation: Some(CreationRules {
+                required_body: true,
+                body_sections: vec!["Goal".into(), "Non-goals".into(), "Design".into()],
+            }),
+            ..CategoryPolicy::default()
+        };
+        policy.categories.insert("rfc".into(), rfc);
+        let task = CategoryPolicy {
+            creation: Some(CreationRules {
+                required_body: false,
+                body_sections: vec![],
+            }),
+            ..CategoryPolicy::default()
+        };
+        policy.categories.insert("task".into(), task);
+        policy
     }
 
     #[test]
     fn check_create_rfc_no_body_returns_error() {
         let policy = policy_with_creation_rules();
-        let violations = check_create(
-            &policy,
-            Lifecycle::Proposal,
-            &["cross-cutting".into()],
-            "Test",
-            None,
-        );
-        assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].severity, Severity::Error);
-        assert_eq!(violations[0].rule, "required_body");
+        let v = check_create(&policy, "rfc", "Test", None);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].severity, Severity::Error);
+        assert_eq!(v[0].rule, "required_body");
     }
 
     #[test]
     fn check_create_rfc_empty_body_returns_error() {
         let policy = policy_with_creation_rules();
-        let violations = check_create(
-            &policy,
-            Lifecycle::Proposal,
-            &["cross-cutting".into()],
-            "Test",
-            Some("  "),
-        );
-        assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].severity, Severity::Error);
-        assert_eq!(violations[0].rule, "required_body");
+        let v = check_create(&policy, "rfc", "Test", Some("  "));
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].rule, "required_body");
     }
 
     #[test]
     fn check_create_rfc_missing_sections_returns_warnings() {
         let policy = policy_with_creation_rules();
-        let violations = check_create(
-            &policy,
-            Lifecycle::Proposal,
-            &["cross-cutting".into()],
-            "Test",
-            Some("## Goal\nSome goal text"),
-        );
-        // Missing Non-goals and Design
-        assert_eq!(violations.len(), 2);
-        assert!(violations.iter().all(|v| v.severity == Severity::Warning));
-        assert!(violations.iter().any(|v| v.reason.contains("Non-goals")));
-        assert!(violations.iter().any(|v| v.reason.contains("Design")));
+        let v = check_create(&policy, "rfc", "Test", Some("## Goal\nSome goal text"));
+        assert_eq!(v.len(), 2);
+        assert!(v.iter().all(|x| x.severity == Severity::Warning));
+        assert!(v.iter().any(|x| x.reason.contains("Non-goals")));
+        assert!(v.iter().any(|x| x.reason.contains("Design")));
     }
 
     #[test]
     fn check_create_rfc_all_sections_present() {
         let policy = policy_with_creation_rules();
         let body = "## Goal\ntext\n## Non-goals\ntext\n## Design\ntext";
-        let violations = check_create(
-            &policy,
-            Lifecycle::Proposal,
-            &["cross-cutting".into()],
-            "Test",
-            Some(body),
-        );
-        assert!(violations.is_empty());
+        let v = check_create(&policy, "rfc", "Test", Some(body));
+        assert!(v.is_empty());
     }
 
     #[test]
     fn check_create_rfc_empty_section_returns_warning() {
         let policy = policy_with_creation_rules();
         let body = "## Goal\n\n## Non-goals\ntext\n## Design\ntext";
-        let violations = check_create(
-            &policy,
-            Lifecycle::Proposal,
-            &["cross-cutting".into()],
-            "Test",
-            Some(body),
-        );
-        assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].severity, Severity::Warning);
-        assert_eq!(violations[0].rule, "body_section_empty");
+        let v = check_create(&policy, "rfc", "Test", Some(body));
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].rule, "body_section_empty");
     }
 
     #[test]
-    fn check_create_rfc_section_with_subheadings_not_empty() {
+    fn check_create_task_no_body_allowed() {
         let policy = policy_with_creation_rules();
-        let body =
-            "## Goal\ntext\n## Non-goals\ntext\n## Design\n\n### Option A\nDetails\n\n### Option B\nMore";
-        let violations = check_create(
-            &policy,
-            Lifecycle::Proposal,
-            &["cross-cutting".into()],
-            "Test",
-            Some(body),
-        );
-        assert!(
-            violations.is_empty(),
-            "sub-headings should count as content: {violations:?}"
-        );
-    }
-
-    #[test]
-    fn check_create_issue_no_body_allowed() {
-        let policy = policy_with_creation_rules();
-        let violations = check_create(&policy, Lifecycle::Execution, &["bug".into()], "Bug", None);
-        assert!(violations.is_empty());
+        let v = check_create(&policy, "task", "Bug", None);
+        assert!(v.is_empty());
     }
 
     #[test]
     fn check_create_no_policy_allows_everything() {
         let policy = Policy::default();
-        let violations = check_create(
-            &policy,
-            Lifecycle::Proposal,
-            &["cross-cutting".into()],
-            "Test",
-            None,
-        );
-        assert!(violations.is_empty());
+        let v = check_create(&policy, "rfc", "Test", None);
+        assert!(v.is_empty());
     }
 
     #[test]
-    fn check_create_case_insensitive_heading_match() {
+    fn check_create_unknown_category_allows_everything() {
         let policy = policy_with_creation_rules();
-        let body = "# goal\ntext\n### NON-GOALS\ntext\n## design\ntext";
-        let violations = check_create(
-            &policy,
-            Lifecycle::Proposal,
-            &["cross-cutting".into()],
-            "Test",
-            Some(body),
-        );
-        assert!(violations.is_empty());
+        let v = check_create(&policy, "bogus", "Test", None);
+        assert!(v.is_empty());
+    }
+
+    fn policy_with_node_rules(category: &str, status: &str, kinds: Vec<NodeKind>) -> Policy {
+        let mut allowed = HashMap::new();
+        allowed.insert(status.to_string(), kinds);
+        let cat = CategoryPolicy {
+            allowed_node_types: allowed,
+            ..CategoryPolicy::default()
+        };
+        let mut policy = Policy::default();
+        policy.categories.insert(category.to_string(), cat);
+        policy
     }
 
     #[test]
     fn check_say_allowed() {
-        let mut node_rules = HashMap::new();
-        node_rules.insert(
-            "draft".into(),
-            vec![NodeType::Claim, NodeType::Question, NodeType::Objection],
+        let policy = policy_with_node_rules(
+            "rfc",
+            "draft",
+            vec![NodeKind::Comment, NodeKind::Objection, NodeKind::Action],
         );
-        let policy = Policy {
-            node_rules,
-            ..Default::default()
-        };
-        let violations = check_say(&policy, "draft", NodeType::Claim);
-        assert!(violations.is_empty());
+        let v = check_say(&policy, "rfc", "draft", NodeType::Comment);
+        assert!(v.is_empty());
     }
 
     #[test]
     fn check_say_blocked() {
-        let mut node_rules = HashMap::new();
-        node_rules.insert("accepted".into(), vec![]);
-        let policy = Policy {
-            node_rules,
-            ..Default::default()
-        };
-        let violations = check_say(&policy, "accepted", NodeType::Claim);
-        assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].severity, Severity::Error);
-        assert_eq!(violations[0].rule, "node_type_restricted");
+        let policy = policy_with_node_rules("rfc", "done", vec![]);
+        let v = check_say(&policy, "rfc", "done", NodeType::Comment);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].rule, "node_type_restricted");
     }
 
     #[test]
     fn check_say_unlisted_state_allows_all() {
-        let mut node_rules = HashMap::new();
-        node_rules.insert("accepted".into(), vec![]);
-        let policy = Policy {
-            node_rules,
-            ..Default::default()
-        };
-        // "draft" not listed in node_rules → all allowed
-        let violations = check_say(&policy, "draft", NodeType::Claim);
-        assert!(violations.is_empty());
+        let policy = policy_with_node_rules("rfc", "done", vec![]);
+        // "draft" not listed → all allowed.
+        let v = check_say(&policy, "rfc", "draft", NodeType::Comment);
+        assert!(v.is_empty());
     }
 
     #[test]
     fn check_say_no_policy_allows_all() {
         let policy = Policy::default();
-        let violations = check_say(&policy, "accepted", NodeType::Claim);
-        assert!(violations.is_empty());
+        let v = check_say(&policy, "rfc", "done", NodeType::Comment);
+        assert!(v.is_empty());
+    }
+
+    fn policy_with_revise(
+        category: &str,
+        body_states: Vec<&str>,
+        node_states: Vec<&str>,
+    ) -> Policy {
+        let cat = CategoryPolicy {
+            revise: Some(ReviseRules {
+                allow_body_revise: body_states.into_iter().map(String::from).collect(),
+                allow_node_revise: node_states.into_iter().map(String::from).collect(),
+            }),
+            ..CategoryPolicy::default()
+        };
+        let mut policy = Policy::default();
+        policy.categories.insert(category.to_string(), cat);
+        policy
     }
 
     #[test]
     fn check_revise_body_allowed() {
-        let policy = Policy {
-            revise_rules: Some(super::super::policy::ReviseRules {
-                allow_body_revise: vec!["draft".into(), "proposed".into()],
-                allow_node_revise: vec!["draft".into()],
-            }),
-            ..Default::default()
-        };
-        let violations = check_revise(&policy, "draft", true);
-        assert!(violations.is_empty());
+        let policy = policy_with_revise("rfc", vec!["draft", "open"], vec!["draft"]);
+        let v = check_revise(&policy, "rfc", "draft", true);
+        assert!(v.is_empty());
     }
 
     #[test]
     fn check_revise_body_blocked() {
-        let policy = Policy {
-            revise_rules: Some(super::super::policy::ReviseRules {
-                allow_body_revise: vec!["draft".into()],
-                allow_node_revise: vec![],
-            }),
-            ..Default::default()
-        };
-        let violations = check_revise(&policy, "accepted", true);
-        assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].severity, Severity::Error);
+        let policy = policy_with_revise("rfc", vec!["draft"], vec![]);
+        let v = check_revise(&policy, "rfc", "done", true);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].rule, "revise_restricted");
     }
 
     #[test]
     fn check_revise_no_policy_allows_all() {
         let policy = Policy::default();
-        let violations = check_revise(&policy, "accepted", true);
-        assert!(violations.is_empty());
+        let v = check_revise(&policy, "rfc", "done", true);
+        assert!(v.is_empty());
+    }
+
+    fn policy_with_evidence(category: &str, states: Vec<&str>) -> Policy {
+        let cat = CategoryPolicy {
+            evidence: Some(EvidenceRules {
+                allow_evidence: states.into_iter().map(String::from).collect(),
+            }),
+            ..CategoryPolicy::default()
+        };
+        let mut policy = Policy::default();
+        policy.categories.insert(category.to_string(), cat);
+        policy
     }
 
     #[test]
     fn check_evidence_allowed() {
-        let policy = Policy {
-            evidence_rules: Some(super::super::policy::EvidenceRules {
-                allow_evidence: vec!["draft".into(), "open".into()],
-            }),
-            ..Default::default()
-        };
-        let violations = check_evidence(&policy, "draft");
-        assert!(violations.is_empty());
+        let policy = policy_with_evidence("rfc", vec!["draft", "open"]);
+        let v = check_evidence(&policy, "rfc", "draft");
+        assert!(v.is_empty());
     }
 
     #[test]
     fn check_evidence_blocked() {
-        let policy = Policy {
-            evidence_rules: Some(super::super::policy::EvidenceRules {
-                allow_evidence: vec!["draft".into()],
-            }),
-            ..Default::default()
-        };
-        let violations = check_evidence(&policy, "accepted");
-        assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].severity, Severity::Error);
-    }
-
-    // Regression: state events store 2.0 canonical names ("review",
-    // "done", "working"), but legacy policies may carry 1.x names
-    // ("under-review", "reviewing", "closed", "implementing"). Both
-    // sides of the allow-list comparison must normalize.
-    #[test]
-    fn check_evidence_matches_across_1x_2x_state_names() {
-        let policy = Policy {
-            evidence_rules: Some(super::super::policy::EvidenceRules {
-                allow_evidence: vec!["under-review".into(), "reviewing".into(), "closed".into()],
-            }),
-            ..Default::default()
-        };
-        // 2.0 thread.status = "review" against 1.x policy entries.
-        assert!(check_evidence(&policy, "review").is_empty());
-        // 2.0 thread.status = "done" against 1.x "closed".
-        assert!(check_evidence(&policy, "done").is_empty());
-        // Reverse: 1.x policy lookup against 2.0 status that has no equivalent
-        // should still block.
-        assert_eq!(check_evidence(&policy, "rejected").len(), 1);
-    }
-
-    // Regression for @ltojzq9l: a default policy using only 2.0
-    // canonical state names must allow evidence in `review` for an
-    // execution-lifecycle thread (issue/task) without needing the
-    // legacy "reviewing" entry as well.
-    #[test]
-    fn check_evidence_canonical_policy_canonical_status_no_friction() {
-        let policy = Policy {
-            evidence_rules: Some(super::super::policy::EvidenceRules {
-                allow_evidence: vec![
-                    "draft".into(),
-                    "open".into(),
-                    "working".into(),
-                    "review".into(),
-                    "done".into(),
-                    "rejected".into(),
-                    "deprecated".into(),
-                ],
-            }),
-            ..Default::default()
-        };
-        assert!(check_evidence(&policy, "review").is_empty());
-        assert!(check_evidence(&policy, "working").is_empty());
-        assert!(check_evidence(&policy, "done").is_empty());
-    }
-
-    // Regression for @ltojzq9l: error hints normalize the listed
-    // policy entries to 2.0 canonical so the user never reads a
-    // contradictory "evidence not allowed in 'review'; allowed in
-    // ..., reviewing, ..." message.
-    #[test]
-    fn check_evidence_hint_lists_canonical_state_names() {
-        let policy = Policy {
-            evidence_rules: Some(super::super::policy::EvidenceRules {
-                allow_evidence: vec!["under-review".into(), "reviewing".into()],
-            }),
-            ..Default::default()
-        };
-        // "rejected" is not in the policy and not equivalent to anything
-        // listed, so it should produce a violation we can inspect.
-        let violations = check_evidence(&policy, "rejected");
-        assert_eq!(violations.len(), 1);
-        let hint = violations[0].hint.as_ref().unwrap();
-        // Normalized, both entries collapse to "review".
-        assert!(
-            hint.contains("review") && !hint.contains("reviewing"),
-            "hint should list canonical 2.0 names; got: {hint}"
-        );
-        // Violation message uses the canonical form of the offending
-        // status so it doesn't conflict with the hint vocabulary.
-        assert!(violations[0].reason.contains("'rejected'"));
-    }
-
-    #[test]
-    fn check_revise_matches_across_1x_2x_state_names() {
-        let policy = Policy {
-            revise_rules: Some(super::super::policy::ReviseRules {
-                allow_body_revise: vec!["implementing".into(), "designing".into()],
-                allow_node_revise: vec!["reviewing".into()],
-            }),
-            ..Default::default()
-        };
-        // 2.0 "working" matches 1.x "implementing"/"designing".
-        assert!(check_revise(&policy, "working", true).is_empty());
-        // 2.0 "review" matches 1.x "reviewing".
-        assert!(check_revise(&policy, "review", false).is_empty());
+        let policy = policy_with_evidence("rfc", vec!["draft"]);
+        let v = check_evidence(&policy, "rfc", "done");
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].rule, "evidence_restricted");
     }
 
     #[test]
     fn check_evidence_no_policy_allows_all() {
         let policy = Policy::default();
-        let violations = check_evidence(&policy, "accepted");
-        assert!(violations.is_empty());
+        let v = check_evidence(&policy, "rfc", "done");
+        assert!(v.is_empty());
     }
 
     #[test]
@@ -762,90 +636,68 @@ mod tests {
 
     #[test]
     fn evaluate_violations_error_blocks() {
-        let violations = vec![OperationViolation {
+        let v = vec![OperationViolation {
             severity: Severity::Error,
             rule: "test".into(),
             reason: "blocked".into(),
             hint: None,
             fix_command: None,
         }];
-        let (has_errors, _) = evaluate_violations(&violations, false, false);
+        let (has_errors, _) = evaluate_violations(&v, false, false);
         assert!(has_errors);
     }
 
     #[test]
     fn evaluate_violations_warning_does_not_block() {
-        let violations = vec![OperationViolation {
+        let v = vec![OperationViolation {
             severity: Severity::Warning,
             rule: "test".into(),
             reason: "advisory".into(),
             hint: None,
             fix_command: None,
         }];
-        let (has_errors, _) = evaluate_violations(&violations, false, false);
+        let (has_errors, _) = evaluate_violations(&v, false, false);
         assert!(!has_errors);
     }
 
     #[test]
     fn evaluate_violations_strict_warning_blocks() {
-        let violations = vec![OperationViolation {
+        let v = vec![OperationViolation {
             severity: Severity::Warning,
             rule: "test".into(),
             reason: "advisory".into(),
             hint: None,
             fix_command: None,
         }];
-        let (has_errors, _) = evaluate_violations(&violations, false, true);
+        let (has_errors, _) = evaluate_violations(&v, false, true);
         assert!(has_errors);
     }
 
     #[test]
     fn evaluate_violations_strict_force_warning_passes() {
-        let violations = vec![OperationViolation {
+        let v = vec![OperationViolation {
             severity: Severity::Warning,
             rule: "test".into(),
             reason: "advisory".into(),
             hint: None,
             fix_command: None,
         }];
-        let (has_errors, _) = evaluate_violations(&violations, true, true);
+        let (has_errors, _) = evaluate_violations(&v, true, true);
         assert!(!has_errors);
     }
 
     #[test]
     fn evaluate_violations_force_does_not_bypass_error() {
-        let violations = vec![OperationViolation {
+        let v = vec![OperationViolation {
             severity: Severity::Error,
             rule: "test".into(),
             reason: "blocked".into(),
             hint: None,
             fix_command: None,
         }];
-        let (has_errors, _) = evaluate_violations(&violations, true, false);
+        let (has_errors, _) = evaluate_violations(&v, true, false);
         assert!(has_errors);
     }
-
-    #[test]
-    fn extract_headings_various_levels() {
-        let body = "# Goal\ntext\n## Non-goals\ntext\n### Design\ntext";
-        let headings = extract_heading_texts(body);
-        assert_eq!(headings.len(), 3);
-        assert_eq!(headings[0].0, "Goal");
-        assert_eq!(headings[1].0, "Non-goals");
-        assert_eq!(headings[2].0, "Design");
-        assert!(headings.iter().all(|(_, empty)| !empty));
-    }
-
-    #[test]
-    fn extract_headings_empty_section() {
-        let body = "## Goal\n\n## Design\ntext";
-        let headings = extract_heading_texts(body);
-        assert_eq!(headings.len(), 2);
-        assert!(headings[0].1); // Goal is empty
-        assert!(!headings[1].1); // Design has content
-    }
-
-    // ---- check_op dispatch ----
 
     #[test]
     fn check_op_create_dispatches_to_creation_rules() {
@@ -853,8 +705,7 @@ mod tests {
         let v = check_op(
             &policy,
             Op::Create {
-                lifecycle: Lifecycle::Proposal,
-                tags: &["cross-cutting".into()],
+                category: "rfc",
                 body: None,
             },
         );
@@ -864,15 +715,11 @@ mod tests {
 
     #[test]
     fn check_op_say_dispatches_to_node_rules() {
-        let mut node_rules = HashMap::new();
-        node_rules.insert("done".into(), vec![]);
-        let policy = Policy {
-            node_rules,
-            ..Default::default()
-        };
+        let policy = policy_with_node_rules("rfc", "done", vec![]);
         let v = check_op(
             &policy,
             Op::Say {
+                category: "rfc",
                 status: "done",
                 node_type: NodeType::Comment,
             },
@@ -883,16 +730,11 @@ mod tests {
 
     #[test]
     fn check_op_revise_dispatches_to_revise_rules() {
-        let policy = Policy {
-            revise_rules: Some(super::super::policy::ReviseRules {
-                allow_body_revise: vec!["draft".into()],
-                allow_node_revise: vec![],
-            }),
-            ..Default::default()
-        };
+        let policy = policy_with_revise("rfc", vec!["draft"], vec![]);
         let v = check_op(
             &policy,
             Op::Revise {
+                category: "rfc",
                 status: "done",
                 is_body: true,
             },
@@ -903,13 +745,14 @@ mod tests {
 
     #[test]
     fn check_op_evidence_dispatches_to_evidence_rules() {
-        let policy = Policy {
-            evidence_rules: Some(super::super::policy::EvidenceRules {
-                allow_evidence: vec!["draft".into()],
-            }),
-            ..Default::default()
-        };
-        let v = check_op(&policy, Op::Evidence { status: "done" });
+        let policy = policy_with_evidence("rfc", vec!["draft"]);
+        let v = check_op(
+            &policy,
+            Op::Evidence {
+                category: "rfc",
+                status: "done",
+            },
+        );
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].rule, "evidence_restricted");
     }

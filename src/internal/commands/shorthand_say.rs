@@ -102,7 +102,9 @@ pub fn run_shorthand_say(
     // helper so main.rs stays free of `internal::event` imports.
     let policy_node_type = node_kind_to_policy_type(kind);
     let state = thread::replay_thread(&git, thread_id)?;
-    let violations = operation_check::check_say(&policy, state.status.as_str(), policy_node_type);
+    let category = crate::internal::policy::category_for_state(&state);
+    let violations =
+        operation_check::check_say(&policy, category, state.status.as_str(), policy_node_type);
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
     let resolved_reply = resolve_reply_to(&git, thread_id, reply_to.as_deref())?;

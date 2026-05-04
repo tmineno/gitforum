@@ -386,7 +386,13 @@ requires = ["one_human_approval", "at_least_one_summary"]
     );
 }
 
+// Pre-flight P1 (task 9635buy0): the v2 in-place rewriter
+// `legacy::v1::rewrite_legacy_policy` was removed when policy.rs
+// became strict 3.0. The 3.0 migrate (Phase 3 item 11 of the same
+// task) writes a new `.forum/policy.toml` in §3.2/§3.3 form instead;
+// that new test will replace this one when item 11 lands.
 #[test]
+#[ignore = "v2 in-place rewrite path removed; replaced by Phase 3 item 11"]
 fn migrate_rewrites_legacy_creation_rules_in_policy() {
     let (_repo, git, paths) = setup();
     // Default policy.toml has [creation_rules.rfc/issue/dec/task] and a

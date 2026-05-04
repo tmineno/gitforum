@@ -22,7 +22,7 @@ use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id_alloc;
 use git_forum::internal::index;
 use git_forum::internal::init;
-use git_forum::internal::policy::{GuardEntry, GuardRule, Policy};
+use git_forum::internal::policy::{CategoryPolicy, GuardRule, Policy};
 use git_forum::internal::reindex;
 use git_forum::internal::state_change;
 use git_forum::internal::thread;
@@ -205,53 +205,135 @@ pub fn open_index(paths: &RepoPaths) -> rusqlite::Connection {
     index::open_db(&db_path).unwrap()
 }
 
-// ---- Policy builders ----
+// ---- Policy builders (SPEC-3.0 §3.2 category-keyed form) ----
 
 pub fn empty_policy() -> Policy {
-    Policy {
-        guards: vec![],
-        ..Default::default()
-    }
+    Policy::default()
 }
 
-pub fn make_policy(guards: Vec<GuardEntry>) -> Policy {
-    let mut p = Policy {
-        guards,
-        ..Default::default()
-    };
-    let emitter = git_forum::internal::lint_emit::LintEmitter::new_capturing(None);
-    git_forum::internal::legacy::v1::rewrite_legacy_policy(
-        &mut p,
-        &emitter,
-        std::path::Path::new("policy.toml"),
-    );
-    p
+/// Build a single-category policy with the given guard rules at the
+/// named transition. Mirrors the §3.2 inline-table form
+/// `[categories.<C>.guards] "from->to" = [rules...]`.
+pub fn make_category_guard_policy(
+    category: &str,
+    transition: &str,
+    rules: Vec<GuardRule>,
+) -> Policy {
+    let mut policy = Policy::default();
+    let mut cat = CategoryPolicy::default();
+    cat.guards.insert(transition.to_string(), rules);
+    policy.categories.insert(category.to_string(), cat);
+    policy
 }
 
-/// Default policy used by `state_change_test` / `verify_test` to
-/// gate the proposal-lifecycle review→done edge with a no-objection
-/// + one-human-approval requirement (ADR-006: `AtLeastOneSummary`
-///   removed in 2.0).
+/// Default policy used by `state_change_test` / `verify_test` to gate
+/// the rfc category's review→done edge with `one_approval` +
+/// `no_open_objections` (SPEC-3.0 §3.2).
 pub fn policy_with_under_review_guards() -> Policy {
-    make_policy(vec![GuardEntry {
-        on: "under-review->accepted".into(),
-        requires: vec![GuardRule::NoOpenObjections, GuardRule::OneHumanApproval],
-        ..Default::default()
-    }])
+    make_category_guard_policy(
+        "rfc",
+        "review->done",
+        vec![GuardRule::NoOpenObjections, GuardRule::OneApproval],
+    )
 }
 
+/// task category gate covering the dec-on-task lifecycle path:
+/// `record`-lifecycle DEC threads fold into category=task per §8.3,
+/// and the legacy `proposed->accepted` transition normalizes to
+/// `open->done` after `event::normalize_state_name`. Both the
+/// `open->done` and `working->done` edges are gated for tests that
+/// drive a DEC through either path.
 pub fn dec_guard_policy() -> Policy {
-    make_policy(vec![GuardEntry {
-        on: "proposed->accepted".into(),
-        requires: vec![GuardRule::NoOpenObjections],
-        ..Default::default()
-    }])
+    let mut policy = Policy::default();
+    let mut cat = CategoryPolicy::default();
+    cat.guards
+        .insert("open->done".into(), vec![GuardRule::NoOpenObjections]);
+    cat.guards
+        .insert("working->done".into(), vec![GuardRule::NoOpenObjections]);
+    policy.categories.insert("task".into(), cat);
+    policy
 }
 
+/// task category gate: review→done requires no open actions.
 pub fn task_guard_policy() -> Policy {
-    make_policy(vec![GuardEntry {
-        on: "reviewing->closed".into(),
-        requires: vec![GuardRule::NoOpenActions],
-        ..Default::default()
-    }])
+    make_category_guard_policy("task", "review->done", vec![GuardRule::NoOpenActions])
+}
+
+// ---- Back-compat shims for v2-shaped test helpers ----
+//
+// Several legacy integration tests (`tests/state_change_test.rs`,
+// `tests/verify_test.rs`) assemble policies via `make_policy(vec![GuardEntry
+// { on, requires, .. }])`. Pre-flight P1 deletes those types from
+// `internal::policy`, but rewriting every test verbatim is out of scope
+// for the policy rewrite commit. This shim accepts the legacy shape and
+// rewrites it into the SPEC-3.0 §3.2 category-table form so the same
+// tests keep exercising the runtime against the new parser.
+//
+// The legacy `on` field is parsed as one of:
+//   "from->to"                          → applies to BOTH categories
+//   "lifecycle=proposal : from->to"     → category=rfc
+//   "lifecycle=execution : from->to"    → category=task
+//   "lifecycle=record : from->to"       → category=task
+//   "kind:from->to" (rfc/issue/dec/task)→ §8.3 mapping
+// State names are normalized to SPEC-3.0 canonical via
+// `event::normalize_state_name` so 1.x verbs (under-review, accepted,
+// closed, ...) line up with category transitions.
+
+/// Legacy v2 guard-entry shape, kept as a test-side adapter only.
+#[derive(Debug, Clone, Default)]
+pub struct GuardEntry {
+    pub on: String,
+    pub requires: Vec<GuardRule>,
+}
+
+/// Back-compat wrapper for the v2 `make_policy(Vec<GuardEntry>)` helper
+/// used across legacy state-change / verify tests. Builds the equivalent
+/// SPEC-3.0 §3.2 category-keyed `Policy`.
+pub fn make_policy(entries: Vec<GuardEntry>) -> Policy {
+    let mut policy = Policy::default();
+    for entry in entries {
+        let (categories, transition) = parse_legacy_on(&entry.on);
+        for category in categories {
+            let cat = policy.categories.entry(category.to_string()).or_default();
+            cat.guards
+                .entry(transition.clone())
+                .or_default()
+                .extend(entry.requires.clone());
+        }
+    }
+    policy
+}
+
+fn parse_legacy_on(on: &str) -> (Vec<&'static str>, String) {
+    use git_forum::internal::event::normalize_state_name;
+    let (scope, transition_part) = match on.split_once(':') {
+        Some((s, t)) => (s.trim(), t.trim()),
+        None => ("", on.trim()),
+    };
+    let categories: Vec<&'static str> = if scope.is_empty() {
+        vec!["rfc", "task"]
+    } else if let Some(rest) = scope.strip_prefix("lifecycle=") {
+        match rest.trim() {
+            "proposal" => vec!["rfc"],
+            "execution" | "record" => vec!["task"],
+            _ => vec!["rfc", "task"],
+        }
+    } else {
+        // `kind:from->to` legacy form.
+        match scope {
+            "rfc" => vec!["rfc"],
+            "issue" | "task" | "dec" => vec!["task"],
+            _ => vec!["rfc", "task"],
+        }
+    };
+    let transition = if let Some((from, to)) = transition_part.split_once("->") {
+        format!(
+            "{}->{}",
+            normalize_state_name(from.trim()),
+            normalize_state_name(to.trim())
+        )
+    } else {
+        transition_part.to_string()
+    };
+    (categories, transition)
 }

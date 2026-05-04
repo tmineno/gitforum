@@ -20,9 +20,9 @@ chosen by protocol effect.
   prefix (claim, question, summary, risk, alternative, assumption)
   express it in the body (e.g. start with `Q:`, `Decision:`, `Risk:`).
 - **objection**: blocking issues ("Benchmarks are missing") — gates
-  the `NoOpenObjections` policy guard until resolved or retracted.
+  the `no_open_objections` policy guard until resolved or retracted.
 - **approval**: surfaces a `--approve <actor>` decision; counted by
-  the `OneHumanApproval` guard.
+  the `one_approval` guard (any actor type per SPEC-3.0 §3.2).
 - **action**: tasks to track ("Add div-by-zero guard") — must be
   resolved before the thread can move to a terminal state.
 
@@ -142,22 +142,33 @@ pub fn state_transition_map() -> String {
     out.push_str("`git forum policy show` displays the loaded policy.\n");
     out.push_str("`git forum status <ID>` reports unresolved items (objections, actions, evidence gaps).\n\n");
 
-    out.push_str("## Category-scoped guard keys (SPEC-3.0 §3.2)\n\n");
+    out.push_str("## Guards (SPEC-3.0 §3.2)\n\n");
     out.push_str(
-        "Guards target a category + status transition. The scope grammar is\n\
-         `category=<NAME>;status=FROM->TO`:\n\n",
+        "Guards are attached directly to a category transition under\n\
+         `[categories.<NAME>.guards]`, keyed by the `\"FROM->TO\"`\n\
+         transition string. The value is the list of guard rules:\n\n",
     );
     out.push_str("```toml\n");
-    out.push_str("[[guards]]\n");
-    out.push_str("scope = \"category=rfc;status=review->done\"\n");
-    out.push_str("rules = [\"OneHumanApproval\", \"NoOpenObjections\"]\n\n");
-    out.push_str("[[guards]]\n");
-    out.push_str("scope = \"category=task;status=working->done\"\n");
-    out.push_str("rules = [\"NoOpenActions\", \"NoOpenObjections\"]\n");
+    out.push_str("[categories.rfc.guards]\n");
+    out.push_str("\"review->done\" = [\"one_approval\", \"no_open_objections\"]\n\n");
+    out.push_str("[categories.task.guards]\n");
+    out.push_str("\"working->done\" = [\"no_open_actions\", \"no_open_objections\"]\n");
     out.push_str("```\n\n");
-    out.push_str("Tag-scoped variants (`tag=<NAME>;status=FROM->TO`) apply only to threads\n");
-    out.push_str("carrying the named tag. When multiple guard tables match a transition,\n");
-    out.push_str("their rule lists are unioned.\n\n");
+    out.push_str(
+        "Rule names: `no_open_objections`, `no_open_actions`, `one_approval`,\n\
+         `has_commit_evidence`. 3.0 has no tag/lifecycle selector language\n\
+         (§3.1: \"3.0 does not define a selector language over tags or other\n\
+         facets\").\n\n",
+    );
+    out.push_str(
+        "Per-category operation checks live under the same\n\
+         `[categories.<NAME>.*]` umbrella: `creation`, `allowed_node_types`,\n\
+         `revise`, `evidence` (SPEC-3.0 §3.3). Loading a v2-form\n\
+         `policy.toml` (`[[guards]]`, `requires =`, kind/lifecycle/facet-\n\
+         scoped `creation_rules.*`, `node_rules`, `revise_rules`,\n\
+         `evidence_rules`, `one_human_approval`, `at_least_one_summary`)\n\
+         is rejected with a hint pointing at `git forum migrate --to 3.0`.\n\n",
+    );
     out.push_str("## Storage shape (SPEC-3.0 §4.2)\n\n");
     out.push_str(
         "A state transition rewrites `thread.toml`'s `status`, `updated_at`,\n\
@@ -203,7 +214,7 @@ OID before storing — `--ref HEAD` becomes the resolved SHA.
 
 Each `evidence add` rewrites `evidence.toml` (one row per `--ref`)
 and creates one commit on `refs/forum/threads/<id>`. Policy guards
-that check evidence (e.g. `HasCommitEvidence`) read the rows
+that check evidence (e.g. `has_commit_evidence`) read the rows
 directly from `evidence.toml`; there is no separate event log.
 "#
     .to_string()

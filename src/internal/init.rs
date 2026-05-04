@@ -4,122 +4,88 @@ use super::config::RepoPaths;
 use super::error::ForumResult;
 use super::git_ops::GitOps;
 
-const DEFAULT_POLICY: &str = r#"# git-forum default policy
+const DEFAULT_POLICY: &str = r#"# git-forum default policy (SPEC-3.0 §3.2 / §3.3)
 #
-# This file has two sections:
-#   1. Transition guards — conditions that must be met before a state change.
-#   2. Operation checks  — rules about what is allowed in each state.
+# Policy is keyed by category. Built-in categories (SPEC-3.0 §3.1):
+#   rfc:  draft → open → review → {done, rejected} → deprecated
+#         (also: draft|open → withdrawn)
+#   task: open ⇄ working ⇄ review → {done, rejected} → deprecated
 #
-# Per SPEC-2.0 §3.1, all state names are 2.0 canonical: draft, open,
-# working, review, done, rejected, withdrawn, deprecated. Legacy 1.x
-# names (proposed, under-review, accepted, closed, pending, designing,
-# implementing, reviewing) are accepted at load time but produce a
-# migration warning; they are normalized internally.
+# State names are SPEC-3.0 canonical: draft, open, working, review, done,
+# rejected, withdrawn, deprecated. Legacy 2.x policy shapes
+# ([[guards]] requires=..., kind/lifecycle/facet-scoped creation_rules.*,
+# node_rules / revise_rules / evidence_rules tables, the
+# `one_human_approval` and `at_least_one_summary` rule names) are
+# rejected at load time with a migration hint pointing at
+# `git forum migrate --to 3.0`.
 #
-# Per-lifecycle reachable states (SPEC-2.0 §3.1.1):
-#   proposal  (RFC):       draft, open, review, done, rejected, withdrawn, deprecated
-#   execution (issue/task): open, working, review, done, rejected, withdrawn
-#   record    (DEC):       open, done, rejected, withdrawn, deprecated
-
-# ═══════════════════════════════════════════════════════════════════════
-# 1. TRANSITION GUARDS
-# ═══════════════════════════════════════════════════════════════════════
-# Each [[guards]] block defines conditions ("requires") that must ALL pass
-# before the transition in "on" is allowed.
-#
-# A guard violation is always an error — the transition is blocked.
-# This is different from operation checks (below), which can be warnings.
-#
-# Lifecycle-scoped guards use the SPEC-2.0 §7.1 facet predicate syntax:
-#   on = "lifecycle=proposal : review->done"   — only matches RFC threads
-#   on = "review->done"                         — matches all lifecycles
-#   on = "lifecycle=execution AND tag=bug : open->done"
-#
-# When both a scoped and unscoped guard match, both apply (union semantics).
-#
-# Available guard rules:
+# Available guard rules (SPEC-3.0 §3.2):
 #   no_open_objections   — all objection nodes must be resolved/retracted
 #   no_open_actions      — all action nodes must be resolved/retracted
-#   one_human_approval   — at least one recorded human/… actor approval required
-#   has_commit_evidence  — thread must have commit-type evidence attached
-
-[[guards]]
-on = "lifecycle=proposal : review->done"
-requires = ["one_human_approval", "no_open_objections"]
-
-[[guards]]
-on = "lifecycle=execution : open->done"
-requires = ["no_open_actions"]
-
-[[guards]]
-on = "lifecycle=execution : review->done"
-requires = ["no_open_actions"]
-
-[[guards]]
-on = "lifecycle=record : open->done"
-requires = ["no_open_objections"]
-
-# Uncomment to require commit evidence before closing execution threads:
-# [[guards]]
-# on = "lifecycle=execution : open->done"
-# requires = ["has_commit_evidence"]
+#   one_approval         — at least one non-retracted approval node
+#                          (any actor type)
+#   has_commit_evidence  — thread must have commit-type evidence
 
 # ═══════════════════════════════════════════════════════════════════════
-# 2. OPERATION CHECKS
+# 1. GUARDS (SPEC-3.0 §3.2)
 # ═══════════════════════════════════════════════════════════════════════
-# Operation checks validate creation, node posting, revision, and evidence
-# operations. Unlike guards, checks have two severity levels:
-#
+
+[categories.rfc.guards]
+"review->done" = ["one_approval", "no_open_objections"]
+
+[categories.task.guards]
+"open->done" = ["no_open_actions"]
+"working->done" = ["no_open_actions"]
+"review->done" = ["no_open_actions"]
+
+# Uncomment to require commit evidence before closing task threads:
+# [categories.task.guards]
+# "review->done" = ["no_open_actions", "has_commit_evidence"]
+
+# ═══════════════════════════════════════════════════════════════════════
+# 2. OPERATION CHECKS (SPEC-3.0 §3.3)
+# ═══════════════════════════════════════════════════════════════════════
+# Severity levels:
 #   strict = false (default) — violations are WARNINGS; use --force to bypass
 #   strict = true            — violations are ERRORS; operation is blocked
-#
-# State names in operation checks are 2.0 canonical (above). The runtime
-# tolerates 1.x names on either side of the comparison so legacy policies
-# keep working, but defaults use the canonical vocabulary.
 
 [checks]
 strict = false
 
-# Creation rules: what is required when creating a new thread.
-# Keyed by thread kind (rfc, issue, dec, task).
-[creation_rules.rfc]
+# Creation rules: what is required when creating a new thread per category.
+[categories.rfc.creation]
 required_body = true
 body_sections = ["Goal", "Non-goals", "Context", "Proposal"]
 
-[creation_rules.issue]
-required_body = false
-body_sections = []
-
-[creation_rules.dec]
-required_body = true
-body_sections = ["Context", "Decision", "Rationale", "Impact"]
-
-[creation_rules.task]
+[categories.task.creation]
 required_body = false
 body_sections = ["Background", "Acceptance criteria", "Exceptions"]
 
-# Node rules: which node types are allowed in each state.
-# No restrictions by default — all node types allowed in all states.
+# Allowed node types per status. Empty/missing = no restriction.
 # Uncomment to restrict node types in terminal states:
-# [node_rules]
-# "done" = []
+# [categories.rfc.allowed_node_types]
+# "done"     = []
 # "rejected" = []
-# "deprecated" = []
-# "withdrawn" = []
+#
+# [categories.task.allowed_node_types]
+# "done"     = []
+# "rejected" = []
 
-# Revise rules: in which states body/node revision is allowed.
-# Body revision is intentionally narrower than node revision — once a
-# thread is under formal review (or working), the body should be stable.
-[revise_rules]
-allow_body_revise = ["draft", "open", "working"]
-allow_node_revise = ["draft", "open", "working", "review"]
+# Revise rules: in which states body/node revision is allowed per category.
+[categories.rfc.revise]
+allow_body_revise = ["draft", "open"]
+allow_node_revise = ["draft", "open", "review"]
 
-# Evidence rules: in which states evidence can be attached.
-# An empty list (or omitting [evidence_rules] entirely) means evidence
-# is allowed in every state. Listed here for documentation; users can
-# narrow it if needed.
-[evidence_rules]
-allow_evidence = ["draft", "open", "working", "review", "done", "rejected", "deprecated"]
+[categories.task.revise]
+allow_body_revise = ["open", "working"]
+allow_node_revise = ["open", "working", "review"]
+
+# Evidence rules: in which states evidence can be attached per category.
+[categories.rfc.evidence]
+allow_evidence = ["draft", "open", "review", "done", "rejected", "deprecated"]
+
+[categories.task.evidence]
+allow_evidence = ["open", "working", "review", "done", "rejected", "deprecated"]
 "#;
 
 const DEFAULT_ACTORS: &str = r#"# git-forum actors
@@ -237,124 +203,87 @@ fn write_if_missing(path: &std::path::Path, content: &str) -> ForumResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::policy::Policy;
+    use crate::internal::policy::{GuardRule, Policy};
 
     #[test]
-    fn default_policy_deserializes() {
-        let policy: Policy =
-            toml::from_str(DEFAULT_POLICY).expect("DEFAULT_POLICY must be valid TOML");
+    fn default_policy_parses_under_v3_parser() {
+        // The DEFAULT_POLICY const must be loadable through the strict
+        // SPEC-3.0 parser without warnings or rewrites — i.e. it must
+        // already be in the §3.2/§3.3 category-table form.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("policy.toml");
+        std::fs::write(&path, DEFAULT_POLICY).unwrap();
+        let policy = Policy::load(&path).expect("DEFAULT_POLICY must parse under v3 parser");
 
-        // Guards (2.0 canonical with lifecycle facets, per @ltojzq9l).
-        assert_eq!(policy.guards.len(), 4);
-        assert_eq!(policy.guards[0].on, "lifecycle=proposal : review->done");
-        assert_eq!(policy.guards[1].on, "lifecycle=execution : open->done");
-        assert_eq!(policy.guards[2].on, "lifecycle=execution : review->done");
-        assert_eq!(policy.guards[3].on, "lifecycle=record : open->done");
-
-        // Checks config
-        assert!(!policy.checks.strict);
-
-        // Creation rules — RFC (legacy `rfc` key, base section before
-        // load-time auto-translation).
-        let rfc_rules = policy
-            .creation_rules
-            .get("rfc")
-            .expect("creation_rules.rfc must exist");
-        assert!(rfc_rules.base.required_body);
+        // Guards: rfc has review->done, task has three transitions.
+        let rfc = policy.category("rfc").expect("rfc category present");
         assert_eq!(
-            rfc_rules.base.body_sections,
+            rfc.guards.get("review->done").map(|v| v.as_slice()),
+            Some([GuardRule::OneApproval, GuardRule::NoOpenObjections].as_slice())
+        );
+        let task = policy.category("task").expect("task category present");
+        assert!(task.guards.contains_key("review->done"));
+        assert!(task.guards.contains_key("open->done"));
+        assert!(task.guards.contains_key("working->done"));
+
+        // Creation rules per category.
+        let rfc_creation = rfc.creation.as_ref().expect("rfc creation");
+        assert!(rfc_creation.required_body);
+        assert_eq!(
+            rfc_creation.body_sections,
             vec!["Goal", "Non-goals", "Context", "Proposal"]
         );
-
-        // Creation rules — issue
-        let issue_rules = policy
-            .creation_rules
-            .get("issue")
-            .expect("creation_rules.issue must exist");
-        assert!(!issue_rules.base.required_body);
-        assert!(issue_rules.base.body_sections.is_empty());
-
-        // Creation rules — dec
-        let dec_rules = policy
-            .creation_rules
-            .get("dec")
-            .expect("creation_rules.dec must exist");
-        assert!(dec_rules.base.required_body);
+        let task_creation = task.creation.as_ref().expect("task creation");
+        assert!(!task_creation.required_body);
         assert_eq!(
-            dec_rules.base.body_sections,
-            vec!["Context", "Decision", "Rationale", "Impact"]
-        );
-
-        // Creation rules — task
-        let task_rules = policy
-            .creation_rules
-            .get("task")
-            .expect("creation_rules.task must exist");
-        assert!(!task_rules.base.required_body);
-        assert_eq!(
-            task_rules.base.body_sections,
+            task_creation.body_sections,
             vec!["Background", "Acceptance criteria", "Exceptions"]
         );
 
-        // Node rules — empty by default (no restrictions)
-        assert!(policy.node_rules.is_empty());
-
-        // Revise rules (2.0 canonical, per @ltojzq9l).
-        let revise = policy.revise_rules.expect("revise_rules must exist");
-        assert_eq!(revise.allow_body_revise, vec!["draft", "open", "working"]);
+        // Revise rules per category, intersected with each category's
+        // statuses (rfc has no `working`, task has no `draft`).
+        let rfc_revise = rfc.revise.as_ref().expect("rfc revise");
+        assert_eq!(rfc_revise.allow_body_revise, vec!["draft", "open"]);
         assert_eq!(
-            revise.allow_node_revise,
-            vec!["draft", "open", "working", "review"]
+            rfc_revise.allow_node_revise,
+            vec!["draft", "open", "review"]
         );
+        let task_revise = task.revise.as_ref().expect("task revise");
+        assert_eq!(task_revise.allow_body_revise, vec!["open", "working"]);
 
-        // Evidence rules (2.0 canonical).
-        let evidence = policy.evidence_rules.expect("evidence_rules must exist");
-        assert_eq!(
-            evidence.allow_evidence,
-            vec![
-                "draft",
-                "open",
-                "working",
-                "review",
-                "done",
-                "rejected",
-                "deprecated"
-            ]
-        );
+        // Checks default: strict = false.
+        assert!(!policy.checks.strict);
     }
 
     #[test]
     fn default_policy_matches_fixture() {
-        let fixture =
-            std::fs::read_to_string("tests/fixtures/policy_default.toml").expect("fixture exists");
-        let from_const: Policy = toml::from_str(DEFAULT_POLICY).expect("DEFAULT_POLICY must parse");
-        let from_fixture: Policy = toml::from_str(&fixture).expect("fixture must parse");
+        let fixture_dir = tempfile::tempdir().unwrap();
+        let fixture_path = fixture_dir.path().join("fixture.toml");
+        std::fs::copy("tests/fixtures/policy_default.toml", &fixture_path).unwrap();
+        let const_dir = tempfile::tempdir().unwrap();
+        let const_path = const_dir.path().join("default.toml");
+        std::fs::write(&const_path, DEFAULT_POLICY).unwrap();
 
-        // Both should produce equivalent Policy structs
-        assert_eq!(from_const.guards.len(), from_fixture.guards.len());
+        let from_const = Policy::load(&const_path).expect("DEFAULT_POLICY parses");
+        let from_fixture = Policy::load(&fixture_path).expect("fixture parses");
+
         assert_eq!(from_const.checks.strict, from_fixture.checks.strict);
         assert_eq!(
-            from_const.creation_rules.len(),
-            from_fixture.creation_rules.len()
+            from_const.categories.len(),
+            from_fixture.categories.len(),
+            "category count must match"
         );
-        assert_eq!(from_const.node_rules.len(), from_fixture.node_rules.len());
-
-        let const_revise = from_const.revise_rules.unwrap();
-        let fixture_revise = from_fixture.revise_rules.unwrap();
-        assert_eq!(
-            const_revise.allow_body_revise,
-            fixture_revise.allow_body_revise
-        );
-        assert_eq!(
-            const_revise.allow_node_revise,
-            fixture_revise.allow_node_revise
-        );
-
-        let const_evidence = from_const.evidence_rules.unwrap();
-        let fixture_evidence = from_fixture.evidence_rules.unwrap();
-        assert_eq!(
-            const_evidence.allow_evidence,
-            fixture_evidence.allow_evidence
-        );
+        for cat_name in ["rfc", "task"] {
+            let c = from_const.category(cat_name).expect("const has category");
+            let f = from_fixture
+                .category(cat_name)
+                .expect("fixture has category");
+            assert_eq!(c.guards.len(), f.guards.len(), "{cat_name} guards count");
+            assert_eq!(
+                c.creation.as_ref().map(|x| x.required_body),
+                f.creation.as_ref().map(|x| x.required_body),
+                "{cat_name} creation.required_body"
+            );
+        }
     }
 }

@@ -181,7 +181,8 @@ pub fn run_revise_body(
     )?;
 
     let state = thread::replay_thread(&git, &thread_id)?;
-    let violations = operation_check::check_revise(&policy, state.status.as_str(), true);
+    let category = crate::internal::policy::category_for_state(&state);
+    let violations = operation_check::check_revise(&policy, category, state.status.as_str(), true);
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
     let mut doc = snapshot::read_snapshot(&git, &thread_id)?;
@@ -233,7 +234,8 @@ pub fn run_revise_node(
     )?;
 
     let state = thread::replay_thread(&git, &thread_id)?;
-    let violations = operation_check::check_revise(&policy, state.status.as_str(), false);
+    let category = crate::internal::policy::category_for_state(&state);
+    let violations = operation_check::check_revise(&policy, category, state.status.as_str(), false);
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
     let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_id)?;

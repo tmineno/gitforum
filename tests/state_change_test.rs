@@ -11,7 +11,7 @@ use git_forum::internal::create;
 use git_forum::internal::event::{self, Event, EventType, NodeType, ThreadKind};
 use git_forum::internal::evidence;
 use git_forum::internal::evidence::EvidenceKind;
-use git_forum::internal::policy::{GuardEntry, GuardRule, Policy};
+use git_forum::internal::policy::{GuardRule, Policy};
 use git_forum::internal::state_change;
 use git_forum::internal::thread;
 use git_forum::internal::write_ops;
@@ -19,6 +19,7 @@ use git_forum::internal::write_ops;
 use support::forum::{
     dec_guard_policy, empty_policy, fixed_clock, make_dec, make_policy, make_rfc, make_task,
     move_rfc_to_under_review, policy_with_under_review_guards, setup, task_guard_policy,
+    GuardEntry,
 };
 
 // ---- Transitions ----
@@ -97,7 +98,6 @@ fn change_state_fails_guard_no_open_objections() {
     let policy = make_policy(vec![GuardEntry {
         on: "under-review->accepted".into(),
         requires: vec![GuardRule::NoOpenObjections],
-        ..Default::default()
     }]);
 
     let result = state_change::change_state(
@@ -176,7 +176,6 @@ fn change_state_issue_close_fails_guard_no_open_actions() {
     let policy = make_policy(vec![GuardEntry {
         on: "open->closed".into(),
         requires: vec![GuardRule::NoOpenActions],
-        ..Default::default()
     }]);
 
     let err = state_change::change_state(
@@ -221,7 +220,6 @@ fn change_state_issue_close_can_resolve_open_actions() {
     let policy = make_policy(vec![GuardEntry {
         on: "open->closed".into(),
         requires: vec![GuardRule::NoOpenActions],
-        ..Default::default()
     }]);
 
     state_change::change_state(
@@ -291,7 +289,6 @@ fn change_state_issue_close_fails_guard_has_commit_evidence() {
     let policy = make_policy(vec![GuardEntry {
         on: "open->closed".into(),
         requires: vec![GuardRule::HasCommitEvidence],
-        ..Default::default()
     }]);
 
     let err = state_change::change_state(
@@ -360,7 +357,6 @@ fn change_state_issue_close_passes_with_commit_evidence() {
     let policy = make_policy(vec![GuardEntry {
         on: "open->closed".into(),
         requires: vec![GuardRule::HasCommitEvidence],
-        ..Default::default()
     }]);
 
     state_change::change_state(
@@ -616,22 +612,19 @@ fn fast_track_stops_on_guard_failure() {
     // post-@ltojzq9l only enforces no_open_actions on execution
     // lifecycle, so we need an explicit guard here to test that
     // fast_track stops mid-walk on a guard failure).
-    let mut custom_policy: Policy = toml::from_str(
-        r#"
-[[guards]]
-on = "lifecycle=proposal : open->done"
-requires = ["no_open_actions"]
-"#,
-    )
-    .unwrap();
-    {
-        let emitter = git_forum::internal::lint_emit::LintEmitter::new_capturing(None);
-        git_forum::internal::legacy::v1::rewrite_legacy_policy(
-            &mut custom_policy,
-            &emitter,
-            std::path::Path::new("policy.toml"),
-        );
-    }
+    // SPEC-3.0 §3.2 form: gate the rfc category's `open->done` edge.
+    // The v2 state machine (`event::find_path`) keeps the legacy
+    // `open->done` shortcut for proposal threads via UNIFIED_TRANSITIONS,
+    // so `fast_track` walks `draft → open → done` and the guard fires
+    // on the second step. validate_against_registry would reject this
+    // transition for rfc (3.0 rfc has no `open->done` edge), but the
+    // test policy is constructed in-memory via `make_category_guard_policy`
+    // and bypasses validate_against_registry.
+    let custom_policy = support::forum::make_category_guard_policy(
+        "rfc",
+        "open->done",
+        vec![GuardRule::NoOpenActions],
+    );
 
     write_ops::say_node(
         &git,

@@ -8,14 +8,14 @@ mod support;
 use git_forum::internal::commands::verify;
 use git_forum::internal::create;
 use git_forum::internal::event::{NodeType, ThreadKind};
-use git_forum::internal::policy::{GuardEntry, GuardRule, Policy};
+use git_forum::internal::policy::{GuardRule, Policy};
 use git_forum::internal::state_change;
 use git_forum::internal::write_ops;
 
 use support::forum::{
     dec_guard_policy, drive_to_done, empty_policy, fixed_clock, link_thread, make_dec, make_policy,
     make_rfc, make_task, make_thread, move_rfc_to_under_review, policy_with_under_review_guards,
-    setup, task_guard_policy,
+    setup, task_guard_policy, GuardEntry,
 };
 
 #[test]
@@ -83,7 +83,6 @@ fn verify_reports_open_action_violation_for_issue_close() {
     let policy = make_policy(vec![GuardEntry {
         on: "open->closed".into(),
         requires: vec![GuardRule::NoOpenActions],
-        ..Default::default()
     }]);
 
     let report = verify::verify_thread(&git, &thread_id, &policy).unwrap();

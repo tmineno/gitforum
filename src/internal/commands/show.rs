@@ -546,24 +546,32 @@ fn render_what_next_block(state: &ThreadState, policy: &Policy) -> String {
 
 fn op_check_lines(state: &ThreadState, policy: &Policy) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    if !policy.node_rules.is_empty() {
-        if let Some(allowed) = policy.node_rules.get(state.status.as_str()) {
-            if allowed.is_empty() {
-                out.push("  node types: (none allowed)".into());
-            } else {
-                let types: Vec<String> = allowed.iter().map(|n| n.to_string()).collect();
-                out.push(format!("  node types: {}", types.join(", ")));
-            }
+    let category = crate::internal::policy::category_for_state(state);
+    let status = state.status.as_str();
+
+    if let Some(allowed) = policy.allowed_node_types(category, status) {
+        if allowed.is_empty() {
+            out.push("  node types: (none allowed)".into());
         } else {
-            out.push("  node types: (all allowed)".into());
+            let types: Vec<String> = allowed
+                .iter()
+                .map(|n| match n {
+                    crate::internal::node::NodeKind::Comment => "comment".to_string(),
+                    crate::internal::node::NodeKind::Approval => "approval".to_string(),
+                    crate::internal::node::NodeKind::Objection => "objection".to_string(),
+                    crate::internal::node::NodeKind::Action => "action".to_string(),
+                })
+                .collect();
+            out.push(format!("  node types: {}", types.join(", ")));
         }
     }
-    if let Some(revise) = &policy.revise_rules {
+
+    if let Some(revise) = policy.revise_rules_for(category) {
         if !revise.allow_body_revise.is_empty() {
             let allowed = revise
                 .allow_body_revise
                 .iter()
-                .any(|s| s.as_str() == state.status.as_str());
+                .any(|s| s.as_str() == status);
             out.push(format!(
                 "  body revise: {}",
                 if allowed { "allowed" } else { "blocked" }
@@ -573,19 +581,17 @@ fn op_check_lines(state: &ThreadState, policy: &Policy) -> Vec<String> {
             let allowed = revise
                 .allow_node_revise
                 .iter()
-                .any(|s| s.as_str() == state.status.as_str());
+                .any(|s| s.as_str() == status);
             out.push(format!(
                 "  node revise: {}",
                 if allowed { "allowed" } else { "blocked" }
             ));
         }
     }
-    if let Some(evidence) = &policy.evidence_rules {
+
+    if let Some(evidence) = policy.evidence_rules_for(category) {
         if !evidence.allow_evidence.is_empty() {
-            let allowed = evidence
-                .allow_evidence
-                .iter()
-                .any(|s| s.as_str() == state.status.as_str());
+            let allowed = evidence.allow_evidence.iter().any(|s| s.as_str() == status);
             out.push(format!(
                 "  evidence:    {}",
                 if allowed { "allowed" } else { "blocked" }
@@ -1102,22 +1108,21 @@ mod tests {
 
     #[test]
     fn what_next_mode_includes_operation_checks() {
+        use crate::internal::node::NodeKind;
+        use crate::internal::policy::{CategoryPolicy, EvidenceRules, Policy, ReviseRules};
         let state = fixed_state();
-        let policy = crate::internal::policy::Policy {
-            node_rules: {
-                let mut m = std::collections::HashMap::new();
-                m.insert("draft".into(), vec![NodeType::Claim, NodeType::Question]);
-                m
-            },
-            revise_rules: Some(crate::internal::policy::ReviseRules {
-                allow_body_revise: vec!["draft".into()],
-                allow_node_revise: vec![],
-            }),
-            evidence_rules: Some(crate::internal::policy::EvidenceRules {
-                allow_evidence: vec!["draft".into(), "proposed".into()],
-            }),
-            ..Default::default()
-        };
+        let mut rfc = CategoryPolicy::default();
+        rfc.allowed_node_types
+            .insert("draft".into(), vec![NodeKind::Comment, NodeKind::Objection]);
+        rfc.revise = Some(ReviseRules {
+            allow_body_revise: vec!["draft".into()],
+            allow_node_revise: vec![],
+        });
+        rfc.evidence = Some(EvidenceRules {
+            allow_evidence: vec!["draft".into(), "open".into()],
+        });
+        let mut policy = Policy::default();
+        policy.categories.insert("rfc".into(), rfc);
         let out = render_show(
             &state,
             &ShowOptions {
@@ -1127,7 +1132,7 @@ mod tests {
             },
         );
         assert!(out.contains("operation checks (state: draft):"));
-        assert!(out.contains("node types: claim, question"));
+        assert!(out.contains("node types: comment, objection"));
         assert!(out.contains("body revise: allowed"));
         assert!(out.contains("evidence:    allowed"));
     }

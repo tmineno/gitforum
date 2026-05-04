@@ -35,7 +35,8 @@ pub fn run_retype(
     let new_kind = parse_new_kind(new_type)?;
 
     let state = thread::replay_thread(&git, &thread_id)?;
-    let violations = operation_check::check_revise(&policy, state.status.as_str(), false);
+    let category = crate::internal::policy::category_for_state(&state);
+    let violations = operation_check::check_revise(&policy, category, state.status.as_str(), false);
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
     let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, node_ref)?;

@@ -243,17 +243,16 @@ pub fn run_canonical_thread_new(
         (t, b, None, None)
     };
 
-    // §7.2 creation rules — keyed on the real `lifecycle`/`tags` the caller
-    // selected, not the backing kind.
+    // SPEC-3.0 §3.3 creation rules — keyed on the resolved category.
     let violations = operation_check::check_op(
         &policy,
         operation_check::Op::Create {
-            lifecycle,
-            tags: &tags,
+            category: &category,
             body: effective_body.as_deref(),
         },
     );
-    let _ = &effective_title; // Title is not consulted by §7.2 rules.
+    let _ = &effective_title; // Title is not consulted by §3.3 rules.
+    let _ = &tags; // 3.0 has no tag-scoped creation rules (§3.1).
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
     let now = clock.now();
