@@ -70,6 +70,14 @@ impl ThreadDocument {
 /// - **Update** (ref present): commit's parent is the current ref tip;
 ///   updates the ref via CAS. A stale-parent racing write fails with
 ///   [`ForumError::SnapshotWriteConflict`]; the ref is unchanged.
+/// - **Archive preservation** (SPEC-3.0 §8.2 + task `9635buy0` item 8a):
+///   when the parent commit has a `legacy/` subtree (written by
+///   migrate via [`write_snapshot_with_archive`]), the new commit
+///   reuses that exact tree object verbatim — no parsing, no rebuild.
+///   This means a normal v3.0.0 write (`comment`, `state`, `revise`,
+///   …) on a migrated thread does NOT lose `legacy/events.ndjson` on
+///   the next commit. When the parent has no `legacy/`, the new tree
+///   has none (no-op preservation).
 ///
 /// Returns the new commit's OID.
 pub fn write_snapshot(
@@ -78,10 +86,45 @@ pub fn write_snapshot(
     doc: &ThreadDocument,
     message: &str,
 ) -> Result<String, ForumError> {
-    let tree_sha = build_tree(git, doc)?;
-    let refname = format!("refs/forum/threads/{thread_id}");
+    write_snapshot_inner(git, thread_id, doc, message, None)
+}
 
+/// Write `doc` as a snapshot commit and embed `archive_bytes` as
+/// `legacy/events.ndjson` in the new tree. Replaces (does not merge
+/// with) any pre-existing `legacy/` subtree on the parent.
+///
+/// Only the migrate command calls this — all other commands use
+/// [`write_snapshot`], which preserves the parent's `legacy/`
+/// verbatim. SPEC-3.0 §8.2: the archive is written for inspection
+/// and export tooling and MUST NOT be required by the read path.
+pub fn write_snapshot_with_archive(
+    git: &GitOps,
+    thread_id: &str,
+    doc: &ThreadDocument,
+    message: &str,
+    archive_bytes: &[u8],
+) -> Result<String, ForumError> {
+    write_snapshot_inner(git, thread_id, doc, message, Some(archive_bytes))
+}
+
+fn write_snapshot_inner(
+    git: &GitOps,
+    thread_id: &str,
+    doc: &ThreadDocument,
+    message: &str,
+    archive_bytes: Option<&[u8]>,
+) -> Result<String, ForumError> {
+    let refname = format!("refs/forum/threads/{thread_id}");
     let parent = git.resolve_ref(&refname)?;
+
+    let archive = match archive_bytes {
+        Some(bytes) => ArchiveSource::Supplied(bytes),
+        None => match &parent {
+            Some(commit) => ArchiveSource::PreserveParent(parent_legacy_tree_sha(git, commit)?),
+            None => ArchiveSource::PreserveParent(None),
+        },
+    };
+    let tree_sha = build_tree(git, doc, archive)?;
 
     let parent_refs: Vec<&str> = parent.iter().map(String::as_str).collect();
     let commit_sha = git.commit_tree(&tree_sha, &parent_refs, message)?;
@@ -105,12 +148,53 @@ pub fn write_snapshot(
     Ok(commit_sha)
 }
 
+/// Look up the tree OID of `<commit>:legacy/`. Returns `None` when
+/// the parent commit has no `legacy/` entry or when the entry is not
+/// a tree (defensive — same effect as no archive).
+fn parent_legacy_tree_sha(git: &GitOps, commit: &str) -> Result<Option<String>, ForumError> {
+    let out = git.run(&["ls-tree", commit, "legacy"])?;
+    let line = out.trim();
+    if line.is_empty() {
+        return Ok(None);
+    }
+    // ls-tree prints "<mode> <type> <sha>\t<name>" per entry.
+    let mut it = line.split_whitespace();
+    let _mode = it.next();
+    let kind = it.next();
+    let sha = it.next();
+    if kind != Some("tree") {
+        return Ok(None);
+    }
+    Ok(sha.map(str::to_string))
+}
+
+/// How `build_tree` should populate the `legacy/` subtree.
+enum ArchiveSource<'a> {
+    /// Replace `legacy/` with a single-file subtree containing
+    /// `events.ndjson` = `bytes`. Used by migrate.
+    Supplied(&'a [u8]),
+    /// Reuse the parent commit's `legacy/` subtree object verbatim.
+    /// `None` means there is no parent legacy tree to preserve.
+    PreserveParent(Option<String>),
+}
+
 /// Assemble the SPEC-3.0 §4.2 snapshot tree from `doc`.
 ///
 /// Optional files (body.md, links.toml, evidence.toml, nodes/) are
 /// omitted when empty per SPEC-3.0 §4.2 ("MAY be absent when empty").
 /// `thread.toml` is always written.
-fn build_tree(git: &GitOps, doc: &ThreadDocument) -> Result<String, ForumError> {
+///
+/// `archive` controls the `legacy/` subtree (SPEC-3.0 §8.2):
+/// - [`ArchiveSource::Supplied`] writes a single-file `legacy/`
+///   containing `events.ndjson` with the supplied bytes.
+/// - [`ArchiveSource::PreserveParent`] reuses the parent commit's
+///   `legacy/` tree object verbatim (or omits `legacy/` entirely
+///   when the parent has none).
+fn build_tree(
+    git: &GitOps,
+    doc: &ThreadDocument,
+    archive: ArchiveSource<'_>,
+) -> Result<String, ForumError> {
     let mut entries: Vec<String> = Vec::new();
 
     // Required: thread.toml
@@ -155,6 +239,19 @@ fn build_tree(git: &GitOps, doc: &ThreadDocument) -> Result<String, ForumError> 
         let toml = doc.evidence.to_toml()?;
         let sha = git.hash_object(toml.as_bytes())?;
         entries.push(format!("100644 blob {sha}\tevidence.toml"));
+    }
+
+    // Optional: legacy/ subtree (SPEC-3.0 §8.2 + task `9635buy0` §8a).
+    let legacy_sha = match archive {
+        ArchiveSource::Supplied(bytes) => {
+            let blob_sha = git.hash_object(bytes)?;
+            let subtree_input = format!("100644 blob {blob_sha}\tevents.ndjson\n");
+            Some(git.run_with_stdin(&["mktree"], subtree_input.as_bytes())?)
+        }
+        ArchiveSource::PreserveParent(parent_sha) => parent_sha,
+    };
+    if let Some(sha) = legacy_sha {
+        entries.push(format!("040000 tree {sha}\tlegacy"));
     }
 
     let tree_input = format!("{}\n", entries.join("\n"));

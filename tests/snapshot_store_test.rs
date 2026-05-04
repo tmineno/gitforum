@@ -10,7 +10,7 @@ mod support;
 
 use git_forum::internal::error::ForumError;
 use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::snapshot::{write_snapshot, ThreadDocument};
+use git_forum::internal::snapshot::{write_snapshot, write_snapshot_with_archive, ThreadDocument};
 use git_forum::internal::thread::ThreadSnapshot;
 
 fn fresh_repo() -> support::repo::TestRepo {
@@ -243,5 +243,134 @@ fn cas_conflict_via_api_returns_snapshot_write_conflict() {
     assert!(
         format!("{manual_err}").contains("snapshot write conflict"),
         "Display impl carries SPEC vocabulary"
+    );
+}
+
+// --- Archive write + preservation (SPEC-3.0 §8.2 + task `9635buy0` 8a/8b) ---
+
+fn legacy_blob_sha(git: &GitOps, refname: &str) -> Option<String> {
+    let tip = git.run(&["rev-parse", refname]).ok()?;
+    let out = git
+        .run(&["ls-tree", "-r", tip.trim(), "legacy/events.ndjson"])
+        .ok()?;
+    let line = out.trim();
+    if line.is_empty() {
+        return None;
+    }
+    // "<mode> blob <sha>\tlegacy/events.ndjson"
+    line.split_whitespace().nth(2).map(str::to_string)
+}
+
+#[test]
+fn write_with_archive_emits_legacy_events_ndjson() {
+    let repo = fresh_repo();
+    let git = GitOps::new(repo.path().to_path_buf());
+
+    let doc = ThreadDocument::new(sample_thread("ARCH001"));
+    let archive = b"{\"event\":1}\n{\"event\":2}\n";
+    write_snapshot_with_archive(&git, "ARCH001", &doc, "migrate ARCH001", archive).unwrap();
+
+    let paths = list_tree_paths(&git, "refs/forum/threads/ARCH001");
+    assert!(
+        paths.iter().any(|p| p == "legacy/events.ndjson"),
+        "legacy/events.ndjson must be written to the snapshot tree, got {paths:?}"
+    );
+    let tip = git
+        .run(&["rev-parse", "refs/forum/threads/ARCH001"])
+        .unwrap();
+    let written = git
+        .show_file_bytes(tip.trim(), "legacy/events.ndjson")
+        .unwrap();
+    assert_eq!(
+        written.as_slice(),
+        archive,
+        "archive bytes must round-trip byte-identical (no trailing newline trim)"
+    );
+}
+
+#[test]
+fn plain_write_preserves_parent_legacy_subtree_byte_identical() {
+    // SPEC-3.0 §8a: a normal v3.0.0 write (the read→mutate→write
+    // pattern used by every command except migrate) must reuse the
+    // parent commit's `legacy/` subtree object verbatim, so the
+    // archive survives the next `comment`/`state`/`revise`.
+    let repo = fresh_repo();
+    let git = GitOps::new(repo.path().to_path_buf());
+
+    let doc0 = ThreadDocument::new(sample_thread("ARCH002"));
+    let archive = b"{\"event\":1}\n{\"event\":2}\n{\"event\":3}\n";
+    write_snapshot_with_archive(&git, "ARCH002", &doc0, "migrate ARCH002", archive).unwrap();
+    let original_sha = legacy_blob_sha(&git, "refs/forum/threads/ARCH002")
+        .expect("archive blob present after migrate write");
+
+    // Three successive plain writes — each mutates the doc and goes
+    // through the read→write loop migrate-clients use.
+    for i in 0..3 {
+        let mut next = ThreadDocument::new(sample_thread("ARCH002"));
+        next.snapshot.title = format!("revised {i}");
+        write_snapshot(&git, "ARCH002", &next, &format!("plain write {i}")).unwrap();
+
+        let after_sha = legacy_blob_sha(&git, "refs/forum/threads/ARCH002")
+            .expect("archive blob must survive plain write");
+        assert_eq!(
+            after_sha, original_sha,
+            "legacy/events.ndjson blob OID must be byte-identical across plain write {i}"
+        );
+        // Also assert tree-level: the path is still present.
+        let paths = list_tree_paths(&git, "refs/forum/threads/ARCH002");
+        assert!(
+            paths.iter().any(|p| p == "legacy/events.ndjson"),
+            "legacy/events.ndjson must still be in the tree after plain write {i}"
+        );
+    }
+}
+
+#[test]
+fn plain_write_without_parent_legacy_does_not_create_one() {
+    // No archive ever supplied; new commits must not invent a
+    // `legacy/` subtree. Guards against regressions where the
+    // preservation path runs even on a v3-native thread.
+    let repo = fresh_repo();
+    let git = GitOps::new(repo.path().to_path_buf());
+
+    let doc = ThreadDocument::new(sample_thread("PURE3V"));
+    write_snapshot(&git, "PURE3V", &doc, "create PURE3V").unwrap();
+
+    let mut next = ThreadDocument::new(sample_thread("PURE3V"));
+    next.snapshot.title = "second".into();
+    write_snapshot(&git, "PURE3V", &next, "second write").unwrap();
+
+    let paths = list_tree_paths(&git, "refs/forum/threads/PURE3V");
+    assert!(
+        paths.iter().all(|p| !p.starts_with("legacy/")),
+        "v3-native thread must never have legacy/ in its tree; got {paths:?}"
+    );
+}
+
+#[test]
+fn write_with_archive_replaces_pre_existing_legacy_subtree() {
+    // Defensive: if migrate is somehow re-invoked on a thread that
+    // already has a legacy/ subtree, the supplied bytes win and the
+    // old subtree is dropped (per item 8a "drops anything else
+    // under legacy/").
+    let repo = fresh_repo();
+    let git = GitOps::new(repo.path().to_path_buf());
+
+    let doc = ThreadDocument::new(sample_thread("ARCH003"));
+    let first = b"{\"event\":\"v1\"}\n";
+    let second = b"{\"event\":\"v2-replaced\"}\n";
+    write_snapshot_with_archive(&git, "ARCH003", &doc, "first migrate", first).unwrap();
+    write_snapshot_with_archive(&git, "ARCH003", &doc, "second migrate", second).unwrap();
+
+    let tip = git
+        .run(&["rev-parse", "refs/forum/threads/ARCH003"])
+        .unwrap();
+    let written = git
+        .show_file_bytes(tip.trim(), "legacy/events.ndjson")
+        .unwrap();
+    assert_eq!(
+        written.as_slice(),
+        second,
+        "archive bytes from the second call must replace the first"
     );
 }
