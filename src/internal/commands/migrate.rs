@@ -657,6 +657,27 @@ pub fn migrate_legacy_to_snapshot_strict_at(
     })
 }
 
+/// Return a tree-safe form of a legacy node ID.
+///
+/// Legacy approval nodes use `<event_sha>#<actor_id>` and `actor_id`
+/// commonly carries a namespace separator (`human/alice`).
+/// `git mktree` rejects path components that contain `/`, so the
+/// projection MUST scrub legacy node IDs before they are used as
+/// `nodes/<id>.toml` filenames in the snapshot tree (SPEC-3.0
+/// §4.2).
+///
+/// Replacement is deterministic — `/` → `-` everywhere — so any
+/// `reply_to` references on other nodes can apply the same
+/// transform and remain consistent. There is a vanishingly small
+/// chance of collision when two legacy actor IDs differ only by a
+/// `/` vs `-` at the same position (e.g. `human/alice-bob` vs
+/// `human-alice/bob` both fold to `human-alice-bob`); we accept
+/// this loss as part of the SPEC-3.0 §8 one-way lossy migration
+/// contract.
+fn tree_safe_node_id(legacy_id: &str) -> String {
+    legacy_id.replace('/', "-")
+}
+
 /// Project a replayed legacy [`ThreadState`] to a SPEC-3.0
 /// [`ThreadDocument`]. Shared by the lenient and strict pinned
 /// projection paths.
@@ -706,14 +727,14 @@ fn project_state_to_doc(state: ThreadState) -> Result<ThreadDocument, ForumError
             };
             Some(NodeWithBody {
                 record: NodeRecord {
-                    id: n.node_id.clone(),
+                    id: tree_safe_node_id(&n.node_id),
                     kind,
                     status,
                     created_at: n.created_at,
                     created_by: n.actor.clone(),
                     updated_at: None,
                     updated_by: None,
-                    reply_to: n.reply_to.clone(),
+                    reply_to: n.reply_to.as_deref().map(tree_safe_node_id),
                     legacy_label: n.legacy_subtype.clone(),
                 },
                 body: n.body.clone(),
@@ -786,6 +807,26 @@ mod tests {
         // the category itself is the classification.
         assert_eq!(legacy_kind_to_canonical_tag(ThreadKind::Rfc), None);
         assert_eq!(legacy_kind_to_canonical_tag(ThreadKind::Task), None);
+    }
+
+    #[test]
+    fn tree_safe_node_id_strips_actor_namespace_slash() {
+        // v2 approval nodes use `<event_sha>#<actor_id>` and the
+        // actor commonly carries a namespace (`human/alice`).
+        // The projection MUST strip the slash so the node ID is
+        // legal as a `nodes/<id>.toml` filename in the SPEC-3.0
+        // §4.2 snapshot tree.
+        assert_eq!(
+            tree_safe_node_id("8ae3c8ffc9f505641a86e628947212b4cc995ceb#human/alice"),
+            "8ae3c8ffc9f505641a86e628947212b4cc995ceb#human-alice"
+        );
+        // Pure event SHAs (the common comment/objection/action
+        // shape) pass through unchanged.
+        let plain = "8ae3c8ffc9f505641a86e628947212b4cc995ceb";
+        assert_eq!(tree_safe_node_id(plain), plain);
+        // Multiple slashes (defensive — shouldn't happen in v2 but
+        // we replace every occurrence to keep the contract simple).
+        assert_eq!(tree_safe_node_id("abc#human/foo/bar"), "abc#human-foo-bar");
     }
 
     // Pin the v→2 alias-token algorithm to its byte-exact original.

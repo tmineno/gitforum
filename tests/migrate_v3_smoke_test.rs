@@ -707,3 +707,80 @@ fn migrate_unparseable_event_payload_records_error_outcome() {
         .unwrap();
     assert_eq!(healthy_entry["outcome"], "migrated");
 }
+
+#[test]
+fn migrate_handles_legacy_approval_node_ids_with_slashes() {
+    // Real-world regression (caught by running `git forum migrate
+    // --to 3.0` against the live `gitforum-v2.0.2-refactor` repo,
+    // 17 of 299 threads failed): legacy approval nodes have
+    // `<event_sha>#<actor_id>` IDs and `actor_id` commonly contains
+    // a namespace separator (`human/bob`). `git mktree`
+    // rejects path components with `/`, so the projection MUST
+    // sanitize before writing `nodes/<id>.toml`.
+    use git_forum::internal::event::{Approval, ApprovalMechanism};
+    let (repo, git, _paths) = setup();
+    let id = id_alloc::alloc_thread_id_with_nonce(
+        ThreadKind::Rfc,
+        "human/alice",
+        "ApprovalSlash",
+        "2026-01-01T00:00:00Z",
+        &[11, 11, 11, 11, 11, 11, 11, 11],
+    );
+    event::write_event(&git, &create_event(&id, ThreadKind::Rfc, "ApprovalSlash")).unwrap();
+    // SPEC-2.0 §2.8: 1.x state events carried approvals inline.
+    // Replay synthesizes one Approval node per `(event_sha, actor)`
+    // pair as `<event_sha>#<actor_id>`. With actor=`human/bob`
+    // the legacy node_id contains a `/`, which is what triggered
+    // the real-world mktree rejection.
+    let state_with_approval = Event {
+        thread_id: id.clone(),
+        event_type: EventType::State,
+        created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
+        actor: "human/alice".into(),
+        new_state: Some("open".into()),
+        approvals: vec![Approval {
+            actor_id: "human/bob".into(),
+            approved_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
+            mechanism: ApprovalMechanism::Recorded,
+            key_id: None,
+            proof_ref: None,
+        }],
+        ..Event::default()
+    };
+    event::write_event(&git, &state_with_approval).unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_git-forum");
+    let out = Command::new(bin)
+        .current_dir(repo.path())
+        .args(["migrate", "--to", "3.0"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "migration must succeed even when an approval's actor_id contains `/`:\n\
+         stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("[migrated]"), "thread should migrate");
+
+    // The approval node should be present with a tree-safe ID
+    // (slashes scrubbed to `-`).
+    let doc = snapshot::read_snapshot(&git, &id).expect("post-migrate read_snapshot");
+    let approval = doc
+        .nodes
+        .iter()
+        .find(|n| matches!(n.record.kind, git_forum::internal::node::NodeKind::Approval))
+        .expect("approval node missing from migrated snapshot");
+    assert!(
+        !approval.record.id.contains('/'),
+        "migrated approval node id must not contain `/`, got `{}`",
+        approval.record.id
+    );
+    assert!(
+        approval.record.id.contains("human-bob"),
+        "approval id should preserve the actor (with `/` → `-`), got `{}`",
+        approval.record.id
+    );
+}
