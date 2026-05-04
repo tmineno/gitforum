@@ -42,13 +42,9 @@ const GROUPED_HELP: &str = "\
 These are common git-forum commands:
 
 setup and repo health
-   init               Initialize a git-forum repository
-   doctor             Diagnose repo health (config, index, refs)
-   repair             Detect and fix thread ID conflicts with a remote
-   reindex            Rebuild local index from Git refs
-   prune-orphans      Delete thread refs that have no valid create event
-   prune-stale-events Drop events whose target_node_id references a vanished node
-   migrate            Rewrite a 1.x repo to the 2.0 storage format
+   init        Initialize a git-forum repository
+   doctor      Diagnose repo health (refs, snapshot integrity)
+   migrate     Rewrite a 1.x/2.x repo to the 3.0 snapshot-ref format
 
 create and browse threads
    new         Create a new thread via kind preset (rfc/dec/task/issue/bug)
@@ -56,7 +52,6 @@ create and browse threads
    ls          List threads (filter by lifecycle, tag, status, or branch)
    show        Show thread details (use --what-next for diagnostics)
    diff        Show diff between body revisions
-   search      Search threads and nodes
    shortlog    List threads resolved since a date or tag
    status      Show unresolved items for a thread
 
@@ -86,10 +81,6 @@ hooks and maintenance
 interactive
    tui         Open the interactive TUI
 
-import / export
-   import      Import from external sources
-   export      Export to external platforms
-
 state shorthands (lifecycle-aware: close/accept/propose/pend/reject/withdraw/deprecate)
    close       proposal: rejected (use accept) | execution/record: -> done
    accept      proposal/record: -> done | execution: rejected (use close)
@@ -100,10 +91,9 @@ state shorthands (lifecycle-aware: close/accept/propose/pend/reject/withdraw/dep
    deprecate   any lifecycle: -> deprecated
 
 node shorthands (convenience aliases for 'node add <ID> --type <type>')
-   comment     node add --type comment (canonical 2.0 form)
+   comment     node add --type comment
    objection   node add --type objection
    action      node add --type action
-   claim, question, summary, risk, review — deprecated aliases for `comment`
 
 'git forum <command> --help' for more on a specific command.
 'git forum --help-llm' for the full manual.";
@@ -697,46 +687,6 @@ enum HookCmd {
     FixIndex,
     /// Initialize git-forum in a new worktree (used by post-checkout hook)
     WorktreeInit,
-}
-
-#[derive(Subcommand)]
-enum ImportCmd {
-    /// Import a GitHub issue into git-forum
-    GithubIssue {
-        /// GitHub repository (owner/repo)
-        #[arg(long)]
-        repo: String,
-        /// Issue number to import
-        #[arg(long, required_unless_present = "all")]
-        issue: Option<u64>,
-        /// Import all issues from the repository
-        #[arg(long, conflicts_with = "issue")]
-        all: bool,
-        /// Actor identity
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Show what would be imported without creating anything
-        #[arg(long)]
-        dry_run: bool,
-    },
-}
-
-#[derive(Subcommand)]
-enum ExportCmd {
-    /// Export a git-forum thread to a GitHub issue
-    GithubIssue {
-        /// Thread ID to export
-        thread_id: String,
-        /// Target GitHub repository (owner/repo)
-        #[arg(long)]
-        repo: String,
-        /// Actor identity
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-        /// Show what would be created without actually creating
-        #[arg(long)]
-        dry_run: bool,
-    },
 }
 
 /// Apply operation check violations: print to stderr, block on errors.
