@@ -197,13 +197,13 @@ pub fn run_canonical_thread_new(
         from_thread
     {
         let source_id = &resolve_tid(&git, source_id)?;
-        // `replay_thread` is mixed-chain aware (Phase 2 transitional):
-        // accepts pure-event, pure-snapshot, or snapshot+events.
-        // `--from-thread` predates slot 1, so the source is often a
-        // pure event chain when the test harness or migration sets it
-        // up directly via `create::create_thread`.
-        let source = crate::internal::thread::replay_thread(&git, source_id)?;
-        let source_lifecycle = source.lifecycle;
+        // ADR-011 Decision 3: non-migrate paths must NOT consume legacy
+        // event chains. Use the snapshot reader so a legacy source
+        // surfaces `LegacyEventChain` *before* any write happens — no
+        // partial-state risk if the source needs migration.
+        let source = snapshot::read_snapshot(&git, source_id)?;
+        let source_lifecycle =
+            legacy_lifecycle_for_category(&source.snapshot.category, &source.snapshot.tags);
         // SPEC-2.0 §9.3 lifecycle-keyed restatement of 1.x §9.2: an
         // execution thread cannot supersede a proposal. Use
         // `link --rel implements` instead.
@@ -215,7 +215,7 @@ pub fn run_canonical_thread_new(
                     .into(),
             ));
         }
-        let t = title.unwrap_or_else(|| format!("v2: {}", source.title));
+        let t = title.unwrap_or_else(|| format!("v2: {}", source.snapshot.title));
         let b = resolve_thread_body(body, body_file, edit, &edit_hint)?.or(source.body.clone());
         (t, b, None, Some((source_id.clone(), source_lifecycle)))
     } else if let Some(rev) = from_commit {
@@ -422,12 +422,10 @@ pub fn run_canonical_thread_new(
 
 /// Append the symmetric `superseded-by` edge to the SOURCE thread.
 ///
-/// ADR-011 Decision 3: non-migrate paths must NOT consume legacy
-/// event chains. When the source is on a legacy chain we bail with
-/// `LegacyEventChain`; the user runs `git forum migrate` first and
-/// retries. The new thread (already a snapshot) has been written by
-/// the caller; only the back-link is rejected, so the user's data is
-/// not lost — they just need to re-attempt the link after migration.
+/// The source has already been pre-flighted via `snapshot::read_snapshot`
+/// in [`run_canonical_thread_new`], so a legacy event chain on the
+/// source surfaces `LegacyEventChain` *before* any write. By the time
+/// we reach this fn, the source is known to be a SPEC-3.0 snapshot.
 fn write_back_supersede_link(
     git: &GitOps,
     source_id: &str,
@@ -534,13 +532,20 @@ pub fn augment_tags_for_lifecycle(lifecycle: Lifecycle, tags: &mut Vec<String>) 
 }
 
 /// Inverse of [`lifecycle_to_category`] for the few read paths that
-/// still need a `Lifecycle` value (e.g. supersede-direction guard).
+/// still need a `Lifecycle` value (e.g. the supersede-direction guard
+/// in `--from-thread`).
 ///
-/// Per §8.3 the `task` category covers both Execution and Record;
-/// the `decision` tag distinguishes the two on read.
-pub fn legacy_lifecycle_for_category(category: &str) -> Lifecycle {
+/// Per SPEC-3.0 §8.3 the `task` category covers both Execution and
+/// Record; the `decision` tag is what distinguishes the two on read.
+pub fn legacy_lifecycle_for_category(category: &str, tags: &[String]) -> Lifecycle {
     match category {
-        "task" => Lifecycle::Execution,
+        "task" => {
+            if tags.iter().any(|t| t == "decision") {
+                Lifecycle::Record
+            } else {
+                Lifecycle::Execution
+            }
+        }
         _ => Lifecycle::Proposal,
     }
 }
