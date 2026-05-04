@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::error::{ForumError, ForumResult};
 use super::event::{Lifecycle, NodeType};
@@ -53,6 +53,55 @@ impl CategoryDefinition {
     pub fn allows_transition(&self, from: &str, to: &str) -> bool {
         let needle = format!("{from}->{to}");
         self.transitions.iter().any(|t| t == &needle)
+    }
+
+    /// Destination statuses reachable in one step from `from`.
+    pub fn valid_targets(&self, from: &str) -> Vec<String> {
+        let prefix = format!("{from}->");
+        self.transitions
+            .iter()
+            .filter_map(|t| t.strip_prefix(&prefix).map(String::from))
+            .collect()
+    }
+
+    /// BFS shortest path from `from` to `to` using this category's
+    /// `transitions`. Returns the sequence of intermediate destinations
+    /// (excluding `from`, including `to`), or `None` when unreachable.
+    pub fn find_path(&self, from: &str, to: &str) -> Option<Vec<String>> {
+        if from == to {
+            return Some(Vec::new());
+        }
+        let mut adjacency: HashMap<&str, Vec<&str>> = HashMap::new();
+        for edge in &self.transitions {
+            if let Some((f, t)) = edge.split_once("->") {
+                adjacency.entry(f.trim()).or_default().push(t.trim());
+            }
+        }
+        let mut visited: HashMap<String, Option<String>> = HashMap::new();
+        let mut queue: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+        visited.insert(from.to_string(), None);
+        queue.push_back(from.to_string());
+        while let Some(node) = queue.pop_front() {
+            if node == to {
+                let mut path = Vec::new();
+                let mut cursor = node;
+                while let Some(prev) = visited.get(&cursor).cloned().flatten() {
+                    path.push(cursor);
+                    cursor = prev;
+                }
+                path.reverse();
+                return Some(path);
+            }
+            if let Some(neighbors) = adjacency.get(node.as_str()) {
+                for &n in neighbors {
+                    if !visited.contains_key(n) {
+                        visited.insert(n.to_string(), Some(node.clone()));
+                        queue.push_back(n.to_string());
+                    }
+                }
+            }
+        }
+        None
     }
 }
 
@@ -92,6 +141,10 @@ impl CategoryRegistry {
 }
 
 fn built_in_rfc() -> CategoryDefinition {
+    // The SPEC-3.0 §3.1 example registry table is the structural
+    // baseline. Two reopen edges (`done->open`, `rejected->open`) are
+    // added beyond the example so the everyday `git forum reopen <ID>`
+    // shorthand keeps working without per-repo overrides.
     CategoryDefinition {
         initial_status: "draft".into(),
         statuses: [
@@ -114,6 +167,8 @@ fn built_in_rfc() -> CategoryDefinition {
             "open->withdrawn",
             "review->done",
             "review->rejected",
+            "done->open",
+            "rejected->open",
             "done->deprecated",
             "rejected->deprecated",
         ]
@@ -148,6 +203,8 @@ fn built_in_task() -> CategoryDefinition {
             "review->done",
             "review->working",
             "review->rejected",
+            "done->open",
+            "rejected->open",
             "done->deprecated",
             "rejected->deprecated",
         ]
@@ -200,7 +257,7 @@ pub fn category_for_state(state: &ThreadState) -> &'static str {
 // ---------------------------------------------------------------------
 
 /// 3.0 guard rule names per SPEC-3.0 §3.2.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GuardRule {
     /// The thread has no `objection` node with `status = "open"`.
@@ -230,60 +287,101 @@ impl std::fmt::Display for GuardRule {
 // ---------------------------------------------------------------------
 
 /// Body / sections required at thread creation (SPEC-3.0 §3.3).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct CreationRules {
     #[serde(default)]
     pub required_body: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub body_sections: Vec<String>,
 }
 
 /// Statuses in which body / node revision is allowed.
-#[derive(Debug, Clone, Default, Deserialize)]
+///
+/// SPEC-3.0 §3.3: an absent allow list (`None`) means no restriction;
+/// a present-but-empty list (`Some(vec![])`) explicitly denies the
+/// operation in every status.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ReviseRules {
-    #[serde(default)]
-    pub allow_body_revise: Vec<String>,
-    #[serde(default)]
-    pub allow_node_revise: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_body_revise: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_node_revise: Option<Vec<String>>,
 }
 
-/// Statuses in which evidence may be attached.
-#[derive(Debug, Clone, Default, Deserialize)]
+/// Statuses in which evidence may be attached. Same absent-vs-empty
+/// distinction as [`ReviseRules`].
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct EvidenceRules {
-    #[serde(default)]
-    pub allow_evidence: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_evidence: Option<Vec<String>>,
 }
 
 /// Global checks (top-level, not category-scoped).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ChecksConfig {
     #[serde(default)]
     pub strict: bool,
 }
 
-/// Per-category policy bundle (SPEC-3.0 §3.3).
-#[derive(Debug, Clone, Default, Deserialize)]
+/// Per-category policy bundle (SPEC-3.0 §3.1 / §3.3).
+///
+/// `initial_status`, `statuses`, and `transitions` are the §3.1
+/// category-definition fields. When all three are present, the entry
+/// overrides the built-in for this category (or defines a new
+/// non-built-in category). When all three are absent, the built-in
+/// definition (if any) is used. Partial overrides are rejected by
+/// [`validate_against_registry`].
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct CategoryPolicy {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub statuses: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transitions: Option<Vec<String>>,
+
     /// Guard rules keyed by `"FROM->TO"` transition string.
     /// Per SPEC-3.0 §3.2: `[categories.rfc.guards] "review->done" = [...]`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub guards: HashMap<String, Vec<GuardRule>>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creation: Option<CreationRules>,
     /// Allowed node types per status. Empty list = no node types allowed
     /// in that status.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub allowed_node_types: HashMap<String, Vec<NodeKind>>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revise: Option<ReviseRules>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<EvidenceRules>,
 }
 
-/// Parsed policy loaded from `.forum/policy.toml` (SPEC-3.0 §3.2 / §3.3).
-#[derive(Debug, Clone, Default, Deserialize)]
+impl CategoryPolicy {
+    /// Whether all three §3.1 definition fields are present.
+    fn has_full_definition(&self) -> bool {
+        self.initial_status.is_some() && self.statuses.is_some() && self.transitions.is_some()
+    }
+
+    /// Whether any of the three §3.1 definition fields are present.
+    fn has_any_definition_field(&self) -> bool {
+        self.initial_status.is_some() || self.statuses.is_some() || self.transitions.is_some()
+    }
+
+    /// Project the §3.1 definition fields into a [`CategoryDefinition`].
+    /// Caller must ensure [`Self::has_full_definition`] first.
+    fn to_definition(&self) -> CategoryDefinition {
+        CategoryDefinition {
+            initial_status: self.initial_status.clone().unwrap(),
+            statuses: self.statuses.clone().unwrap(),
+            transitions: self.transitions.clone().unwrap(),
+        }
+    }
+}
+
+/// Parsed policy loaded from `.forum/policy.toml` (SPEC-3.0 §3.1 / §3.2 / §3.3).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Policy {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub categories: HashMap<String, CategoryPolicy>,
     #[serde(default)]
     pub checks: ChecksConfig,
@@ -323,6 +421,25 @@ impl Policy {
 
     pub fn category(&self, name: &str) -> Option<&CategoryPolicy> {
         self.categories.get(name)
+    }
+
+    /// Effective category registry per SPEC-3.0 §3.1: built-in categories
+    /// (`rfc`, `task`) overlaid with any per-category definition fields
+    /// (`initial_status`, `statuses`, `transitions`) supplied in
+    /// `.forum/policy.toml`. Categories that are listed in the policy
+    /// without definition fields keep their built-in definition;
+    /// non-built-in categories MUST supply all three fields (enforced by
+    /// `validate_against_registry`).
+    pub fn effective_registry(&self) -> CategoryRegistry {
+        let mut registry = CategoryRegistry::built_in();
+        for (name, cat) in &self.categories {
+            if cat.has_full_definition() {
+                registry
+                    .categories
+                    .insert(name.clone(), cat.to_definition());
+            }
+        }
+        registry
     }
 
     /// Return the guard rules for `category`'s `from->to` transition, or
@@ -435,14 +552,40 @@ pub fn detect_legacy_policy_form(text: &str) -> Option<String> {
 }
 
 fn validate_against_registry(policy: &Policy) -> ForumResult<()> {
-    let registry = CategoryRegistry::built_in();
+    let built_in = CategoryRegistry::built_in();
+
+    // 1) Validate per-category definition fields, then build the
+    //    effective registry. Partial overrides and inconsistent
+    //    definitions are rejected here.
     for (cat_name, cat_policy) in &policy.categories {
-        let Some(cat_def) = registry.get(cat_name) else {
+        let is_built_in = built_in.get(cat_name).is_some();
+        if cat_policy.has_any_definition_field() && !cat_policy.has_full_definition() {
             return Err(ForumError::Config(format!(
-                "policy.toml references unknown category {cat_name:?}; \
+                "[categories.{cat_name}]: partial category definition; \
+                 SPEC-3.0 §3.1 requires all three of `initial_status`, `statuses`, \
+                 `transitions` together"
+            )));
+        }
+        if !is_built_in && !cat_policy.has_full_definition() {
+            return Err(ForumError::Config(format!(
+                "[categories.{cat_name}]: non-built-in category requires `initial_status`, \
+                 `statuses`, and `transitions` (SPEC-3.0 §3.1); \
                  built-in categories are: rfc, task"
             )));
-        };
+        }
+        if cat_policy.has_full_definition() {
+            validate_definition_consistency(cat_name, cat_policy)?;
+        }
+    }
+
+    let effective = policy.effective_registry();
+
+    // 2) Validate guards, allowed_node_types, revise, evidence against
+    //    the effective definition (built-in or override).
+    for (cat_name, cat_policy) in &policy.categories {
+        let cat_def = effective
+            .get(cat_name)
+            .expect("effective registry built above must contain every policy category");
 
         for transition in cat_policy.guards.keys() {
             let Some((from, to)) = transition.split_once("->") else {
@@ -482,33 +625,88 @@ fn validate_against_registry(policy: &Policy) -> ForumResult<()> {
         }
 
         if let Some(revise) = &cat_policy.revise {
-            for s in &revise.allow_body_revise {
-                if !cat_def.has_status(s) {
-                    return Err(ForumError::Config(format!(
-                        "[categories.{cat_name}.revise] allow_body_revise: status {s:?} is not \
-                         in category `{cat_name}`'s `statuses`"
-                    )));
+            if let Some(list) = &revise.allow_body_revise {
+                for s in list {
+                    if !cat_def.has_status(s) {
+                        return Err(ForumError::Config(format!(
+                            "[categories.{cat_name}.revise] allow_body_revise: status {s:?} is \
+                             not in category `{cat_name}`'s `statuses`"
+                        )));
+                    }
                 }
             }
-            for s in &revise.allow_node_revise {
-                if !cat_def.has_status(s) {
-                    return Err(ForumError::Config(format!(
-                        "[categories.{cat_name}.revise] allow_node_revise: status {s:?} is not \
-                         in category `{cat_name}`'s `statuses`"
-                    )));
+            if let Some(list) = &revise.allow_node_revise {
+                for s in list {
+                    if !cat_def.has_status(s) {
+                        return Err(ForumError::Config(format!(
+                            "[categories.{cat_name}.revise] allow_node_revise: status {s:?} is \
+                             not in category `{cat_name}`'s `statuses`"
+                        )));
+                    }
                 }
             }
         }
 
         if let Some(evidence) = &cat_policy.evidence {
-            for s in &evidence.allow_evidence {
-                if !cat_def.has_status(s) {
-                    return Err(ForumError::Config(format!(
-                        "[categories.{cat_name}.evidence] allow_evidence: status {s:?} is not \
-                         in category `{cat_name}`'s `statuses`"
-                    )));
+            if let Some(list) = &evidence.allow_evidence {
+                for s in list {
+                    if !cat_def.has_status(s) {
+                        return Err(ForumError::Config(format!(
+                            "[categories.{cat_name}.evidence] allow_evidence: status {s:?} is \
+                             not in category `{cat_name}`'s `statuses`"
+                        )));
+                    }
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+/// SPEC-3.0 §3.1: a category definition with an unknown status, duplicate
+/// transition, or transition referencing a status outside `statuses` is
+/// invalid. Also: `initial_status` must appear in `statuses`.
+fn validate_definition_consistency(cat_name: &str, cat: &CategoryPolicy) -> ForumResult<()> {
+    let statuses = cat.statuses.as_ref().expect("checked by caller");
+    let transitions = cat.transitions.as_ref().expect("checked by caller");
+    let initial_status = cat.initial_status.as_ref().expect("checked by caller");
+
+    if statuses.is_empty() {
+        return Err(ForumError::Config(format!(
+            "[categories.{cat_name}]: `statuses` must not be empty"
+        )));
+    }
+    if !statuses.iter().any(|s| s == initial_status) {
+        return Err(ForumError::Config(format!(
+            "[categories.{cat_name}]: `initial_status = {initial_status:?}` is not in \
+             `statuses`"
+        )));
+    }
+    let mut seen: std::collections::HashSet<&String> = std::collections::HashSet::new();
+    for t in transitions {
+        if !seen.insert(t) {
+            return Err(ForumError::Config(format!(
+                "[categories.{cat_name}]: duplicate transition {t:?}"
+            )));
+        }
+        let Some((from, to)) = t.split_once("->") else {
+            return Err(ForumError::Config(format!(
+                "[categories.{cat_name}]: transition {t:?}: invalid syntax; expected \
+                 \"from->to\""
+            )));
+        };
+        let (from, to) = (from.trim(), to.trim());
+        if !statuses.iter().any(|s| s == from) {
+            return Err(ForumError::Config(format!(
+                "[categories.{cat_name}]: transition {t:?}: status {from:?} is not in \
+                 `statuses`"
+            )));
+        }
+        if !statuses.iter().any(|s| s == to) {
+            return Err(ForumError::Config(format!(
+                "[categories.{cat_name}]: transition {t:?}: status {to:?} is not in \
+                 `statuses`"
+            )));
         }
     }
     Ok(())
@@ -692,16 +890,18 @@ pub fn render_policy_show(policy: &Policy) -> String {
         }
         if let Some(r) = &cat.revise {
             lines.push("  revise:".into());
-            if !r.allow_body_revise.is_empty() {
-                lines.push(format!("    body: [{}]", r.allow_body_revise.join(", ")));
+            if let Some(list) = &r.allow_body_revise {
+                lines.push(format!("    body: [{}]", list.join(", ")));
             }
-            if !r.allow_node_revise.is_empty() {
-                lines.push(format!("    node: [{}]", r.allow_node_revise.join(", ")));
+            if let Some(list) = &r.allow_node_revise {
+                lines.push(format!("    node: [{}]", list.join(", ")));
             }
         }
         if let Some(e) = &cat.evidence {
             lines.push("  evidence:".into());
-            lines.push(format!("    allow: [{}]", e.allow_evidence.join(", ")));
+            if let Some(list) = &e.allow_evidence {
+                lines.push(format!("    allow: [{}]", list.join(", ")));
+            }
         }
         lines.push(String::new());
     }
@@ -1013,11 +1213,213 @@ required_body = false
 
     #[test]
     fn rejects_unknown_category() {
+        // Non-built-in category without §3.1 definition fields → reject.
         let toml = "[categories.bogus.guards]\n\"a->b\" = []\n";
         let (_dir, path) = write_temp(toml);
         let err = Policy::load(&path).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("unknown category"), "got: {msg}");
+        assert!(msg.contains("non-built-in category"), "got: {msg}");
+        assert!(msg.contains("rfc, task"), "got: {msg}");
+    }
+
+    #[test]
+    fn accepts_custom_category_with_full_definition() {
+        // SPEC-3.0 §3.1: repos MAY define additional categories.
+        let toml = r#"
+[categories.spike]
+initial_status = "draft"
+statuses = ["draft", "investigating", "done"]
+transitions = ["draft->investigating", "investigating->done"]
+
+[categories.spike.guards]
+"investigating->done" = ["one_approval"]
+"#;
+        let (_dir, path) = write_temp(toml);
+        let policy = Policy::load(&path).expect("custom category accepted");
+        let reg = policy.effective_registry();
+        let spike = reg.get("spike").expect("custom category in registry");
+        assert_eq!(spike.initial_status, "draft");
+        assert!(spike.allows_transition("draft", "investigating"));
+        // Built-ins survive alongside the custom category.
+        assert!(reg.get("rfc").is_some());
+        assert!(reg.get("task").is_some());
+    }
+
+    #[test]
+    fn accepts_built_in_override() {
+        // SPEC-3.0 §3.1: repos MAY override built-in category definitions.
+        let toml = r#"
+[categories.rfc]
+initial_status = "open"
+statuses = ["open", "review", "done"]
+transitions = ["open->review", "review->done"]
+"#;
+        let (_dir, path) = write_temp(toml);
+        let policy = Policy::load(&path).expect("built-in override accepted");
+        let reg = policy.effective_registry();
+        let rfc = reg.get("rfc").expect("rfc still present");
+        assert_eq!(rfc.initial_status, "open");
+        assert!(rfc.allows_transition("open", "review"));
+        // Built-in `draft->open` is gone after override.
+        assert!(!rfc.allows_transition("draft", "open"));
+    }
+
+    #[test]
+    fn rejects_partial_definition_override() {
+        // Partial override (only initial_status, no statuses/transitions) → reject.
+        let toml = r#"
+[categories.rfc]
+initial_status = "open"
+"#;
+        let (_dir, path) = write_temp(toml);
+        let err = Policy::load(&path).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("partial category definition"), "got: {msg}");
+    }
+
+    #[test]
+    fn rejects_initial_status_not_in_statuses() {
+        let toml = r#"
+[categories.spike]
+initial_status = "starting"
+statuses = ["draft", "done"]
+transitions = ["draft->done"]
+"#;
+        let (_dir, path) = write_temp(toml);
+        let err = Policy::load(&path).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("initial_status"), "got: {msg}");
+    }
+
+    #[test]
+    fn rejects_duplicate_transition() {
+        let toml = r#"
+[categories.spike]
+initial_status = "draft"
+statuses = ["draft", "done"]
+transitions = ["draft->done", "draft->done"]
+"#;
+        let (_dir, path) = write_temp(toml);
+        let err = Policy::load(&path).unwrap_err();
+        assert!(err.to_string().contains("duplicate transition"));
+    }
+
+    #[test]
+    fn rejects_transition_with_status_outside_statuses() {
+        let toml = r#"
+[categories.spike]
+initial_status = "draft"
+statuses = ["draft", "done"]
+transitions = ["draft->shipped"]
+"#;
+        let (_dir, path) = write_temp(toml);
+        let err = Policy::load(&path).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("shipped"), "got: {msg}");
+    }
+
+    #[test]
+    fn override_unblocks_previously_invalid_transition() {
+        // The built-in rfc has no `open->done` edge. With an override that
+        // adds it, the guard table is accepted instead of rejected.
+        let toml = r#"
+[categories.rfc]
+initial_status = "draft"
+statuses = ["draft", "open", "done"]
+transitions = ["draft->open", "open->done"]
+
+[categories.rfc.guards]
+"open->done" = ["one_approval"]
+"#;
+        let (_dir, path) = write_temp(toml);
+        let policy = Policy::load(&path).expect("override unblocks open->done");
+        assert!(policy.guards_for_transition("rfc", "open->done").is_some());
+    }
+
+    #[test]
+    fn round_trip_serialize_parse() {
+        // SPEC-3.0 §3.1 round-trip: parse → serialize → parse must be
+        // byte-stable on the structural fields (HashMap iteration is
+        // non-deterministic in TOML emit, so we compare semantically).
+        let toml = r#"
+[categories.rfc]
+initial_status = "draft"
+statuses = ["draft", "open", "review", "done"]
+transitions = ["draft->open", "open->review", "review->done"]
+
+[categories.rfc.guards]
+"review->done" = ["one_approval", "no_open_objections"]
+
+[categories.rfc.creation]
+required_body = true
+body_sections = ["Goal", "Non-goals"]
+
+[categories.rfc.revise]
+allow_body_revise = ["draft", "open"]
+
+[categories.rfc.evidence]
+allow_evidence = ["draft", "open"]
+
+[checks]
+strict = true
+"#;
+        let (_dir, path) = write_temp(toml);
+        let p1 = Policy::load(&path).unwrap();
+        let serialized = toml::to_string(&p1).expect("policy must round-trip via toml::to_string");
+        let dir = tempfile::tempdir().unwrap();
+        let path2 = dir.path().join("rt.toml");
+        std::fs::write(&path2, &serialized).unwrap();
+        let p2 = Policy::load(&path2).expect("re-parse after serialize");
+
+        // Definition fields preserved.
+        let reg2 = p2.effective_registry();
+        let rfc = reg2.get("rfc").unwrap();
+        assert_eq!(rfc.initial_status, "draft");
+        assert_eq!(rfc.statuses, vec!["draft", "open", "review", "done"]);
+        // Guards preserved.
+        let g = p2
+            .guards_for_transition("rfc", "review->done")
+            .expect("guards survive round-trip");
+        assert!(g.contains(&GuardRule::OneApproval));
+        assert!(g.contains(&GuardRule::NoOpenObjections));
+        // Operation checks preserved.
+        let creation = p2.creation_rules_for("rfc").unwrap();
+        assert!(creation.required_body);
+        assert_eq!(creation.body_sections, vec!["Goal", "Non-goals"]);
+        let revise = p2.revise_rules_for("rfc").unwrap();
+        assert_eq!(
+            revise.allow_body_revise.as_deref(),
+            Some(&["draft".into(), "open".into()][..])
+        );
+        // Top-level checks preserved.
+        assert!(p2.checks.strict);
+    }
+
+    #[test]
+    fn round_trip_preserves_empty_allow_lists() {
+        // SPEC-3.0 §3.3: empty allow list = explicit deny-all. Round trip
+        // must preserve `Some(vec![])` (not collapse it to `None`).
+        let toml = r#"
+[categories.rfc.revise]
+allow_body_revise = []
+
+[categories.rfc.evidence]
+allow_evidence = []
+"#;
+        let (_dir, path) = write_temp(toml);
+        let p1 = Policy::load(&path).unwrap();
+        let revise = p1.revise_rules_for("rfc").unwrap();
+        assert_eq!(revise.allow_body_revise.as_deref(), Some(&[][..]));
+
+        let serialized = toml::to_string(&p1).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path2 = dir.path().join("rt.toml");
+        std::fs::write(&path2, &serialized).unwrap();
+        let p2 = Policy::load(&path2).unwrap();
+        let revise = p2.revise_rules_for("rfc").unwrap();
+        assert_eq!(revise.allow_body_revise.as_deref(), Some(&[][..]));
+        let evidence = p2.evidence_rules_for("rfc").unwrap();
+        assert_eq!(evidence.allow_evidence.as_deref(), Some(&[][..]));
     }
 
     #[test]

@@ -243,13 +243,19 @@ mod tests {
         // Revise rules per category, intersected with each category's
         // statuses (rfc has no `working`, task has no `draft`).
         let rfc_revise = rfc.revise.as_ref().expect("rfc revise");
-        assert_eq!(rfc_revise.allow_body_revise, vec!["draft", "open"]);
         assert_eq!(
-            rfc_revise.allow_node_revise,
-            vec!["draft", "open", "review"]
+            rfc_revise.allow_body_revise.as_deref(),
+            Some(&["draft".into(), "open".into()][..])
+        );
+        assert_eq!(
+            rfc_revise.allow_node_revise.as_deref(),
+            Some(&["draft".into(), "open".into(), "review".into()][..])
         );
         let task_revise = task.revise.as_ref().expect("task revise");
-        assert_eq!(task_revise.allow_body_revise, vec!["open", "working"]);
+        assert_eq!(
+            task_revise.allow_body_revise.as_deref(),
+            Some(&["open".into(), "working".into()][..])
+        );
 
         // Checks default: strict = false.
         assert!(!policy.checks.strict);

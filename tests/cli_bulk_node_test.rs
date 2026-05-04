@@ -20,15 +20,21 @@ fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
 }
 
 /// Snapshot fixture: write a fresh SPEC-3.0 thread with the given
-/// category and title. Replaces the legacy `create::create_thread`
+/// kind shorthand and title. Replaces the legacy `create::create_thread`
 /// fixture path now that ADR-011 Decision 3 forbids non-migrate code
 /// paths from consuming legacy event chains.
-fn make_snapshot_thread(git: &GitOps, category: &str, title: &str, seed: u8) -> String {
+///
+/// `kind` accepts the v2 vocabulary (`rfc`/`issue`/`task`/`dec`) and
+/// projects to the SPEC-3.0 §8.3 category + canonical-tag pair so the
+/// snapshot is a valid 3.0 thread that the category registry can route.
+fn make_snapshot_thread(git: &GitOps, kind: &str, title: &str, seed: u8) -> String {
     let id = format!("blk{seed:02x}{seed:02x}{seed:02x}", seed = seed.max(1));
     let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
-    let initial_status = match category {
-        "rfc" => "draft",
-        _ => "open",
+    let (category, tags, initial_status) = match kind {
+        "rfc" => ("rfc", vec![], "draft"),
+        "issue" => ("task", vec!["bug".to_string()], "open"),
+        "dec" => ("task", vec!["decision".to_string()], "open"),
+        _ => ("task", vec![], "open"),
     };
     let doc = ThreadDocument::new(ThreadSnapshot {
         schema_version: ThreadSnapshot::SCHEMA_VERSION,
@@ -36,7 +42,7 @@ fn make_snapshot_thread(git: &GitOps, category: &str, title: &str, seed: u8) -> 
         title: title.to_string(),
         category: category.to_string(),
         status: initial_status.to_string(),
-        tags: vec![],
+        tags,
         created_at: now,
         created_by: "human/alice".into(),
         updated_at: now,

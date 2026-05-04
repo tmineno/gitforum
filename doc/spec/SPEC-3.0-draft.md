@@ -257,6 +257,8 @@ transitions = [
   "open->withdrawn",
   "review->done",
   "review->rejected",
+  "done->open",
+  "rejected->open",
   "done->deprecated",
   "rejected->deprecated",
 ]
@@ -275,10 +277,17 @@ transitions = [
   "review->done",
   "review->working",
   "review->rejected",
+  "done->open",
+  "rejected->open",
   "done->deprecated",
   "rejected->deprecated",
 ]
 ```
+
+`done->open` and `rejected->open` are the reopen edges that back the
+everyday `git forum reopen <ID>` shorthand. They are part of the built-in
+defaults; repos that prefer one-way close semantics MAY override either
+category to drop them.
 
 A transition is valid only when it is listed in the thread category's
 `transitions` array. A status is valid only when it is listed in the thread

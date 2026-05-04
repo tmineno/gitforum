@@ -76,13 +76,13 @@ impl VerifyReport {
 /// Side effects: none (read-only).
 pub fn verify_thread(git: &GitOps, thread_id: &str, p: &Policy) -> ForumResult<VerifyReport> {
     let state = thread::replay_thread(git, thread_id)?;
-    let violations = match forward_target(state.kind, state.status.as_str()) {
-        Some(to) => policy::check_guards(p, &state, state.status.as_str(), to),
+    let violations = match forward_target(&state, p) {
+        Some(to) => policy::check_guards(p, &state, state.status.as_str(), &to),
         None => vec![],
     };
 
     // Lookahead: check guards for milestone states reachable via intermediate transitions
-    let lookahead = build_lookahead(state.kind, state.status.as_str(), &state, p);
+    let lookahead = build_lookahead(&state, p);
 
     // Advisory: surface state of linked threads (strictly informational).
     let linked_advisories = build_linked_advisories(git, &state);
@@ -132,56 +132,59 @@ fn build_linked_advisories(git: &GitOps, state: &thread::ThreadState) -> Vec<Lin
     out
 }
 
-/// The forward target state for preflight purposes (the milestone terminal,
-/// always `done` post-2.0). Returned only when the current state has a
-/// direct guarded edge to the milestone for this kind.
-fn forward_target(kind: ThreadKind, status: &str) -> Option<&'static str> {
-    let normalized = normalize_state_name(status);
-    match (kind, normalized) {
-        // Execution: open → done is the typical guarded close for bugs.
-        (ThreadKind::Issue, "open") => Some("done"),
-        // Proposal: review → done is the acceptance step.
-        (ThreadKind::Rfc, "review") => Some("done"),
-        // Record: open → done.
-        (ThreadKind::Dec, "open") => Some("done"),
-        // Execution (task): review → done is the acceptance step.
-        (ThreadKind::Task, "review") => Some("done"),
-        _ => None,
-    }
+/// The forward target state for preflight purposes — the next direct edge
+/// from the thread's current status whose destination is `done` (the
+/// milestone terminal). SPEC-3.0 §3.1: routed through the effective
+/// category registry, so `[categories.X] transitions = [...]` overrides
+/// in `.forum/policy.toml` are honoured. Returns `None` when no direct
+/// edge to the milestone exists from the current status.
+fn forward_target(state: &thread::ThreadState, p: &Policy) -> Option<String> {
+    let category = policy::category_for_state(state);
+    let registry = p.effective_registry();
+    let cat_def = registry.get(category)?;
+    let normalized = normalize_state_name(state.status.as_str());
+    cat_def
+        .valid_targets(normalized)
+        .into_iter()
+        .find(|t| t == "done")
 }
 
-/// The milestone target for each thread kind (the "happy path" endpoint).
-/// Post-2.0 every kind's milestone is `done`.
-fn milestone_target(_kind: ThreadKind) -> &'static str {
+/// The milestone target for the verified thread (the "happy path"
+/// endpoint). SPEC-3.0 §3.1 collapses every category's milestone to
+/// `done`.
+fn milestone_target() -> &'static str {
     "done"
 }
 
 /// Build lookahead entries for guards on milestone states reachable via
 /// intermediate transitions. Only produces entries when the milestone target
 /// is NOT a direct transition from the current state (i.e. when forward_target
-/// returns None) and when a path exists.
-pub fn build_lookahead(
-    kind: ThreadKind,
-    current_status: &str,
-    state: &thread::ThreadState,
-    policy: &Policy,
-) -> Vec<LookaheadEntry> {
-    // If forward_target already covers this state, no lookahead needed
-    if forward_target(kind, current_status).is_some() {
+/// returns None) and when a path exists. SPEC-3.0 §3.1: pathfinding goes
+/// through the effective category registry so policy overrides shape the
+/// reachable transition graph.
+pub fn build_lookahead(state: &thread::ThreadState, policy: &Policy) -> Vec<LookaheadEntry> {
+    // If forward_target already covers this state, no lookahead needed.
+    if forward_target(state, policy).is_some() {
         return vec![];
     }
 
-    let target = milestone_target(kind);
+    let target = milestone_target();
+    let category = policy::category_for_state(state);
+    let registry = policy.effective_registry();
+    let Some(cat_def) = registry.get(category) else {
+        return vec![];
+    };
+    let current_status = state.status.as_str();
 
-    // Find the path from current state to the milestone target
-    let path = match event::find_path(kind.lifecycle(), current_status, target) {
-        Some(p) if p.len() >= 2 => p, // Need at least 2 steps (otherwise it's direct)
+    // Find the path from current state to the milestone target.
+    let path = match cat_def.find_path(current_status, target) {
+        Some(p) if p.len() >= 2 => p,
         _ => return vec![],
     };
 
-    // The guard check is on the final transition: penultimate -> target
-    let from_state = path[path.len() - 2];
-    let violations = policy::check_guards(policy, state, from_state, target);
+    // The guard check is on the final transition: penultimate -> target.
+    let from_state = path[path.len() - 2].clone();
+    let violations = policy::check_guards(policy, state, &from_state, target);
 
     if violations.is_empty() {
         return vec![];
@@ -189,7 +192,7 @@ pub fn build_lookahead(
 
     let mut path_parts = vec![current_status.to_string()];
     for step in &path {
-        path_parts.push(step.to_string());
+        path_parts.push(step.clone());
     }
 
     vec![LookaheadEntry {

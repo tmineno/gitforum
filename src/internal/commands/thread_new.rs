@@ -27,7 +27,7 @@ use crate::internal::evidence::{EvidenceFile, EvidenceKind, EvidenceRecord};
 use crate::internal::git_ops::GitOps;
 use crate::internal::id_alloc;
 use crate::internal::node::{NodeKind, NodeRecord, NodeStatus};
-use crate::internal::policy::{CategoryRegistry, Policy};
+use crate::internal::policy::Policy;
 use crate::internal::snapshot::{
     self, store::write_snapshot, Link, Links, NodeWithBody, ThreadDocument,
 };
@@ -185,7 +185,10 @@ pub fn run_canonical_thread_new(
     // SPEC-3.0 §8.3: preserve dec/record classification with a
     // canonical `decision` tag when collapsing to the task category.
     augment_tags_for_lifecycle(lifecycle, &mut tags);
-    let registry = CategoryRegistry::built_in();
+    // SPEC-3.0 §3.1: honour `[categories.X] initial_status = ...` overrides
+    // from policy.toml so a repo that re-pins the rfc/task initial state
+    // (or defines a custom category) gets the configured starting point.
+    let registry = policy.effective_registry();
     let initial_status = registry
         .get(&category)
         .map(|d| d.initial_status.clone())

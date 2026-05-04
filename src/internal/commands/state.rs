@@ -179,31 +179,44 @@ pub fn run_state_shorthand(
         return Ok(());
     }
 
-    // Validate the transition. With `fast_track`, find_path walks
-    // intermediate states; otherwise the direct edge must be legal.
-    let walked: Vec<&'static str> = if fast_track {
-        SPEC.find_path(pre_state.lifecycle, &from, target)
-            .ok_or_else(|| {
-                ForumError::Config(format!(
-                    "no legal path from '{from}' to '{target}' for {} lifecycle",
-                    pre_state.lifecycle
-                ))
-            })?
-    } else if SPEC.is_valid_transition(pre_state.lifecycle, &from, target) {
-        vec![target]
+    // SPEC-3.0 §3.1: validate against the effective category registry,
+    // not the legacy lifecycle workflow. With `fast_track`, walk through
+    // intermediate states using the category's transitions; otherwise
+    // the direct edge must be in `transitions`.
+    let registry = policy.effective_registry();
+    let category = doc.snapshot.category.clone();
+    let cat_def = registry.get(&category).ok_or_else(|| {
+        ForumError::Config(format!(
+            "thread {thread_id}: category `{category}` is not defined in the policy or built-ins"
+        ))
+    })?;
+    let walked: Vec<String> = if fast_track {
+        cat_def.find_path(&from, target).ok_or_else(|| {
+            ForumError::Config(format!(
+                "no legal path from '{from}' to '{target}' for category `{category}`"
+            ))
+        })?
+    } else if cat_def.allows_transition(&from, target) {
+        vec![target.to_string()]
     } else {
+        let valid = cat_def.valid_targets(&from);
+        let valid_msg = if valid.is_empty() {
+            "(none)".into()
+        } else {
+            valid.join(", ")
+        };
         return Err(ForumError::Config(format!(
-            "transition '{from}' → '{target}' is not allowed for {} lifecycle",
-            pre_state.lifecycle
+            "transition '{from}' → '{target}' is not allowed for category `{category}`; \
+             valid targets from '{from}': {valid_msg}"
         )));
     };
 
     // Update status to the final hop. The snapshot model carries
     // the cumulative state, so we write one snapshot landing on
     // the final target — the intermediate hops are still validated
-    // against the workflow graph by `find_path`.
+    // against the category transition graph by `find_path`.
     let final_state = walked.last().expect("walked is non-empty after validation");
-    doc.snapshot.status = (*final_state).to_string();
+    doc.snapshot.status = final_state.clone();
     doc.snapshot.updated_at = now;
     doc.snapshot.updated_by = actor.clone();
 
@@ -294,10 +307,28 @@ pub fn apply_state_change_snapshot(
         return Ok((from, target));
     }
 
-    if !SPEC.is_valid_transition(pre_state.lifecycle, &from, target) {
+    // SPEC-3.0 §3.1: validate against the effective category registry
+    // (built-ins overlaid with policy.toml overrides), not the legacy
+    // lifecycle workflow. The thread's category is read from the
+    // snapshot, so a `[categories.X]` override in `.forum/policy.toml`
+    // is the authoritative answer for valid transitions.
+    let registry = policy.effective_registry();
+    let category = &doc.snapshot.category;
+    let cat_def = registry.get(category).ok_or_else(|| {
+        ForumError::Config(format!(
+            "thread {thread_id}: category `{category}` is not defined in the policy or built-ins"
+        ))
+    })?;
+    if !cat_def.allows_transition(&from, target) {
+        let valid = cat_def.valid_targets(&from);
+        let valid_msg = if valid.is_empty() {
+            "(none)".into()
+        } else {
+            valid.join(", ")
+        };
         return Err(ForumError::Config(format!(
-            "transition '{from}' → '{target}' is not allowed for {} lifecycle",
-            pre_state.lifecycle
+            "transition '{from}' → '{target}' is not allowed for category `{category}`; \
+             valid targets from '{from}': {valid_msg}"
         )));
     }
 

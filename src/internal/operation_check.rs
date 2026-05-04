@@ -262,30 +262,38 @@ fn check_revise_inner(
         return violations;
     };
 
-    let allowed = if is_body {
-        &rules.allow_body_revise
+    // SPEC-3.0 §3.3: an absent allow list (None) means no restriction;
+    // a present-but-empty list (Some(vec![])) is an explicit deny-all.
+    let allowed_opt = if is_body {
+        rules.allow_body_revise.as_ref()
     } else {
-        &rules.allow_node_revise
+        rules.allow_node_revise.as_ref()
+    };
+    let Some(allowed) = allowed_opt else {
+        return violations;
     };
 
-    if allowed.is_empty() {
+    if allow_list_contains(allowed, status) {
         return violations;
     }
 
-    if !allow_list_contains(allowed, status) {
-        let target = if is_body { "body" } else { "node" };
-        let canonical_status = normalize_state_name(status);
-        violations.push(OperationViolation {
-            severity: Severity::Error,
-            rule: "revise_restricted".into(),
-            reason: format!("{target} revision is not allowed in state '{canonical_status}'"),
-            hint: Some(format!(
-                "{target} revision is allowed in: {}",
-                render_allow_list_for_hint(allowed)
-            )),
-            fix_command: None,
-        });
-    }
+    let target = if is_body { "body" } else { "node" };
+    let canonical_status = normalize_state_name(status);
+    let hint = if allowed.is_empty() {
+        format!("{target} revision is denied in every status (allow list is empty)")
+    } else {
+        format!(
+            "{target} revision is allowed in: {}",
+            render_allow_list_for_hint(allowed)
+        )
+    };
+    violations.push(OperationViolation {
+        severity: Severity::Error,
+        rule: "revise_restricted".into(),
+        reason: format!("{target} revision is not allowed in state '{canonical_status}'"),
+        hint: Some(hint),
+        fix_command: None,
+    });
 
     violations
 }
@@ -301,23 +309,32 @@ fn check_evidence_inner(policy: &Policy, category: &str, status: &str) -> Vec<Op
         return violations;
     };
 
-    if rules.allow_evidence.is_empty() {
+    // SPEC-3.0 §3.3: present-but-empty `allow_evidence = []` denies
+    // attachment in every status; absent section means no restriction.
+    let Some(allowed) = rules.allow_evidence.as_ref() else {
+        return violations;
+    };
+
+    if allow_list_contains(allowed, status) {
         return violations;
     }
 
-    if !allow_list_contains(&rules.allow_evidence, status) {
-        let canonical_status = normalize_state_name(status);
-        violations.push(OperationViolation {
-            severity: Severity::Error,
-            rule: "evidence_restricted".into(),
-            reason: format!("evidence is not allowed in state '{canonical_status}'"),
-            hint: Some(format!(
-                "evidence is allowed in: {}",
-                render_allow_list_for_hint(&rules.allow_evidence)
-            )),
-            fix_command: None,
-        });
-    }
+    let canonical_status = normalize_state_name(status);
+    let hint = if allowed.is_empty() {
+        "evidence is denied in every status (allow list is empty)".to_string()
+    } else {
+        format!(
+            "evidence is allowed in: {}",
+            render_allow_list_for_hint(allowed)
+        )
+    };
+    violations.push(OperationViolation {
+        severity: Severity::Error,
+        rule: "evidence_restricted".into(),
+        reason: format!("evidence is not allowed in state '{canonical_status}'"),
+        hint: Some(hint),
+        fix_command: None,
+    });
 
     violations
 }
@@ -561,8 +578,8 @@ mod tests {
     ) -> Policy {
         let cat = CategoryPolicy {
             revise: Some(ReviseRules {
-                allow_body_revise: body_states.into_iter().map(String::from).collect(),
-                allow_node_revise: node_states.into_iter().map(String::from).collect(),
+                allow_body_revise: Some(body_states.into_iter().map(String::from).collect()),
+                allow_node_revise: Some(node_states.into_iter().map(String::from).collect()),
             }),
             ..CategoryPolicy::default()
         };
@@ -593,10 +610,64 @@ mod tests {
         assert!(v.is_empty());
     }
 
+    #[test]
+    fn check_revise_absent_section_allows_all() {
+        // SPEC-3.0 §3.3: an absent revise section means no restriction.
+        // The category is present in the policy with other rules but no
+        // `revise` table at all.
+        let mut policy = Policy::default();
+        policy
+            .categories
+            .insert("rfc".into(), CategoryPolicy::default());
+        assert!(check_revise(&policy, "rfc", "done", true).is_empty());
+        assert!(check_revise(&policy, "rfc", "done", false).is_empty());
+    }
+
+    #[test]
+    fn check_revise_present_but_empty_body_denies_all() {
+        // SPEC-3.0 §3.3: present-but-empty `allow_body_revise = []` is an
+        // explicit deny-all; absent is the only "no restriction" form.
+        let cat = CategoryPolicy {
+            revise: Some(ReviseRules {
+                allow_body_revise: Some(vec![]),
+                allow_node_revise: None,
+            }),
+            ..CategoryPolicy::default()
+        };
+        let mut policy = Policy::default();
+        policy.categories.insert("rfc".into(), cat);
+        for status in ["draft", "open", "review", "done"] {
+            let v = check_revise(&policy, "rfc", status, true);
+            assert_eq!(v.len(), 1, "status {status}: expected 1 violation");
+            assert_eq!(v[0].rule, "revise_restricted");
+            // Node revision still unrestricted (None).
+            assert!(check_revise(&policy, "rfc", status, false).is_empty());
+        }
+    }
+
+    #[test]
+    fn check_revise_present_but_empty_node_denies_all() {
+        let cat = CategoryPolicy {
+            revise: Some(ReviseRules {
+                allow_body_revise: None,
+                allow_node_revise: Some(vec![]),
+            }),
+            ..CategoryPolicy::default()
+        };
+        let mut policy = Policy::default();
+        policy.categories.insert("rfc".into(), cat);
+        for status in ["draft", "open", "review", "done"] {
+            let v = check_revise(&policy, "rfc", status, false);
+            assert_eq!(v.len(), 1, "status {status}: expected 1 violation");
+            // Body revision still unrestricted (None).
+            assert!(check_revise(&policy, "rfc", status, true).is_empty());
+        }
+    }
+
     fn policy_with_evidence(category: &str, states: Vec<&str>) -> Policy {
         let cat = CategoryPolicy {
             evidence: Some(EvidenceRules {
-                allow_evidence: states.into_iter().map(String::from).collect(),
+                allow_evidence: Some(states.into_iter().map(String::from).collect()),
             }),
             ..CategoryPolicy::default()
         };
@@ -625,6 +696,34 @@ mod tests {
         let policy = Policy::default();
         let v = check_evidence(&policy, "rfc", "done");
         assert!(v.is_empty());
+    }
+
+    #[test]
+    fn check_evidence_absent_section_allows_all() {
+        let mut policy = Policy::default();
+        policy
+            .categories
+            .insert("rfc".into(), CategoryPolicy::default());
+        assert!(check_evidence(&policy, "rfc", "done").is_empty());
+    }
+
+    #[test]
+    fn check_evidence_present_but_empty_denies_all() {
+        // SPEC-3.0 §3.3: present-but-empty `allow_evidence = []` denies
+        // attachment in every status.
+        let cat = CategoryPolicy {
+            evidence: Some(EvidenceRules {
+                allow_evidence: Some(vec![]),
+            }),
+            ..CategoryPolicy::default()
+        };
+        let mut policy = Policy::default();
+        policy.categories.insert("rfc".into(), cat);
+        for status in ["draft", "open", "review", "done"] {
+            let v = check_evidence(&policy, "rfc", status);
+            assert_eq!(v.len(), 1, "status {status}: expected 1 violation");
+            assert_eq!(v[0].rule, "evidence_restricted");
+        }
     }
 
     #[test]

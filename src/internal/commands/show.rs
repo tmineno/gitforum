@@ -11,7 +11,7 @@
 //! only path.
 
 use super::super::error::ForumError;
-use super::super::event::{self, Lifecycle};
+use super::super::event::Lifecycle;
 use super::super::git_ops::GitOps;
 use super::super::policy::{self, Policy};
 use super::super::thread::{self, NodeLookup, ThreadState};
@@ -393,10 +393,23 @@ fn push_conversations(lines: &mut Vec<String>, state: &ThreadState, compact: boo
     lines.push(String::new());
 }
 
+/// SPEC-3.0 §3.1: derive the per-thread category-driven transition list.
+/// `ThreadState` carries the v2 `lifecycle` facet only; `category_for_state`
+/// folds it into one of the built-in category names so policy overrides on
+/// `rfc`/`task` take effect on the displayed next-states.
+fn next_targets_for_state(state: &ThreadState, policy: &Policy) -> Vec<String> {
+    let category = policy::category_for_state(state);
+    policy
+        .effective_registry()
+        .get(category)
+        .map(|d| d.valid_targets(state.status.as_str()))
+        .unwrap_or_default()
+}
+
 /// Build the `**next:**` line shown under the status field. Returns `None` if
 /// the current state has no outgoing transitions.
 fn next_states_line(state: &ThreadState, policy: &Policy) -> Option<String> {
-    let targets = event::valid_targets(state.lifecycle, state.status.as_str());
+    let targets = next_targets_for_state(state, policy);
     if targets.is_empty() {
         return None;
     }
@@ -483,7 +496,7 @@ fn render_what_next_block(state: &ThreadState, policy: &Policy) -> String {
     lines.push(format!("{} ({})", state.id, state.status));
     lines.push(String::new());
 
-    let targets = event::valid_targets(state.lifecycle, state.status.as_str());
+    let targets = next_targets_for_state(state, policy);
     if targets.is_empty() {
         lines.push("valid transitions: (none)".to_string());
     } else {
@@ -506,8 +519,7 @@ fn render_what_next_block(state: &ThreadState, policy: &Policy) -> String {
         lines.push(String::new());
     }
 
-    let lookahead =
-        super::verify::build_lookahead(state.kind, state.status.as_str(), state, policy);
+    let lookahead = super::verify::build_lookahead(state, policy);
     for entry in &lookahead {
         lines.push(format!("lookahead ({}):", entry.path));
         for v in &entry.violations {
@@ -567,21 +579,15 @@ fn op_check_lines(state: &ThreadState, policy: &Policy) -> Vec<String> {
     }
 
     if let Some(revise) = policy.revise_rules_for(category) {
-        if !revise.allow_body_revise.is_empty() {
-            let allowed = revise
-                .allow_body_revise
-                .iter()
-                .any(|s| s.as_str() == status);
+        if let Some(list) = &revise.allow_body_revise {
+            let allowed = list.iter().any(|s| s.as_str() == status);
             out.push(format!(
                 "  body revise: {}",
                 if allowed { "allowed" } else { "blocked" }
             ));
         }
-        if !revise.allow_node_revise.is_empty() {
-            let allowed = revise
-                .allow_node_revise
-                .iter()
-                .any(|s| s.as_str() == status);
+        if let Some(list) = &revise.allow_node_revise {
+            let allowed = list.iter().any(|s| s.as_str() == status);
             out.push(format!(
                 "  node revise: {}",
                 if allowed { "allowed" } else { "blocked" }
@@ -590,8 +596,8 @@ fn op_check_lines(state: &ThreadState, policy: &Policy) -> Vec<String> {
     }
 
     if let Some(evidence) = policy.evidence_rules_for(category) {
-        if !evidence.allow_evidence.is_empty() {
-            let allowed = evidence.allow_evidence.iter().any(|s| s.as_str() == status);
+        if let Some(list) = &evidence.allow_evidence {
+            let allowed = list.iter().any(|s| s.as_str() == status);
             out.push(format!(
                 "  evidence:    {}",
                 if allowed { "allowed" } else { "blocked" }
@@ -608,7 +614,7 @@ fn op_check_lines(state: &ThreadState, policy: &Policy) -> Vec<String> {
 fn render_action_hint(state: &ThreadState, policy: &Policy) -> String {
     let mut lines: Vec<String> = Vec::new();
 
-    let targets = event::valid_targets(state.lifecycle, state.status.as_str());
+    let targets = next_targets_for_state(state, policy);
     if targets.is_empty() {
         lines.push("  next: (no transitions available)".to_string());
     } else {
@@ -1115,11 +1121,11 @@ mod tests {
         rfc.allowed_node_types
             .insert("draft".into(), vec![NodeKind::Comment, NodeKind::Objection]);
         rfc.revise = Some(ReviseRules {
-            allow_body_revise: vec!["draft".into()],
-            allow_node_revise: vec![],
+            allow_body_revise: Some(vec!["draft".into()]),
+            allow_node_revise: None,
         });
         rfc.evidence = Some(EvidenceRules {
-            allow_evidence: vec!["draft".into(), "open".into()],
+            allow_evidence: Some(vec!["draft".into(), "open".into()]),
         });
         let mut policy = Policy::default();
         policy.categories.insert("rfc".into(), rfc);
