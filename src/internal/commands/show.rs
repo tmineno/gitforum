@@ -499,7 +499,7 @@ fn render_status_block(state: &ThreadState) -> String {
     let open_questions: Vec<&super::super::node::Node> = state
         .nodes
         .iter()
-        .filter(|n| n.node_type == super::super::event::NodeType::Question && n.is_open())
+        .filter(|n| n.node_type == super::super::node::NodeType::Question && n.is_open())
         .collect();
 
     if open_obj.is_empty() && open_act.is_empty() && open_questions.is_empty() {

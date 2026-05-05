@@ -26,10 +26,10 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::error::{ForumError, ForumResult};
-use super::event::{Lifecycle, NodeType};
+use super::event::Lifecycle;
 use super::evidence::EvidenceKind;
 use super::lint_emit::{self, LintEmitter};
-use super::node::NodeKind;
+use super::node::{NodeKind, NodeType};
 use super::thread::ThreadState;
 
 // ---------------------------------------------------------------------

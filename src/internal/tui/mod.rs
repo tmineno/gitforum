@@ -1575,7 +1575,7 @@ mod tests {
         app.thread_text = "RFC-0001 Test RFC\nkind: rfc\n".into();
         app.thread_nodes = vec![Node {
             node_id: "abcdef1234567890".into(),
-            node_type: crate::internal::event::NodeType::Question,
+            node_type: crate::internal::node::NodeType::Question,
             body: "What is this?".into(),
             actor: "human/alice".into(),
             created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
@@ -2185,7 +2185,7 @@ mod tests {
         app.thread_nodes = vec![
             Node {
                 node_id: "a".into(),
-                node_type: crate::internal::event::NodeType::Question,
+                node_type: crate::internal::node::NodeType::Question,
                 body: "A".into(),
                 actor: "human/alice".into(),
                 created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
@@ -2193,7 +2193,7 @@ mod tests {
             },
             Node {
                 node_id: "b".into(),
-                node_type: crate::internal::event::NodeType::Question,
+                node_type: crate::internal::node::NodeType::Question,
                 body: "B".into(),
                 actor: "human/alice".into(),
                 created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
@@ -2425,7 +2425,7 @@ mod tests {
         assert_eq!(app.thread_nodes.len(), 1);
         assert_eq!(
             app.thread_nodes[0].node_type,
-            crate::internal::event::NodeType::Comment
+            crate::internal::node::NodeType::Comment
         );
         assert!(
             app.thread_nodes[0].legacy_subtype.is_none(),

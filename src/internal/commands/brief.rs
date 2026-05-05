@@ -26,8 +26,7 @@ use serde::Serialize;
 
 use super::super::config;
 use super::super::error::ForumError;
-use super::super::event::NodeType;
-use super::super::node::Node;
+use super::super::node::{Node, NodeType};
 use super::super::thread::{self, ThreadState};
 use super::context::Context;
 use super::shared::resolve_tid;

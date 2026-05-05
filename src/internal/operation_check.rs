@@ -5,8 +5,8 @@
 //! selectors). Callers pass the thread's `category` (`"rfc"` or
 //! `"task"`) along with the relevant status / node kind for dispatch.
 
-use super::event::{normalize_state_name, NodeType};
-use super::node::NodeKind;
+use super::event::normalize_state_name;
+use super::node::{NodeKind, NodeType};
 use super::policy::Policy;
 
 /// State-name allow-list match that tolerates 1.x↔2.0 name mismatches

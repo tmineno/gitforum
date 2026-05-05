@@ -118,7 +118,10 @@ const ALLOW_LIST: &[&str] = &[
     "src/internal/commands/repair_workflow.rs",
     // (c) KEEP files currently contaminated — Phase 4 Step 1 rewires.
     "src/internal/thread.rs",
-    "src/internal/node.rs",
+    // node.rs cleared in Phase 4 Step 1f (RFC 7ymtc4b2, task 913c4s9v):
+    // NodeType definition relocated into node.rs itself, so no
+    // event:: import remains. Picks up legacy_gate exemption (the
+    // canonical/legacy_subtype_label impls still call legacy::v1).
     "src/internal/evidence.rs",
     "src/internal/policy.rs",
     "src/internal/operation_check.rs",
@@ -135,9 +138,11 @@ const ALLOW_LIST: &[&str] = &[
     "src/internal/commands/doctor.rs",
     "src/internal/commands/state.rs",
     "src/internal/commands/shortlog.rs",
-    "src/internal/commands/shorthand_say.rs",
+    // commands/shorthand_say.rs cleared in Phase 4 Step 1f: switched
+    // event::NodeType to node::NodeType; no other event:: import remains.
     "src/internal/commands/thread_new.rs",
-    "src/internal/commands/node.rs",
+    // commands/node.rs cleared in Phase 4 Step 1f: switched
+    // event::NodeType to node::NodeType; no other event:: import remains.
     "src/internal/commands/shared.rs",
     "src/internal/tui/mod.rs",
     "src/internal/tui/state.rs",

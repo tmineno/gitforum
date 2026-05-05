@@ -12,8 +12,7 @@ use std::str::FromStr;
 
 use super::super::clock::Clock;
 use super::super::error::ForumError;
-use super::super::event::NodeType;
-use super::super::node::NodeKind;
+use super::super::node::{NodeKind, NodeType};
 use super::super::refs::thread_ref;
 use super::super::snapshot::history;
 use super::super::thread;

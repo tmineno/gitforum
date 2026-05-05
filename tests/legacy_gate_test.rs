@@ -33,6 +33,11 @@ const ALLOW_LIST: &[&str] = &[
     "src/internal/legacy/v1.rs",
     // 2.0-native domain code that delegates to legacy::v1 per RFC 915yuegd P1.
     "src/internal/event.rs",
+    // Phase 4 Step 1f (RFC 7ymtc4b2): NodeType relocated from event.rs
+    // to node.rs; its `canonical` / `is_canonical` / `legacy_subtype_label`
+    // impls still delegate to `legacy::v1` until Step 5 deletes the v2
+    // NodeType + Node struct alongside the other v2 peer types.
+    "src/internal/node.rs",
     "src/internal/policy.rs",
     "src/internal/thread.rs",
     "src/internal/workflow.rs",

@@ -341,7 +341,7 @@ pub fn apply_state_change_snapshot(
         crate::internal::event::ThreadStatus::parse_lenient(target).unwrap_or(projected.status);
     if resolve_open_actions {
         for n in projected.nodes.iter_mut() {
-            if n.node_type == crate::internal::event::NodeType::Action && n.is_open() {
+            if n.node_type == crate::internal::node::NodeType::Action && n.is_open() {
                 n.resolved = true;
             }
         }
@@ -349,7 +349,7 @@ pub fn apply_state_change_snapshot(
     for approver in approve {
         projected.nodes.push(crate::internal::node::Node {
             node_id: format!("approval-{approver}"),
-            node_type: crate::internal::event::NodeType::Approval,
+            node_type: crate::internal::node::NodeType::Approval,
             actor: approver.clone(),
             ..Default::default()
         });

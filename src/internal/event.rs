@@ -384,108 +384,14 @@ impl std::fmt::Display for EventType {
     }
 }
 
-/// Node types for structured discussion.
-///
-/// 2.0 reduces the canonical taxonomy to four (`Comment`, `Approval`,
-/// `Objection`, `Action`) cut by *protocol effect* per ADR-006. The seven
-/// 1.x prose-only variants (`Claim`, `Question`, `Summary`, `Risk`,
-/// `Review`, `Alternative`, `Assumption`) and the data-pointer variant
-/// (`Evidence`) remain on this enum for backward-compatible reads of legacy
-/// repos; new write paths SHOULD use the canonical four. The `canonical()`
-/// method maps any variant to its 2.0 equivalent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum NodeType {
-    // -- 2.0 canonical variants (protocol-effect cut) --
-    /// 2.0 canonical: body-prose contribution. No protocol effect.
-    /// Replaces 1.x `Claim` / `Question` / `Summary` / `Risk` / `Review` /
-    /// `Alternative` / `Assumption`.
-    #[default]
-    Comment,
-    /// 2.0 canonical: positive sign-off. Counts toward state-transition
-    /// guards (e.g. `one_human_approval`). Folds in the 1.x standalone
-    /// Approval concept (SPEC.md §2.7).
-    Approval,
-    // -- Variants retained from 1.x (canonical and legacy alike) --
-    Objection,
-    Action,
-    // -- Legacy 1.x variants (kept for read compat; map to Comment) --
-    Claim,
-    Question,
-    Evidence,
-    Summary,
-    Risk,
-    Review,
-    Alternative,
-    Assumption,
-}
-
-impl NodeType {
-    /// Map any variant to its 2.0 canonical form.
-    ///
-    /// Thin delegator over [`super::legacy::v1::canonical_node_type`];
-    /// the rule body (which legacy variants collapse to which canonical
-    /// node) lives in `legacy::v1` per RFC 915yuegd P1.
-    pub fn canonical(self) -> Self {
-        super::legacy::v1::canonical_node_type(self)
-    }
-
-    /// Returns true if this is a 2.0 canonical variant.
-    pub fn is_canonical(self) -> bool {
-        super::legacy::v1::is_canonical_node_type(self)
-    }
-
-    /// Legacy 1.x label for non-canonical variants, or `None` if already canonical.
-    ///
-    /// Thin delegator over [`super::legacy::v1::legacy_subtype_label`].
-    /// Used by 2.0 write paths to record the user's stated rhetorical
-    /// type in `Event.legacy_subtype` while persisting the canonical
-    /// `node_type` on the event (SPEC-2.0 §2.5 / §9.3 / §10.1).
-    pub fn legacy_subtype_label(self) -> Option<&'static str> {
-        super::legacy::v1::legacy_subtype_label(self)
-    }
-}
-
-impl std::fmt::Display for NodeType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            Self::Comment => "comment",
-            Self::Approval => "approval",
-            Self::Objection => "objection",
-            Self::Action => "action",
-            Self::Claim => "claim",
-            Self::Question => "question",
-            Self::Evidence => "evidence",
-            Self::Summary => "summary",
-            Self::Risk => "risk",
-            Self::Review => "review",
-            Self::Alternative => "alternative",
-            Self::Assumption => "assumption",
-        };
-        f.write_str(s)
-    }
-}
-
-impl std::str::FromStr for NodeType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "comment" => Ok(Self::Comment),
-            "approval" => Ok(Self::Approval),
-            "objection" => Ok(Self::Objection),
-            "action" => Ok(Self::Action),
-            "claim" => Ok(Self::Claim),
-            "question" => Ok(Self::Question),
-            "evidence" => Ok(Self::Evidence),
-            "summary" => Ok(Self::Summary),
-            "risk" => Ok(Self::Risk),
-            "review" => Ok(Self::Review),
-            "alternative" => Ok(Self::Alternative),
-            "assumption" => Ok(Self::Assumption),
-            _ => Err(format!("unknown node type '{s}'; canonical types (2.0): comment, approval, objection, action; legacy types accepted for reads: claim, question, evidence, summary, risk, review, alternative, assumption")),
-        }
-    }
-}
+// `NodeType` was relocated to `internal::node` in Phase 4 Step 1f
+// (RFC `7ymtc4b2`, task `913c4s9v`) so KEEP files no longer need to
+// import from `internal::event` just for the type. Importers should
+// switch to `crate::internal::node::NodeType`. event.rs back-imports
+// here so internal references inside this file (and the legacy
+// `Event` struct's `node_type` field) keep working until Step 2
+// moves event.rs into `internal::legacy/`.
+pub use super::node::NodeType;
 
 /// An immutable event in a thread's history.
 ///
