@@ -3,11 +3,10 @@ mod support;
 use chrono::TimeZone;
 use git_forum::internal::commands::ls;
 use git_forum::internal::commands::show;
-use git_forum::internal::legacy::event::{
-    Event, EventType, Lifecycle, NodeType, ThreadKind, ThreadStatus,
-};
-use git_forum::internal::node::Node;
-use git_forum::internal::thread::{NodeLookup, ThreadLink, ThreadState};
+use git_forum::internal::legacy::event::{Event, EventType, NodeType};
+use git_forum::internal::node::{Node, NodeKind};
+use git_forum::internal::policy::Lifecycle;
+use git_forum::internal::thread::{NodeLookup, ThreadKind, ThreadLink, ThreadState, ThreadStatus};
 
 const SNAPSHOT_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots");
 
@@ -72,7 +71,7 @@ fn rich_state() -> ThreadState {
     state.nodes = vec![
         Node {
             node_id: "node-0001".into(),
-            node_type: NodeType::Objection,
+            node_type: NodeKind::Objection,
             body: "Benchmarks are missing.".into(),
             actor: "ai/reviewer".into(),
             created_at: t2,
@@ -80,7 +79,8 @@ fn rich_state() -> ThreadState {
         },
         Node {
             node_id: "node-0002".into(),
-            node_type: NodeType::Summary,
+            node_type: NodeKind::Comment,
+            legacy_subtype: Some("summary".into()),
             body: "Direction is sound; migration evidence needed.".into(),
             actor: "human/alice".into(),
             created_at: t3,
@@ -184,7 +184,8 @@ fn node_show_question() {
         thread_tags: vec!["cross-cutting".into()],
         node: Node {
             node_id: "node-0001".into(),
-            node_type: NodeType::Question,
+            node_type: NodeKind::Comment,
+            legacy_subtype: Some("question".into()),
             body: "What is the migration plan?".into(),
             actor: "ai/reviewer".into(),
             created_at: t,

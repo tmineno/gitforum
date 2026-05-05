@@ -26,7 +26,7 @@ use serde::Serialize;
 
 use super::super::config;
 use super::super::error::ForumError;
-use super::super::node::{Node, NodeType};
+use super::super::node::{Node, NodeKind};
 use super::super::thread::{self, ThreadState};
 use super::context::Context;
 use super::shared::resolve_tid;
@@ -198,32 +198,15 @@ fn format_link_summary(pairs: &[(String, usize)]) -> String {
 fn canonical_node_counts(nodes: &[Node]) -> BTreeMap<String, usize> {
     let mut acc: BTreeMap<String, usize> = BTreeMap::new();
     for n in nodes {
-        let label = match n.node_type.canonical() {
-            NodeType::Comment => "comment",
-            NodeType::Approval => "approval",
-            NodeType::Objection => "objection",
-            NodeType::Action => "action",
-            // canonical() never returns the legacy variants below; included
-            // for exhaustiveness to keep this stable as new variants are added.
-            other => other_to_label(other),
+        let label = match n.node_type {
+            NodeKind::Comment => "comment",
+            NodeKind::Approval => "approval",
+            NodeKind::Objection => "objection",
+            NodeKind::Action => "action",
         };
         *acc.entry(label.to_string()).or_default() += 1;
     }
     acc
-}
-
-fn other_to_label(nt: NodeType) -> &'static str {
-    match nt {
-        NodeType::Claim => "claim",
-        NodeType::Question => "question",
-        NodeType::Evidence => "evidence",
-        NodeType::Summary => "summary",
-        NodeType::Risk => "risk",
-        NodeType::Review => "review",
-        NodeType::Alternative => "alternative",
-        NodeType::Assumption => "assumption",
-        _ => "other",
-    }
 }
 
 fn format_node_breakdown(counts: &BTreeMap<String, usize>) -> String {
@@ -396,22 +379,25 @@ mod tests {
             created_by: "ai/x".into(),
             nodes: vec![
                 Node {
-                    node_type: NodeType::Claim,
+                    node_type: NodeKind::Comment,
+                    legacy_subtype: Some("claim".into()),
                     ..Default::default()
                 },
                 Node {
-                    node_type: NodeType::Question,
+                    node_type: NodeKind::Comment,
+                    legacy_subtype: Some("question".into()),
                     ..Default::default()
                 },
                 Node {
-                    node_type: NodeType::Approval,
+                    node_type: NodeKind::Approval,
                     ..Default::default()
                 },
             ],
             ..Default::default()
         };
         let counts = canonical_node_counts(&state.nodes);
-        // Claim + Question collapse to comment; Approval is its own bucket.
+        // Both legacy-labelled comments collapse to the canonical
+        // `comment` bucket; Approval is its own bucket.
         assert_eq!(counts.get("comment"), Some(&2));
         assert_eq!(counts.get("approval"), Some(&1));
     }

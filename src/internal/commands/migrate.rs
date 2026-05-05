@@ -37,8 +37,8 @@ use super::super::error::{ForumError, ForumResult};
 use super::super::evidence::{EvidenceFile, EvidenceRecord};
 use super::super::git_ops::GitOps;
 use super::super::id_alloc;
-use super::super::legacy::event::{self, NodeType, ThreadKind};
-use super::super::node::{NodeKind, NodeRecord, NodeStatus};
+use super::super::legacy::event::{self, ThreadKind};
+use super::super::node::{NodeRecord, NodeStatus};
 use super::super::refs;
 use super::super::snapshot::{self, Link, Links, NodeWithBody, ThreadDocument};
 use super::super::thread::{self, ThreadSnapshot, ThreadState};
@@ -759,14 +759,10 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
     let nodes: Vec<NodeWithBody> = state
         .nodes
         .iter()
-        .filter_map(|n| {
-            let kind = match n.node_type.canonical() {
-                NodeType::Comment => NodeKind::Comment,
-                NodeType::Approval => NodeKind::Approval,
-                NodeType::Objection => NodeKind::Objection,
-                NodeType::Action => NodeKind::Action,
-                _ => return None, // canonical() always returns one of the four
-            };
+        .map(|n| {
+            // After v3.1 step 3g, v2 Node.node_type is already NodeKind
+            // (the canonical 4); the v1 fold happened upstream during
+            // legacy event chain replay.
             let status = if n.retracted {
                 NodeStatus::Retracted
             } else if n.incorporated {
@@ -776,10 +772,10 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
             } else {
                 NodeStatus::Open
             };
-            Some(NodeWithBody {
+            NodeWithBody {
                 record: NodeRecord {
                     id: tree_safe_node_id(&n.node_id),
-                    kind,
+                    kind: n.node_type,
                     status,
                     created_at: n.created_at,
                     created_by: n.actor.clone(),
@@ -789,7 +785,7 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
                     legacy_label: n.legacy_subtype.clone(),
                 },
                 body: n.body.clone(),
-            })
+            }
         })
         .collect();
 

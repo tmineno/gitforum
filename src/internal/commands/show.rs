@@ -93,7 +93,7 @@ pub fn render_node_show(lookup: &NodeLookup, options: &ShowOptions) -> String {
     lines.push(format!(
         "## {} {}",
         short_oid(&node.node_id),
-        node.node_type
+        node_display_label(node)
     ));
     lines.push(String::new());
     lines.push(format!(
@@ -228,7 +228,7 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
             format!(
                 "  - {} {} {}",
                 short_oid(&node.node_id),
-                node.node_type,
+                node_display_label(node),
                 body_or_truncated(&node.body, 60, false)
             )
         });
@@ -391,7 +391,7 @@ fn push_conversations(lines: &mut Vec<String>, state: &ThreadState, compact: boo
             lines.push(format!(
                 "  {} {} [{}] {} — {}",
                 short_oid(&root.node_id),
-                root.node_type,
+                node_display_label(root),
                 node_status(root),
                 root.actor,
                 single_line_preview(&root.body, 60)
@@ -404,7 +404,7 @@ fn push_conversations(lines: &mut Vec<String>, state: &ThreadState, compact: boo
             lines.push(format!(
                 "  {} {} [{}] {}",
                 short_oid(&root.node_id),
-                root.node_type,
+                node_display_label(root),
                 node_status(root),
                 body_or_truncated(&root.body, 50, false)
             ));
@@ -413,7 +413,7 @@ fn push_conversations(lines: &mut Vec<String>, state: &ThreadState, compact: boo
                 lines.push(format!(
                     "    -> {} {} {} {}",
                     short_oid(&reply.node_id),
-                    reply.node_type,
+                    node_display_label(reply),
                     reply.actor,
                     body_or_truncated(&reply.body, 50, false)
                 ));
@@ -498,7 +498,7 @@ fn render_status_block(state: &ThreadState) -> String {
     let open_questions: Vec<&super::super::node::Node> = state
         .nodes
         .iter()
-        .filter(|n| n.node_type == super::super::node::NodeType::Question && n.is_open())
+        .filter(|n| n.legacy_subtype.as_deref() == Some("question") && n.is_open())
         .collect();
 
     if open_obj.is_empty() && open_act.is_empty() && open_questions.is_empty() {
@@ -774,6 +774,17 @@ pub fn render_state_diagram(category: &str, current: &str) -> Vec<String> {
     }
 
     lines
+}
+
+/// Display label for a node: prefer the rhetorical `legacy_subtype`
+/// (e.g. `summary`, `question`, `claim`) when set, else the canonical
+/// SPEC-3.0 NodeKind name. Migrated v1 nodes carry their original
+/// rhetorical label here even though the persisted `node_type`
+/// collapses to one of the four canonical kinds.
+fn node_display_label(node: &super::super::node::Node) -> String {
+    node.legacy_subtype
+        .clone()
+        .unwrap_or_else(|| node.node_type.to_string())
 }
 
 fn is_spine_edge(spine: &[&str], src: &str, dst: &str) -> bool {
@@ -1075,7 +1086,7 @@ fn fallback_scan_implements(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::node::{Node, NodeType};
+    use crate::internal::node::{Node, NodeKind};
     use crate::internal::policy::Lifecycle;
     use crate::internal::thread::{ThreadKind, ThreadState, ThreadStatus};
     use chrono::TimeZone;
@@ -1178,7 +1189,7 @@ mod tests {
         let mut state = fixed_state();
         state.nodes.push(Node {
             node_id: "node-0001".into(),
-            node_type: NodeType::Objection,
+            node_type: NodeKind::Objection,
             body: "Bench results missing".into(),
             actor: "ai/reviewer".into(),
             created_at: state.created_at,

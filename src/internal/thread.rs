@@ -5,10 +5,10 @@ use super::error::{ForumError, ForumResult};
 use super::evidence::Evidence;
 use super::git_ops::GitOps;
 use super::legacy::event::{
-    self, DomainEvent, Event, EventMeta, EventType, Lifecycle, LinkPayload, NodeType,
-    ProjectionError,
+    self, node_type_to_kind_and_subtype, DomainEvent, Event, EventMeta, EventType, Lifecycle,
+    LinkPayload, ProjectionError,
 };
-use super::node::Node;
+use super::node::{Node, NodeKind};
 use super::refs;
 use super::validate::StrictReplayIssue;
 
@@ -326,7 +326,7 @@ impl ThreadState {
     pub fn open_objections(&self) -> Vec<&Node> {
         self.nodes
             .iter()
-            .filter(|n| n.node_type == NodeType::Objection && n.is_open())
+            .filter(|n| n.node_type == NodeKind::Objection && n.is_open())
             .collect()
     }
 
@@ -334,7 +334,7 @@ impl ThreadState {
     pub fn open_actions(&self) -> Vec<&Node> {
         self.nodes
             .iter()
-            .filter(|n| n.node_type == NodeType::Action && n.is_open())
+            .filter(|n| n.node_type == NodeKind::Action && n.is_open())
             .collect()
     }
 
@@ -352,11 +352,9 @@ impl ThreadState {
     /// `Comment` nodes whose `legacy_subtype = "summary"` (native 2.0 writes
     /// from `git forum summary` and migrated 1.x events).
     pub fn latest_summary(&self) -> Option<&Node> {
-        self.nodes.iter().rfind(|n| {
-            !n.retracted
-                && (n.node_type == NodeType::Summary
-                    || n.legacy_subtype.as_deref() == Some("summary"))
-        })
+        self.nodes
+            .iter()
+            .rfind(|n| !n.retracted && n.legacy_subtype.as_deref() == Some("summary"))
     }
 }
 
@@ -612,7 +610,7 @@ fn apply_event(
             for approval in approvals {
                 state.nodes.push(Node {
                     node_id: format!("{}#{}", meta.event_id, approval.actor_id),
-                    node_type: NodeType::Approval,
+                    node_type: NodeKind::Approval,
                     body: String::new(),
                     actor: approval.actor_id.clone(),
                     created_at: approval.approved_at,
@@ -632,14 +630,16 @@ fn apply_event(
             legacy_subtype,
             target_node_id,
         } => {
+            // Fold the v2 12-variant NodeType into the SPEC-3.0
+            // 4-variant NodeKind. v1 events with rhetorical types
+            // (Question/Claim/etc.) collapse to Comment with the
+            // label preserved in legacy_subtype.
+            let (kind, derived_subtype) = node_type_to_kind_and_subtype(*node_type);
             state.nodes.push(Node {
-                // 2.0: a Say node id is the writer's pre-allocated
-                // `target_node_id` when present, else the event's
-                // commit SHA (the common case for native 2.0 writes).
                 node_id: target_node_id
                     .clone()
                     .unwrap_or_else(|| meta.event_id.clone()),
-                node_type: *node_type,
+                node_type: kind,
                 body: body.clone(),
                 actor: meta.actor.clone(),
                 created_at: meta.created_at,
@@ -647,7 +647,7 @@ fn apply_event(
                 retracted: false,
                 incorporated: false,
                 reply_to: reply_to.clone(),
-                legacy_subtype: legacy_subtype.clone(),
+                legacy_subtype: legacy_subtype.clone().or(derived_subtype),
             });
         }
         DomainEvent::Edit {
@@ -696,7 +696,11 @@ fn apply_event(
                 .iter_mut()
                 .find(|n| &n.node_id == target_node_id)
             {
-                node.node_type = *node_type;
+                let (kind, derived_subtype) = node_type_to_kind_and_subtype(*node_type);
+                node.node_type = kind;
+                if derived_subtype.is_some() {
+                    node.legacy_subtype = derived_subtype;
+                }
             } else {
                 issues.push(StrictReplayIssue::UnknownTargetNode {
                     event_id: meta.event_id.clone(),
@@ -949,7 +953,7 @@ pub fn replay_thread_at(git: &GitOps, start_rev: &str) -> ForumResult<ThreadStat
 /// on the Phase 4 DELETE list.
 fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocument) -> ThreadState {
     use super::evidence::Evidence;
-    use super::node::{NodeKind, NodeStatus};
+    use super::node::NodeStatus;
     use super::snapshot::ThreadDocument;
 
     let ThreadDocument {
@@ -968,12 +972,7 @@ fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocument) 
         .into_iter()
         .map(|n| Node {
             node_id: n.record.id,
-            node_type: match n.record.kind {
-                NodeKind::Comment => NodeType::Comment,
-                NodeKind::Approval => NodeType::Approval,
-                NodeKind::Objection => NodeType::Objection,
-                NodeKind::Action => NodeType::Action,
-            },
+            node_type: n.record.kind,
             body: n.body,
             actor: n.record.created_by,
             created_at: n.record.created_at,

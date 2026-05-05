@@ -5,7 +5,7 @@
 //! selectors). Callers pass the thread's `category` (`"rfc"` or
 //! `"task"`) along with the relevant status / node kind for dispatch.
 
-use super::node::{NodeKind, NodeType};
+use super::node::NodeKind;
 use super::policy::{normalize_state_name, Policy};
 
 /// State-name allow-list match that tolerates 1.x↔2.0 name mismatches
@@ -28,18 +28,6 @@ fn render_allow_list_for_hint(allow: &[String]) -> String {
         }
     }
     seen.join(", ")
-}
-
-/// Map a v2 [`NodeType`] to its 3.0 [`NodeKind`] for policy dispatch.
-fn node_type_to_kind(nt: NodeType) -> NodeKind {
-    match nt.canonical() {
-        NodeType::Comment => NodeKind::Comment,
-        NodeType::Approval => NodeKind::Approval,
-        NodeType::Objection => NodeKind::Objection,
-        NodeType::Action => NodeKind::Action,
-        // canonical() always returns one of the four, but be safe.
-        _ => NodeKind::Comment,
-    }
 }
 
 fn node_kind_str(k: NodeKind) -> &'static str {
@@ -65,7 +53,7 @@ pub enum Op<'a> {
     Say {
         category: &'a str,
         status: &'a str,
-        node_type: NodeType,
+        node_type: NodeKind,
     },
     /// Revising the body or a node body of an existing thread.
     Revise {
@@ -181,7 +169,7 @@ pub fn check_say(
     policy: &Policy,
     category: &str,
     status: &str,
-    node_type: NodeType,
+    node_type: NodeKind,
 ) -> Vec<OperationViolation> {
     check_say_inner(policy, category, status, node_type)
 }
@@ -190,10 +178,10 @@ fn check_say_inner(
     policy: &Policy,
     category: &str,
     status: &str,
-    node_type: NodeType,
+    node_type: NodeKind,
 ) -> Vec<OperationViolation> {
     let mut violations = Vec::new();
-    let target_kind = node_type_to_kind(node_type);
+    let target_kind = node_type;
     let target_status = normalize_state_name(status);
 
     // 3.0 lookup is direct on the canonical status name; allow_list_contains
@@ -543,14 +531,14 @@ mod tests {
             "draft",
             vec![NodeKind::Comment, NodeKind::Objection, NodeKind::Action],
         );
-        let v = check_say(&policy, "rfc", "draft", NodeType::Comment);
+        let v = check_say(&policy, "rfc", "draft", NodeKind::Comment);
         assert!(v.is_empty());
     }
 
     #[test]
     fn check_say_blocked() {
         let policy = policy_with_node_rules("rfc", "done", vec![]);
-        let v = check_say(&policy, "rfc", "done", NodeType::Comment);
+        let v = check_say(&policy, "rfc", "done", NodeKind::Comment);
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].rule, "node_type_restricted");
     }
@@ -559,14 +547,14 @@ mod tests {
     fn check_say_unlisted_state_allows_all() {
         let policy = policy_with_node_rules("rfc", "done", vec![]);
         // "draft" not listed → all allowed.
-        let v = check_say(&policy, "rfc", "draft", NodeType::Comment);
+        let v = check_say(&policy, "rfc", "draft", NodeKind::Comment);
         assert!(v.is_empty());
     }
 
     #[test]
     fn check_say_no_policy_allows_all() {
         let policy = Policy::default();
-        let v = check_say(&policy, "rfc", "done", NodeType::Comment);
+        let v = check_say(&policy, "rfc", "done", NodeKind::Comment);
         assert!(v.is_empty());
     }
 
@@ -819,7 +807,7 @@ mod tests {
             Op::Say {
                 category: "rfc",
                 status: "done",
-                node_type: NodeType::Comment,
+                node_type: NodeKind::Comment,
             },
         );
         assert_eq!(v.len(), 1);

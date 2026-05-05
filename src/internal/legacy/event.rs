@@ -164,14 +164,152 @@ impl std::fmt::Display for EventType {
     }
 }
 
-// `NodeType` was relocated to `internal::node` in Phase 4 Step 1f
-// (RFC `7ymtc4b2`, task `913c4s9v`) so KEEP files no longer need to
-// import from `internal::event` just for the type. Importers should
-// switch to `crate::internal::node::NodeType`. event.rs back-imports
-// here so internal references inside this file (and the legacy
-// `Event` struct's `node_type` field) keep working until Step 2
-// moves event.rs into `internal::legacy/`.
-pub use super::super::node::NodeType;
+// --------------------------------------------------------------------
+// `NodeType` (12-variant v2 enum) lives here as of task `1v400j3l`
+// step 3g: it is the legacy event-codec's own type, no longer
+// re-exported from `internal::node`. The 4 canonical 2.0 variants
+// remain (Comment / Approval / Objection / Action) alongside the 8
+// legacy 1.x rhetorical labels (Claim / Question / Evidence /
+// Summary / Risk / Review / Alternative / Assumption) so the v1 →
+// v3 migration projection still parses historical event payloads
+// verbatim.
+//
+// 3.0-native code uses `internal::node::NodeKind` (4 variants); only
+// the migration consumer in `internal::commands::migrate` and the
+// legacy event codec here reach for the 12-variant `NodeType`.
+// --------------------------------------------------------------------
+
+/// 2.0 + 1.x node type. Carries the 4 canonical 2.0 variants and the
+/// 8 legacy 1.x rhetorical labels so v1 event payloads parse verbatim
+/// during migration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeType {
+    // -- 2.0 canonical variants --
+    #[default]
+    Comment,
+    Approval,
+    Objection,
+    Action,
+    // -- Legacy 1.x rhetorical labels --
+    Claim,
+    Question,
+    Evidence,
+    Summary,
+    Risk,
+    Review,
+    Alternative,
+    Assumption,
+}
+
+impl NodeType {
+    /// Map any variant to its 2.0 canonical form (Comment for the 1.x
+    /// rhetorical labels). Used by the v1 → v3 migration projection
+    /// to fold rhetorical types into SPEC-3.0 NodeKind.
+    pub fn canonical(self) -> Self {
+        match self {
+            Self::Comment | Self::Approval | Self::Objection | Self::Action => self,
+            Self::Claim
+            | Self::Question
+            | Self::Evidence
+            | Self::Summary
+            | Self::Risk
+            | Self::Review
+            | Self::Alternative
+            | Self::Assumption => Self::Comment,
+        }
+    }
+
+    /// True iff this is one of the 4 canonical 2.0 variants.
+    pub fn is_canonical(self) -> bool {
+        matches!(
+            self,
+            Self::Comment | Self::Approval | Self::Objection | Self::Action
+        )
+    }
+
+    /// Legacy 1.x label for non-canonical variants, or `None` for
+    /// canonical types. Used by the migration projection to populate
+    /// `NodeRecord::legacy_label`.
+    pub fn legacy_subtype_label(self) -> Option<&'static str> {
+        match self {
+            Self::Claim => Some("claim"),
+            Self::Question => Some("question"),
+            Self::Evidence => Some("evidence"),
+            Self::Summary => Some("summary"),
+            Self::Risk => Some("risk"),
+            Self::Review => Some("review"),
+            Self::Alternative => Some("alternative"),
+            Self::Assumption => Some("assumption"),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for NodeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Comment => "comment",
+            Self::Approval => "approval",
+            Self::Objection => "objection",
+            Self::Action => "action",
+            Self::Claim => "claim",
+            Self::Question => "question",
+            Self::Evidence => "evidence",
+            Self::Summary => "summary",
+            Self::Risk => "risk",
+            Self::Review => "review",
+            Self::Alternative => "alternative",
+            Self::Assumption => "assumption",
+        };
+        f.write_str(s)
+    }
+}
+
+impl std::str::FromStr for NodeType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "comment" => Ok(Self::Comment),
+            "approval" => Ok(Self::Approval),
+            "objection" => Ok(Self::Objection),
+            "action" => Ok(Self::Action),
+            "claim" => Ok(Self::Claim),
+            "question" => Ok(Self::Question),
+            "evidence" => Ok(Self::Evidence),
+            "summary" => Ok(Self::Summary),
+            "risk" => Ok(Self::Risk),
+            "review" => Ok(Self::Review),
+            "alternative" => Ok(Self::Alternative),
+            "assumption" => Ok(Self::Assumption),
+            _ => Err(format!("unknown node type '{s}'")),
+        }
+    }
+}
+
+/// Fold a v2 [`NodeType`] (12-variant) to a SPEC-3.0 [`NodeKind`]
+/// (4-variant) plus the rhetorical-subtype label for non-canonical
+/// inputs. Used by the v2 → v3 read-path adapter when projecting v2
+/// `Node` records into the 3.0-native shape.
+pub fn node_type_to_kind_and_subtype(
+    nt: NodeType,
+) -> (super::super::node::NodeKind, Option<String>) {
+    use super::super::node::NodeKind;
+    match nt {
+        NodeType::Comment => (NodeKind::Comment, None),
+        NodeType::Approval => (NodeKind::Approval, None),
+        NodeType::Objection => (NodeKind::Objection, None),
+        NodeType::Action => (NodeKind::Action, None),
+        NodeType::Claim => (NodeKind::Comment, Some("claim".into())),
+        NodeType::Question => (NodeKind::Comment, Some("question".into())),
+        NodeType::Evidence => (NodeKind::Comment, Some("evidence".into())),
+        NodeType::Summary => (NodeKind::Comment, Some("summary".into())),
+        NodeType::Risk => (NodeKind::Comment, Some("risk".into())),
+        NodeType::Review => (NodeKind::Comment, Some("review".into())),
+        NodeType::Alternative => (NodeKind::Comment, Some("alternative".into())),
+        NodeType::Assumption => (NodeKind::Comment, Some("assumption".into())),
+    }
+}
 
 /// An immutable event in a thread's history.
 ///

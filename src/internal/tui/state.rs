@@ -7,7 +7,7 @@ use crate::internal::error::{ForumError, ForumResult};
 use crate::internal::evidence::EvidenceFile;
 use crate::internal::git_ops::GitOps;
 use crate::internal::id_alloc;
-use crate::internal::node::{Node, NodeKind, NodeRecord, NodeStatus, NodeType};
+use crate::internal::node::{Node, NodeKind, NodeRecord, NodeStatus};
 use crate::internal::policy::Lifecycle;
 use crate::internal::snapshot::history;
 use crate::internal::snapshot::list::{self as snapshot_list, ThreadRow};
@@ -323,16 +323,16 @@ pub(super) fn default_thread_lifecycle_index(lifecycle_filter: Option<&str>) -> 
     }
 }
 
-/// SPEC-2.0 §2.5: the four canonical 2.0 node types offered for creation.
-/// Legacy prose-only types (claim, question, summary, risk, review,
-/// alternative, assumption) are no longer offered; pre-existing nodes still
-/// render with their stored label.
-pub(super) fn node_type_values() -> [NodeType; 4] {
+/// SPEC-3.0 §2.2: the four canonical node kinds offered for creation.
+/// Legacy 1.x prose-only types (claim, question, summary, risk, review,
+/// alternative, assumption) are no longer offered; pre-existing nodes
+/// still render with their stored `legacy_subtype` label.
+pub(super) fn node_type_values() -> [NodeKind; 4] {
     [
-        NodeType::Comment,
-        NodeType::Approval,
-        NodeType::Objection,
-        NodeType::Action,
+        NodeKind::Comment,
+        NodeKind::Approval,
+        NodeKind::Objection,
+        NodeKind::Action,
     ]
 }
 
@@ -561,20 +561,13 @@ fn snapshot_update_node_status(
 fn snapshot_append_node(
     git: &GitOps,
     thread_id: &str,
-    node_type: NodeType,
+    kind: NodeKind,
     body: &str,
     actor: &str,
     clock: &dyn Clock,
 ) -> ForumResult<String> {
     let mut doc = snapshot::read_snapshot(git, thread_id)?;
     let now = clock.now();
-    let kind = match node_type.canonical() {
-        NodeType::Comment => NodeKind::Comment,
-        NodeType::Approval => NodeKind::Approval,
-        NodeType::Objection => NodeKind::Objection,
-        NodeType::Action => NodeKind::Action,
-        _ => NodeKind::Comment,
-    };
     let id = id_alloc::alloc_bare_thread_id(actor, body, &now.to_rfc3339());
     doc.nodes.push(NodeWithBody {
         record: NodeRecord {

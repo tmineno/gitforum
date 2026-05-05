@@ -4,117 +4,14 @@ use serde::{Deserialize, Serialize};
 use super::error::ForumError;
 
 // --------------------------------------------------------------------
-// `NodeType` (12-variant v2 enum) lives here as of Phase 4 Step 1f
-// (RFC `7ymtc4b2`, task `913c4s9v`). Earlier revisions had it in
-// `event.rs`; the relocation co-locates the v2 enum with its primary
-// consumer (the v2 `Node` struct below) so KEEP files no longer need
-// to reach into `internal::event` just for a node-type label.
+// v2 `NodeType` (the 12-variant enum carrying 1.x rhetorical labels)
+// was relocated to `internal::legacy::event` in task `1v400j3l` step
+// 3g. Only the migration consumer needs the legacy variants; runtime
+// node code uses `NodeKind` (4 variants) below.
 //
-// The 3.0-native node type is the smaller `NodeKind` (4 variants)
-// further down. Both coexist during the cutover; Phase 4 Step 5
-// removes `NodeType` and the v2 `Node` struct together when the v2
-// peers in node/evidence/thread are dropped.
+// The v2 `Node` struct below now stores `NodeKind` directly, with
+// any 1.x rhetorical label preserved as a string in `legacy_subtype`.
 // --------------------------------------------------------------------
-
-/// 2.0 + 1.x node type. Carries both the 4 canonical 2.0 variants and
-/// the 8 legacy 1.x rhetorical labels so v2 read paths still parse
-/// historical data verbatim. The
-/// [`canonical`](Self::canonical) helper folds any variant into one of
-/// the 2.0 four; [`legacy_subtype_label`](Self::legacy_subtype_label)
-/// returns the 1.x label for non-canonical variants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum NodeType {
-    // -- 2.0 canonical variants (protocol-effect cut) --
-    /// 2.0 canonical: body-prose contribution. No protocol effect.
-    /// Replaces 1.x `Claim` / `Question` / `Summary` / `Risk` / `Review` /
-    /// `Alternative` / `Assumption`.
-    #[default]
-    Comment,
-    /// 2.0 canonical: positive sign-off. Counts toward state-transition
-    /// guards (e.g. `one_human_approval`). Folds in the 1.x standalone
-    /// Approval concept (SPEC.md §2.7).
-    Approval,
-    // -- Variants retained from 1.x (canonical and legacy alike) --
-    Objection,
-    Action,
-    // -- Legacy 1.x variants (kept for read compat; map to Comment) --
-    Claim,
-    Question,
-    Evidence,
-    Summary,
-    Risk,
-    Review,
-    Alternative,
-    Assumption,
-}
-
-impl NodeType {
-    /// Map any variant to its 2.0 canonical form.
-    ///
-    /// Thin delegator over [`super::legacy::v1::canonical_node_type`];
-    /// the rule body (which legacy variants collapse to which canonical
-    /// node) lives in `legacy::v1` per RFC 915yuegd P1.
-    pub fn canonical(self) -> Self {
-        super::legacy::v1::canonical_node_type(self)
-    }
-
-    /// Returns true if this is a 2.0 canonical variant.
-    pub fn is_canonical(self) -> bool {
-        super::legacy::v1::is_canonical_node_type(self)
-    }
-
-    /// Legacy 1.x label for non-canonical variants, or `None` if already canonical.
-    ///
-    /// Thin delegator over [`super::legacy::v1::legacy_subtype_label`].
-    /// Used by 2.0 write paths to record the user's stated rhetorical
-    /// type in `Event.legacy_subtype` while persisting the canonical
-    /// `node_type` on the event (SPEC-2.0 §2.5 / §9.3 / §10.1).
-    pub fn legacy_subtype_label(self) -> Option<&'static str> {
-        super::legacy::v1::legacy_subtype_label(self)
-    }
-}
-
-impl std::fmt::Display for NodeType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            Self::Comment => "comment",
-            Self::Approval => "approval",
-            Self::Objection => "objection",
-            Self::Action => "action",
-            Self::Claim => "claim",
-            Self::Question => "question",
-            Self::Evidence => "evidence",
-            Self::Summary => "summary",
-            Self::Risk => "risk",
-            Self::Review => "review",
-            Self::Alternative => "alternative",
-            Self::Assumption => "assumption",
-        };
-        f.write_str(s)
-    }
-}
-
-impl std::str::FromStr for NodeType {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "comment" => Ok(Self::Comment),
-            "approval" => Ok(Self::Approval),
-            "objection" => Ok(Self::Objection),
-            "action" => Ok(Self::Action),
-            "claim" => Ok(Self::Claim),
-            "question" => Ok(Self::Question),
-            "evidence" => Ok(Self::Evidence),
-            "summary" => Ok(Self::Summary),
-            "risk" => Ok(Self::Risk),
-            "review" => Ok(Self::Review),
-            "alternative" => Ok(Self::Alternative),
-            "assumption" => Ok(Self::Assumption),
-            _ => Err(format!("unknown node type '{s}'; canonical types (2.0): comment, approval, objection, action; legacy types accepted for reads: claim, question, evidence, summary, risk, review, alternative, assumption")),
-        }
-    }
-}
 
 /// A structured discussion node contributed via a `say` event.
 ///
@@ -129,7 +26,7 @@ impl std::str::FromStr for NodeType {
 #[derive(Debug, Clone, Default)]
 pub struct Node {
     pub node_id: String,
-    pub node_type: NodeType,
+    pub node_type: NodeKind,
     pub body: String,
     pub actor: String,
     pub created_at: DateTime<Utc>,
@@ -177,13 +74,45 @@ impl Node {
 // --------------------------------------------------------------------
 
 /// SPEC-3.0 §2.2 node type (strict canonical four).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeKind {
+    #[default]
     Comment,
     Approval,
     Objection,
     Action,
+}
+
+impl std::fmt::Display for NodeKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Comment => "comment",
+            Self::Approval => "approval",
+            Self::Objection => "objection",
+            Self::Action => "action",
+        })
+    }
+}
+
+impl std::str::FromStr for NodeKind {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "comment" => Ok(Self::Comment),
+            "approval" => Ok(Self::Approval),
+            "objection" => Ok(Self::Objection),
+            "action" => Ok(Self::Action),
+            // Legacy 1.x rhetorical labels (claim/question/summary/risk/
+            // review/alternative/assumption/evidence) are not valid for
+            // 3.0 native writes — they collapse to `comment` and the
+            // rhetorical label belongs in the migration archival
+            // `legacy_label` field, not as a write-time type.
+            other => Err(format!(
+                "unknown node type '{other}'; SPEC-3.0 native types: comment, approval, objection, action"
+            )),
+        }
+    }
 }
 
 /// SPEC-3.0 §2.2 node status.

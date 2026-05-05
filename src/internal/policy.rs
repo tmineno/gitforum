@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use super::error::{ForumError, ForumResult};
 use super::evidence::EvidenceKind;
 use super::lint_emit::{self, LintEmitter};
-use super::node::{NodeKind, NodeType};
+use super::node::NodeKind;
 use super::thread::ThreadState;
 
 // --------------------------------------------------------------------
@@ -978,7 +978,7 @@ pub fn evaluate_rule(rule: &GuardRule, state: &ThreadState) -> Option<GuardViola
             let has = state
                 .nodes
                 .iter()
-                .any(|n| n.node_type == NodeType::Approval && !n.retracted);
+                .any(|n| n.node_type == NodeKind::Approval && !n.retracted);
             (!has).then(|| GuardViolation {
                 rule: rule.to_string(),
                 reason: "no approval recorded".into(),
@@ -1680,7 +1680,7 @@ mod evaluate_tests {
     fn approval_node(actor: &str) -> crate::internal::node::Node {
         crate::internal::node::Node {
             node_id: format!("approval-{actor}"),
-            node_type: NodeType::Approval,
+            node_type: NodeKind::Approval,
             actor: actor.into(),
             ..Default::default()
         }
@@ -1689,7 +1689,7 @@ mod evaluate_tests {
     fn objection_node() -> crate::internal::node::Node {
         crate::internal::node::Node {
             node_id: "obj1".into(),
-            node_type: NodeType::Objection,
+            node_type: NodeKind::Objection,
             ..Default::default()
         }
     }
@@ -1697,7 +1697,7 @@ mod evaluate_tests {
     fn action_node() -> crate::internal::node::Node {
         crate::internal::node::Node {
             node_id: "act1".into(),
-            node_type: NodeType::Action,
+            node_type: NodeKind::Action,
             ..Default::default()
         }
     }
