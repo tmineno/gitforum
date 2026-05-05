@@ -9,6 +9,7 @@ use crate::internal::evidence::EvidenceFile;
 use crate::internal::git_ops::GitOps;
 use crate::internal::id_alloc;
 use crate::internal::node::{Node, NodeKind, NodeRecord, NodeStatus};
+use crate::internal::snapshot::history;
 use crate::internal::snapshot::list::{self as snapshot_list, ThreadRow};
 use crate::internal::snapshot::{self, store::write_snapshot, Link, Links, NodeWithBody};
 use crate::internal::thread::{self, ThreadSnapshot};
@@ -35,7 +36,19 @@ pub(super) fn open_thread_detail(
         state.tags.clone()
     };
     app.thread_status = state.status.to_string();
-    app.thread_text = show::render_show(&state, &show::ShowOptions::default());
+    // Phase 4 Step 1d (RFC `7ymtc4b2`): per-thread timeline panel reads
+    // the snapshot ref's git history (SPEC-3.0 §5.4). `read_log` returns
+    // `None` on legacy event-chain refs — the renderer falls back to its
+    // "_(timeline unavailable)_" placeholder, matching the same shape
+    // CLI `git forum show` produces on those refs.
+    let timeline_entries = history::read_log(git, &ref_name).ok();
+    app.thread_text = show::render_show(
+        &state,
+        &show::ShowOptions {
+            timeline_entries,
+            ..show::ShowOptions::default()
+        },
+    );
     app.thread_scroll = 0;
     app.thread_nodes = state.nodes;
     app.tree_entries = build_tree_entries(&app.thread_nodes);
@@ -56,7 +69,18 @@ pub(super) fn open_node_detail(
     node_id: &str,
 ) -> ForumResult<()> {
     let lookup = thread::find_node_in_thread(git, thread_id, node_id)?;
-    app.node_detail_text = show::render_node_show(&lookup, &show::ShowOptions::default());
+    // Phase 4 Step 1d (RFC `7ymtc4b2`): per-node history panel uses the
+    // same snapshot ref log as the thread view. `render_node_show` does
+    // the path-filter to commits that touched `nodes/<id>.{toml,md}`.
+    let ref_name = format!("refs/forum/threads/{thread_id}");
+    let timeline_entries = history::read_log(git, &ref_name).ok();
+    app.node_detail_text = show::render_node_show(
+        &lookup,
+        &show::ShowOptions {
+            timeline_entries,
+            ..show::ShowOptions::default()
+        },
+    );
     app.node_detail_scroll = 0;
     app.view = View::NodeDetail {
         thread_id: thread_id.to_string(),
