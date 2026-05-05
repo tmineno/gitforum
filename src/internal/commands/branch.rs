@@ -5,10 +5,63 @@
 //! SPEC-3.0 §3.1. The legacy `Scope` event-write path is no longer
 //! invoked here.
 
+use clap::Subcommand;
+
 use super::super::clock::Clock;
 use super::super::error::{ForumError, ForumResult};
 use super::super::git_ops::GitOps;
 use super::super::snapshot::{self, store::write_snapshot};
+use super::context::Context;
+use super::shared::{discover_repo_with_init_warning, resolve_actor, resolve_tid};
+
+/// Sub-commands for `git forum branch`. Owns the clap surface so
+/// main.rs's branch arm is a thin dispatcher.
+#[derive(Subcommand)]
+pub enum BranchCmd {
+    /// Bind a thread to an existing Git branch
+    Bind {
+        thread_id: String,
+        branch: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+    /// Clear the bound branch from a thread
+    Clear {
+        thread_id: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+    },
+}
+
+/// Uniform entry point for the `branch` subcommand per RFC `7ymtc4b2`
+/// criterion 3 ("every public command exposes
+/// `internal::commands::<cmd>::run(args, &ctx)`").
+pub fn run(cmd: BranchCmd, ctx: &Context) -> ForumResult<()> {
+    match cmd {
+        BranchCmd::Bind {
+            thread_id,
+            branch,
+            as_actor,
+        } => {
+            let (git, _paths) = discover_repo_with_init_warning()?;
+            let thread_id = resolve_tid(&git, &thread_id)?;
+            let actor = resolve_actor(as_actor, &git);
+            set_branch(&git, &thread_id, Some(&branch), &actor, ctx.clock.as_ref())?;
+            println!("{thread_id} -> branch {branch}");
+        }
+        BranchCmd::Clear {
+            thread_id,
+            as_actor,
+        } => {
+            let (git, _paths) = discover_repo_with_init_warning()?;
+            let thread_id = resolve_tid(&git, &thread_id)?;
+            let actor = resolve_actor(as_actor, &git);
+            set_branch(&git, &thread_id, None, &actor, ctx.clock.as_ref())?;
+            println!("{thread_id} -> branch <cleared>");
+        }
+    }
+    Ok(())
+}
 
 /// Bind or clear a thread's branch scope.
 ///

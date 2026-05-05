@@ -661,22 +661,10 @@ enum NodeCmd {
     },
 }
 
-#[derive(Subcommand)]
-enum BranchCmd {
-    /// Bind a thread to an existing Git branch
-    Bind {
-        thread_id: String,
-        branch: String,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-    },
-    /// Clear the bound branch from a thread
-    Clear {
-        thread_id: String,
-        #[arg(long = "as", value_name = "ACTOR")]
-        as_actor: Option<String>,
-    },
-}
+// `BranchCmd` lives in `internal::commands::branch::BranchCmd` per
+// the post-Phase-4 unified entry-point shape (RFC `7ymtc4b2`
+// criterion 3 — every command exposes `commands::<cmd>::run`).
+use git_forum::internal::commands::branch::BranchCmd;
 
 #[derive(Subcommand)]
 enum HookCmd {
@@ -1164,29 +1152,10 @@ fn main() -> Result<(), ForumError> {
             )?,
         },
 
-        Commands::Branch { cmd } => match cmd {
-            BranchCmd::Bind {
-                thread_id,
-                branch,
-                as_actor,
-            } => {
-                let (git, _paths) = discover_repo_with_init_warning()?;
-                let thread_id = resolve_tid(&git, &thread_id)?;
-                let actor = resolve_actor(as_actor, &git);
-                branch::set_branch(&git, &thread_id, Some(&branch), &actor, &clock)?;
-                println!("{thread_id} -> branch {branch}");
-            }
-            BranchCmd::Clear {
-                thread_id,
-                as_actor,
-            } => {
-                let (git, _paths) = discover_repo_with_init_warning()?;
-                let thread_id = resolve_tid(&git, &thread_id)?;
-                let actor = resolve_actor(as_actor, &git);
-                branch::set_branch(&git, &thread_id, None, &actor, &clock)?;
-                println!("{thread_id} -> branch <cleared>");
-            }
-        },
+        Commands::Branch { cmd } => {
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            branch::run(cmd, &ctx)?;
+        }
 
         Commands::Revise {
             thread_id,
