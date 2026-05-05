@@ -42,11 +42,13 @@ pub struct Approval {
 // loaders that still consume it (deleted in Step 2/3).
 pub use super::super::thread::ThreadKind;
 
-// `ThreadStatus` was relocated to `internal::thread` in Phase 4
-// Step 1h (RFC `7ymtc4b2`, task `913c4s9v`). KEEP files import via
-// the new path; event.rs re-exports for legacy/DELETE-list callers
-// retired in Steps 2/3.
-pub use super::super::thread::ThreadStatus;
+// v3.1 step 3l (task `1v400j3l`): `ThreadStatus` (the v2 8-variant
+// enum) moved out of `internal::thread` into
+// `internal::legacy::chain_replay`. The 3.0-native ThreadState
+// carries `status: String`; the typed enum survives only inside
+// the legacy event-chain reader's state machine. event.rs's own
+// tests of `parse_lenient` consume it via this re-export.
+pub use super::chain_replay::ThreadStatus;
 
 // `Lifecycle` was relocated to `internal::policy` in Phase 4 Step 1j
 // (RFC `7ymtc4b2`, task `913c4s9v`). Co-located with the existing v2

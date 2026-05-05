@@ -361,6 +361,30 @@ pub fn normalize_state_name(s: &str) -> &str {
         .unwrap_or(s)
 }
 
+/// Lenient parse: normalize 1.x synonyms onto canonical 2.0 status
+/// names and verify the result is one of the eight canonical statuses
+/// (draft / open / working / review / done / rejected / withdrawn /
+/// deprecated). Returns `None` if the normalized string isn't
+/// canonical.
+///
+/// 3.0-native replacement for `legacy::chain_replay::ThreadStatus
+/// ::parse_lenient` for non-legacy callers (state.rs's CLI input
+/// path, etc.) — keeps them off the typed v2 enum while preserving
+/// the lenient input behavior. v3.1 step 3l (task `1v400j3l`).
+pub fn canonical_status_lenient(s: &str) -> Option<&'static str> {
+    match normalize_state_name(s) {
+        "draft" => Some("draft"),
+        "open" => Some("open"),
+        "working" => Some("working"),
+        "review" => Some("review"),
+        "done" => Some("done"),
+        "rejected" => Some("rejected"),
+        "withdrawn" => Some("withdrawn"),
+        "deprecated" => Some("deprecated"),
+        _ => None,
+    }
+}
+
 // ---------------------------------------------------------------------
 // SPEC-3.0 §9.1 kind preset registry (3.0-native)
 // ---------------------------------------------------------------------

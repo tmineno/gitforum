@@ -228,7 +228,7 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use crate::internal::policy::Lifecycle;
-    use crate::internal::thread::{ThreadKind, ThreadStatus};
+    use crate::internal::thread::ThreadKind;
     use chrono::TimeZone;
 
     fn t() -> chrono::DateTime<chrono::Utc> {
@@ -241,7 +241,7 @@ mod tests {
             kind: ThreadKind::Rfc,
             title: "Test RFC".into(),
             body: Some("Thread body".into()),
-            status: ThreadStatus::Draft,
+            status: "draft".into(),
             created_at: t(),
             created_by: "human/alice".into(),
             ..ThreadState::default()

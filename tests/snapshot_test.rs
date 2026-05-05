@@ -5,7 +5,7 @@ use git_forum::internal::commands::ls;
 use git_forum::internal::commands::show;
 use git_forum::internal::node::{Node, NodeKind};
 use git_forum::internal::policy::Lifecycle;
-use git_forum::internal::thread::{NodeLookup, ThreadKind, ThreadLink, ThreadState, ThreadStatus};
+use git_forum::internal::thread::{NodeLookup, ThreadKind, ThreadLink, ThreadState};
 
 const SNAPSHOT_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots");
 
@@ -42,7 +42,7 @@ fn base_state() -> ThreadState {
         lifecycle: Lifecycle::Proposal,
         title: "Test RFC".into(),
         body: Some("Initial thread body.".into()),
-        status: ThreadStatus::Draft,
+        status: "draft".into(),
         created_at: t,
         created_by: "human/alice".into(),
         updated_at: t,
@@ -56,7 +56,7 @@ fn rich_state() -> ThreadState {
     let t3 = t + chrono::Duration::hours(2);
     let mut state = base_state();
     // Lenient parse so 1.x-flavored fixture data still produces a valid 2.0 status.
-    state.status = ThreadStatus::parse_lenient("under-review").unwrap();
+    state.status = "review".into();
     state.branch = Some("feat/solver".into());
     state.updated_at = t3;
     state.nodes = vec![
@@ -187,7 +187,7 @@ fn ls_two_threads() {
     s2.lifecycle = Lifecycle::Execution;
     s2.tags = vec!["bug".into()];
     s2.title = "Implement trait backend".into();
-    s2.status = ThreadStatus::Open;
+    s2.status = "open".into();
     s2.branch = Some("feat/parser".into());
     let out = ls::render_ls(&[&s1, &s2]);
     assert_snapshot("ls_two_threads", &out);

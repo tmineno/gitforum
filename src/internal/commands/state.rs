@@ -104,14 +104,12 @@ fn resolve_target_state(
         Unknown => {
             // Try as a canonical state name. The legacy 1.x → 2.0
             // alias fold (`closed` → `done`, `proposed` → `open`,
-            // etc.) lives in `thread::ThreadStatus::parse_lenient`.
-            crate::internal::thread::ThreadStatus::parse_lenient(new_state)
-                .map(|s| s.as_str())
-                .ok_or_else(|| {
-                    ForumError::Config(format!(
-                        "unknown state '{new_state}' for category `{category}`"
-                    ))
-                })
+            // etc.) lives in `policy::canonical_status_lenient`.
+            policy::canonical_status_lenient(new_state).ok_or_else(|| {
+                ForumError::Config(format!(
+                    "unknown state '{new_state}' for category `{category}`"
+                ))
+            })
         }
     }
 }
@@ -321,8 +319,9 @@ pub fn apply_state_change_snapshot(
     // about to write — `--resolve-open-actions` cures `no_open_actions`,
     // and explicit `--approve <ACTOR>` cures `one_human_approval`.
     let mut projected = pre_state.clone();
-    projected.status =
-        crate::internal::thread::ThreadStatus::parse_lenient(target).unwrap_or(projected.status);
+    projected.status = crate::internal::policy::canonical_status_lenient(target)
+        .map(str::to_string)
+        .unwrap_or(projected.status);
     if resolve_open_actions {
         for n in projected.nodes.iter_mut() {
             if n.node_type == crate::internal::node::NodeKind::Action && n.is_open() {

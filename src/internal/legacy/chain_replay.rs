@@ -29,12 +29,88 @@
 use super::super::error::{ForumError, ForumResult};
 use super::super::git_ops::GitOps;
 use super::super::node::{Node, NodeKind};
-use super::super::thread::{materialize_thread_state_from_snapshot, ThreadState, ThreadStatus};
+use super::super::thread::{materialize_thread_state_from_snapshot, ThreadState};
 use super::super::validate::StrictReplayIssue;
 use super::event::{
     self, node_type_to_kind_and_subtype, DomainEvent, Event, EventMeta, EventType, Lifecycle,
     LinkPayload, ProjectionError,
 };
+
+// --------------------------------------------------------------------
+// `ThreadStatus` (8-variant v2 enum + lenient parser).
+//
+// Relocated here from `internal::thread` in v3.1 step 3l (task
+// `1v400j3l`). The 3.0-native ThreadState carries the status as a
+// plain String; this typed enum is needed only inside the legacy
+// event-chain replay state machine, so it now lives next to the
+// reader. `legacy::event` re-exports it for backward-compat shadow
+// callers (and for `event.rs`'s own tests of `parse_lenient`).
+// --------------------------------------------------------------------
+
+/// SPEC-2.0 §3.1 — the canonical 2.0 state set across every lifecycle.
+///
+/// Used by lenient/strict event-chain replay to validate transitions
+/// against the per-lifecycle `WorkflowSpec` graph. ThreadState's
+/// `status` field is `String`; this enum is the typed view that
+/// `apply_event` constructs internally before serialising back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ThreadStatus {
+    Draft,
+    #[default]
+    Open,
+    Working,
+    Review,
+    Done,
+    Rejected,
+    Withdrawn,
+    Deprecated,
+}
+
+impl ThreadStatus {
+    /// Canonical 2.0 names only — does NOT accept 1.x synonyms.
+    /// Use [`parse_lenient`](Self::parse_lenient) for inputs that may
+    /// carry pre-2.0 names (`closed`, `proposed`, etc.).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "draft" => Some(Self::Draft),
+            "open" => Some(Self::Open),
+            "working" => Some(Self::Working),
+            "review" => Some(Self::Review),
+            "done" => Some(Self::Done),
+            "rejected" => Some(Self::Rejected),
+            "withdrawn" => Some(Self::Withdrawn),
+            "deprecated" => Some(Self::Deprecated),
+            _ => None,
+        }
+    }
+
+    /// Accepts canonical 2.0 names AND 1.x synonyms by routing through
+    /// [`super::super::policy::normalize_state_name`]. The lenient
+    /// `apply_event` path uses this so legacy event chains keep
+    /// replaying.
+    pub fn parse_lenient(s: &str) -> Option<Self> {
+        Self::parse(super::super::policy::normalize_state_name(s))
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Open => "open",
+            Self::Working => "working",
+            Self::Review => "review",
+            Self::Done => "done",
+            Self::Rejected => "rejected",
+            Self::Withdrawn => "withdrawn",
+            Self::Deprecated => "deprecated",
+        }
+    }
+}
+
+impl std::fmt::Display for ThreadStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.as_str(), f)
+    }
+}
 
 /// Replay events to reconstruct thread state (lenient).
 ///
@@ -112,9 +188,9 @@ fn replay_with_issues_inner(
     };
 
     // `kind.initial_status()` returns a hardcoded canonical literal
-    // (`"draft"` / `"open"`); parse_lenient is total over this input.
-    let initial_status = ThreadStatus::parse_lenient(kind.initial_status())
-        .expect("kind.initial_status() always returns a canonical 2.0 status name");
+    // (`"draft"` / `"open"`); store it directly on the String-typed
+    // ThreadState.status field.
+    let initial_status = kind.initial_status().to_string();
     let mut state = ThreadState {
         id: first.thread_id.clone(),
         kind,
@@ -195,7 +271,7 @@ fn suppress_self_healed_invalid_transitions(
         else {
             return true;
         };
-        if state.status.as_str() != target {
+        if state.status != *target {
             return true;
         }
         let Some(idx) = events.iter().position(|e| &e.event_id == event_id) else {
@@ -257,22 +333,23 @@ fn apply_event(
                     // lifecycle on the per-lifecycle filtered graph.
                     // Lenient mode applies the new status regardless
                     // so legacy chains keep replaying.
-                    let from = state.status;
-                    if from != parsed
+                    let from_str = state.status.clone();
+                    let to_str = parsed.as_str();
+                    if from_str != to_str
                         && !super::workflow::SPEC.is_valid_transition(
                             state.lifecycle,
-                            from.as_str(),
-                            parsed.as_str(),
+                            &from_str,
+                            to_str,
                         )
                     {
                         issues.push(StrictReplayIssue::InvalidTransition {
                             event_id: meta.event_id.clone(),
-                            from: from.as_str().to_string(),
-                            to: parsed.as_str().to_string(),
+                            from: from_str,
+                            to: to_str.to_string(),
                             lifecycle: state.lifecycle.as_str().to_string(),
                         });
                     }
-                    state.status = parsed;
+                    state.status = to_str.to_string();
                 }
                 // Lenient: keep the prior status. Strict mode surfaces
                 // the unparseable value below.
@@ -712,7 +789,7 @@ mod tests {
             make_state("RFC-0001", "proposed"),
         ];
         let state = replay(&events).unwrap();
-        assert_eq!(state.status, ThreadStatus::Open);
+        assert_eq!(state.status, "open");
     }
 
     #[test]
@@ -993,7 +1070,7 @@ mod tests {
             state_event,
         ];
         let (final_state, issues) = replay_strict(&events).unwrap();
-        assert_eq!(final_state.status, ThreadStatus::Review);
+        assert_eq!(final_state.status, "review");
         assert!(
             issues.iter().any(|i| matches!(
                 i,
@@ -1063,7 +1140,7 @@ mod tests {
             fix2,
         ];
         let (state, issues) = replay_strict(&events).unwrap();
-        assert_eq!(state.status, ThreadStatus::Rejected);
+        assert_eq!(state.status, "rejected");
         assert!(
             !issues
                 .iter()
@@ -1094,7 +1171,7 @@ mod tests {
         fix1.event_id = "evt-fix1".into();
         let events = vec![make_create("RFC-0001", ThreadKind::Rfc, "T"), bad, fix1];
         let (state, issues) = replay_strict(&events).unwrap();
-        assert_eq!(state.status, ThreadStatus::Open);
+        assert_eq!(state.status, "open");
         assert!(
             issues
                 .iter()
@@ -1118,7 +1195,7 @@ mod tests {
             bad,
         ];
         let (state, issues) = replay_strict(&events).unwrap();
-        assert_eq!(state.status, ThreadStatus::Withdrawn);
+        assert_eq!(state.status, "withdrawn");
         assert!(
             issues
                 .iter()

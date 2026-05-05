@@ -348,14 +348,12 @@ fn build_cross_thread_advisories(states: &[thread::ThreadState]) -> Vec<String> 
         let Some(parent) = by_id.get(parent_id.as_str()) else {
             continue; // referenced parent not in this repo's refs — skip silently
         };
-        if parent.status != thread::ThreadStatus::Done {
+        if parent.status != "done" {
             continue;
         }
         let children = &implements_children_by_parent[parent_id];
-        let open_children: Vec<&&thread::ThreadState> = children
-            .iter()
-            .filter(|c| c.status != thread::ThreadStatus::Done)
-            .collect();
+        let open_children: Vec<&&thread::ThreadState> =
+            children.iter().filter(|c| c.status != "done").collect();
         if open_children.is_empty() {
             continue;
         }

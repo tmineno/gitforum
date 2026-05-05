@@ -1088,7 +1088,7 @@ mod tests {
     use super::*;
     use crate::internal::node::{Node, NodeKind};
     use crate::internal::policy::Lifecycle;
-    use crate::internal::thread::{ThreadKind, ThreadState, ThreadStatus};
+    use crate::internal::thread::{ThreadKind, ThreadState};
     use chrono::TimeZone;
 
     fn fixed_state() -> ThreadState {
@@ -1099,7 +1099,7 @@ mod tests {
             lifecycle: Lifecycle::Proposal,
             title: "Test RFC".into(),
             body: Some("Thread body".into()),
-            status: ThreadStatus::Draft,
+            status: "draft".into(),
             created_at: t,
             created_by: "human/alice".into(),
             ..ThreadState::default()
@@ -1213,7 +1213,7 @@ mod tests {
             id: "RFC-PARENT".into(),
             kind: ThreadKind::Rfc,
             title: "Parent RFC".into(),
-            status: ThreadStatus::Done,
+            status: "done".into(),
             ..Default::default()
         };
         let children = vec![
@@ -1244,7 +1244,7 @@ mod tests {
             id: "RFC-LONELY".into(),
             kind: ThreadKind::Rfc,
             title: "Lonely RFC".into(),
-            status: ThreadStatus::Draft,
+            status: "draft".into(),
             ..Default::default()
         };
         let out = render_tree(&parent, &[]);

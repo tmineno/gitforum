@@ -288,7 +288,7 @@ mod tests {
     use super::*;
     use crate::internal::node::Node;
     use crate::internal::policy::Lifecycle;
-    use crate::internal::thread::{ThreadKind, ThreadLink, ThreadStatus};
+    use crate::internal::thread::{ThreadKind, ThreadLink};
     use chrono::{TimeZone, Utc};
 
     fn make_state() -> ThreadState {
@@ -300,7 +300,7 @@ mod tests {
             id: "RFC-x9k2".into(),
             kind: ThreadKind::Rfc,
             title: "Replace LIKE scan with FTS5".into(),
-            status: ThreadStatus::Done,
+            status: "done".into(),
             lifecycle: Lifecycle::Proposal,
             created_at: t,
             created_by: "ai/claude".into(),
@@ -334,7 +334,7 @@ mod tests {
             id: "TASK-123".into(),
             kind: ThreadKind::Task,
             title: "Lonely task".into(),
-            status: ThreadStatus::Open,
+            status: "open".into(),
             created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             created_by: "human/alice".into(),
             ..Default::default()
@@ -374,7 +374,7 @@ mod tests {
             id: "RFC-1".into(),
             kind: ThreadKind::Rfc,
             title: "T".into(),
-            status: ThreadStatus::Draft,
+            status: "draft".into(),
             created_at: Utc::now(),
             created_by: "ai/x".into(),
             nodes: vec![

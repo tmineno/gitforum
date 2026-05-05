@@ -10,7 +10,7 @@
 use super::super::error::{ForumError, ForumResult};
 use super::super::git_ops::GitOps;
 use super::super::policy::{self, normalize_state_name, GuardViolation, Policy};
-use super::super::thread::{self, ThreadKind, ThreadStatus};
+use super::super::thread::{self, ThreadKind};
 use super::context::Context;
 use super::shared::resolve_tid;
 
@@ -113,13 +113,13 @@ fn build_linked_advisories(git: &GitOps, state: &thread::ThreadState) -> Vec<Lin
         let Ok(linked) = thread::replay_thread(git, &canonical) else {
             continue;
         };
-        if linked.status == ThreadStatus::Done {
+        if linked.status == "done" {
             continue;
         }
         out.push(LinkedAdvisory {
             linked_thread_id: linked.id.clone(),
             linked_kind: linked.kind,
-            linked_status: linked.status.to_string(),
+            linked_status: linked.status.clone(),
             rel: link.rel.clone(),
             message: format!(
                 "linked {} {} ({}) is not yet `done` — informational only",
