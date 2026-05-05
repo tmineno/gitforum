@@ -126,7 +126,9 @@ const ALLOW_LIST: &[&str] = &[
     "src/internal/id_alloc.rs",
     "src/internal/commands/show.rs",
     "src/internal/commands/ls.rs",
-    "src/internal/commands/diff.rs",
+    // commands/diff.rs cleared in Phase 4 Step 1b (RFC 7ymtc4b2,
+    // task 913c4s9v): revisions now derive from snapshot::history
+    // commits whose tree changed body.md — no super::event imports.
     "src/internal/commands/bulk.rs",
     "src/internal/commands/brief.rs",
     "src/internal/commands/verify.rs",

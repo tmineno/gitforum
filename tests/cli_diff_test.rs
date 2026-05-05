@@ -1,22 +1,21 @@
+//! `git forum diff` CLI tests.
+//!
+//! Phase 4 Step 1b (RFC `7ymtc4b2`, task `913c4s9v`): switched from v2
+//! `create::create_thread` + `write_ops::revise_body` setup to direct
+//! snapshot writes via `internal::snapshot::write_snapshot`. The new
+//! diff implementation derives revisions from snapshot commits whose
+//! tree changed `body.md` (SPEC-3.0 §5.4), so the test setup must
+//! produce real snapshot history.
+
 mod support;
 
 use std::process::Command;
 
-use git_forum::internal::clock::FixedClock;
 use git_forum::internal::config::RepoPaths;
-use git_forum::internal::create;
-use git_forum::internal::event::ThreadKind;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
-use git_forum::internal::write_ops;
-
-use chrono::{TimeZone, Utc};
-
-fn fixed_clock() -> FixedClock {
-    FixedClock {
-        instant: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-    }
-}
+use git_forum::internal::snapshot::{write_snapshot, ThreadDocument};
+use git_forum::internal::thread::ThreadSnapshot;
 
 fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
     let repo = support::repo::TestRepo::new();
@@ -36,20 +35,41 @@ fn run_diff(repo: &support::repo::TestRepo, args: &[&str]) -> std::process::Outp
         .expect("failed to run git-forum diff")
 }
 
+fn snapshot(id: &str) -> ThreadSnapshot {
+    ThreadSnapshot {
+        schema_version: 3,
+        id: id.into(),
+        title: "Test issue".into(),
+        category: "issue".into(),
+        status: "open".into(),
+        tags: vec![],
+        created_at: "2026-01-01T00:00:00Z".parse().unwrap(),
+        created_by: "human/alice".into(),
+        updated_at: "2026-01-01T00:00:00Z".parse().unwrap(),
+        updated_by: "human/alice".into(),
+        branch: None,
+        supersedes: vec![],
+    }
+}
+
+/// Create a thread snapshot with the given body. The first call creates
+/// the ref; subsequent calls write an updated snapshot to record a body
+/// revision (each call produces one commit that touches `body.md`).
+fn write_revision(git: &GitOps, id: &str, body: Option<&str>, message: &str) {
+    let doc = ThreadDocument {
+        body: body.map(|s| s.to_string()),
+        ..ThreadDocument::new(snapshot(id))
+    };
+    write_snapshot(git, id, &doc, message).unwrap();
+}
+
 #[test]
 fn diff_no_revisions_shows_message() {
     let (repo, git, _paths) = setup();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Issue,
-        "Test issue",
-        Some("original body"),
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap();
+    let id = "iss00001";
+    write_revision(&git, id, Some("original body"), "create");
 
-    let output = run_diff(&repo, &[&thread_id]);
+    let output = run_diff(&repo, &[id]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "diff should succeed");
     assert!(
@@ -61,28 +81,11 @@ fn diff_no_revisions_shows_message() {
 #[test]
 fn diff_default_shows_latest_vs_previous() {
     let (repo, git, _paths) = setup();
-    let clock = fixed_clock();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Issue,
-        "Test issue",
-        Some("line one\nline two\n"),
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
+    let id = "iss00002";
+    write_revision(&git, id, Some("line one\nline two\n"), "create");
+    write_revision(&git, id, Some("line one\nline two\nline three\n"), "revise");
 
-    write_ops::revise_body(
-        &git,
-        &thread_id,
-        "line one\nline two\nline three\n",
-        &[],
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
-
-    let output = run_diff(&repo, &[&thread_id]);
+    let output = run_diff(&repo, &[id]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -106,38 +109,12 @@ fn diff_default_shows_latest_vs_previous() {
 #[test]
 fn diff_rev_range() {
     let (repo, git, _paths) = setup();
-    let clock = fixed_clock();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Issue,
-        "Test issue",
-        Some("version zero\n"),
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
+    let id = "iss00003";
+    write_revision(&git, id, Some("version zero\n"), "create");
+    write_revision(&git, id, Some("version one\n"), "revise 1");
+    write_revision(&git, id, Some("version two\n"), "revise 2");
 
-    write_ops::revise_body(
-        &git,
-        &thread_id,
-        "version one\n",
-        &[],
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
-    write_ops::revise_body(
-        &git,
-        &thread_id,
-        "version two\n",
-        &[],
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
-
-    // Diff rev 0..2
-    let output = run_diff(&repo, &[&thread_id, "--rev", "0..2"]);
+    let output = run_diff(&repo, &[id, "--rev", "0..2"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -165,38 +142,13 @@ fn diff_rev_range() {
 #[test]
 fn diff_rev_single() {
     let (repo, git, _paths) = setup();
-    let clock = fixed_clock();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Issue,
-        "Test issue",
-        Some("version zero\n"),
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
-
-    write_ops::revise_body(
-        &git,
-        &thread_id,
-        "version one\n",
-        &[],
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
-    write_ops::revise_body(
-        &git,
-        &thread_id,
-        "version two\n",
-        &[],
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
+    let id = "iss00004";
+    write_revision(&git, id, Some("version zero\n"), "create");
+    write_revision(&git, id, Some("version one\n"), "revise 1");
+    write_revision(&git, id, Some("version two\n"), "revise 2");
 
     // --rev 1 means diff rev 0 vs 1
-    let output = run_diff(&repo, &[&thread_id, "--rev", "1"]);
+    let output = run_diff(&repo, &[id, "--rev", "1"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -216,28 +168,13 @@ fn diff_rev_single() {
 #[test]
 fn diff_empty_create_body_vs_first_revision() {
     let (repo, git, _paths) = setup();
-    let clock = fixed_clock();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Issue,
-        "Test issue",
-        None, // no body at creation
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
+    let id = "iss00005";
+    // Create with no body — snapshot tree omits body.md entirely
+    // (SPEC-3.0 §4.2: optional files MAY be absent when empty).
+    write_revision(&git, id, None, "create empty");
+    write_revision(&git, id, Some("first body content\n"), "add body");
 
-    write_ops::revise_body(
-        &git,
-        &thread_id,
-        "first body content\n",
-        &[],
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
-
-    let output = run_diff(&repo, &[&thread_id, "--rev", "0..1"]);
+    let output = run_diff(&repo, &[id, "--rev", "0..1"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -253,20 +190,11 @@ fn diff_empty_create_body_vs_first_revision() {
 #[test]
 fn diff_headers_show_body_not_temp_paths() {
     let (repo, git, _paths) = setup();
-    let clock = fixed_clock();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Issue,
-        "Test issue",
-        Some("old\n"),
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
+    let id = "iss00006";
+    write_revision(&git, id, Some("old\n"), "create");
+    write_revision(&git, id, Some("new\n"), "revise");
 
-    write_ops::revise_body(&git, &thread_id, "new\n", &[], "human/alice", &clock).unwrap();
-
-    let output = run_diff(&repo, &[&thread_id]);
+    let output = run_diff(&repo, &[id]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success());
     // Should not contain /tmp/ paths
@@ -284,24 +212,15 @@ fn diff_headers_show_body_not_temp_paths() {
 #[test]
 fn diff_invalid_rev_fails() {
     let (repo, git, _paths) = setup();
-    let clock = fixed_clock();
-    let thread_id = create::create_thread(
-        &git,
-        ThreadKind::Issue,
-        "Test issue",
-        Some("body\n"),
-        "human/alice",
-        &clock,
-    )
-    .unwrap();
-
-    write_ops::revise_body(&git, &thread_id, "new body\n", &[], "human/alice", &clock).unwrap();
+    let id = "iss00007";
+    write_revision(&git, id, Some("body\n"), "create");
+    write_revision(&git, id, Some("new body\n"), "revise");
 
     // Out of range
-    let output = run_diff(&repo, &[&thread_id, "--rev", "5"]);
+    let output = run_diff(&repo, &[id, "--rev", "5"]);
     assert!(!output.status.success(), "should fail for out-of-range rev");
 
     // Same rev
-    let output = run_diff(&repo, &[&thread_id, "--rev", "1..1"]);
+    let output = run_diff(&repo, &[id, "--rev", "1..1"]);
     assert!(!output.status.success(), "should fail for same rev");
 }

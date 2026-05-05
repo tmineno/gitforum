@@ -1,18 +1,19 @@
 //! `git forum diff <THREAD_ID> [--rev N|N..M]` orchestration.
 //!
-//! Phase 2 slot 7d (RFC `7ymtc4b2`): the `Diff` arm body relocates
-//! from `main.rs` to [`run`] in this module. The diff renderer
-//! ([`diff_body`]) is unchanged — it operates on a replayed
-//! `ThreadState`, which `replay_thread` already produces correctly
-//! from a snapshot tip.
+//! Phase 4 Step 1b (RFC `7ymtc4b2`, task `913c4s9v`): revisions are
+//! derived from the snapshot ref's git history per SPEC-3.0 §5.4 —
+//! a "body revision" is a snapshot commit whose tree changed
+//! `body.md`. Earlier revisions of this file walked
+//! `state.events.filter(EventType::ReviseBody)`; that path is gone.
 
 use std::io::Write;
 
 use tempfile::NamedTempFile;
 
 use super::super::error::{ForumError, ForumResult};
-use super::super::event::EventType;
 use super::super::git_ops::GitOps;
+use super::super::refs::thread_ref;
+use super::super::snapshot::history;
 use super::super::thread::{self, ThreadState};
 use super::context::Context;
 use super::shared::resolve_tid;
@@ -32,35 +33,38 @@ pub fn run(args: DiffArgs, ctx: &Context) -> Result<(), ForumError> {
     Ok(())
 }
 
-/// A body revision extracted from the event history.
+/// A body revision extracted from the snapshot history.
 struct BodyRevision {
     body: String,
 }
 
-/// Collect body revisions from a thread's events.
+/// Collect body revisions by walking the snapshot ref's git history
+/// per SPEC-3.0 §5.4.
 ///
-/// Revision 0 is the body from the Create event (empty string if absent).
-/// Revisions 1..N correspond to each ReviseBody event in timeline order.
-fn collect_revisions(state: &ThreadState) -> Vec<BodyRevision> {
-    let mut revisions = Vec::new();
-
-    for event in &state.events {
-        match event.event_type {
-            EventType::Create => {
-                revisions.push(BodyRevision {
-                    body: event.body.clone().unwrap_or_default(),
-                });
-            }
-            EventType::ReviseBody => {
-                if let Some(ref body) = event.body {
-                    revisions.push(BodyRevision { body: body.clone() });
-                }
-            }
-            _ => {}
+/// Walks every commit oldest-first and reads `body.md` from each
+/// commit's tree, defaulting to empty when the tree omits it
+/// (SPEC-3.0 §4.2: optional files MAY be absent). Pushes a new
+/// `BodyRevision` only when the body differs from the previous one,
+/// so `node-add` / `link-add` snapshot commits that don't change the
+/// body don't inflate the revision count. Revision 0 is the body at
+/// the first commit (empty when the initial snapshot omits body.md);
+/// revision N is the latest distinct body.
+///
+/// Returns an empty vec on legacy event-chain refs — those don't
+/// store the thread body as a tree path, so there is nothing to diff.
+fn collect_revisions(git: &GitOps, state: &ThreadState) -> ForumResult<Vec<BodyRevision>> {
+    let entries = history::read_log(git, &thread_ref(&state.id))?;
+    let mut revisions: Vec<BodyRevision> = Vec::new();
+    // history::read_log returns newest-first; revisions go oldest-first
+    // so revision 0 is the body at the earliest commit.
+    for entry in entries.iter().rev() {
+        let body = git.show_file(&entry.sha, "body.md").unwrap_or_default();
+        match revisions.last() {
+            Some(prev) if prev.body == body => continue,
+            _ => revisions.push(BodyRevision { body }),
         }
     }
-
-    revisions
+    Ok(revisions)
 }
 
 /// Parse a `--rev` argument into a (from, to) pair of revision indices.
@@ -118,7 +122,7 @@ pub fn parse_rev_arg(rev: &str, max_rev: usize) -> ForumResult<(usize, usize)> {
 /// Returns the diff output as a string, or an informative message if there
 /// are no revisions to diff.
 pub fn diff_body(git: &GitOps, state: &ThreadState, rev_spec: Option<&str>) -> ForumResult<String> {
-    let revisions = collect_revisions(state);
+    let revisions = collect_revisions(git, state)?;
     let max_rev = revisions.len().saturating_sub(1);
 
     if revisions.len() < 2 {
