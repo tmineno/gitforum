@@ -26,21 +26,14 @@ use crate::internal::error::ForumError;
 use crate::internal::evidence::{EvidenceFile, EvidenceKind, EvidenceRecord};
 use crate::internal::git_ops::GitOps;
 use crate::internal::id_alloc;
-use crate::internal::legacy::workflow::{KindPreset, SPEC};
 use crate::internal::node::{NodeKind, NodeRecord, NodeStatus};
-use crate::internal::policy::Policy;
+use crate::internal::policy::{self, CategoryPreset, Lifecycle, Policy};
 use crate::internal::snapshot::{
     self, store::write_snapshot, Link, Links, NodeWithBody, ThreadDocument,
 };
 use crate::internal::thread::ThreadSnapshot;
 
-// Legacy event-side import — used only for operation-check input
-// shape (still keyed on `Lifecycle`/`tags`) and the lifecycle CLI
-// surface. Slot 2 will replace the operation_check call with the
-// 3.0 category surface; slot 1 keeps the existing check in place
-// but routes the write through the snapshot writer.
 use crate::internal::operation_check;
-use crate::internal::policy::Lifecycle;
 
 use super::shared::{
     apply_operation_checks, discover_repo_with_init_warning, resolve_actor, resolve_tid,
@@ -552,16 +545,16 @@ pub fn legacy_lifecycle_for_category(category: &str, tags: &[String]) -> Lifecyc
     }
 }
 
-/// Parse a kind preset name into the corresponding [`KindPreset`].
-/// Used by `Commands::New { kind, ... }` to map `git forum new rfc`
-/// → preset row → `(lifecycle, tags)`.
-pub fn preset_lookup(name: &str) -> Option<&'static KindPreset> {
-    SPEC.preset_lookup(name)
+/// Parse a kind preset name into the corresponding 3.0-native
+/// [`CategoryPreset`]. Used by `Commands::New { kind, ... }` to map
+/// `git forum new rfc` → preset row → `(category, tags)`.
+pub fn preset_lookup(name: &str) -> Option<&'static CategoryPreset> {
+    policy::preset_lookup(name)
 }
 
 /// Comma-separated list of valid preset names for error messages.
 pub fn valid_preset_names() -> String {
-    SPEC.presets()
+    policy::presets()
         .iter()
         .map(|p| p.name)
         .collect::<Vec<_>>()

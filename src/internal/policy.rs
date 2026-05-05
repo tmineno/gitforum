@@ -328,6 +328,73 @@ pub fn normalize_state_name(s: &str) -> &str {
 }
 
 // ---------------------------------------------------------------------
+// SPEC-3.0 §9.1 kind preset registry (3.0-native)
+// ---------------------------------------------------------------------
+
+/// One row in the `git forum new <preset>` registry per SPEC-2.0 §9.1.
+///
+/// 3.0-native shape: presets bind a CLI name (and optional aliases) to a
+/// SPEC-3.0 §3.1 `category` + default tag set. The redundant
+/// `lifecycle` field rides along until v3.1 step 3h finishes the
+/// Lifecycle removal — keeping it here lets the existing
+/// `commands::thread_new::run_canonical_thread_new(lifecycle, tags)`
+/// signature stay stable across step 3b.
+///
+/// Replaces the legacy `legacy::workflow::KindPreset` (which carried a
+/// v2 `ThreadKind` field that the snapshot writer no longer consumes)
+/// per RFC `7ymtc4b2` v3.1 follow-up task `1v400j3l` step 3b.
+pub struct CategoryPreset {
+    pub name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub category: &'static str,
+    pub lifecycle: Lifecycle,
+    pub tags: &'static [&'static str],
+}
+
+const CATEGORY_PRESETS: &[CategoryPreset] = &[
+    CategoryPreset {
+        name: "rfc",
+        aliases: &[],
+        category: "rfc",
+        lifecycle: Lifecycle::Proposal,
+        tags: &["cross-cutting"],
+    },
+    CategoryPreset {
+        name: "dec",
+        aliases: &[],
+        category: "task",
+        lifecycle: Lifecycle::Record,
+        tags: &[],
+    },
+    CategoryPreset {
+        name: "task",
+        aliases: &["job"],
+        category: "task",
+        lifecycle: Lifecycle::Execution,
+        tags: &["task"],
+    },
+    CategoryPreset {
+        name: "issue",
+        aliases: &["ask", "bug"],
+        category: "task",
+        lifecycle: Lifecycle::Execution,
+        tags: &["bug"],
+    },
+];
+
+/// SPEC-2.0 §9.1 — look up a preset by primary name OR alias.
+pub fn preset_lookup(name: &str) -> Option<&'static CategoryPreset> {
+    CATEGORY_PRESETS
+        .iter()
+        .find(|p| p.name == name || p.aliases.contains(&name))
+}
+
+/// All preset rows (for error-message enumeration).
+pub fn presets() -> &'static [CategoryPreset] {
+    CATEGORY_PRESETS
+}
+
+// ---------------------------------------------------------------------
 // SPEC-3.0 §9.3 shorthand verb resolution (3.0-native)
 // ---------------------------------------------------------------------
 
