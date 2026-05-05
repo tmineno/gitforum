@@ -113,11 +113,7 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
     lines.push("-".repeat(fixed_cols));
     for s in states {
         let created = s.created_at.format("%Y-%m-%d %H:%M").to_string();
-        let updated = s
-            .events
-            .last()
-            .map(|e| e.created_at.format("%Y-%m-%d %H:%M").to_string())
-            .unwrap_or_else(|| "-".into());
+        let updated = s.updated_at.format("%Y-%m-%d %H:%M").to_string();
         let title = truncate_with_ellipsis(&s.title, title_max);
         let tags = join_tags(&s.tags);
         lines.push(format!(

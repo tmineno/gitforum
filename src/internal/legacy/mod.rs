@@ -33,3 +33,11 @@ pub mod v1;
 // — `tests/legacy_gate_test.rs` enforces the import-graph invariant.
 pub mod event;
 pub mod workflow;
+
+// Phase 4 v3.1 follow-up step 3j (task `1v400j3l`): the v1/v2
+// event-chain replay machinery (formerly in `internal::thread`)
+// relocated here. The 3.0-native `thread::replay_thread` reads
+// snapshot tips only; the legacy reader lives here and is reachable
+// solely from `commands::migrate` (the only ALLOW-listed
+// non-legacy consumer). See `tests/legacy_gate_test.rs`.
+pub mod chain_replay;

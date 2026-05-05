@@ -151,10 +151,11 @@ fn state_self_loop_returns_zero_with_note() {
     let thread_id = extract_created_id(&issue);
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let events_before = thread::replay_thread(&git, &thread_id)
-        .unwrap()
-        .events
-        .len();
+    // v3.1 step 3j: ThreadState dropped its `events: Vec<Event>` field
+    // (snapshot storage has no event chain). The "no new commit"
+    // assertion now reads the thread ref's commit count directly.
+    let ref_name = format!("refs/forum/threads/{thread_id}");
+    let commits_before = git.rev_list(&ref_name).unwrap().len();
 
     let out = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
@@ -176,13 +177,10 @@ fn state_self_loop_returns_zero_with_note() {
         "stdout missing 'no transition recorded': {stdout}"
     );
 
-    let events_after = thread::replay_thread(&git, &thread_id)
-        .unwrap()
-        .events
-        .len();
+    let commits_after = git.rev_list(&ref_name).unwrap().len();
     assert_eq!(
-        events_after, events_before,
-        "self-loop must not write any new events"
+        commits_after, commits_before,
+        "self-loop must not write any new commits"
     );
 }
 

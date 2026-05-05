@@ -41,7 +41,7 @@ use super::super::legacy::event::{self, ThreadKind};
 use super::super::node::{NodeRecord, NodeStatus};
 use super::super::refs;
 use super::super::snapshot::{self, Link, Links, NodeWithBody, ThreadDocument};
-use super::super::thread::{self, ThreadSnapshot, ThreadState};
+use super::super::thread::{ThreadSnapshot, ThreadState};
 use super::super::validate::StrictReplayIssue;
 
 /// SPEC-2.0 §10: v→2 alias entries live under
@@ -607,7 +607,7 @@ pub fn migrate_legacy_to_snapshot_at(
     thread_id: &str,
     start_rev: &str,
 ) -> Result<ThreadDocument, ForumError> {
-    let state = thread::replay_thread_at(git, start_rev)?;
+    let state = super::super::legacy::chain_replay::replay_chain_at(git, start_rev)?;
     if state.id != thread_id {
         return Err(ForumError::Repo(format!(
             "rev {start_rev} replays as thread `{}`, not `{thread_id}` — refs out of sync",
@@ -663,7 +663,8 @@ pub fn migrate_legacy_to_snapshot_strict_at(
     thread_id: &str,
     start_rev: &str,
 ) -> Result<MigrationProjection, ForumError> {
-    let (state, issues) = thread::replay_thread_strict_at(git, start_rev)?;
+    let (state, issues) =
+        super::super::legacy::chain_replay::replay_chain_strict_at(git, start_rev)?;
     if state.id != thread_id {
         return Err(ForumError::Repo(format!(
             "rev {start_rev} replays as thread `{}`, not `{thread_id}` — refs out of sync",

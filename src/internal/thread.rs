@@ -4,11 +4,8 @@ use serde::{Deserialize, Serialize};
 use super::error::{ForumError, ForumResult};
 use super::evidence::Evidence;
 use super::git_ops::GitOps;
-use super::legacy::event::{
-    self, node_type_to_kind_and_subtype, DomainEvent, Event, EventMeta, EventType, Lifecycle,
-    LinkPayload, ProjectionError,
-};
 use super::node::{Node, NodeKind};
+use super::policy::Lifecycle;
 use super::refs;
 use super::validate::StrictReplayIssue;
 
@@ -66,14 +63,18 @@ impl ThreadKind {
         }
     }
 
-    /// SPEC-2.0 §2.3.3: each 1.x kind maps to a canonical lifecycle facet.
-    /// Used to derive `lifecycle` for legacy threads with no `facet_set`
-    /// event in their chain.
-    ///
-    /// Routes through `SPEC::kind_lifecycle`, which sources from the
-    /// kind preset table.
+    /// SPEC-2.0 §2.3.3: each 1.x kind maps to a canonical lifecycle
+    /// facet. Used to derive `lifecycle` for legacy threads with no
+    /// `facet_set` event in their chain. Mirrors the kind-preset row
+    /// for each variant in `legacy::workflow::KIND_PRESETS`; v3.1
+    /// step 3j inlined the mapping so this method does not reach
+    /// into `internal::legacy::*`.
     pub fn lifecycle(self) -> Lifecycle {
-        super::legacy::workflow::SPEC.kind_lifecycle(self)
+        match self {
+            Self::Rfc => Lifecycle::Proposal,
+            Self::Issue | Self::Task => Lifecycle::Execution,
+            Self::Dec => Lifecycle::Record,
+        }
     }
 }
 
@@ -269,7 +270,13 @@ pub struct ThreadState {
     pub status: ThreadStatus,
     pub created_at: DateTime<Utc>,
     pub created_by: String,
-    pub events: Vec<Event>,
+    /// Most recent change timestamp. Snapshot-derived states use the
+    /// snapshot's `updated_at`; legacy event-chain replays carry the
+    /// most recent event's `created_at` (see `legacy::chain_replay`).
+    /// v3.1 step 3j replaced the v2 `events: Vec<Event>` field — the
+    /// only consumer of `events.last()` was `ls.rs`'s "updated"
+    /// column, which now reads this field directly.
+    pub updated_at: DateTime<Utc>,
     /// All discussion nodes (say/edit/retract/resolve/reopen applied).
     pub nodes: Vec<Node>,
     /// Evidence items attached to this thread via Link events.
@@ -318,7 +325,6 @@ pub struct NodeLookup {
     pub thread_tags: Vec<String>,
     pub node: Node,
     pub links: Vec<ThreadLink>,
-    pub events: Vec<Event>,
 }
 
 impl ThreadState {
@@ -358,600 +364,48 @@ impl ThreadState {
     }
 }
 
-/// Replay events to reconstruct thread state (lenient).
+/// Read the SPEC-3.0 snapshot at the thread ref tip and materialize
+/// it as [`ThreadState`].
 ///
-/// Silently no-ops on conditions that strict replay would flag (unknown
-/// target node, second `facet_set` lifecycle, etc.). Read-side callers want
-/// best-effort; doctor / migration / tests want [`replay_strict`].
+/// v3.1 step 3j (task `1v400j3l`) made this snapshot-only: the
+/// mixed-chain / pure-event-chain replay path moved to
+/// [`super::legacy::chain_replay::replay_chain_at`] and is reachable
+/// only from `commands::migrate`. Threads whose tip still carries an
+/// `event.json` (i.e. an unmigrated 1.x/2.x chain) surface
+/// [`ForumError::LegacyEventChain`] — its message tells the user to
+/// run `git forum migrate` first.
 ///
-/// Precondition: `events` is in chronological order; first must be `Create`.
-pub fn replay(events: &[Event]) -> ForumResult<ThreadState> {
-    let (state, _issues) = replay_with_issues(events)?;
-    Ok(state)
-}
-
-/// Replay events strictly, returning every silent-no-op as a
-/// [`StrictReplayIssue`] alongside the final state.
-///
-/// The state machine is identical to lenient `replay()` (first-write-wins
-/// lifecycle, dedup tags, etc.) — strict mode only **observes** the
-/// no-ops; it does not abort on them. A fully clean replay returns an
-/// empty issue vector.
-pub fn replay_strict(events: &[Event]) -> ForumResult<(ThreadState, Vec<StrictReplayIssue>)> {
-    replay_with_issues(events)
-}
-
-/// Like [`replay_strict`] but skips the post-pass that suppresses
-/// `InvalidTransition` issues whose chain tail has self-healed.
-///
-/// Used by the workflow-repair tool (#uu9wxn1d) to recover the offending
-/// event id even on chains that the public `replay_strict` would have
-/// reported as clean. Read-side callers (doctor, search, display) want
-/// the suppressed view; only the repair tool needs the raw stream.
-pub fn replay_strict_unsuppressed(
-    events: &[Event],
-) -> ForumResult<(ThreadState, Vec<StrictReplayIssue>)> {
-    replay_with_issues_inner(events, /* suppress_self_healed = */ false)
-}
-
-fn replay_with_issues(events: &[Event]) -> ForumResult<(ThreadState, Vec<StrictReplayIssue>)> {
-    replay_with_issues_inner(events, true)
-}
-
-fn replay_with_issues_inner(
-    events: &[Event],
-    suppress_self_healed: bool,
-) -> ForumResult<(ThreadState, Vec<StrictReplayIssue>)> {
-    let first = events
-        .first()
-        .ok_or_else(|| ForumError::StateMachine("no events to replay".into()))?;
-
-    if first.event_type != EventType::Create {
-        return Err(ForumError::StateMachine(
-            "first event must be 'create'".into(),
-        ));
-    }
-
-    // Project the create event up-front: the seed needs `kind` + `title`
-    // and there is no graceful "skip Create" path (an empty thread is
-    // not representable in 2.0).
-    let create = first.project().map_err(|e| match e {
-        ProjectionError::MissingRequiredField { field } => {
-            ForumError::StateMachine(format!("create event missing '{field}'"))
-        }
-    })?;
-    let DomainEvent::Create {
-        kind,
-        title,
-        body,
-        branch,
-        ..
-    } = create
-    else {
-        return Err(ForumError::StateMachine(
-            "first event must be 'create'".into(),
-        ));
-    };
-
-    // `kind.initial_status()` returns a hardcoded canonical literal
-    // (`"draft"` / `"open"`); parse_lenient is total over this input.
-    let initial_status = ThreadStatus::parse_lenient(kind.initial_status())
-        .expect("kind.initial_status() always returns a canonical 2.0 status name");
-    let mut state = ThreadState {
-        id: first.thread_id.clone(),
-        kind,
-        title,
-        body,
-        branch,
-        status: initial_status,
-        created_at: first.created_at,
-        created_by: first.actor.clone(),
-        events: vec![first.clone()],
-        nodes: vec![],
-        evidence_items: vec![],
-        links: vec![],
-        body_revision_count: 0,
-        incorporated_node_ids: vec![],
-        // Phase 2c: lifecycle is always populated. Default is the §2.3.3
-        // kind-derived value (a 1.x compat fallback for chains without
-        // an explicit `facet_set`); the first explicit `facet_set` then
-        // overrides it and flips `lifecycle_explicit` below.
-        lifecycle: super::legacy::v1::lifecycle_for_legacy_kind(kind),
-        lifecycle_explicit: false,
-        tags: Vec::new(),
-    };
-
-    let mut issues = Vec::new();
-    for ev in &events[1..] {
-        // Push the stored event onto the running history regardless of
-        // projection outcome — display surfaces still want to render
-        // events whose payload is malformed.
-        state.events.push(ev.clone());
-        match ev.project() {
-            Ok(domain) => apply_event(&mut state, &domain, &mut issues)?,
-            Err(ProjectionError::MissingRequiredField { field }) => {
-                issues.push(StrictReplayIssue::MissingRequiredField {
-                    event_id: ev.event_id.clone(),
-                    event_type: ev.event_type.to_string(),
-                    field,
-                });
-            }
-        }
-    }
-    if suppress_self_healed {
-        suppress_self_healed_invalid_transitions(events, &state, &mut issues);
-    }
-    Ok((state, issues))
-}
-
-/// SPEC-2.0 §3.1 / #uu9wxn1d: drop `InvalidTransition` issues whose offending
-/// event has been "self-healed" by a subsequent legal corrective sequence.
-///
-/// A self-heal is recognised when:
-/// 1. The chain's final terminal status equals the issue's `to` (the visible
-///    state the operator intended).
-/// 2. After the offending event, every subsequent `state` event is on a legal
-///    edge for the lifecycle.
-/// 3. The running state visits at least one non-`to` state and walks back to
-///    `to` via legal edges (i.e. the corrective tail is non-trivial).
-///
-/// Without (3), a chain that simply stops at the offending event would
-/// trivially pass — we want to require an explicit operator-emitted
-/// corrective sequence (the pattern `state open` → `state rejected` for the
-/// `draft → rejected` case). Threads whose terminal sits on a sink state
-/// (`withdrawn` in proposal lifecycle) cannot self-heal via append-only
-/// because no legal outgoing edge exists; those issues remain reported.
-fn suppress_self_healed_invalid_transitions(
-    events: &[Event],
-    state: &ThreadState,
-    issues: &mut Vec<StrictReplayIssue>,
-) {
-    issues.retain(|issue| {
-        let StrictReplayIssue::InvalidTransition {
-            event_id,
-            to: target,
-            ..
-        } = issue
-        else {
-            return true;
-        };
-        if state.status.as_str() != target {
-            return true;
-        }
-        let Some(idx) = events.iter().position(|e| &e.event_id == event_id) else {
-            return true;
-        };
-        !is_self_healed_after(&events[idx + 1..], state.lifecycle, target)
-    });
-}
-
-fn is_self_healed_after(tail: &[Event], lifecycle: super::policy::Lifecycle, target: &str) -> bool {
-    let Some(target_status) = ThreadStatus::parse_lenient(target) else {
-        return false;
-    };
-    let mut running = target_status;
-    let mut left_target = false;
-    for ev in tail {
-        if ev.event_type != EventType::State {
-            continue;
-        }
-        let Some(name) = ev.new_state.as_deref() else {
-            continue;
-        };
-        let Some(parsed) = ThreadStatus::parse_lenient(name) else {
-            return false;
-        };
-        if parsed == running {
-            continue;
-        }
-        if !super::legacy::workflow::SPEC.is_valid_transition(
-            lifecycle,
-            running.as_str(),
-            parsed.as_str(),
-        ) {
-            return false;
-        }
-        running = parsed;
-        if running.as_str() != target {
-            left_target = true;
-        }
-        if left_target && running.as_str() == target {
-            return true;
-        }
-    }
-    false
-}
-
-fn apply_event(
-    state: &mut ThreadState,
-    event: &DomainEvent,
-    issues: &mut Vec<StrictReplayIssue>,
-) -> ForumResult<()> {
-    match event {
-        DomainEvent::State {
-            meta,
-            new_state,
-            approvals,
-        } => {
-            match ThreadStatus::parse_lenient(new_state) {
-                Some(parsed) => {
-                    // SPEC-2.0 §3.1 (P0 #34ith16h): strict mode flags
-                    // an illegal `from -> to` for the thread's
-                    // lifecycle on the per-lifecycle filtered graph.
-                    // Lenient mode applies the new status regardless
-                    // so legacy chains keep replaying.
-                    let from = state.status;
-                    if from != parsed
-                        && !super::legacy::workflow::SPEC.is_valid_transition(
-                            state.lifecycle,
-                            from.as_str(),
-                            parsed.as_str(),
-                        )
-                    {
-                        issues.push(StrictReplayIssue::InvalidTransition {
-                            event_id: meta.event_id.clone(),
-                            from: from.as_str().to_string(),
-                            to: parsed.as_str().to_string(),
-                            lifecycle: state.lifecycle.as_str().to_string(),
-                        });
-                    }
-                    state.status = parsed;
-                }
-                // Lenient: keep the prior status. Strict mode surfaces
-                // the unparseable value below.
-                None => issues.push(StrictReplayIssue::InvalidStateValue {
-                    event_id: meta.event_id.clone(),
-                    value: new_state.clone(),
-                }),
-            }
-            // SPEC-2.0 §2.8: 1.x State events carried approvals as a direct
-            // field; 2.0 emits them as Approval-typed Say nodes. Synthesize
-            // equivalent nodes here so policy guards see one source of truth.
-            for approval in approvals {
-                state.nodes.push(Node {
-                    node_id: format!("{}#{}", meta.event_id, approval.actor_id),
-                    node_type: NodeKind::Approval,
-                    body: String::new(),
-                    actor: approval.actor_id.clone(),
-                    created_at: approval.approved_at,
-                    ..Node::default()
-                });
-            }
-        }
-        DomainEvent::Scope { branch, .. } => {
-            // `branch = None` legitimately clears scope; lenient and strict agree.
-            state.branch.clone_from(branch);
-        }
-        DomainEvent::Say {
-            meta,
-            node_type,
-            body,
-            reply_to,
-            legacy_subtype,
-            target_node_id,
-        } => {
-            // Fold the v2 12-variant NodeType into the SPEC-3.0
-            // 4-variant NodeKind. v1 events with rhetorical types
-            // (Question/Claim/etc.) collapse to Comment with the
-            // label preserved in legacy_subtype.
-            let (kind, derived_subtype) = node_type_to_kind_and_subtype(*node_type);
-            state.nodes.push(Node {
-                node_id: target_node_id
-                    .clone()
-                    .unwrap_or_else(|| meta.event_id.clone()),
-                node_type: kind,
-                body: body.clone(),
-                actor: meta.actor.clone(),
-                created_at: meta.created_at,
-                resolved: false,
-                retracted: false,
-                incorporated: false,
-                reply_to: reply_to.clone(),
-                legacy_subtype: legacy_subtype.clone().or(derived_subtype),
-            });
-        }
-        DomainEvent::Edit {
-            meta,
-            target_node_id,
-            body,
-        } => {
-            if let Some(node) = state
-                .nodes
-                .iter_mut()
-                .find(|n| &n.node_id == target_node_id)
-            {
-                node.body = body.clone();
-            } else {
-                issues.push(StrictReplayIssue::UnknownTargetNode {
-                    event_id: meta.event_id.clone(),
-                    event_type: meta.event_type.to_string(),
-                    target_node_id: target_node_id.clone(),
-                });
-            }
-        }
-        DomainEvent::Retract {
-            meta,
-            target_node_id,
-        } => apply_node_flag(state, meta, target_node_id, issues, |n| n.retracted = true),
-        DomainEvent::Resolve {
-            meta,
-            target_node_id,
-        } => apply_node_flag(state, meta, target_node_id, issues, |n| n.resolved = true),
-        DomainEvent::Reopen {
-            meta,
-            target_node_id,
-        } => apply_node_flag(state, meta, target_node_id, issues, |n| {
-            n.resolved = false;
-            n.retracted = false;
-            n.incorporated = false;
-        }),
-        DomainEvent::Retype {
-            meta,
-            target_node_id,
-            node_type,
-            ..
-        } => {
-            if let Some(node) = state
-                .nodes
-                .iter_mut()
-                .find(|n| &n.node_id == target_node_id)
-            {
-                let (kind, derived_subtype) = node_type_to_kind_and_subtype(*node_type);
-                node.node_type = kind;
-                if derived_subtype.is_some() {
-                    node.legacy_subtype = derived_subtype;
-                }
-            } else {
-                issues.push(StrictReplayIssue::UnknownTargetNode {
-                    event_id: meta.event_id.clone(),
-                    event_type: meta.event_type.to_string(),
-                    target_node_id: target_node_id.clone(),
-                });
-            }
-        }
-        DomainEvent::ReviseBody {
-            meta,
-            body,
-            incorporated_node_ids,
-        } => {
-            state.body = Some(body.clone());
-            state.body_revision_count += 1;
-            for node_id in incorporated_node_ids {
-                let found = state
-                    .nodes
-                    .iter_mut()
-                    .find(|n| n.node_id == *node_id)
-                    .map(|node| node.incorporated = true);
-                if found.is_none() {
-                    issues.push(StrictReplayIssue::UnknownTargetNode {
-                        event_id: meta.event_id.clone(),
-                        event_type: meta.event_type.to_string(),
-                        target_node_id: node_id.clone(),
-                    });
-                }
-                if !state.incorporated_node_ids.contains(node_id) {
-                    state.incorporated_node_ids.push(node_id.clone());
-                }
-            }
-        }
-        DomainEvent::Link { meta, payload } => match payload {
-            LinkPayload::Evidence(ev_data) => {
-                let mut ev = ev_data.clone();
-                ev.evidence_id = meta.event_id.clone();
-                state.evidence_items.push(ev);
-            }
-            LinkPayload::Thread {
-                target_thread_id,
-                link_rel,
-            } => {
-                state.links.push(ThreadLink {
-                    target_thread_id: target_thread_id.clone(),
-                    rel: link_rel.clone(),
-                });
-            }
-        },
-        // No-ops during replay:
-        DomainEvent::Create { .. } => {} // handled in replay() seed before apply_event loop
-        DomainEvent::Verify { .. } | DomainEvent::Merge { .. } => {}
-        // ADR-010 option (a): unknown variants no-op + emit a strict
-        // issue. Unreachable in Phase A; Phase B wires the
-        // `EventType::Other(String)` deserialiser to this arm.
-        DomainEvent::Unknown { meta, .. } => {
-            issues.push(StrictReplayIssue::MissingRequiredField {
-                event_id: meta.event_id.clone(),
-                event_type: meta.event_type.to_string(),
-                field: "unknown_event_type",
-            });
-        }
-        // SPEC-2.0 §2.4.1: per-event facet mutation, not full-state
-        // replacement.
-        DomainEvent::FacetSet {
-            meta,
-            lifecycle,
-            tags_add,
-            tags_remove,
-        } => {
-            // First-lifecycle-wins: §7.3 makes lifecycle immutable, so any
-            // subsequent facet_set carrying `lifecycle` is silently ignored
-            // at replay (write-side rejection with FacetTransitionDisallowed
-            // is Track B's responsibility).
-            if let Some(lc) = lifecycle {
-                let parsed = Lifecycle::parse(lc);
-                if parsed.is_none() {
-                    issues.push(StrictReplayIssue::InvalidLifecycleValue {
-                        event_id: meta.event_id.clone(),
-                        value: lc.clone(),
-                    });
-                }
-                if let Some(parsed_lc) = parsed {
-                    if !state.lifecycle_explicit {
-                        // First explicit facet_set wins. Override the
-                        // kind-derived default.
-                        state.lifecycle = parsed_lc;
-                        state.lifecycle_explicit = true;
-                    } else if state.lifecycle != parsed_lc {
-                        issues.push(StrictReplayIssue::LifecycleResetAttempted {
-                            event_id: meta.event_id.clone(),
-                            existing: state.lifecycle.as_str().to_string(),
-                            attempted: lc.clone(),
-                        });
-                    }
-                    // else: idempotent re-set with the same value — no-op.
-                }
-            }
-            // Within a single event, tags_add is applied before tags_remove
-            // (an event that simultaneously adds and removes the same tag
-            // is a removal). Insertion is set-style (no duplicates).
-            //
-            // Tag-grammar validation happens at the migration boundary
-            // (`commands::migrate::project_state_to_doc`), NOT here:
-            // legacy display surfaces want to render tags verbatim even
-            // when they violate the 3.0 grammar (e.g. a 1-char tag
-            // accepted by an earlier loose validator). Migration drops
-            // invalid tags and records them as `kind: "tag"` omissions
-            // in the report (task `9635buy0` objection `e285682f`).
-            for tag in tags_add {
-                if !state.tags.iter().any(|t| t == tag) {
-                    state.tags.push(tag.clone());
-                }
-            }
-            for tag in tags_remove {
-                state.tags.retain(|t| t != tag);
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Shared helper for `Retract` / `Resolve` / `Reopen`: locate the target
-/// node by id, apply `mutate`, or record an
-/// [`StrictReplayIssue::UnknownTargetNode`]. Projection has already
-/// guaranteed a present `target_node_id` for these variants.
-fn apply_node_flag(
-    state: &mut ThreadState,
-    meta: &EventMeta,
-    target_node_id: &str,
-    issues: &mut Vec<StrictReplayIssue>,
-    mutate: impl FnOnce(&mut Node),
-) {
-    if let Some(node) = state.nodes.iter_mut().find(|n| n.node_id == target_node_id) {
-        mutate(node);
-    } else {
-        issues.push(StrictReplayIssue::UnknownTargetNode {
-            event_id: meta.event_id.clone(),
-            event_type: meta.event_type.to_string(),
-            target_node_id: target_node_id.to_string(),
-        });
-    }
-}
-
-/// Walk the chain at `refs/forum/threads/<id>` oldest→newest and
-/// project a [`ThreadState`].
-///
-/// Phase 2 transition (RFC `7ymtc4b2`): every commit's tree is
-/// classified as a SPEC-3.0 *snapshot commit* (`thread.toml` blob) or
-/// a v1/v2 *event commit* (`event.json` blob). The reader copes with
-/// any mixture:
-///
-/// - **Pure snapshot** — single snapshot commit at tip → state is
-///   materialized from the [`ThreadDocument`](super::snapshot::ThreadDocument).
-/// - **Pure event chain** — every commit carries `event.json` →
-///   delegated to [`replay`] over the loaded events.
-/// - **Mixed (snapshot bottom, events on top)** — arises during the
-///   Phase 2 cutover window: e.g. `git forum new` (slot-1 snapshot
-///   write) followed by `git forum comment` (slot-2 event write,
-///   pre-cutover). The snapshot at chain bottom seeds state; the
-///   event tail is folded in via [`apply_event`].
-/// - **Multiple snapshot commits** — each later snapshot supersedes
-///   the earlier (the tree IS the cumulative state); accumulated
-///   tail events are discarded when a fresh snapshot resets state.
-///
-/// This dispatch disappears in Phase 4 along with the event-chain
-/// reader.
+/// Errors:
+/// - [`ForumError::Repo`] — thread ref does not exist.
+/// - [`ForumError::SnapshotMissing`] — tip tree lacks `thread.toml`.
+/// - [`ForumError::LegacyEventChain`] — tip is an unmigrated event commit.
+/// - [`ForumError::SnapshotSchemaUnsupported`] / [`ForumError::SnapshotInvalid`] /
+///   [`ForumError::Toml`] — bad snapshot payload.
 pub fn replay_thread(git: &GitOps, thread_id: &str) -> ForumResult<ThreadState> {
-    let refname = format!("refs/forum/threads/{thread_id}");
-    let tip = git
-        .resolve_ref(&refname)?
-        .ok_or_else(|| ForumError::Repo(format!("thread {thread_id} not found")))?;
-    replay_thread_at(git, &tip)
+    let doc = super::snapshot::read_snapshot(git, thread_id)?;
+    Ok(materialize_thread_state_from_snapshot(doc))
 }
 
-/// Like [`replay_thread`], but walks from a caller-supplied rev
-/// (typically a captured commit OID) instead of resolving the live
-/// thread ref. Used by migrate to pin the legacy-chain replay
-/// against the exact tip recorded for the eventual CAS write so a
-/// concurrent event landing between read and write fails the CAS
-/// instead of silently dropping events from the projected snapshot
-/// (task `9635buy0`, objection `e630f01f`).
-pub fn replay_thread_at(git: &GitOps, start_rev: &str) -> ForumResult<ThreadState> {
-    // `rev_list` returns newest-first; replay needs oldest-first.
-    let mut shas: Vec<String> = git.rev_list(start_rev)?;
-    shas.reverse();
-
-    let mut state: Option<ThreadState> = None;
-    let mut tail_events: Vec<Event> = Vec::new();
-    let mut issues: Vec<StrictReplayIssue> = Vec::new();
-
-    for sha in &shas {
-        let listing = git.run(&["ls-tree", "--name-only", sha])?;
-        let names: Vec<&str> = listing.lines().collect();
-        if names.contains(&"thread.toml") {
-            // SPEC-3.0 snapshot commit — reset state to this snapshot's
-            // view. Any prior tail events are subsumed.
-            let doc = super::snapshot::read_snapshot_at(git, sha)?;
-            state = Some(materialize_thread_state_from_snapshot(doc));
-            tail_events.clear();
-        } else if names.contains(&"event.json") {
-            // Legacy v1/v2 event commit — accumulate for projection.
-            tail_events.push(event::read_event(git, sha)?);
-        }
-        // Unknown tree shapes (e.g. an empty merge) are skipped; they
-        // do not affect state under either storage model.
-    }
-
-    if let Some(mut s) = state {
-        // Apply any events that landed AFTER the most recent snapshot.
-        for ev in &tail_events {
-            s.events.push(ev.clone());
-            match ev.project() {
-                Ok(domain) => apply_event(&mut s, &domain, &mut issues)?,
-                Err(ProjectionError::MissingRequiredField { .. }) => {
-                    // Lenient mode: a malformed event is silently
-                    // skipped. Strict callers route through
-                    // `replay_thread_strict` which surfaces this as
-                    // `MissingRequiredField`.
-                }
-            }
-        }
-        Ok(s)
-    } else if !tail_events.is_empty() {
-        // No snapshot seed — pure legacy event chain. v3.0.0 keeps this
-        // path because `commands::migrate` calls `replay_thread_at`
-        // directly to consume legacy refs. Codex objection 2ab3b2a4 on
-        // task `913c4s9v` flagged the architectural concern that
-        // non-migrate code can also reach this path through
-        // `replay_thread`; the body's reply documents the v3.1 split
-        // (separate snapshot-only public API + migrate-internal
-        // event-chain reader) needed to close that gap. v3.0.0 ships
-        // with the residual access documented but not gated.
-        replay(&tail_events)
-    } else {
-        Err(ForumError::Repo(format!(
-            "rev {start_rev} has no replayable content"
-        )))
-    }
+/// Strict variant of [`replay_thread`].
+///
+/// Snapshots are validated at write time, so the issue vector is
+/// always empty for snapshot-only reads. The signature is preserved
+/// for callers (doctor, migration verification) that historically
+/// fanned out across both the snapshot and event-chain paths.
+pub fn replay_thread_strict(
+    git: &GitOps,
+    thread_id: &str,
+) -> ForumResult<(ThreadState, Vec<StrictReplayIssue>)> {
+    Ok((replay_thread(git, thread_id)?, Vec::new()))
 }
 
-/// Materialize a legacy [`ThreadState`] view from a SPEC-3.0
+/// Materialize a [`ThreadState`] from a SPEC-3.0
 /// [`ThreadDocument`](super::snapshot::ThreadDocument).
 ///
-/// Phase 2 bridge: read paths still consume `ThreadState`. Until each
-/// command is cut over to read snapshots directly (slots 7a–7k), the
-/// snapshot-tip case is translated into the legacy struct. `events`
-/// is left empty — the snapshot model has no event chain, and the
-/// surfaces that display events (legacy `log`, domain timeline) are
-/// on the Phase 4 DELETE list.
-fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocument) -> ThreadState {
+/// `pub` so the legacy event-chain reader
+/// (`legacy::chain_replay::replay_chain_at`) can seed state from the
+/// snapshot at chain bottom on a mixed chain.
+pub fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocument) -> ThreadState {
     use super::evidence::Evidence;
     use super::node::NodeStatus;
     use super::snapshot::ThreadDocument;
@@ -965,7 +419,8 @@ fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocument) 
     } = doc;
 
     let kind = category_to_legacy_kind(&snapshot.category, &snapshot.tags);
-    let lifecycle = super::legacy::v1::lifecycle_for_legacy_kind(kind);
+    let lifecycle =
+        super::policy::legacy_lifecycle_for_category(&snapshot.category, &snapshot.tags);
     let status = ThreadStatus::parse_lenient(&snapshot.status).unwrap_or_default();
 
     let nodes: Vec<Node> = nodes
@@ -1012,7 +467,7 @@ fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocument) 
         status,
         created_at: snapshot.created_at,
         created_by: snapshot.created_by,
-        events: Vec::new(),
+        updated_at: snapshot.updated_at,
         nodes,
         evidence_items,
         links,
@@ -1049,86 +504,6 @@ fn category_to_legacy_kind(category: &str, tags: &[String]) -> ThreadKind {
             }
         }
         _ => ThreadKind::Issue,
-    }
-}
-
-/// Load events from Git and replay strictly, returning every silent-no-op
-/// alongside the materialized state. See [`replay_strict`].
-pub fn replay_thread_strict(
-    git: &GitOps,
-    thread_id: &str,
-) -> ForumResult<(ThreadState, Vec<StrictReplayIssue>)> {
-    let events = event::load_thread_events(git, thread_id)?;
-    replay_strict(&events)
-}
-
-/// Like [`replay_thread_strict`], but reads events from a caller-
-/// supplied rev (typically a captured tip OID) instead of resolving
-/// the live thread ref. Used by migrate so the strict replay walks
-/// the same chain that the eventual CAS write will guard against —
-/// `replay_thread_strict` against the live ref would re-introduce
-/// the read/write race fixed by objection `e630f01f`.
-///
-/// Mirrors the mixed-chain walk of [`replay_thread_at`]: a chain
-/// whose bottom is a SPEC-3.0 snapshot commit (Phase-2 cutover
-/// shape) seeds state from the snapshot and applies any event tail
-/// strictly. A pure-event chain routes through [`replay_strict`].
-/// `read_snapshot` only inspects the tip tree, so a tip that is an
-/// event commit dispatches through migrate even when an ancestor
-/// is a snapshot — the `_at` reader MUST handle that case
-/// (task `9635buy0`, objection `bf678561`).
-pub fn replay_thread_strict_at(
-    git: &GitOps,
-    start_rev: &str,
-) -> ForumResult<(ThreadState, Vec<StrictReplayIssue>)> {
-    let mut shas: Vec<String> = git.rev_list(start_rev)?;
-    shas.reverse();
-
-    let mut state: Option<ThreadState> = None;
-    let mut tail_events: Vec<Event> = Vec::new();
-
-    for sha in &shas {
-        let listing = git.run(&["ls-tree", "--name-only", sha])?;
-        let names: Vec<&str> = listing.lines().collect();
-        if names.contains(&"thread.toml") {
-            // SPEC-3.0 snapshot ancestor — reset state to its view.
-            // Anything before is subsumed; the snapshot's tags/links
-            // were already validated at write time, so they enter
-            // the strict path without further checks.
-            let doc = super::snapshot::read_snapshot_at(git, sha)?;
-            state = Some(materialize_thread_state_from_snapshot(doc));
-            tail_events.clear();
-        } else if names.contains(&"event.json") {
-            tail_events.push(event::read_event(git, sha)?);
-        }
-        // Unknown tree shapes (empty merges, etc.) are skipped —
-        // same lenience as `replay_thread_at`.
-    }
-
-    if let Some(mut s) = state {
-        // Snapshot-bottom + event-tail. Apply tail events strictly.
-        let mut issues = Vec::new();
-        for ev in &tail_events {
-            s.events.push(ev.clone());
-            match ev.project() {
-                Ok(domain) => apply_event(&mut s, &domain, &mut issues)?,
-                Err(super::legacy::event::ProjectionError::MissingRequiredField { field }) => {
-                    issues.push(StrictReplayIssue::MissingRequiredField {
-                        event_id: ev.event_id.clone(),
-                        event_type: ev.event_type.to_string(),
-                        field,
-                    });
-                }
-            }
-        }
-        Ok((s, issues))
-    } else if !tail_events.is_empty() {
-        // Pure legacy event chain.
-        replay_strict(&tail_events)
-    } else {
-        Err(ForumError::Repo(format!(
-            "rev {start_rev} has no replayable content"
-        )))
     }
 }
 
@@ -1444,12 +819,6 @@ fn all_node_lookups(git: &GitOps) -> ForumResult<Vec<NodeLookup>> {
 }
 
 fn build_node_lookup(state: &ThreadState, node: &Node) -> NodeLookup {
-    let events = state
-        .events
-        .iter()
-        .filter(|ev| event_references_node(ev, node.node_id.as_str()))
-        .cloned()
-        .collect();
     NodeLookup {
         thread_id: state.id.clone(),
         thread_title: state.title.clone(),
@@ -1458,21 +827,6 @@ fn build_node_lookup(state: &ThreadState, node: &Node) -> NodeLookup {
         thread_tags: state.tags.clone(),
         node: node.clone(),
         links: state.links.clone(),
-        events,
-    }
-}
-
-fn say_node_id(event: &Event) -> &str {
-    event
-        .target_node_id
-        .as_deref()
-        .unwrap_or(event.event_id.as_str())
-}
-
-fn event_references_node(event: &Event, node_id: &str) -> bool {
-    match event.event_type {
-        EventType::Say => say_node_id(event) == node_id,
-        _ => event.target_node_id.as_deref() == Some(node_id),
     }
 }
 
@@ -1692,79 +1046,6 @@ mod thread_snapshot_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
-
-    fn make_create(thread_id: &str, kind: ThreadKind, title: &str) -> Event {
-        Event {
-            event_id: "evt-0001".into(),
-            thread_id: thread_id.into(),
-            event_type: EventType::Create,
-            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-            actor: "human/alice".into(),
-            title: Some(title.into()),
-            kind: Some(kind),
-            ..Event::default()
-        }
-    }
-
-    fn make_state(thread_id: &str, new_state: &str) -> Event {
-        Event {
-            event_id: "evt-0002".into(),
-            thread_id: thread_id.into(),
-            event_type: EventType::State,
-            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
-            actor: "human/alice".into(),
-            new_state: Some(new_state.into()),
-            ..Event::default()
-        }
-    }
-
-    #[test]
-    fn replay_single_create() {
-        let events = vec![make_create("RFC-0001", ThreadKind::Rfc, "Test RFC")];
-        let state = replay(&events).unwrap();
-        assert_eq!(state.id, "RFC-0001");
-        assert_eq!(state.kind, ThreadKind::Rfc);
-        assert_eq!(state.title, "Test RFC");
-        assert_eq!(state.body, None);
-        assert_eq!(state.status, "draft");
-        assert_eq!(state.created_by, "human/alice");
-        assert_eq!(state.events.len(), 1);
-    }
-
-    #[test]
-    fn replay_create_then_state() {
-        // Phase 2a: 1.x "proposed" is normalized by parse_lenient into the
-        // canonical 2.0 status `Open`. The original assertion against the
-        // raw string is replaced by the parsed enum variant.
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "Test RFC"),
-            make_state("RFC-0001", "proposed"),
-        ];
-        let state = replay(&events).unwrap();
-        assert_eq!(state.status, ThreadStatus::Open);
-        assert_eq!(state.events.len(), 2);
-    }
-
-    #[test]
-    fn replay_empty_events_fails() {
-        let result = replay(&[]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn replay_non_create_first_fails() {
-        let events = vec![make_state("RFC-0001", "proposed")];
-        let result = replay(&events);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn replay_issue_initial_status() {
-        let events = vec![make_create("ISSUE-0001", ThreadKind::Issue, "Bug")];
-        let state = replay(&events).unwrap();
-        assert_eq!(state.status, "open");
-    }
 
     // --- resolve_from_list tests ---
 
@@ -1872,466 +1153,5 @@ mod tests {
             msg.contains("did you mean"),
             "should show 'did you mean'; got: {msg}"
         );
-    }
-
-    // ---- facet_set replay (SPEC-2.0 §2.4.1) ----
-
-    fn make_facet_set(
-        thread_id: &str,
-        seq: u32,
-        lifecycle: Option<&str>,
-        tags_add: &[&str],
-        tags_remove: &[&str],
-    ) -> Event {
-        Event {
-            event_id: format!("evt-facet-{seq:04}"),
-            thread_id: thread_id.into(),
-            event_type: EventType::FacetSet,
-            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, seq.min(59), 0).unwrap(),
-            actor: "human/alice".into(),
-            lifecycle: lifecycle.map(str::to_string),
-            tags_add: tags_add.iter().map(|s| s.to_string()).collect(),
-            tags_remove: tags_remove.iter().map(|s| s.to_string()).collect(),
-            ..Event::default()
-        }
-    }
-
-    #[test]
-    fn facet_set_first_lifecycle_wins() {
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_facet_set("RFC-0001", 1, Some("proposal"), &[], &[]),
-            // Second facet_set carrying lifecycle: silently ignored at replay
-            // (write-side rejection is Track B).
-            make_facet_set("RFC-0001", 2, Some("execution"), &[], &[]),
-        ];
-        let state = replay(&events).unwrap();
-        assert_eq!(state.lifecycle, Lifecycle::Proposal);
-        assert!(state.lifecycle_explicit);
-    }
-
-    #[test]
-    fn facet_set_lifecycle_optional() {
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            // facet_set with no lifecycle, no tags — valid no-op (§2.4.1).
-            make_facet_set("RFC-0001", 1, None, &[], &[]),
-        ];
-        let state = replay(&events).unwrap();
-        // Phase 2c: facet_set without `lifecycle` doesn't flip `lifecycle_explicit`.
-        // The lifecycle stays at its kind-derived default (`Rfc -> Proposal`).
-        assert_eq!(state.lifecycle, Lifecycle::Proposal);
-        assert!(!state.lifecycle_explicit);
-        assert!(state.tags.is_empty());
-    }
-
-    #[test]
-    fn facet_set_tags_add_then_remove_within_event() {
-        // Within one event tags_add applies before tags_remove.
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_facet_set("RFC-0001", 1, None, &["bug", "ux"], &["bug"]),
-        ];
-        let state = replay(&events).unwrap();
-        assert_eq!(state.tags, vec!["ux".to_string()]);
-    }
-
-    #[test]
-    fn facet_set_tags_accumulate_across_events() {
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_facet_set("RFC-0001", 1, None, &["a", "b"], &[]),
-            make_facet_set("RFC-0001", 2, None, &["c"], &["a"]),
-        ];
-        let state = replay(&events).unwrap();
-        assert_eq!(state.tags, vec!["b".to_string(), "c".to_string()]);
-    }
-
-    #[test]
-    fn facet_set_tags_add_dedupes() {
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_facet_set("RFC-0001", 1, None, &["bug"], &[]),
-            // Re-adding the same tag is a no-op.
-            make_facet_set("RFC-0001", 2, None, &["bug"], &[]),
-        ];
-        let state = replay(&events).unwrap();
-        assert_eq!(state.tags, vec!["bug".to_string()]);
-    }
-
-    #[test]
-    fn lifecycle_accessor_falls_back_to_kind() {
-        // No facet_set event in chain — derive from ThreadKind per §2.3.3.
-        let state = replay(&[make_create("RFC-0001", ThreadKind::Rfc, "T")]).unwrap();
-        assert_eq!(state.lifecycle, Lifecycle::Proposal);
-        assert!(
-            !state.lifecycle_explicit,
-            "kind-derived lifecycle is implicit"
-        );
-
-        let state = replay(&[make_create("ASK-0001", ThreadKind::Issue, "T")]).unwrap();
-        assert_eq!(state.lifecycle, Lifecycle::Execution);
-        assert!(!state.lifecycle_explicit);
-
-        let state = replay(&[make_create("DEC-0001", ThreadKind::Dec, "T")]).unwrap();
-        assert_eq!(state.lifecycle, Lifecycle::Record);
-        assert!(!state.lifecycle_explicit);
-    }
-
-    #[test]
-    fn lifecycle_accessor_prefers_explicit_facet_set() {
-        // SPEC-2.0 §2.3.3 / §7.3: an explicit facet_set lifecycle drives
-        // the state machine even on a thread whose ThreadKind would map
-        // elsewhere. (Migration overlay scenario.)
-        let events = vec![
-            make_create("ASK-0001", ThreadKind::Issue, "T"),
-            make_facet_set("ASK-0001", 1, Some("record"), &[], &[]),
-        ];
-        let state = replay(&events).unwrap();
-        assert_eq!(state.lifecycle, Lifecycle::Record);
-        assert!(
-            state.lifecycle_explicit,
-            "explicit facet_set must flip the flag"
-        );
-    }
-
-    #[test]
-    fn facet_set_tags_remove_unknown_is_noop() {
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_facet_set("RFC-0001", 1, None, &[], &["nonexistent"]),
-        ];
-        let state = replay(&events).unwrap();
-        assert!(state.tags.is_empty());
-    }
-
-    // ---- replay_strict (Phase 1: Finding 4) ----
-
-    use super::super::validate::StrictReplayIssue;
-
-    fn make_resolve(thread_id: &str, target: &str, seq: u32) -> Event {
-        Event {
-            event_id: format!("evt-resolve-{seq:04}"),
-            thread_id: thread_id.into(),
-            event_type: EventType::Resolve,
-            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, seq.min(59), 0).unwrap(),
-            actor: "human/alice".into(),
-            target_node_id: Some(target.into()),
-            ..Event::default()
-        }
-    }
-
-    fn make_edit(thread_id: &str, target: &str, body: Option<&str>, seq: u32) -> Event {
-        Event {
-            event_id: format!("evt-edit-{seq:04}"),
-            thread_id: thread_id.into(),
-            event_type: EventType::Edit,
-            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, seq.min(59), 0).unwrap(),
-            actor: "human/alice".into(),
-            target_node_id: Some(target.into()),
-            body: body.map(str::to_string),
-            ..Event::default()
-        }
-    }
-
-    #[test]
-    fn replay_strict_clean_thread_yields_no_issues() {
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_facet_set("RFC-0001", 1, Some("proposal"), &["bug"], &[]),
-        ];
-        let (state, issues) = replay_strict(&events).unwrap();
-        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
-        assert_eq!(state.lifecycle, Lifecycle::Proposal);
-        assert!(state.lifecycle_explicit);
-    }
-
-    #[test]
-    fn replay_strict_flags_resolve_on_unknown_node() {
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_resolve("RFC-0001", "ghost-node", 1),
-        ];
-        let (_, issues) = replay_strict(&events).unwrap();
-        assert!(matches!(
-            issues.as_slice(),
-            [StrictReplayIssue::UnknownTargetNode { target_node_id, .. }] if target_node_id == "ghost-node"
-        ));
-    }
-
-    #[test]
-    fn replay_strict_flags_edit_missing_body() {
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_edit("RFC-0001", "any-node", None, 1),
-        ];
-        let (_, issues) = replay_strict(&events).unwrap();
-        // We get both UnknownTargetNode is skipped — when body is missing we
-        // never look up the node. Only MissingRequiredField is reported.
-        assert_eq!(issues.len(), 1, "got: {issues:?}");
-        assert!(matches!(
-            &issues[0],
-            StrictReplayIssue::MissingRequiredField { field, .. } if *field == "body"
-        ));
-    }
-
-    #[test]
-    fn replay_strict_flags_lifecycle_reset() {
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_facet_set("RFC-0001", 1, Some("proposal"), &[], &[]),
-            make_facet_set("RFC-0001", 2, Some("execution"), &[], &[]),
-        ];
-        let (state, issues) = replay_strict(&events).unwrap();
-        // Lenient first-wins still holds.
-        assert_eq!(state.lifecycle, Lifecycle::Proposal);
-        assert!(state.lifecycle_explicit);
-        assert!(matches!(
-            issues.as_slice(),
-            [StrictReplayIssue::LifecycleResetAttempted { existing, attempted, .. }]
-                if existing == "proposal" && attempted == "execution"
-        ));
-    }
-
-    #[test]
-    fn replay_strict_idempotent_lifecycle_reset_is_clean() {
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_facet_set("RFC-0001", 1, Some("proposal"), &[], &[]),
-            make_facet_set("RFC-0001", 2, Some("proposal"), &[], &[]),
-        ];
-        let (_, issues) = replay_strict(&events).unwrap();
-        assert!(
-            issues.is_empty(),
-            "idempotent re-set should not flag: {issues:?}"
-        );
-    }
-
-    #[test]
-    fn replay_strict_flags_invalid_lifecycle_value() {
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_facet_set("RFC-0001", 1, Some("nonsense"), &[], &[]),
-        ];
-        let (_, issues) = replay_strict(&events).unwrap();
-        assert!(
-            issues.iter().any(|i| matches!(
-                i,
-                StrictReplayIssue::InvalidLifecycleValue { value, .. } if value == "nonsense"
-            )),
-            "got: {issues:?}"
-        );
-    }
-
-    #[test]
-    fn replay_strict_flags_state_event_missing_new_state() {
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            Event {
-                event_id: "evt-state-bad".into(),
-                thread_id: "RFC-0001".into(),
-                event_type: EventType::State,
-                created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
-                actor: "human/alice".into(),
-                ..Event::default()
-            },
-        ];
-        let (_, issues) = replay_strict(&events).unwrap();
-        assert!(matches!(
-            issues.as_slice(),
-            [StrictReplayIssue::MissingRequiredField { field, .. }] if *field == "new_state"
-        ));
-    }
-
-    #[test]
-    fn replay_strict_flags_illegal_transition_for_lifecycle() {
-        // SPEC-2.0 §3.1 / P0 #34ith16h: strict replay must surface a
-        // state event whose `from -> to` edge is missing from the
-        // per-lifecycle transition graph.
-        //
-        // Setup: an RFC (proposal lifecycle) starts at `draft`, goes to
-        // `done`, then attempts `done -> review`. The `done -> review`
-        // edge does not exist for any lifecycle; lenient replay applies
-        // it anyway, strict surfaces the legality miss.
-        let mut state_event = make_state("RFC-0001", "review");
-        state_event.event_id = "evt-illegal".into();
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_state("RFC-0001", "open"),
-            make_state("RFC-0001", "done"),
-            state_event,
-        ];
-        let (final_state, issues) = replay_strict(&events).unwrap();
-        // Lenient semantic preserved: the new status was applied.
-        assert_eq!(final_state.status, ThreadStatus::Review);
-        assert!(
-            issues.iter().any(|i| matches!(
-                i,
-                StrictReplayIssue::InvalidTransition {
-                    event_id, from, to, lifecycle
-                } if event_id == "evt-illegal"
-                    && from == "done"
-                    && to == "review"
-                    && lifecycle == "proposal"
-            )),
-            "expected an InvalidTransition issue, got: {issues:?}"
-        );
-    }
-
-    #[test]
-    fn replay_strict_clean_for_legal_transition() {
-        // Regression guard: a legal transition (open -> review on
-        // proposal) must NOT emit InvalidTransition.
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_state("RFC-0001", "open"),
-            make_state("RFC-0001", "review"),
-        ];
-        let (_, issues) = replay_strict(&events).unwrap();
-        assert!(
-            !issues
-                .iter()
-                .any(|i| matches!(i, StrictReplayIssue::InvalidTransition { .. })),
-            "legal transition should not flag: {issues:?}"
-        );
-    }
-
-    #[test]
-    fn replay_strict_legacy_state_synonyms_remain_legal() {
-        // Lenient compatibility: a 1.x state name that normalizes onto a
-        // canonical 2.0 transition must NOT trip InvalidTransition.
-        // Here `proposed` (=> open) follows `draft` on a proposal — a
-        // legal edge.
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_state("RFC-0001", "proposed"),
-            make_state("RFC-0001", "under-review"),
-        ];
-        let (_, issues) = replay_strict(&events).unwrap();
-        assert!(
-            issues.is_empty(),
-            "1.x synonyms on a legal path should not flag: {issues:?}"
-        );
-    }
-
-    #[test]
-    fn replay_strict_idempotent_state_does_not_flag() {
-        // No-op transitions (status unchanged) skip the legality check —
-        // a state event that re-asserts the current status is benign.
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_state("RFC-0001", "draft"),
-        ];
-        let (_, issues) = replay_strict(&events).unwrap();
-        assert!(issues.is_empty(), "idempotent re-state: {issues:?}");
-    }
-
-    #[test]
-    fn replay_strict_self_heal_suppresses_invalid_transition_after_corrective_tail() {
-        // SPEC-2.0 §3.1 / #uu9wxn1d: a thread that hit `draft → rejected`
-        // (illegal on proposal) and was repaired by appending
-        // `state open` then `state rejected` should not surface the
-        // InvalidTransition issue — the corrective tail walks back to
-        // the visible terminal status (`rejected`) via legal edges.
-        let mut bad = make_state("RFC-0001", "rejected");
-        bad.event_id = "evt-bad".into();
-        let mut fix1 = make_state("RFC-0001", "open");
-        fix1.event_id = "evt-fix1".into();
-        let mut fix2 = make_state("RFC-0001", "rejected");
-        fix2.event_id = "evt-fix2".into();
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            bad,
-            fix1,
-            fix2,
-        ];
-        let (state, issues) = replay_strict(&events).unwrap();
-        assert_eq!(state.status, ThreadStatus::Rejected);
-        assert!(
-            !issues
-                .iter()
-                .any(|i| matches!(i, StrictReplayIssue::InvalidTransition { .. })),
-            "self-healed chain must not surface InvalidTransition: {issues:?}"
-        );
-    }
-
-    #[test]
-    fn replay_strict_no_self_heal_without_corrective_tail() {
-        // Regression guard: a chain that ends at the offending event with
-        // no corrective tail must STILL surface the InvalidTransition.
-        let mut bad = make_state("RFC-0001", "rejected");
-        bad.event_id = "evt-bad".into();
-        let events = vec![make_create("RFC-0001", ThreadKind::Rfc, "T"), bad];
-        let (_, issues) = replay_strict(&events).unwrap();
-        assert!(
-            issues
-                .iter()
-                .any(|i| matches!(i, StrictReplayIssue::InvalidTransition { .. })),
-            "no corrective tail → issue must remain: {issues:?}"
-        );
-    }
-
-    #[test]
-    fn replay_strict_no_self_heal_when_terminal_status_differs() {
-        // If the chain's terminal status differs from the issue's `to`,
-        // no self-heal — the operator's visible state isn't what the
-        // illegal event aimed at.
-        let mut bad = make_state("RFC-0001", "rejected");
-        bad.event_id = "evt-bad".into();
-        let mut fix1 = make_state("RFC-0001", "open");
-        fix1.event_id = "evt-fix1".into();
-        // Terminal = open, not rejected.
-        let events = vec![make_create("RFC-0001", ThreadKind::Rfc, "T"), bad, fix1];
-        let (state, issues) = replay_strict(&events).unwrap();
-        assert_eq!(state.status, ThreadStatus::Open);
-        assert!(
-            issues
-                .iter()
-                .any(|i| matches!(i, StrictReplayIssue::InvalidTransition { .. })),
-            "terminal mismatch → issue must remain: {issues:?}"
-        );
-    }
-
-    #[test]
-    fn replay_strict_review_to_withdrawn_cannot_self_heal() {
-        // `withdrawn` is a sink in proposal lifecycle (no outgoing legal
-        // edges). A `review → withdrawn` violation cannot be self-healed
-        // via append-only — the corrective walk would need an outgoing
-        // edge from withdrawn that doesn't exist. Issue must remain.
-        let mut intake = make_state("RFC-0001", "open");
-        intake.event_id = "evt-intake".into();
-        let mut review = make_state("RFC-0001", "review");
-        review.event_id = "evt-review".into();
-        let mut bad = make_state("RFC-0001", "withdrawn");
-        bad.event_id = "evt-bad".into();
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            intake,
-            review,
-            bad,
-        ];
-        let (state, issues) = replay_strict(&events).unwrap();
-        assert_eq!(state.status, ThreadStatus::Withdrawn);
-        assert!(
-            issues
-                .iter()
-                .any(|i| matches!(i, StrictReplayIssue::InvalidTransition { .. })),
-            "Category B (review→withdrawn) cannot self-heal: {issues:?}"
-        );
-    }
-
-    #[test]
-    fn replay_lenient_unchanged_under_strict_failures() {
-        // Regression guard: read-side `replay()` must not start failing for
-        // any of the conditions strict mode now flags.
-        let events = vec![
-            make_create("RFC-0001", ThreadKind::Rfc, "T"),
-            make_resolve("RFC-0001", "ghost-node", 1),
-            make_facet_set("RFC-0001", 2, Some("proposal"), &[], &[]),
-            make_facet_set("RFC-0001", 3, Some("execution"), &[], &[]),
-        ];
-        let state = replay(&events).expect("lenient replay must still succeed");
-        assert_eq!(state.lifecycle, Lifecycle::Proposal);
-        assert!(state.lifecycle_explicit);
     }
 }

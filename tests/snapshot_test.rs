@@ -3,7 +3,6 @@ mod support;
 use chrono::TimeZone;
 use git_forum::internal::commands::ls;
 use git_forum::internal::commands::show;
-use git_forum::internal::legacy::event::{Event, EventType, NodeType};
 use git_forum::internal::node::{Node, NodeKind};
 use git_forum::internal::policy::Lifecycle;
 use git_forum::internal::thread::{NodeLookup, ThreadKind, ThreadLink, ThreadState, ThreadStatus};
@@ -46,16 +45,7 @@ fn base_state() -> ThreadState {
         status: ThreadStatus::Draft,
         created_at: t,
         created_by: "human/alice".into(),
-        events: vec![Event {
-            event_id: "evt-0001".into(),
-            thread_id: "RFC-a1b2c3d4".into(),
-            event_type: EventType::Create,
-            created_at: t,
-            actor: "human/alice".into(),
-            title: Some("Test RFC".into()),
-            kind: Some(ThreadKind::Rfc),
-            ..Event::default()
-        }],
+        updated_at: t,
         ..ThreadState::default()
     }
 }
@@ -68,6 +58,7 @@ fn rich_state() -> ThreadState {
     // Lenient parse so 1.x-flavored fixture data still produces a valid 2.0 status.
     state.status = ThreadStatus::parse_lenient("under-review").unwrap();
     state.branch = Some("feat/solver".into());
+    state.updated_at = t3;
     state.nodes = vec![
         Node {
             node_id: "node-0001".into(),
@@ -87,28 +78,6 @@ fn rich_state() -> ThreadState {
             ..Node::default()
         },
     ];
-    state.events.push(Event {
-        event_id: "evt-0002".into(),
-        thread_id: "RFC-a1b2c3d4".into(),
-        event_type: EventType::Say,
-        created_at: t2,
-        actor: "ai/reviewer".into(),
-        body: Some("Benchmarks are missing.".into()),
-        node_type: Some(NodeType::Objection),
-        target_node_id: Some("node-0001".into()),
-        ..Event::default()
-    });
-    state.events.push(Event {
-        event_id: "evt-0003".into(),
-        thread_id: "RFC-a1b2c3d4".into(),
-        event_type: EventType::Say,
-        created_at: t3,
-        actor: "human/alice".into(),
-        body: Some("Direction is sound; migration evidence needed.".into()),
-        node_type: Some(NodeType::Summary),
-        target_node_id: Some("node-0002".into()),
-        ..Event::default()
-    });
     state
 }
 
@@ -194,17 +163,6 @@ fn node_show_question() {
         links: vec![ThreadLink {
             target_thread_id: "ASK-e5f6a7b8".into(),
             rel: "implements".into(),
-        }],
-        events: vec![Event {
-            event_id: "evt-0010".into(),
-            thread_id: "RFC-a1b2c3d4".into(),
-            event_type: EventType::Say,
-            created_at: t,
-            actor: "ai/reviewer".into(),
-            body: Some("What is the migration plan?".into()),
-            node_type: Some(NodeType::Question),
-            target_node_id: Some("node-0001".into()),
-            ..Event::default()
         }],
     };
     let out = show::render_node_show(&lookup, &show::ShowOptions::default());

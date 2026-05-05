@@ -73,6 +73,9 @@ const PERMANENT_EXEMPTIONS: &[&str] = &[
     // forward.
     "src/internal/legacy/event.rs",
     "src/internal/legacy/workflow.rs",
+    // v3.1 step 3j (task 1v400j3l): event-chain replay relocated
+    // here from `internal::thread`. Structurally inside legacy/.
+    "src/internal/legacy/chain_replay.rs",
     "src/internal/commands/migrate.rs",
 ];
 
@@ -113,6 +116,11 @@ const ALLOW_LIST: &[&str] = &[
     // non-legacy importer is caught by `tests/legacy_gate_test.rs`.
     "src/internal/legacy/event.rs",
     "src/internal/legacy/workflow.rs",
+    // v3.1 step 3j (task 1v400j3l): event-chain replay machinery
+    // relocated here from `internal::thread`. Sibling-imports
+    // `super::event` and `super::workflow`; non-legacy importers
+    // are caught by `tests/legacy_gate_test.rs`.
+    "src/internal/legacy/chain_replay.rs",
     "src/internal/commands/migrate.rs",
     // (b) Phase 4 Step 3 (RFC 7ymtc4b2, task 913c4s9v) deleted the
     //     entire DELETE-list (state_change, write_ops, create, repair,
