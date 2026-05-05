@@ -57,7 +57,10 @@ const ALLOW_LIST: &[&str] = &[
     // and need their own exemption until Step 5 removes the v2 peer
     // types they're projecting.
     "src/internal/validate.rs",
-    "src/internal/evidence.rs",
+    // evidence.rs cleared in Phase 4 Step 5 (RFC 7ymtc4b2,
+    // task 913c4s9v): dropped Locator + add_evidence + add_thread_link
+    // (all unreachable from runtime); the residual `Evidence` struct
+    // doesn't import from legacy.
     "src/internal/commands/doctor.rs", // event::is_orphan_ref + legacy event chain probes
     "src/internal/commands/state.rs",  // workflow::SPEC + workflow::ShorthandResolution
     "src/internal/commands/thread_new.rs", // workflow::{KindPreset, SPEC}
@@ -185,6 +188,82 @@ fn allow_list_paths_exist() {
             path
         );
     }
+}
+
+/// Phase 4 Step 5 (RFC `7ymtc4b2`, task `913c4s9v`) — codex objection
+/// 2ab3b2a4 issue 1: ADR-011 Decision 3 says only the migrate command
+/// may consume legacy event-chain code. v3.0.0 cannot enforce that
+/// strictly without the full Lifecycle→Category rewire (deferred from
+/// Step 1j to v3.1 per body revision 4). The list below documents
+/// every file v3.0.0 ships with as a sanctioned exemption — the test
+/// directly below locks `ALLOW_LIST` to this exact set, so any new
+/// transitional grandfathering trips CI.
+///
+/// Categories:
+/// 1. **Structural** — inside `legacy/` itself: legacy/{mod, v1, event,
+///    workflow}.rs.
+/// 2. **Migration consumer** — commands/migrate.rs.
+/// 3. **3.0-native modules with v2-delegating impls** — node.rs
+///    (NodeType::canonical → legacy::v1), policy.rs (Lifecycle::*
+///    methods → legacy::workflow::SPEC; normalize_state_name →
+///    legacy::v1), thread.rs (replay_thread_at mixed-chain projection,
+///    ThreadKind::lifecycle → legacy::workflow::SPEC).
+/// 4. **v2 read-path KEEP files** — validate.rs (uses
+///    legacy::event::EventType for shape checks); commands/state.rs,
+///    thread_new.rs, shared.rs, show.rs (use legacy::workflow::SPEC
+///    for state-diagram and category-keyed lookups);
+///    commands/doctor.rs (uses legacy::event::is_orphan_ref for v2
+///    ref triage); commands/ls.rs, shortlog.rs (test fixtures only).
+///
+/// Categories 3 and 4 close in v3.1 when the full SPEC-3.0 §3
+/// Category surface replaces Lifecycle dispatch and the v2 peer types
+/// (ThreadState.events, ThreadState.evidence_items, the v2 NodeType
+/// enum, etc.) are removed. v3.0.0 ships with the exemption list as
+/// the contract; the gate locks against drift below.
+const LEGACY_GATE_PERMANENT_EXEMPTIONS: &[&str] = &[
+    // Structural / migration consumer.
+    "src/internal/legacy/mod.rs",
+    "src/internal/legacy/v1.rs",
+    "src/internal/legacy/event.rs",
+    "src/internal/legacy/workflow.rs",
+    "src/internal/commands/migrate.rs",
+    // 3.0-native modules with v2-delegating impls.
+    "src/internal/node.rs",
+    "src/internal/policy.rs",
+    "src/internal/thread.rs",
+    // v2 read-path KEEP files (cleared in v3.1).
+    "src/internal/validate.rs",
+    "src/internal/commands/doctor.rs",
+    "src/internal/commands/state.rs",
+    "src/internal/commands/thread_new.rs",
+    "src/internal/commands/shared.rs",
+    "src/internal/commands/show.rs",
+    "src/internal/commands/ls.rs",
+    "src/internal/commands/shortlog.rs",
+];
+
+#[test]
+fn allow_list_matches_permanent_set() {
+    let extras: Vec<&&str> = ALLOW_LIST
+        .iter()
+        .filter(|p| !LEGACY_GATE_PERMANENT_EXEMPTIONS.contains(*p))
+        .collect();
+    let missing: Vec<&&str> = LEGACY_GATE_PERMANENT_EXEMPTIONS
+        .iter()
+        .filter(|p| !ALLOW_LIST.contains(*p))
+        .collect();
+    assert!(
+        extras.is_empty() && missing.is_empty(),
+        "v3.0.0 ALLOW_LIST must equal LEGACY_GATE_PERMANENT_EXEMPTIONS.\n\
+         Extras (in ALLOW but not permanent): {:?}\n\
+         Missing (permanent but not in ALLOW): {:?}\n\n\
+         If a transitional KEEP file needs legacy access for a Phase 4\n\
+         step, that file should be cleared (rewire) before merging — not\n\
+         grandfathered through v3.0.0. The Lifecycle/ThreadKind/etc.\n\
+         delegations are tracked for the v3.1 Category rewire.",
+        extras,
+        missing
+    );
 }
 
 #[test]

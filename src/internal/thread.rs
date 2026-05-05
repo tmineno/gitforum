@@ -921,7 +921,15 @@ pub fn replay_thread_at(git: &GitOps, start_rev: &str) -> ForumResult<ThreadStat
         }
         Ok(s)
     } else if !tail_events.is_empty() {
-        // No snapshot seed — pure legacy event chain.
+        // No snapshot seed — pure legacy event chain. v3.0.0 keeps this
+        // path because `commands::migrate` calls `replay_thread_at`
+        // directly to consume legacy refs. Codex objection 2ab3b2a4 on
+        // task `913c4s9v` flagged the architectural concern that
+        // non-migrate code can also reach this path through
+        // `replay_thread`; the body's reply documents the v3.1 split
+        // (separate snapshot-only public API + migrate-internal
+        // event-chain reader) needed to close that gap. v3.0.0 ships
+        // with the residual access documented but not gated.
         replay(&tail_events)
     } else {
         Err(ForumError::Repo(format!(
@@ -993,7 +1001,6 @@ fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocument) 
             evidence_id: e.id,
             kind: e.kind,
             ref_target: e.ref_target,
-            locator: None,
         })
         .collect();
 

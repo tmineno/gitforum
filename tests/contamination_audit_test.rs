@@ -65,6 +65,14 @@ const FORBIDDEN_MODULES: &[&str] = &[
 const PERMANENT_EXEMPTIONS: &[&str] = &[
     "src/internal/legacy/mod.rs",
     "src/internal/legacy/v1.rs",
+    // Phase 4 Step 5 (RFC 7ymtc4b2, task 913c4s9v) — codex objection
+    // 2ab3b2a4 issue 2: PERMANENT_EXEMPTIONS must include the relocated
+    // event/workflow modules (now permanently inside legacy/) so the
+    // `final_audit_pass_*` test passes once `#[ignore]` is dropped.
+    // Both files structurally belong to the legacy/ tree from Step 2b
+    // forward.
+    "src/internal/legacy/event.rs",
+    "src/internal/legacy/workflow.rs",
     "src/internal/commands/migrate.rs",
 ];
 
@@ -334,12 +342,11 @@ fn allow_list_has_no_duplicates() {
     }
 }
 
-/// Once Phase 4 finishes, only `PERMANENT_EXEMPTIONS` remain in
-/// `ALLOW_LIST`. This test stays `#[ignore]` until the final Step 6
-/// commit unmarks it; flipping it from `ignore` to active is what
-/// locks the gate closed.
+/// The post-Phase-4 invariant: `ALLOW_LIST` contains only the
+/// permanent exemptions. Phase 4 Step 6 (RFC `7ymtc4b2`, task
+/// `913c4s9v`) flipped this off `#[ignore]` — from this commit
+/// forward, adding any new transitional ALLOW entry fails CI.
 #[test]
-#[ignore = "Phase 4 not complete; ALLOW_LIST still grandfathers in-flight contamination"]
 fn final_audit_pass_allow_list_must_be_empty_except_permanent_exemptions() {
     let extras: Vec<&&str> = ALLOW_LIST
         .iter()

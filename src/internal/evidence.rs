@@ -1,10 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::clock::Clock;
-use super::error::{ForumError, ForumResult};
-use super::git_ops::GitOps;
-use super::legacy::event::{Event, EventType};
+use super::error::ForumError;
 
 /// Supported evidence kinds (spec §7.4).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,20 +52,21 @@ impl std::str::FromStr for EvidenceKind {
     }
 }
 
-/// Optional locator fields for an evidence reference.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Locator {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub lines: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rows: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub commit: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-}
+// Phase 4 Step 5 (RFC `7ymtc4b2`, task `913c4s9v`):
+// - `Locator` (Evidence's optional inner field) is removed — every
+//   call site set it to `None` and no read site existed.
+// - `add_evidence` and `add_thread_link` are removed — both wrote v2
+//   `Event::Link` records via `legacy::event::write_event`. The 3.0
+//   write path is `internal::snapshot::store::write_snapshot` (with
+//   `EvidenceFile` / `links.toml` mutations); no caller reached the
+//   v2 helpers after Phase 2's command cutover.
+//
+// `Evidence` (the v2 in-memory record) survives because
+// `internal::thread::ThreadState.evidence_items: Vec<Evidence>` and
+// `internal::legacy::event::LinkPayload::Evidence` still consume it.
+// Removing the v2 struct itself is the v3.1 follow-up to the
+// Lifecycle→Category rewire (codex objection 2ab3b2a4 on task
+// 913c4s9v).
 
 /// A reference to supporting evidence (spec §7.4).
 ///
@@ -81,64 +79,6 @@ pub struct Evidence {
     pub kind: EvidenceKind,
     #[serde(rename = "ref")]
     pub ref_target: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub locator: Option<Locator>,
-}
-
-/// Add an evidence item to a thread via a Link event.
-///
-/// Preconditions: git is bound to an initialised git-forum repo; thread_id exists.
-/// Postconditions: a Link event carrying the evidence is written to the thread.
-/// Failure modes: ForumError::Git on subprocess failure.
-/// Side effects: writes git objects, updates ref.
-pub fn add_evidence(
-    git: &GitOps,
-    thread_id: &str,
-    kind: EvidenceKind,
-    ref_target: &str,
-    locator: Option<Locator>,
-    actor: &str,
-    clock: &dyn Clock,
-) -> ForumResult<String> {
-    let ref_target = canonicalize_evidence_ref(git, &kind, ref_target)?;
-    let ev = Event::base(thread_id, EventType::Link, actor, clock).with_evidence(Evidence {
-        evidence_id: String::new(),
-        kind,
-        ref_target,
-        locator,
-    });
-    super::legacy::event::write_event(git, &ev)
-}
-
-fn canonicalize_evidence_ref(
-    git: &GitOps,
-    kind: &EvidenceKind,
-    ref_target: &str,
-) -> ForumResult<String> {
-    match kind {
-        EvidenceKind::Commit => git.resolve_commit(ref_target),
-        _ => Ok(ref_target.to_string()),
-    }
-}
-
-/// Add a link between two threads via a Link event.
-///
-/// Preconditions: git is bound to an initialised git-forum repo; thread_id exists.
-/// Postconditions: a Link event with target and rel is written to the thread.
-/// Failure modes: ForumError::Git on subprocess failure.
-/// Side effects: writes git objects, updates ref.
-pub fn add_thread_link(
-    git: &GitOps,
-    thread_id: &str,
-    target_thread_id: &str,
-    rel: &str,
-    actor: &str,
-    clock: &dyn Clock,
-) -> ForumResult<String> {
-    let ev = Event::base(thread_id, EventType::Link, actor, clock)
-        .with_target_node_id(target_thread_id)
-        .with_link_rel(rel);
-    super::legacy::event::write_event(git, &ev)
 }
 
 // --------------------------------------------------------------------
@@ -212,7 +152,6 @@ mod tests {
             evidence_id: "sha123".into(),
             kind: EvidenceKind::Benchmark,
             ref_target: "bench/result.csv".into(),
-            locator: None,
         };
         let json = serde_json::to_string(&ev).unwrap();
         assert!(!json.contains("evidence_id"));
