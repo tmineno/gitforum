@@ -14,8 +14,9 @@ use super::super::error::ForumError;
 use super::super::event::Lifecycle;
 use super::super::git_ops::GitOps;
 use super::super::policy::{self, Policy};
+use super::super::refs::thread_ref;
+use super::super::snapshot::history::{self, SnapshotLogEntry};
 use super::super::thread::{self, NodeLookup, ThreadState};
-use super::super::timeline;
 use super::super::workflow::SPEC;
 use super::context::Context;
 use super::shared::resolve_tid;
@@ -39,6 +40,14 @@ pub struct ShowOptions {
     pub policy: Option<Policy>,
     /// Which subset of the thread view to render.
     pub mode: ShowMode,
+    /// Pre-loaded git-history view of the snapshot ref (SPEC-3.0 §5.4).
+    /// `None` means the renderer skips the timeline section with a
+    /// placeholder hint — callers that want the table populated must
+    /// load entries via `snapshot::history::read_log` before rendering.
+    /// (Phase 4 Step 1a, RFC `7ymtc4b2`: replaces `state.events`-driven
+    /// timeline rendering. Subsequent step 1d wires the TUI per-thread
+    /// timeline panel through the same surface.)
+    pub timeline_entries: Option<Vec<SnapshotLogEntry>>,
 }
 
 /// Sub-views of the canonical thread renderer.
@@ -129,11 +138,38 @@ pub fn render_node_show(lookup: &NodeLookup, options: &ShowOptions) -> String {
         lines.push(String::new());
         lines.push("### history".into());
         lines.push(String::new());
-        lines.extend(timeline::render_markdown(&lookup.events));
+        lines.extend(node_history_lines(&lookup.node.node_id, options));
         lines.push(String::new());
     }
 
     lines.join("\n")
+}
+
+/// Thread-level snapshot history table — uses pre-loaded entries from
+/// `ShowOptions::timeline_entries`. Falls back to a placeholder when
+/// entries weren't loaded; callers that want the full table must
+/// populate via `snapshot::history::read_log` first.
+fn thread_history_lines(options: &ShowOptions) -> Vec<String> {
+    let Some(entries) = &options.timeline_entries else {
+        return vec!["_(timeline unavailable; no snapshot ref loaded)_".into()];
+    };
+    history::render_markdown(entries)
+}
+
+/// Per-node history slice: filter the pre-loaded snapshot log to
+/// commits whose tree changed `nodes/<id>.{toml,md}`. Falls back to a
+/// placeholder when entries weren't loaded.
+fn node_history_lines(node_id: &str, options: &ShowOptions) -> Vec<String> {
+    let Some(entries) = &options.timeline_entries else {
+        return vec!["_(history unavailable; no snapshot ref loaded)_".into()];
+    };
+    let toml_path = format!("nodes/{node_id}.toml");
+    let md_path = format!("nodes/{node_id}.md");
+    let touching = history::entries_touching(entries, &[&toml_path, &md_path]);
+    if touching.is_empty() {
+        return vec!["_(no snapshot commits touched this node)_".into()];
+    }
+    history::render_markdown_refs(&touching)
 }
 
 // ============================================================
@@ -239,15 +275,19 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
         lines.push("---".into());
         lines.push(String::new());
         if compact {
+            let count = options
+                .timeline_entries
+                .as_ref()
+                .map(|e| e.len())
+                .unwrap_or(0);
             lines.push(format!(
-                "**timeline:** {} events (use 'log {}' for full view)",
-                state.events.len(),
-                state.id
+                "**timeline:** {} commits (use 'log {}' for full view)",
+                count, state.id
             ));
         } else {
             lines.push("### timeline".into());
             lines.push(String::new());
-            lines.extend(timeline::render_markdown(&state.events));
+            lines.extend(thread_history_lines(options));
         }
         lines.push(String::new());
     }
@@ -938,6 +978,12 @@ pub fn run(args: ShowArgs, ctx: &Context) -> Result<(), ForumError> {
         } else {
             ShowMode::Full
         };
+        let timeline_entries = if args.no_timeline {
+            None
+        } else {
+            // SPEC-3.0 §5.4: thread history is the snapshot ref's git log.
+            history::read_log(&ctx.git, &thread_ref(&thread_id)).ok()
+        };
         print!(
             "{}",
             render_show(
@@ -947,6 +993,7 @@ pub fn run(args: ShowArgs, ctx: &Context) -> Result<(), ForumError> {
                     no_timeline: args.no_timeline,
                     policy: Some(policy),
                     mode,
+                    timeline_entries,
                 }
             )
         );
@@ -1055,30 +1102,14 @@ mod tests {
         assert!(preview.ends_with("..."));
     }
 
-    #[test]
-    fn timeline_summarizes_long_bodies_to_one_line() {
-        let mut state = fixed_state();
-        let long_body = "First line of a multi-paragraph body\n\nSecond paragraph with more detail that is long enough to exceed the eighty character limit for preview";
-        state.events[0].body = Some(long_body.into());
-        state.events[0].event_type = EventType::Say;
-        state.events[0].node_type = Some(NodeType::Claim);
-        state.events[0].target_node_id = Some("node-0001".into());
-        let out = render_show(&state, &ShowOptions::default());
-        assert!(out.contains("First line of a multi-paragraph body"));
-        assert!(out.contains("..."));
-        assert!(!out.contains("eighty character limit for preview"));
-    }
-
-    #[test]
-    fn revise_body_timeline_shows_size_summary() {
-        let mut state = fixed_state();
-        state.events[0].body = Some("x".repeat(2048));
-        state.events[0].event_type = EventType::ReviseBody;
-        state.events[0].incorporated_node_ids = vec!["node-001".into(), "node-002".into()];
-        let out = render_show(&state, &ShowOptions::default());
-        assert!(out.contains("(2.0 KB, incorporated 2 node(s))"));
-        assert!(!out.contains(&"x".repeat(100)));
-    }
+    // Phase 4 Step 1a: the v2 timeline body-preview / revise-body
+    // size-summary tests (`timeline_summarizes_long_bodies_to_one_line`,
+    // `revise_body_timeline_shows_size_summary`) used to live here.
+    // They exercised `state.events` flowing through the legacy
+    // `internal::timeline::render_markdown` path, which no longer
+    // exists — the canonical 3.0 timeline reads commit subjects per
+    // SPEC-3.0 §5.4 instead. Equivalent coverage for the new rendering
+    // lives in `internal::snapshot::history::tests`.
 
     #[test]
     fn show_with_policy_includes_next_and_diagram() {

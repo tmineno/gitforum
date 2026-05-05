@@ -21,10 +21,14 @@
 //! - [`link`] — `links.toml` model + serde.
 //! - [`store`] — read tip → `ThreadDocument`; write `ThreadDocument`
 //!   → tree → commit → CAS. Owns the SPEC-3.0 §4 schema boundary.
+//! - [`history`] — git-history view of the snapshot ref per
+//!   SPEC-3.0 §5.4. Replaces the v2 domain-event timeline (Phase 4
+//!   Step 1a, RFC `7ymtc4b2`).
 //!
 //! Phase 1 of RFC `7ymtc4b2`: this subsystem is additive; production
 //! commands do not call into it yet. Phase 2 cuts each command over.
 
+pub mod history;
 pub mod link;
 pub mod store;
 

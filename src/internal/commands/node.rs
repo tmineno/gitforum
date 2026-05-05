@@ -14,6 +14,8 @@ use super::super::clock::Clock;
 use super::super::error::ForumError;
 use super::super::event::NodeType;
 use super::super::node::NodeKind;
+use super::super::refs::thread_ref;
+use super::super::snapshot::history;
 use super::super::thread;
 use super::context::Context;
 use super::shorthand_say::run_shorthand_say;
@@ -47,7 +49,20 @@ pub struct NodeAddArgs {
 /// the shared canonical formatter.
 pub fn run_show(args: NodeShowArgs, ctx: &Context) -> Result<(), ForumError> {
     let lookup = thread::find_node(&ctx.git, &args.node_id)?;
-    print!("{}", render_node_show(&lookup, &ShowOptions::default()));
+    // SPEC-3.0 §5.4: per-node history is the slice of the thread's
+    // snapshot ref log that touched `nodes/<id>.{toml,md}`. The
+    // renderer does the path filtering — we just hand it the full log.
+    let timeline_entries = history::read_log(&ctx.git, &thread_ref(&lookup.thread_id)).ok();
+    print!(
+        "{}",
+        render_node_show(
+            &lookup,
+            &ShowOptions {
+                timeline_entries,
+                ..ShowOptions::default()
+            }
+        )
+    );
     Ok(())
 }
 

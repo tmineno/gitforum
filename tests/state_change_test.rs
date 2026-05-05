@@ -931,11 +931,13 @@ fn state_change_with_comment_attaches_body_no_summary_node() {
 
     assert!(state.nodes.is_empty());
 
-    let out = git_forum::internal::commands::show::render_show(
-        &state,
-        &git_forum::internal::commands::show::ShowOptions::default(),
-    );
-    assert!(out.contains("done — closing because resolved"));
+    // (Phase 4 Step 1a: dropped `out.contains("done — closing because
+    // resolved")` — that previously matched the v2 timeline's `state`
+    // event-body column, which the SPEC-3.0 §5.4 git-log view doesn't
+    // expose. The state-change body is still present on the underlying
+    // event (asserted on line 928 above); surfacing it in the show
+    // renderer is a separate concern from this test's "no summary
+    // node was created" intent.)
 }
 
 // ---- DEC lifecycle ----

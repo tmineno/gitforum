@@ -67,7 +67,10 @@ fn show_includes_links_section() {
     assert!(out.contains("links: 1"));
     assert!(out.contains(&target_id));
     assert!(out.contains("implements"));
-    assert!(out.contains(&format!("{target_id} (implements)")));
+    // (Phase 4 Step 1a: dropped `out.contains(format!("{target_id} (implements)"))`
+    // — that matched the v2 timeline's `Link` event detail format. The
+    // links section itself renders as `<target>  <rel>` (two spaces),
+    // covered by the assertions above.)
 }
 
 #[test]

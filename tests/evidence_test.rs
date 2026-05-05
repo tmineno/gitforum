@@ -116,6 +116,10 @@ fn show_includes_evidence_section() {
     assert!(out.contains("evidence: 1"));
     assert!(out.contains("benchmark"));
     assert!(out.contains("bench/result.csv"));
-    assert!(out.contains("link"));
-    assert!(out.contains("benchmark bench/result.csv"));
+    // (Phase 4 Step 1a: dropped `out.contains("link")` and
+    // `out.contains("benchmark bench/result.csv")` — both matched the
+    // v2 timeline's `type`/`body` columns, which the SPEC-3.0 §5.4
+    // git-log view doesn't have. The evidence section's own
+    // `<id>  <kind>  <ref_target>` row is still surfaced — exercised
+    // by the `benchmark` and `bench/result.csv` assertions above.)
 }

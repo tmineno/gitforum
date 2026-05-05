@@ -362,12 +362,17 @@ fn find_node_returns_current_body_and_history() {
 
     let out = show::render_node_show(&lookup, &show::ShowOptions::default());
     assert!(out.contains("What is this object?"));
-    assert!(out.contains("What is this?"));
     assert!(out.contains(&node_id[..node_id.len().min(16)]));
-    assert!(out.contains("edit"));
+    // (Phase 4 Step 1a: dropped `out.contains("What is this?")` —
+    // the prior body was previously surfaced via the v2 per-node
+    // timeline's `revise-body` row that replayed the original say
+    // event's body. The SPEC-3.0 §5.4 history view shows commit
+    // metadata, not historical body content; `git forum diff`
+    // surfaces revision diffs explicitly.
+    // Dropped `out.contains("edit")` / `node_id` / `event_id` —
+    // those matched the v2 timeline columns. Section heading still
+    // appears with the new placeholder.)
     assert!(out.contains("### history"));
-    assert!(out.contains("node_id"));
-    assert!(out.contains("event_id"));
 }
 
 #[test]
