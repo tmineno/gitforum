@@ -2,12 +2,12 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::error::{ForumError, ForumResult};
-use super::event::{
+use super::evidence::Evidence;
+use super::git_ops::GitOps;
+use super::legacy::event::{
     self, DomainEvent, Event, EventMeta, EventType, Lifecycle, LinkPayload, NodeType,
     ProjectionError,
 };
-use super::evidence::Evidence;
-use super::git_ops::GitOps;
 use super::node::Node;
 use super::refs;
 use super::validate::StrictReplayIssue;
@@ -73,7 +73,7 @@ impl ThreadKind {
     /// Routes through `SPEC::kind_lifecycle`, which sources from the
     /// kind preset table.
     pub fn lifecycle(self) -> Lifecycle {
-        super::workflow::SPEC.kind_lifecycle(self)
+        super::legacy::workflow::SPEC.kind_lifecycle(self)
     }
 }
 
@@ -546,8 +546,11 @@ fn is_self_healed_after(tail: &[Event], lifecycle: super::policy::Lifecycle, tar
         if parsed == running {
             continue;
         }
-        if !super::workflow::SPEC.is_valid_transition(lifecycle, running.as_str(), parsed.as_str())
-        {
+        if !super::legacy::workflow::SPEC.is_valid_transition(
+            lifecycle,
+            running.as_str(),
+            parsed.as_str(),
+        ) {
             return false;
         }
         running = parsed;
@@ -581,7 +584,7 @@ fn apply_event(
                     // so legacy chains keep replaying.
                     let from = state.status;
                     if from != parsed
-                        && !super::workflow::SPEC.is_valid_transition(
+                        && !super::legacy::workflow::SPEC.is_valid_transition(
                             state.lifecycle,
                             from.as_str(),
                             parsed.as_str(),
@@ -1103,7 +1106,7 @@ pub fn replay_thread_strict_at(
             s.events.push(ev.clone());
             match ev.project() {
                 Ok(domain) => apply_event(&mut s, &domain, &mut issues)?,
-                Err(super::event::ProjectionError::MissingRequiredField { field }) => {
+                Err(super::legacy::event::ProjectionError::MissingRequiredField { field }) => {
                     issues.push(StrictReplayIssue::MissingRequiredField {
                         event_id: ev.event_id.clone(),
                         event_type: ev.event_type,

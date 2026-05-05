@@ -269,7 +269,7 @@ fn preview_one_line(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::event::{Event, EventType, Lifecycle, ThreadKind, ThreadStatus};
+    use crate::internal::legacy::event::{Event, EventType, Lifecycle, ThreadKind, ThreadStatus};
     use chrono::TimeZone;
 
     fn t() -> chrono::DateTime<chrono::Utc> {

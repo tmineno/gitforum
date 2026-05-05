@@ -13,10 +13,10 @@ use std::process::Command;
 
 use chrono::{TimeZone, Utc};
 use git_forum::internal::config::RepoPaths;
-use git_forum::internal::event::{self, Event, EventType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id_alloc;
 use git_forum::internal::init;
+use git_forum::internal::legacy::event::{self, Event, EventType, ThreadKind};
 use git_forum::internal::snapshot;
 
 fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
@@ -196,7 +196,7 @@ fn migrate_pinned_write_rejects_concurrent_event() {
         created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 5, 0).unwrap(),
         actor: "human/bob".into(),
         body: Some("a comment that races migration".into()),
-        node_type: Some(git_forum::internal::event::NodeType::Comment),
+        node_type: Some(git_forum::internal::legacy::event::NodeType::Comment),
         ..Event::default()
     };
     event::write_event(&git, &racer).unwrap();
@@ -242,7 +242,7 @@ fn say_event(thread_id: &str, body: &str, ts_offset_min: i64) -> Event {
             + chrono::Duration::minutes(ts_offset_min),
         actor: "human/bob".into(),
         body: Some(body.into()),
-        node_type: Some(git_forum::internal::event::NodeType::Comment),
+        node_type: Some(git_forum::internal::legacy::event::NodeType::Comment),
         ..Event::default()
     }
 }
@@ -717,7 +717,7 @@ fn migrate_handles_legacy_approval_node_ids_with_slashes() {
     // a namespace separator (`human/bob`). `git mktree`
     // rejects path components with `/`, so the projection MUST
     // sanitize before writing `nodes/<id>.toml`.
-    use git_forum::internal::event::{Approval, ApprovalMechanism};
+    use git_forum::internal::legacy::event::{Approval, ApprovalMechanism};
     let (repo, git, _paths) = setup();
     let id = id_alloc::alloc_thread_id_with_nonce(
         ThreadKind::Rfc,
@@ -938,7 +938,7 @@ fn migrate_handles_mixed_chain_with_snapshot_bottom_and_event_tail() {
         created_at: now + chrono::Duration::minutes(1),
         actor: "human/bob".into(),
         body: Some("after-snapshot comment".into()),
-        node_type: Some(git_forum::internal::event::NodeType::Comment),
+        node_type: Some(git_forum::internal::legacy::event::NodeType::Comment),
         ..Event::default()
     };
     let blob = git
@@ -1046,7 +1046,7 @@ fn migrate_cli_handles_mixed_chain_through_full_handler() {
         created_at: now + chrono::Duration::minutes(1),
         actor: "human/bob".into(),
         body: Some("after-snapshot tail".into()),
-        node_type: Some(git_forum::internal::event::NodeType::Comment),
+        node_type: Some(git_forum::internal::legacy::event::NodeType::Comment),
         ..Event::default()
     };
     let blob = git

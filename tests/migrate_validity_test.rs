@@ -44,10 +44,10 @@ use std::process::Command;
 use chrono::{TimeZone, Utc};
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::error::ForumError;
-use git_forum::internal::event::{self, Event, EventType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id_alloc;
 use git_forum::internal::init;
+use git_forum::internal::legacy::event::{self, Event, EventType, ThreadKind};
 use git_forum::internal::snapshot;
 
 fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
@@ -89,7 +89,7 @@ fn say_event(thread_id: &str, body: &str, ts_offset_min: i64) -> Event {
             + chrono::Duration::minutes(ts_offset_min),
         actor: "human/bob".into(),
         body: Some(body.into()),
-        node_type: Some(git_forum::internal::event::NodeType::Comment),
+        node_type: Some(git_forum::internal::legacy::event::NodeType::Comment),
         ..Event::default()
     }
 }

@@ -24,7 +24,7 @@
 //!   lifecycle (P0 #34ith16h). Lenient replay still applies any
 //!   `parse_lenient`-able state, so legacy chains keep replaying.
 
-use super::event::EventType;
+use super::legacy::event::EventType;
 
 /// A semantic issue detected by strict replay.
 ///
@@ -58,7 +58,7 @@ pub enum StrictReplayIssue {
     InvalidLifecycleValue { event_id: String, value: String },
     /// A `state` event's `new_state` does not parse as a known status
     /// (canonical 2.0 OR a 1.x synonym handled by
-    /// [`ThreadStatus::parse_lenient`](super::event::ThreadStatus::parse_lenient)).
+    /// [`ThreadStatus::parse_lenient`](super::legacy::event::ThreadStatus::parse_lenient)).
     /// Lenient replay leaves the prior status untouched; strict mode flags it.
     InvalidStateValue { event_id: String, value: String },
     /// SPEC-2.0 §3.1 — a `state` event's `from -> to` edge is not legal

@@ -21,12 +21,12 @@ use crate::internal::clock::Clock;
 use crate::internal::commands::show;
 use crate::internal::error::ForumError;
 use crate::internal::id_alloc;
+use crate::internal::legacy::workflow::SPEC;
 use crate::internal::node::{NodeKind, NodeRecord, NodeStatus};
 use crate::internal::policy::Lifecycle;
 use crate::internal::policy::Policy;
 use crate::internal::snapshot::{self, store::write_snapshot, Link, NodeWithBody, ThreadDocument};
 use crate::internal::thread;
-use crate::internal::workflow::SPEC;
 
 use super::shared::{discover_repo_with_init_warning, resolve_actor, resolve_tid};
 
@@ -93,7 +93,7 @@ pub fn shorthand_target_for_lifecycle(
     shorthand: &str,
     lifecycle: Lifecycle,
 ) -> Result<&'static str, ForumError> {
-    use crate::internal::workflow::ShorthandResolution::*;
+    use crate::internal::legacy::workflow::ShorthandResolution::*;
     match SPEC.shorthand_target(shorthand, lifecycle) {
         Target(t) => Ok(t),
         NotApplicable(hint) => Err(ForumError::Config(format!("{hint} (SPEC-2.0 §9.3)"))),
@@ -108,7 +108,7 @@ pub fn shorthand_target_for_lifecycle(
 /// `open`, …). Used by both the shorthand arms and the canonical
 /// `git forum state <ID> <STATE>` form.
 fn resolve_target_state(new_state: &str, lifecycle: Lifecycle) -> Result<&'static str, ForumError> {
-    use crate::internal::workflow::ShorthandResolution::*;
+    use crate::internal::legacy::workflow::ShorthandResolution::*;
     match SPEC.shorthand_target(new_state, lifecycle) {
         Target(t) => Ok(t),
         NotApplicable(hint) => Err(ForumError::Config(format!("{hint} (SPEC-2.0 §9.3)"))),

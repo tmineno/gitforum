@@ -6,8 +6,8 @@
 mod support;
 
 use git_forum::internal::config::CommitIdentity;
-use git_forum::internal::event::{self, ThreadKind};
 use git_forum::internal::init;
+use git_forum::internal::legacy::event::{self, ThreadKind};
 
 use support::forum::{
     sample_create_event as sample_create, setup_no_init as setup, test_thread_id,

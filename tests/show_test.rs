@@ -7,9 +7,9 @@ mod support;
 
 use git_forum::internal::commands::show;
 use git_forum::internal::create;
-use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::evidence;
 use git_forum::internal::index;
+use git_forum::internal::legacy::event::{NodeType, ThreadKind};
 use git_forum::internal::reindex;
 use git_forum::internal::thread;
 use git_forum::internal::write_ops;

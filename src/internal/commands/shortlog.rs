@@ -54,7 +54,7 @@ pub fn run(args: ShortlogArgs, ctx: &Context) -> Result<(), ForumError> {
 /// pre-cutover behaviour. Either path returns the same answer for
 /// threads that are currently terminal.
 pub fn terminal_state_date(git: &GitOps, state: &ThreadState) -> Option<DateTime<Utc>> {
-    use crate::internal::event::EventType;
+    use crate::internal::legacy::event::EventType;
 
     if !TERMINAL_STATES.contains(&state.status.as_str()) {
         return None;

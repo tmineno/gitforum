@@ -7,7 +7,7 @@ mod support;
 
 use git_forum::internal::commands::verify;
 use git_forum::internal::create;
-use git_forum::internal::event::{NodeType, ThreadKind};
+use git_forum::internal::legacy::event::{NodeType, ThreadKind};
 use git_forum::internal::policy::{GuardRule, Policy};
 use git_forum::internal::state_change;
 use git_forum::internal::write_ops;

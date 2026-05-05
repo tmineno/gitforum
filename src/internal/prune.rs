@@ -22,8 +22,8 @@
 use std::collections::HashSet;
 
 use super::error::ForumResult;
-use super::event;
 use super::git_ops::GitOps;
+use super::legacy::event;
 use super::refs;
 use super::thread;
 use super::validate::StrictReplayIssue;

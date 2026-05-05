@@ -76,16 +76,16 @@ impl Lifecycle {
 
     /// SPEC-2.0 §3.1.1 — initial state per lifecycle.
     pub fn initial_state(self) -> &'static str {
-        super::workflow::SPEC.initial_state(self)
+        super::legacy::workflow::SPEC.initial_state(self)
     }
 
     /// SPEC-2.0 §3.1.1 — states reachable for this lifecycle.
     pub fn allowed_states(self) -> &'static [&'static str] {
-        super::workflow::SPEC.allowed_states(self)
+        super::legacy::workflow::SPEC.allowed_states(self)
     }
 
     pub fn allows_state(self, state: &str) -> bool {
-        super::workflow::SPEC.allows_state(self, state)
+        super::legacy::workflow::SPEC.allows_state(self, state)
     }
 }
 

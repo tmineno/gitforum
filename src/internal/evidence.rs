@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use super::clock::Clock;
 use super::error::{ForumError, ForumResult};
-use super::event::{Event, EventType};
 use super::git_ops::GitOps;
+use super::legacy::event::{Event, EventType};
 
 /// Supported evidence kinds (spec §7.4).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,7 +107,7 @@ pub fn add_evidence(
         ref_target,
         locator,
     });
-    super::event::write_event(git, &ev)
+    super::legacy::event::write_event(git, &ev)
 }
 
 fn canonicalize_evidence_ref(
@@ -138,7 +138,7 @@ pub fn add_thread_link(
     let ev = Event::base(thread_id, EventType::Link, actor, clock)
         .with_target_node_id(target_thread_id)
         .with_link_rel(rel);
-    super::event::write_event(git, &ev)
+    super::legacy::event::write_event(git, &ev)
 }
 
 // --------------------------------------------------------------------

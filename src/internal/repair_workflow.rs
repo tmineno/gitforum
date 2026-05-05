@@ -24,11 +24,11 @@
 
 use super::clock::Clock;
 use super::error::ForumResult;
-use super::event::{self, Event, EventType, Lifecycle};
 use super::git_ops::GitOps;
+use super::legacy::event::{self, Event, EventType, Lifecycle};
+use super::legacy::workflow::SPEC;
 use super::thread;
 use super::validate::StrictReplayIssue;
-use super::workflow::SPEC;
 
 /// One thread's repair status.
 #[derive(Debug, Clone, PartialEq, Eq)]

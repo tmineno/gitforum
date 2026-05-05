@@ -5,7 +5,10 @@ pub mod config;
 pub mod create;
 pub mod editor;
 pub mod error;
-pub mod event;
+// Phase 4 Step 2b (RFC `7ymtc4b2`, task `913c4s9v`): `event` relocated
+// to `internal::legacy::event` per ADR-011 Decision 1. Importers
+// should reach for the new path; non-migrate code is blocked by
+// `tests/legacy_gate_test.rs`.
 pub mod evidence;
 pub mod git_ops;
 pub mod github;
@@ -33,5 +36,6 @@ pub mod thread;
 pub mod timeline;
 pub mod tui;
 pub mod validate;
-pub mod workflow;
+// Phase 4 Step 2b: `workflow` relocated to `internal::legacy::workflow`
+// alongside `event`.
 pub mod write_ops;

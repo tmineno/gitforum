@@ -92,7 +92,7 @@ pub fn resolve_tid(git: &GitOps, user_input: &str) -> Result<String, ForumError>
 /// TODO(phase-4): the kind preset table itself disappears with the
 /// Phase 1 category rewrite; this helper goes with it.
 pub fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
-    use crate::internal::workflow::SPEC;
+    use crate::internal::legacy::workflow::SPEC;
     SPEC.preset_lookup(kind).map(|p| p.kind).ok_or_else(|| {
         let valid: Vec<&str> = SPEC.presets().iter().map(|p| p.name).collect();
         ForumError::Config(format!(

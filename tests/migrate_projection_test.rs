@@ -19,10 +19,10 @@ mod support;
 use chrono::{TimeZone, Utc};
 use git_forum::internal::commands::migrate;
 use git_forum::internal::config::RepoPaths;
-use git_forum::internal::event::{self, Event, EventType, ThreadKind};
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id_alloc;
 use git_forum::internal::init;
+use git_forum::internal::legacy::event::{self, Event, EventType, ThreadKind};
 
 fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
     let repo = support::repo::TestRepo::new();

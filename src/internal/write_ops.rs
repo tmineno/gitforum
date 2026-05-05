@@ -2,8 +2,8 @@ use chrono::{DateTime, Utc};
 
 use super::clock::Clock;
 use super::error::{ForumError, ForumResult};
-use super::event::{self, Event, EventType, NodeType};
 use super::git_ops::GitOps;
+use super::legacy::event::{self, Event, EventType, NodeType};
 use super::thread;
 
 /// Add a typed discussion node to a thread.
@@ -74,7 +74,7 @@ fn say_node_core(
     if let Some(ts) = created_at {
         ev = ev.with_created_at(ts);
     }
-    super::event::write_event(git, &ev)
+    super::legacy::event::write_event(git, &ev)
 }
 
 /// Write a `facet_set` event mutating a thread's lifecycle / tag facets.
@@ -156,7 +156,7 @@ pub fn revise_body(
     let ev = Event::base(thread_id, EventType::ReviseBody, actor, clock)
         .with_body(body)
         .with_incorporated_node_ids(resolved_ids);
-    super::event::write_event(git, &ev)?;
+    super::legacy::event::write_event(git, &ev)?;
     Ok(())
 }
 
@@ -177,7 +177,7 @@ pub fn revise_node(
     let ev = Event::base(thread_id, EventType::Edit, actor, clock)
         .with_body(body)
         .with_target_node_id(node_id);
-    super::event::write_event(git, &ev)?;
+    super::legacy::event::write_event(git, &ev)?;
     Ok(())
 }
 
@@ -203,7 +203,7 @@ pub fn retype_node(
         .with_target_node_id(node_id)
         .with_old_node_type(old_type);
     ev = super::legacy::v1::apply_canonical_node_type(ev, new_type);
-    super::event::write_event(git, &ev)?;
+    super::legacy::event::write_event(git, &ev)?;
     Ok(())
 }
 
@@ -222,7 +222,7 @@ pub fn node_lifecycle(
     event_type: EventType,
 ) -> ForumResult<()> {
     let ev = Event::base(thread_id, event_type, actor, clock).with_target_node_id(node_id);
-    super::event::write_event(git, &ev)?;
+    super::legacy::event::write_event(git, &ev)?;
     Ok(())
 }
 
@@ -305,7 +305,7 @@ mod facet_set_tests {
     fn make_rfc(git: &super::super::git_ops::GitOps) -> String {
         crate::internal::create::create_thread(
             git,
-            super::super::event::ThreadKind::Rfc,
+            super::super::legacy::event::ThreadKind::Rfc,
             "Test",
             None,
             "human/alice",

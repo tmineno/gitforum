@@ -3,7 +3,7 @@
 //! rendering pass — see RFC-lmr3wfcm Track E AC for the consolidation.
 
 use super::commands::show::short_oid;
-use super::event::{Event, EventType};
+use super::legacy::event::{Event, EventType};
 
 /// Render a markdown table for the given events.
 pub fn render_markdown(events: &[Event]) -> Vec<String> {

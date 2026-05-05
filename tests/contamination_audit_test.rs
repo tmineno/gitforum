@@ -97,64 +97,32 @@ const ALLOW_LIST: &[&str] = &[
     // (a) Permanent exemptions.
     "src/internal/legacy/mod.rs",
     "src/internal/legacy/v1.rs",
+    // Phase 4 Step 2b (RFC 7ymtc4b2, task 913c4s9v): event.rs and
+    // workflow.rs relocated from `internal::` to `internal::legacy::`.
+    // They sibling-import each other via `super::event` / `super::workflow`,
+    // which the contamination detector flags as "anchored at internal".
+    // Exempt them — they are structurally inside legacy/ and any
+    // non-legacy importer is caught by `tests/legacy_gate_test.rs`.
+    "src/internal/legacy/event.rs",
+    "src/internal/legacy/workflow.rs",
     "src/internal/commands/migrate.rs",
-    // (b) DELETE-list and MOVE-TO-LEGACY targets (removed in Steps 2-3).
-    "src/internal/event.rs",
-    "src/internal/workflow.rs",
-    "src/internal/timeline.rs",
-    "src/internal/index.rs",
-    "src/internal/reindex.rs",
-    "src/internal/create.rs",
-    "src/internal/write_ops.rs",
-    "src/internal/state_change.rs",
-    "src/internal/repair.rs",
-    "src/internal/repair_workflow.rs",
-    "src/internal/prune.rs",
-    "src/internal/purge.rs",
-    // (note: src/internal/github.rs has no forbidden imports — only github_import/export
-    // pull in event/state_change/etc. — so it's omitted here. It is still git rm'd in Step 3.)
-    "src/internal/github_import.rs",
-    "src/internal/github_export.rs",
+    // (b) DELETE-list targets that still reference forbidden modules
+    //     (removed in Step 3). Phase 4 Step 2b dramatically shrunk this
+    //     list because most former entries (timeline, index, create,
+    //     prune, purge, repair*, github*, state_change, write_ops, etc.)
+    //     now reach the v2 types via `internal::legacy::event` — caught
+    //     by `tests/legacy_gate_test.rs` instead. Only files that still
+    //     have *non-legacy* forbidden imports stay here.
+    "src/internal/reindex.rs",       // imports super::index
+    "src/internal/write_ops.rs",     // imports super::create + others
+    "src/internal/state_change.rs",  // imports super::write_ops
+    "src/internal/repair.rs",        // imports super::create + super::write_ops (test code)
+    "src/internal/github_import.rs", // imports super::create + super::write_ops + super::index
+    "src/internal/github_export.rs", // imports super::github
     "src/internal/commands/repair_workflow.rs",
+    "src/internal/commands/ls.rs", // imports super::super::index::SearchRow
     // (c) KEEP files currently contaminated — Phase 4 Step 1 rewires.
-    "src/internal/thread.rs",
-    // node.rs cleared in Phase 4 Step 1f (RFC 7ymtc4b2, task 913c4s9v):
-    // NodeType definition relocated into node.rs itself, so no
-    // event:: import remains. Picks up legacy_gate exemption (the
-    // canonical/legacy_subtype_label impls still call legacy::v1).
-    "src/internal/evidence.rs",
-    "src/internal/policy.rs",
-    // operation_check.rs cleared in Phase 4 Step 1i (RFC 7ymtc4b2,
-    // task 913c4s9v): normalize_state_name and NodeType both moved to
-    // 3.0-native homes (policy.rs and node.rs) — no event:: import.
-    "src/internal/validate.rs",
-    // id_alloc.rs cleared in Phase 4 Step 1g (RFC 7ymtc4b2,
-    // task 913c4s9v): switched event::ThreadKind to thread::ThreadKind.
-    "src/internal/commands/show.rs",
-    "src/internal/commands/ls.rs",
-    // commands/diff.rs cleared in Phase 4 Step 1b (RFC 7ymtc4b2,
-    // task 913c4s9v): revisions now derive from snapshot::history
-    // commits whose tree changed body.md — no super::event imports.
-    // commands/bulk.rs cleared in Phase 4 Step 1i: switched
-    // event::normalize_state_name and event::ThreadKind to their
-    // 3.0-native homes (policy.rs, thread.rs).
-    // commands/brief.rs cleared in Phase 4 Step 1j (RFC 7ymtc4b2,
-    // task 913c4s9v): test imports split off `event::{Lifecycle,
-    // ThreadKind, ThreadStatus}` to their 3.0-native homes (policy::,
-    // thread::).
-    // commands/verify.rs cleared in Phase 4 Step 1i: switched
-    // event::normalize_state_name and ThreadStatus / ThreadKind to
-    // their 3.0-native homes; the residual `event::{self}` glob was
-    // unused after the swap and dropped.
-    "src/internal/commands/doctor.rs",
-    "src/internal/commands/state.rs",
-    "src/internal/commands/shortlog.rs",
-    // commands/shorthand_say.rs cleared in Phase 4 Step 1f: switched
-    // event::NodeType to node::NodeType; no other event:: import remains.
-    "src/internal/commands/thread_new.rs",
-    // commands/node.rs cleared in Phase 4 Step 1f: switched
-    // event::NodeType to node::NodeType; no other event:: import remains.
-    "src/internal/commands/shared.rs",
+    //     Most former (c) entries cleared via Step 1 and Step 2b.
     "src/internal/tui/mod.rs",
     // tui/state.rs cleared in Phase 4 Step 2a (RFC 7ymtc4b2,
     // task 913c4s9v): switched its lone `event::validate_tag` call to

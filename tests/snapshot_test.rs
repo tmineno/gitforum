@@ -3,7 +3,9 @@ mod support;
 use chrono::TimeZone;
 use git_forum::internal::commands::ls;
 use git_forum::internal::commands::show;
-use git_forum::internal::event::{Event, EventType, Lifecycle, NodeType, ThreadKind, ThreadStatus};
+use git_forum::internal::legacy::event::{
+    Event, EventType, Lifecycle, NodeType, ThreadKind, ThreadStatus,
+};
 use git_forum::internal::node::Node;
 use git_forum::internal::thread::{NodeLookup, ThreadLink, ThreadState};
 

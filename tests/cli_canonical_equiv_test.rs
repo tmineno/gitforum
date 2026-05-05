@@ -5,9 +5,9 @@ mod support;
 use std::process::Command;
 
 use git_forum::internal::config::RepoPaths;
-use git_forum::internal::event::NodeType;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
+use git_forum::internal::legacy::event::NodeType;
 use git_forum::internal::thread;
 
 fn bin() -> String {

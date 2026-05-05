@@ -12,9 +12,9 @@
 
 use super::super::config::RepoPaths;
 use super::super::error::{ForumError, ForumResult};
-use super::super::event;
 use super::super::git_ops::GitOps;
 use super::super::init;
+use super::super::legacy::event;
 use super::super::refs;
 use super::super::snapshot;
 use super::super::thread;

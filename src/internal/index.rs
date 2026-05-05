@@ -726,7 +726,9 @@ mod tests {
     }
 
     fn make_state(id: &str) -> ThreadState {
-        use crate::internal::event::{Event, EventType, Lifecycle, ThreadKind, ThreadStatus};
+        use crate::internal::legacy::event::{
+            Event, EventType, Lifecycle, ThreadKind, ThreadStatus,
+        };
         let t = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
         ThreadState {
             id: id.into(),
@@ -771,7 +773,7 @@ mod tests {
 
     #[test]
     fn upsert_persists_lifecycle_explicit_and_tags() {
-        use crate::internal::event::Lifecycle;
+        use crate::internal::legacy::event::Lifecycle;
         let conn = in_memory();
         let mut state = make_state("RFC-0001");
         state.lifecycle = Lifecycle::Execution; // override + simulate facet_set write
@@ -805,7 +807,7 @@ mod tests {
 
     #[test]
     fn search_matches_lifecycle_column() {
-        use crate::internal::event::Lifecycle;
+        use crate::internal::legacy::event::Lifecycle;
         let conn = in_memory();
         let mut s1 = make_state("RFC-0001");
         s1.lifecycle = Lifecycle::Proposal;
@@ -829,7 +831,7 @@ mod tests {
         // Phase 3: `lifecycle:proposal` is an EXACT column filter, not a
         // free-text substring. A thread whose body merely mentions the
         // word "proposal" must NOT match this token.
-        use crate::internal::event::Lifecycle;
+        use crate::internal::legacy::event::Lifecycle;
         let conn = in_memory();
         let mut s1 = make_state("RFC-0001");
         s1.lifecycle = Lifecycle::Proposal;
@@ -870,7 +872,7 @@ mod tests {
     fn search_combines_prefix_and_freetext_with_and() {
         // Combined: `lifecycle:execution Other` -> the thread must match
         // both. Verifies the conjunction wiring of the new query parser.
-        use crate::internal::event::Lifecycle;
+        use crate::internal::legacy::event::Lifecycle;
         let conn = in_memory();
         let mut s1 = make_state("RFC-0001");
         s1.lifecycle = Lifecycle::Proposal;

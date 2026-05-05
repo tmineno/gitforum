@@ -6,7 +6,7 @@ mod support;
 
 use git_forum::internal::commands::ls;
 use git_forum::internal::create;
-use git_forum::internal::event::ThreadKind;
+use git_forum::internal::legacy::event::ThreadKind;
 use git_forum::internal::thread;
 
 use support::forum::{fixed_clock, make_dec, make_task, setup};

@@ -2,9 +2,9 @@ use chrono::{DateTime, Utc};
 
 use super::clock::Clock;
 use super::error::{ForumError, ForumResult};
-use super::event::{Event, EventType, ThreadKind};
 use super::git_ops::GitOps;
 use super::id_alloc;
+use super::legacy::event::{Event, EventType, ThreadKind};
 
 /// Maximum number of CAS retries on ref collision during thread creation.
 const MAX_CREATE_RETRIES: usize = 5;
@@ -111,7 +111,7 @@ fn create_thread_core(
         if let Some(body) = body {
             event = event.with_body(body);
         }
-        match super::event::write_event(git, &event) {
+        match super::legacy::event::write_event(git, &event) {
             Ok(_) => return Ok(thread_id),
             Err(ForumError::Git(msg)) if msg.contains("already exists") => {
                 last_err = Some(ForumError::Git(msg));

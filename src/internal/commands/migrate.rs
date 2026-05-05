@@ -34,10 +34,10 @@ use sha2::{Digest, Sha256};
 
 use super::super::config::RepoPaths;
 use super::super::error::{ForumError, ForumResult};
-use super::super::event::{self, NodeType, ThreadKind};
 use super::super::evidence::{EvidenceFile, EvidenceRecord};
 use super::super::git_ops::GitOps;
 use super::super::id_alloc;
+use super::super::legacy::event::{self, NodeType, ThreadKind};
 use super::super::node::{NodeKind, NodeRecord, NodeStatus};
 use super::super::refs;
 use super::super::snapshot::{self, Link, Links, NodeWithBody, ThreadDocument};
@@ -721,7 +721,7 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
     let mut omissions: Vec<Omission> = Vec::new();
     let mut tags: Vec<String> = Vec::with_capacity(state.tags.len());
     for tag in &state.tags {
-        match super::super::event::validate_tag(tag) {
+        match super::super::legacy::event::validate_tag(tag) {
             Ok(()) => {
                 if !tags.iter().any(|t| t == tag) {
                     tags.push(tag.clone());

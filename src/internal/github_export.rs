@@ -230,7 +230,7 @@ fn re_export_issue(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::event::NodeType;
+    use crate::internal::legacy::event::NodeType;
     use chrono::TimeZone;
 
     fn make_node(node_id: &str, node_type: NodeType, body: &str) -> Node {

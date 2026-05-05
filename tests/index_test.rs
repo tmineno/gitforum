@@ -8,11 +8,11 @@ mod support;
 
 use chrono::{TimeZone, Utc};
 use git_forum::internal::clock::FixedClock;
-use git_forum::internal::event::{self, NodeType, ThreadKind};
 use git_forum::internal::evidence;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::index;
 use git_forum::internal::init;
+use git_forum::internal::legacy::event::{self, NodeType, ThreadKind};
 use git_forum::internal::reindex;
 use git_forum::internal::write_ops;
 

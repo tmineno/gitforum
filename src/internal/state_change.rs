@@ -1,8 +1,8 @@
 use super::clock::Clock;
 use super::error::{ForumError, ForumResult};
-use super::event;
-use super::event::{Event, EventType, NodeType};
 use super::git_ops::GitOps;
+use super::legacy::event;
+use super::legacy::event::{Event, EventType, NodeType};
 use super::node::Node;
 use super::policy::Policy;
 use super::thread;
@@ -88,7 +88,7 @@ pub fn prepare_state_change(
     let resolve_action_ids = if options.resolve_open_actions
         && matches!(
             state.kind,
-            super::event::ThreadKind::Issue | super::event::ThreadKind::Task
+            super::legacy::event::ThreadKind::Issue | super::legacy::event::ThreadKind::Task
         )
         && event::normalize_state_name(new_state) == "done"
     {
@@ -227,7 +227,7 @@ pub fn change_state(
     if let Some(ref text) = comment {
         ev = ev.with_body(text);
     }
-    super::event::write_event(git, &ev)?;
+    super::legacy::event::write_event(git, &ev)?;
     Ok(StateChangeOutcome::Applied {
         from: plan.from_state,
         to: new_state.to_string(),

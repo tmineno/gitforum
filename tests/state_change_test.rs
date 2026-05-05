@@ -8,9 +8,9 @@ mod support;
 
 use git_forum::internal::clock::Clock;
 use git_forum::internal::create;
-use git_forum::internal::event::{self, Event, EventType, NodeType, ThreadKind};
 use git_forum::internal::evidence;
 use git_forum::internal::evidence::EvidenceKind;
+use git_forum::internal::legacy::event::{self, Event, EventType, NodeType, ThreadKind};
 use git_forum::internal::policy::{GuardRule, Policy};
 use git_forum::internal::state_change;
 use git_forum::internal::thread;
@@ -860,7 +860,7 @@ fn legacy_state_approvals_replay_into_nodes() {
     // 1.x State events stored approvals on the event itself. Replay must
     // synthesize equivalent Approval nodes so policy guards see them
     // (SPEC-2.0 §2.8 / §10.1).
-    use git_forum::internal::event::{Approval, ApprovalMechanism};
+    use git_forum::internal::legacy::event::{Approval, ApprovalMechanism};
     let (_repo, git, _paths) = setup();
     let thread_id = make_rfc(&git);
     let now = fixed_clock().now();

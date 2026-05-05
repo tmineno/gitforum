@@ -5,8 +5,8 @@
 mod support;
 
 use git_forum::internal::commands::brief;
-use git_forum::internal::event::ThreadKind;
 use git_forum::internal::index;
+use git_forum::internal::legacy::event::ThreadKind;
 use git_forum::internal::thread;
 
 use support::forum::{build_index, link_thread as link, make_thread, open_index, setup};

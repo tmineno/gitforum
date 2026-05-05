@@ -13,8 +13,8 @@
 use std::collections::HashMap;
 
 use super::error::{ForumError, ForumResult};
-use super::event::{self, Event};
 use super::git_ops::GitOps;
+use super::legacy::event::{self, Event};
 use super::refs;
 use super::thread;
 
@@ -256,7 +256,7 @@ mod tests {
         let mut ev = Event {
             event_id: "test".into(),
             thread_id: "ISSUE-0001".into(),
-            event_type: super::super::event::EventType::Say,
+            event_type: super::super::legacy::event::EventType::Say,
             created_at: chrono::Utc::now(),
             actor: "human/alice".into(),
             title: Some("Secret title".into()),
@@ -274,7 +274,7 @@ mod tests {
         let mut ev = Event {
             event_id: "test".into(),
             thread_id: "ISSUE-0001".into(),
-            event_type: super::super::event::EventType::State,
+            event_type: super::super::legacy::event::EventType::State,
             created_at: chrono::Utc::now(),
             actor: "human/alice".into(),
             new_state: Some("closed".into()),

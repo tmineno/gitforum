@@ -375,7 +375,7 @@ fn canonical_thread_new_with_lifecycle_and_tag() {
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(
         state.lifecycle,
-        git_forum::internal::event::Lifecycle::Execution,
+        git_forum::internal::legacy::event::Lifecycle::Execution,
         "facet_set should persist execution lifecycle"
     );
     assert!(
@@ -434,7 +434,7 @@ fn canonical_thread_new_rejects_unknown_lifecycle() {
 /// (P0 §34ith16h) so the structural change cannot regress the contract.
 #[test]
 fn preset_aliases_resolve_to_canonical_axes() {
-    use git_forum::internal::event::Lifecycle;
+    use git_forum::internal::legacy::event::Lifecycle;
     let repo = support::repo::TestRepo::new();
     let paths = RepoPaths::from_repo_root(repo.path());
     init::init_forum(&paths).unwrap();
@@ -486,7 +486,7 @@ fn preset_aliases_resolve_to_canonical_axes() {
 /// must keep working through any `WorkflowSpec` consolidation.
 #[test]
 fn id_prefix_aliases_resolve_to_canonical_kind() {
-    use git_forum::internal::event::ThreadKind;
+    use git_forum::internal::legacy::event::ThreadKind;
     assert_eq!(ThreadKind::from_id_prefix("ASK"), Some(ThreadKind::Issue));
     assert_eq!(ThreadKind::from_id_prefix("ISSUE"), Some(ThreadKind::Issue));
     assert_eq!(ThreadKind::from_id_prefix("JOB"), Some(ThreadKind::Task));

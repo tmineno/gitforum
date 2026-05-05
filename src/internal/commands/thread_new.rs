@@ -26,13 +26,13 @@ use crate::internal::error::ForumError;
 use crate::internal::evidence::{EvidenceFile, EvidenceKind, EvidenceRecord};
 use crate::internal::git_ops::GitOps;
 use crate::internal::id_alloc;
+use crate::internal::legacy::workflow::{KindPreset, SPEC};
 use crate::internal::node::{NodeKind, NodeRecord, NodeStatus};
 use crate::internal::policy::Policy;
 use crate::internal::snapshot::{
     self, store::write_snapshot, Link, Links, NodeWithBody, ThreadDocument,
 };
 use crate::internal::thread::ThreadSnapshot;
-use crate::internal::workflow::{KindPreset, SPEC};
 
 // Legacy event-side import — used only for operation-check input
 // shape (still keyed on `Lifecycle`/`tags`) and the lifecycle CLI

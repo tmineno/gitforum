@@ -12,12 +12,12 @@
 
 use super::super::error::ForumError;
 use super::super::git_ops::GitOps;
+use super::super::legacy::workflow::SPEC;
 use super::super::policy::Lifecycle;
 use super::super::policy::{self, Policy};
 use super::super::refs::thread_ref;
 use super::super::snapshot::history::{self, SnapshotLogEntry};
 use super::super::thread::{self, NodeLookup, ThreadState};
-use super::super::workflow::SPEC;
 use super::context::Context;
 use super::shared::resolve_tid;
 
@@ -1063,7 +1063,9 @@ fn fallback_scan_implements(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::event::{Event, EventType, Lifecycle, NodeType, ThreadKind, ThreadStatus};
+    use crate::internal::legacy::event::{
+        Event, EventType, Lifecycle, NodeType, ThreadKind, ThreadStatus,
+    };
     use crate::internal::node::Node;
     use crate::internal::thread::ThreadState;
     use chrono::TimeZone;

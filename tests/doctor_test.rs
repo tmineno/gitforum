@@ -6,8 +6,8 @@ mod support;
 
 use chrono::Utc;
 use git_forum::internal::commands::doctor::{self, CheckLevel};
-use git_forum::internal::event::ThreadKind;
 use git_forum::internal::init;
+use git_forum::internal::legacy::event::ThreadKind;
 use git_forum::internal::policy::Policy;
 
 use support::forum::{drive_to_done, link_thread, make_thread, setup_no_init as setup};
@@ -194,7 +194,7 @@ fn doctor_warns_on_orphan_thread_ref() {
 fn doctor_strict_flips_unknown_target_resolve_to_fail() {
     use chrono::TimeZone;
     use git_forum::internal::clock::FixedClock;
-    use git_forum::internal::event::{self as ev, Event, EventType, ThreadKind};
+    use git_forum::internal::legacy::event::{self as ev, Event, EventType, ThreadKind};
 
     let (_repo, git, paths) = setup();
     init::init_forum(&paths).unwrap();
@@ -266,7 +266,7 @@ fn doctor_strict_flips_unknown_target_resolve_to_fail() {
 fn prune_stale_events_drops_unknown_target_resolve() {
     use chrono::TimeZone;
     use git_forum::internal::clock::FixedClock;
-    use git_forum::internal::event::{self as ev, Event, EventType, ThreadKind};
+    use git_forum::internal::legacy::event::{self as ev, Event, EventType, ThreadKind};
     use git_forum::internal::prune;
 
     let (_repo, git, paths) = setup();
@@ -347,7 +347,7 @@ fn prune_stale_events_preserves_unaffected_prefix_sha() {
     // commit MUST be re-emitted (its parent changed).
     use chrono::TimeZone;
     use git_forum::internal::clock::FixedClock;
-    use git_forum::internal::event::{self as ev, Event, EventType, NodeType, ThreadKind};
+    use git_forum::internal::legacy::event::{self as ev, Event, EventType, NodeType, ThreadKind};
     use git_forum::internal::prune;
 
     let (_repo, git, paths) = setup();

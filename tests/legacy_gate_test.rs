@@ -31,8 +31,15 @@ const ALLOW_LIST: &[&str] = &[
     // The legacy tree itself (internal references inside the module).
     "src/internal/legacy/mod.rs",
     "src/internal/legacy/v1.rs",
+    // Phase 4 Step 2b (RFC 7ymtc4b2, task 913c4s9v): event.rs and
+    // workflow.rs themselves now live under `legacy/`. Their internal
+    // sibling-imports (legacy/event.rs uses super::workflow,
+    // legacy/workflow.rs uses super::event) trigger the gate's path
+    // walker; exempt them because they are inside the relocation
+    // target.
+    "src/internal/legacy/event.rs",
+    "src/internal/legacy/workflow.rs",
     // 2.0-native domain code that delegates to legacy::v1 per RFC 915yuegd P1.
-    "src/internal/event.rs",
     // Phase 4 Step 1f (RFC 7ymtc4b2): NodeType relocated from event.rs
     // to node.rs; its `canonical` / `is_canonical` / `legacy_subtype_label`
     // impls still delegate to `legacy::v1` until Step 5 deletes the v2
@@ -40,10 +47,38 @@ const ALLOW_LIST: &[&str] = &[
     "src/internal/node.rs",
     "src/internal/policy.rs",
     "src/internal/thread.rs",
-    "src/internal/workflow.rs",
     "src/internal/write_ops.rs",
     // The migrate command — the legitimate Phase 4 consumer.
     "src/internal/commands/migrate.rs",
+    // Phase 4 Step 2b (RFC 7ymtc4b2, task 913c4s9v): KEEP files with
+    // residual v2 read-path code that was previously importing
+    // `super::event::*` / `super::workflow::*` (then resolving via the
+    // event.rs / workflow.rs ALLOW slots). Those files now reach into
+    // `internal::legacy::event` / `internal::legacy::workflow` directly
+    // and need their own exemption until Step 5 removes the v2 peer
+    // types they're projecting.
+    "src/internal/validate.rs",
+    "src/internal/evidence.rs",
+    "src/internal/commands/doctor.rs", // event::is_orphan_ref + legacy event chain probes
+    "src/internal/commands/state.rs",  // workflow::SPEC + workflow::ShorthandResolution
+    "src/internal/commands/thread_new.rs", // workflow::{KindPreset, SPEC}
+    "src/internal/commands/shared.rs", // workflow::SPEC (test code)
+    "src/internal/commands/show.rs",   // workflow::SPEC + test fixtures
+    "src/internal/commands/ls.rs",     // event::* test fixtures
+    "src/internal/commands/shortlog.rs", // event::EventType test fixture
+    // DELETE-list files (retired in Step 3). Each has v2-event imports
+    // that are about to disappear with the file; exempt for the
+    // duration of the transition.
+    "src/internal/timeline.rs",
+    "src/internal/create.rs",
+    "src/internal/state_change.rs",
+    "src/internal/prune.rs",
+    "src/internal/purge.rs",
+    "src/internal/repair.rs",
+    "src/internal/repair_workflow.rs",
+    "src/internal/index.rs",
+    "src/internal/github_import.rs",
+    "src/internal/github_export.rs",
 ];
 
 /// Walks every `syn::Path` and records whether any of them uses

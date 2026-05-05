@@ -12,9 +12,9 @@
 //! Side effects: rewrites git commits and refs for conflicting threads.
 
 use super::error::{ForumError, ForumResult};
-use super::event::{self, EventType};
 use super::git_ops::GitOps;
 use super::id_alloc;
+use super::legacy::event::{self, EventType};
 use super::refs;
 
 /// A detected thread ID conflict between local and remote.
@@ -193,8 +193,8 @@ mod tests {
     use super::*;
     use crate::internal::clock::Clock;
     use crate::internal::create;
-    use crate::internal::event::{NodeType, ThreadKind};
     use crate::internal::git_ops::GitOps;
+    use crate::internal::legacy::event::{NodeType, ThreadKind};
     use crate::internal::write_ops;
 
     use chrono::{TimeZone, Utc};

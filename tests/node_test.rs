@@ -10,7 +10,7 @@ use chrono::{TimeZone, Utc};
 use git_forum::internal::clock::Clock;
 use git_forum::internal::commands::show;
 use git_forum::internal::create;
-use git_forum::internal::event::{self, Event, EventType, NodeType, ThreadKind};
+use git_forum::internal::legacy::event::{self, Event, EventType, NodeType, ThreadKind};
 use git_forum::internal::thread;
 use git_forum::internal::write_ops;
 

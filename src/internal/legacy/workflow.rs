@@ -20,7 +20,7 @@
 //!
 //! 1.x → 2.0 compatibility rules (state-name aliases,
 //! `migrate_legacy_state`, `kind:`-prefixed guard scopes, etc.) live
-//! one level over in [`super::legacy::v1`] per RFC 915yuegd P1.
+//! one level over in [`super::v1`] per RFC 915yuegd P1.
 //! `WorkflowSpec` calls into legacy to keep its lifecycle-aware query
 //! methods forgiving of legacy state names while the alias data
 //! itself stays out of the 2.0 source of truth.
@@ -189,12 +189,12 @@ impl WorkflowSpec {
     /// `true` iff `from -> to` is a valid edge for `lifecycle`.
     ///
     /// Inputs may be 1.x state names; the 1.x → 2.0 alias fold is done
-    /// via [`super::legacy::v1::normalize_state_name`]. Both endpoints
+    /// via [`super::v1::normalize_state_name`]. Both endpoints
     /// must be in the lifecycle's allowed set (§3.1.1) and the edge
     /// must exist in the unified §3.1 graph.
     pub fn is_valid_transition(&self, lifecycle: Lifecycle, from: &str, to: &str) -> bool {
-        let from = super::legacy::v1::normalize_state_name(from);
-        let to = super::legacy::v1::normalize_state_name(to);
+        let from = super::v1::normalize_state_name(from);
+        let to = super::v1::normalize_state_name(to);
         self.allows_state(lifecycle, from)
             && self.allows_state(lifecycle, to)
             && UNIFIED_TRANSITIONS
@@ -204,9 +204,9 @@ impl WorkflowSpec {
 
     /// Destination states reachable in one step from `from` for `lifecycle`.
     /// Returns 2.0 state names; `from` may be a 1.x name (folded via
-    /// [`super::legacy::v1::normalize_state_name`]).
+    /// [`super::v1::normalize_state_name`]).
     pub fn valid_targets(&self, lifecycle: Lifecycle, from: &str) -> Vec<&'static str> {
-        let from = super::legacy::v1::normalize_state_name(from);
+        let from = super::v1::normalize_state_name(from);
         UNIFIED_TRANSITIONS
             .iter()
             .filter_map(|&(s, d)| (s == from && self.allows_state(lifecycle, d)).then_some(d))
@@ -215,15 +215,15 @@ impl WorkflowSpec {
 
     /// Shortest path from `from` to `to` via BFS over the unified graph,
     /// restricted to states allowed for `lifecycle`. `from`/`to` may be
-    /// 1.x names (folded via [`super::legacy::v1::normalize_state_name`]).
+    /// 1.x names (folded via [`super::v1::normalize_state_name`]).
     pub fn find_path(
         &self,
         lifecycle: Lifecycle,
         from: &str,
         to: &str,
     ) -> Option<Vec<&'static str>> {
-        let from = super::legacy::v1::normalize_state_name(from);
-        let to = super::legacy::v1::normalize_state_name(to);
+        let from = super::v1::normalize_state_name(from);
+        let to = super::v1::normalize_state_name(to);
         if from == to {
             return Some(vec![]);
         }

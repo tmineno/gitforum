@@ -4,13 +4,13 @@ use chrono::{TimeZone, Utc};
 use git_forum::internal::clock::FixedClock;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::create;
-use git_forum::internal::event::{NodeType, ThreadKind};
 use git_forum::internal::evidence;
 use git_forum::internal::evidence::EvidenceKind;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::github_export;
 use git_forum::internal::github_import;
 use git_forum::internal::init;
+use git_forum::internal::legacy::event::{NodeType, ThreadKind};
 use git_forum::internal::write_ops;
 
 fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {

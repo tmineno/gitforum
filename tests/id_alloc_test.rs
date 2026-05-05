@@ -3,8 +3,8 @@
 
 mod support;
 
-use git_forum::internal::event::ThreadKind;
 use git_forum::internal::id_alloc;
+use git_forum::internal::legacy::event::ThreadKind;
 
 #[test]
 fn alloc_issue_id_has_correct_prefix() {

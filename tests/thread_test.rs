@@ -7,8 +7,8 @@ mod support;
 
 use chrono::{TimeZone, Utc};
 use git_forum::internal::create;
-use git_forum::internal::event::{self, ThreadKind};
 use git_forum::internal::id_alloc;
+use git_forum::internal::legacy::event::{self, ThreadKind};
 use git_forum::internal::thread;
 
 use support::forum::{

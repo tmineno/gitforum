@@ -4,7 +4,7 @@
 
 mod support;
 
-use git_forum::internal::event::{self, EventType, ThreadKind};
+use git_forum::internal::legacy::event::{self, EventType, ThreadKind};
 
 use support::forum::{
     sample_create_event as sample_create, sample_state_event as sample_state,

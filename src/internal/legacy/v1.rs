@@ -5,8 +5,8 @@
 //! these functions instead of duplicating the rule bodies inline; tests
 //! at the bottom of this module pin every rule.
 
-use super::super::event::{Event, Lifecycle, NodeType, ThreadKind};
-use super::super::workflow::SPEC;
+use super::event::{Event, Lifecycle, NodeType, ThreadKind};
+use super::workflow::SPEC;
 
 // =============================================================================
 // 1. State alias normalisation

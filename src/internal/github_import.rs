@@ -8,11 +8,11 @@
 use super::clock::Clock;
 use super::create;
 use super::error::{ForumError, ForumResult};
-use super::event::{Event, EventType, NodeType, ThreadKind};
 use super::evidence::{Evidence, EvidenceKind};
 use super::git_ops::GitOps;
 use super::github::{self, GhIssue};
 use super::index;
+use super::legacy::event::{Event, EventType, NodeType, ThreadKind};
 use super::policy::Policy;
 use super::state_change::{self, StateChangeOptions};
 use super::thread;
@@ -186,7 +186,7 @@ pub fn import_issue(
         locator: None,
     };
     let ev = Event::base(&thread_id, EventType::Link, actor, clock).with_evidence(evidence);
-    super::event::write_event(git, &ev)?;
+    super::legacy::event::write_event(git, &ev)?;
 
     // 5. If closed, transition state (using default policy to avoid guard conflicts)
     let state_changed = if issue.state == "CLOSED" {

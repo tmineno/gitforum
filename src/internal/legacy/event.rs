@@ -1,10 +1,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::error::{ForumError, ForumResult};
-use super::evidence::Evidence;
-use super::git_ops::GitOps;
-use super::refs;
+use super::super::error::{ForumError, ForumResult};
+use super::super::evidence::Evidence;
+use super::super::git_ops::GitOps;
+use super::super::refs;
 use super::workflow::SPEC;
 
 /// Approval mechanism (legacy SPEC.md §7.7).
@@ -40,13 +40,13 @@ pub struct Approval {
 // (RFC `7ymtc4b2`, task `913c4s9v`). KEEP files import via the new
 // path; event.rs re-exports for back-compat with the legacy event
 // loaders that still consume it (deleted in Step 2/3).
-pub use super::thread::ThreadKind;
+pub use super::super::thread::ThreadKind;
 
 // `ThreadStatus` was relocated to `internal::thread` in Phase 4
 // Step 1h (RFC `7ymtc4b2`, task `913c4s9v`). KEEP files import via
 // the new path; event.rs re-exports for legacy/DELETE-list callers
 // retired in Steps 2/3.
-pub use super::thread::ThreadStatus;
+pub use super::super::thread::ThreadStatus;
 
 // `Lifecycle` was relocated to `internal::policy` in Phase 4 Step 1j
 // (RFC `7ymtc4b2`, task `913c4s9v`). Co-located with the existing v2
@@ -57,18 +57,18 @@ pub use super::thread::ThreadStatus;
 // v3.1 concern — v3.0.0's `CategoryRegistry` already exists side-by-
 // side and v2 reads continue to use Lifecycle.
 //
-// event.rs keeps `pub use super::policy::Lifecycle;` for legacy /
+// event.rs keeps `pub use super::super::policy::Lifecycle;` for legacy /
 // DELETE-list callers (write_ops, state_change, github_*, repair,
 // create, workflow, legacy/v1, commands/migrate) retired in Steps
 // 2/3.
-pub use super::policy::Lifecycle;
+pub use super::super::policy::Lifecycle;
 
 // `validate_tag` was relocated to `internal::thread` in Phase 4
 // Step 2a (RFC `7ymtc4b2`, task `913c4s9v`). It's a SPEC-2.0 §2.3.5
 // (carried into SPEC-3.0 §2.3.5) tag-grammar check, naturally a
 // thread-shaped concern. event.rs back-imports for legacy callers
 // retired in Steps 2/3.
-pub use super::thread::validate_tag;
+pub use super::super::thread::validate_tag;
 
 // `impl Lifecycle { ... }` and `impl Display for Lifecycle` were
 // relocated alongside the enum definition to `internal::policy` in
@@ -90,14 +90,14 @@ pub fn unified_transitions() -> &'static [(&'static str, &'static str)] {
 // Phase 4 Step 1i (RFC `7ymtc4b2`, task `913c4s9v`). KEEP files import
 // via the new path; event.rs re-exports for legacy / DELETE-list
 // callers retired in Steps 2/3.
-pub use super::policy::normalize_state_name;
+pub use super::super::policy::normalize_state_name;
 
 /// SPEC-2.0 §3.1.1 / §3.1.2 — kind-aware migration of a 1.x state name to a
 /// 2.0 state in the lifecycle's allowed set.
 ///
-/// Thin wrapper over [`super::legacy::v1::migrate_legacy_state`].
+/// Thin wrapper over [`super::v1::migrate_legacy_state`].
 pub fn migrate_legacy_state(kind: ThreadKind, state: &str) -> &str {
-    super::legacy::v1::migrate_legacy_state(kind, state)
+    super::v1::migrate_legacy_state(kind, state)
 }
 
 /// Shortest path from `from` to `to` for `lifecycle`. Thin wrapper over
@@ -171,7 +171,7 @@ impl std::fmt::Display for EventType {
 // here so internal references inside this file (and the legacy
 // `Event` struct's `node_type` field) keep working until Step 2
 // moves event.rs into `internal::legacy/`.
-pub use super::node::NodeType;
+pub use super::super::node::NodeType;
 
 /// An immutable event in a thread's history.
 ///
@@ -253,7 +253,7 @@ impl Event {
         thread_id: &str,
         event_type: EventType,
         actor: &str,
-        clock: &dyn super::clock::Clock,
+        clock: &dyn super::super::clock::Clock,
     ) -> Self {
         Self {
             thread_id: thread_id.to_string(),
@@ -343,7 +343,7 @@ impl Event {
         self
     }
 
-    pub fn with_evidence(mut self, evidence: super::evidence::Evidence) -> Self {
+    pub fn with_evidence(mut self, evidence: super::super::evidence::Evidence) -> Self {
         self.evidence = Some(evidence);
         self
     }
@@ -369,20 +369,20 @@ impl Event {
         const MAX_THREAD_ID: usize = 100;
 
         if self.actor.len() > MAX_ACTOR {
-            return Err(super::error::ForumError::Config(format!(
+            return Err(super::super::error::ForumError::Config(format!(
                 "actor too long ({} chars, max {MAX_ACTOR})",
                 self.actor.len()
             )));
         }
         if self.thread_id.len() > MAX_THREAD_ID {
-            return Err(super::error::ForumError::Config(format!(
+            return Err(super::super::error::ForumError::Config(format!(
                 "thread_id too long ({} chars, max {MAX_THREAD_ID})",
                 self.thread_id.len()
             )));
         }
         if let Some(ref title) = self.title {
             if title.len() > MAX_TITLE {
-                return Err(super::error::ForumError::Config(format!(
+                return Err(super::super::error::ForumError::Config(format!(
                     "title too long ({} chars, max {MAX_TITLE})",
                     title.len()
                 )));
@@ -390,7 +390,7 @@ impl Event {
         }
         if let Some(ref body) = self.body {
             if body.len() > MAX_BODY {
-                return Err(super::error::ForumError::Config(format!(
+                return Err(super::super::error::ForumError::Config(format!(
                     "body too long ({} bytes, max {MAX_BODY})",
                     body.len()
                 )));
@@ -432,7 +432,7 @@ pub struct EventMeta {
 /// `target_thread_id` + relation kind.
 #[derive(Debug, Clone)]
 pub enum LinkPayload {
-    Evidence(super::evidence::Evidence),
+    Evidence(super::super::evidence::Evidence),
     Thread {
         target_thread_id: String,
         link_rel: String,
@@ -568,7 +568,7 @@ impl DomainEvent {
 
 /// Reason a stored [`Event`] failed to project to a [`DomainEvent`].
 ///
-/// Mirrors [`super::validate::StrictReplayIssue::MissingRequiredField`]
+/// Mirrors [`super::super::validate::StrictReplayIssue::MissingRequiredField`]
 /// — replay catches the error and turns it into the corresponding
 /// strict issue while letting lenient replay continue with no state
 /// change for that event.
@@ -766,7 +766,7 @@ pub fn write_event(git: &GitOps, event: &Event) -> ForumResult<String> {
         Some(old_sha) => git.update_ref_cas(&ref_name, &commit_sha, old_sha)?,
         None if event.event_type == EventType::Create => git.create_ref(&ref_name, &commit_sha)?,
         None => {
-            return Err(super::error::ForumError::Repo(format!(
+            return Err(super::super::error::ForumError::Repo(format!(
                 "thread {} does not exist (no ref at {})",
                 event.thread_id, ref_name
             )));
