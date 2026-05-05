@@ -100,8 +100,8 @@ fn objection_shorthand_equals_node_add_objection() {
     assert!(out.status.success());
     let state_b = replay(repo_b.path(), &id_b);
 
-    assert_eq!(state_a.nodes[0].node_type, NodeKind::Objection);
-    assert_eq!(state_b.nodes[0].node_type, NodeKind::Objection);
+    assert_eq!(state_a.nodes[0].record.kind, NodeKind::Objection);
+    assert_eq!(state_b.nodes[0].record.kind, NodeKind::Objection);
     assert_eq!(state_a.nodes[0].body, state_b.nodes[0].body);
 }
 

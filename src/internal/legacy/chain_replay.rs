@@ -27,8 +27,10 @@
 //!   the old `thread::replay_thread_at` / `replay_thread_strict_at`.
 
 use super::super::error::{ForumError, ForumResult};
+use super::super::evidence::EvidenceRecord;
 use super::super::git_ops::GitOps;
-use super::super::node::{Node, NodeKind};
+use super::super::node::{NodeKind, NodeRecord, NodeStatus};
+use super::super::snapshot::store::NodeWithBody;
 use super::super::thread::{materialize_thread_state_from_snapshot, ThreadState};
 use super::super::validate::StrictReplayIssue;
 use super::event::{
@@ -427,13 +429,15 @@ fn apply_event(
             // field; 2.0 emits them as Approval-typed Say nodes. Synthesize
             // equivalent nodes here so policy guards see one source of truth.
             for approval in approvals {
-                state.nodes.push(Node {
-                    node_id: format!("{}#{}", meta.event_id, approval.actor_id),
-                    node_type: NodeKind::Approval,
-                    body: String::new(),
-                    actor: approval.actor_id.clone(),
-                    created_at: approval.approved_at,
-                    ..Node::default()
+                state.nodes.push(NodeWithBody {
+                    record: NodeRecord {
+                        id: format!("{}#{}", meta.event_id, approval.actor_id),
+                        kind: NodeKind::Approval,
+                        created_at: approval.approved_at,
+                        created_by: approval.actor_id.clone(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
                 });
             }
         }
@@ -454,19 +458,19 @@ fn apply_event(
             // (Question/Claim/etc.) collapse to Comment with the
             // label preserved in legacy_subtype.
             let (kind, derived_subtype) = node_type_to_kind_and_subtype(*node_type);
-            state.nodes.push(Node {
-                node_id: target_node_id
-                    .clone()
-                    .unwrap_or_else(|| meta.event_id.clone()),
-                node_type: kind,
+            state.nodes.push(NodeWithBody {
+                record: NodeRecord {
+                    id: target_node_id
+                        .clone()
+                        .unwrap_or_else(|| meta.event_id.clone()),
+                    kind,
+                    created_at: meta.created_at,
+                    created_by: meta.actor.clone(),
+                    reply_to: reply_to.clone(),
+                    legacy_label: legacy_subtype.clone().or(derived_subtype),
+                    ..Default::default()
+                },
                 body: body.clone(),
-                actor: meta.actor.clone(),
-                created_at: meta.created_at,
-                resolved: false,
-                retracted: false,
-                incorporated: false,
-                reply_to: reply_to.clone(),
-                legacy_subtype: legacy_subtype.clone().or(derived_subtype),
             });
         }
         DomainEvent::Edit {
@@ -477,7 +481,7 @@ fn apply_event(
             if let Some(node) = state
                 .nodes
                 .iter_mut()
-                .find(|n| &n.node_id == target_node_id)
+                .find(|n| &n.record.id == target_node_id)
             {
                 node.body = body.clone();
             } else {
@@ -491,18 +495,20 @@ fn apply_event(
         DomainEvent::Retract {
             meta,
             target_node_id,
-        } => apply_node_flag(state, meta, target_node_id, issues, |n| n.retracted = true),
+        } => apply_node_flag(state, meta, target_node_id, issues, |n| {
+            n.record.status = NodeStatus::Retracted
+        }),
         DomainEvent::Resolve {
             meta,
             target_node_id,
-        } => apply_node_flag(state, meta, target_node_id, issues, |n| n.resolved = true),
+        } => apply_node_flag(state, meta, target_node_id, issues, |n| {
+            n.record.status = NodeStatus::Resolved
+        }),
         DomainEvent::Reopen {
             meta,
             target_node_id,
         } => apply_node_flag(state, meta, target_node_id, issues, |n| {
-            n.resolved = false;
-            n.retracted = false;
-            n.incorporated = false;
+            n.record.status = NodeStatus::Open;
         }),
         DomainEvent::Retype {
             meta,
@@ -513,12 +519,12 @@ fn apply_event(
             if let Some(node) = state
                 .nodes
                 .iter_mut()
-                .find(|n| &n.node_id == target_node_id)
+                .find(|n| &n.record.id == target_node_id)
             {
                 let (kind, derived_subtype) = node_type_to_kind_and_subtype(*node_type);
-                node.node_type = kind;
+                node.record.kind = kind;
                 if derived_subtype.is_some() {
-                    node.legacy_subtype = derived_subtype;
+                    node.record.legacy_label = derived_subtype;
                 }
             } else {
                 issues.push(StrictReplayIssue::UnknownTargetNode {
@@ -539,8 +545,8 @@ fn apply_event(
                 let found = state
                     .nodes
                     .iter_mut()
-                    .find(|n| n.node_id == *node_id)
-                    .map(|node| node.incorporated = true);
+                    .find(|n| n.record.id == *node_id)
+                    .map(|node| node.record.status = NodeStatus::Incorporated);
                 if found.is_none() {
                     issues.push(StrictReplayIssue::UnknownTargetNode {
                         event_id: meta.event_id.clone(),
@@ -555,9 +561,13 @@ fn apply_event(
         }
         DomainEvent::Link { meta, payload } => match payload {
             LinkPayload::Evidence(ev_data) => {
-                let mut ev = ev_data.clone();
-                ev.evidence_id = meta.event_id.clone();
-                state.evidence_items.push(ev);
+                state.evidence_items.push(EvidenceRecord {
+                    id: meta.event_id.clone(),
+                    kind: ev_data.kind.clone(),
+                    ref_target: ev_data.ref_target.clone(),
+                    created_at: meta.created_at,
+                    created_by: meta.actor.clone(),
+                });
             }
             LinkPayload::Thread {
                 target_thread_id,
@@ -662,9 +672,13 @@ fn apply_node_flag(
     meta: &EventMeta,
     target_node_id: &str,
     issues: &mut Vec<StrictReplayIssue>,
-    mutate: impl FnOnce(&mut Node),
+    mutate: impl FnOnce(&mut NodeWithBody),
 ) {
-    if let Some(node) = state.nodes.iter_mut().find(|n| n.node_id == target_node_id) {
+    if let Some(node) = state
+        .nodes
+        .iter_mut()
+        .find(|n| n.record.id == target_node_id)
+    {
         mutate(node);
     } else {
         issues.push(StrictReplayIssue::UnknownTargetNode {

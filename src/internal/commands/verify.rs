@@ -259,7 +259,7 @@ pub fn remediation_hint(rule: &str, state: &thread::ThreadState, thread_id: &str
             let ids: Vec<String> = state
                 .open_actions()
                 .iter()
-                .map(|n| n.node_id[..n.node_id.len().min(16)].to_string())
+                .map(|n| n.record.id[..n.record.id.len().min(16)].to_string())
                 .collect();
             if ids.is_empty() {
                 return String::new();
@@ -273,7 +273,7 @@ pub fn remediation_hint(rule: &str, state: &thread::ThreadState, thread_id: &str
             let ids: Vec<String> = state
                 .open_objections()
                 .iter()
-                .map(|n| n.node_id[..n.node_id.len().min(16)].to_string())
+                .map(|n| n.record.id[..n.record.id.len().min(16)].to_string())
                 .collect();
             if ids.is_empty() {
                 return String::new();

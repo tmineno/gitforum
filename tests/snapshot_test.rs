@@ -3,7 +3,8 @@ mod support;
 use chrono::TimeZone;
 use git_forum::internal::commands::ls;
 use git_forum::internal::commands::show;
-use git_forum::internal::node::{Node, NodeKind};
+use git_forum::internal::node::{NodeKind, NodeRecord};
+use git_forum::internal::snapshot::store::NodeWithBody;
 use git_forum::internal::thread::{NodeLookup, ThreadLink, ThreadState};
 
 const SNAPSHOT_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots");
@@ -57,22 +58,26 @@ fn rich_state() -> ThreadState {
     state.branch = Some("feat/solver".into());
     state.updated_at = t3;
     state.nodes = vec![
-        Node {
-            node_id: "node-0001".into(),
-            node_type: NodeKind::Objection,
+        NodeWithBody {
+            record: NodeRecord {
+                id: "node-0001".into(),
+                kind: NodeKind::Objection,
+                created_at: t2,
+                created_by: "ai/reviewer".into(),
+                ..Default::default()
+            },
             body: "Benchmarks are missing.".into(),
-            actor: "ai/reviewer".into(),
-            created_at: t2,
-            ..Node::default()
         },
-        Node {
-            node_id: "node-0002".into(),
-            node_type: NodeKind::Comment,
-            legacy_subtype: Some("summary".into()),
+        NodeWithBody {
+            record: NodeRecord {
+                id: "node-0002".into(),
+                kind: NodeKind::Comment,
+                created_at: t3,
+                created_by: "human/alice".into(),
+                legacy_label: Some("summary".into()),
+                ..Default::default()
+            },
             body: "Direction is sound; migration evidence needed.".into(),
-            actor: "human/alice".into(),
-            created_at: t3,
-            ..Node::default()
         },
     ];
     state
@@ -147,14 +152,16 @@ fn node_show_question() {
         // `node show` derives the lifecycle label via `policy::lifecycle_label_for`.
         thread_category: "rfc".into(),
         thread_tags: vec!["cross-cutting".into()],
-        node: Node {
-            node_id: "node-0001".into(),
-            node_type: NodeKind::Comment,
-            legacy_subtype: Some("question".into()),
+        node: NodeWithBody {
+            record: NodeRecord {
+                id: "node-0001".into(),
+                kind: NodeKind::Comment,
+                created_at: t,
+                created_by: "ai/reviewer".into(),
+                legacy_label: Some("question".into()),
+                ..Default::default()
+            },
             body: "What is the migration plan?".into(),
-            actor: "ai/reviewer".into(),
-            created_at: t,
-            ..Node::default()
         },
         links: vec![ThreadLink {
             target_thread_id: "ASK-e5f6a7b8".into(),

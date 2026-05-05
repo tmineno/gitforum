@@ -984,10 +984,10 @@ pub fn evaluate_rule(rule: &GuardRule, state: &ThreadState) -> Option<GuardViola
         GuardRule::OneApproval => {
             // SPEC-3.0 §3.2: "At least one non-retracted `approval` node
             // exists on the thread, regardless of actor type."
-            let has = state
-                .nodes
-                .iter()
-                .any(|n| n.node_type == NodeKind::Approval && !n.retracted);
+            let has = state.nodes.iter().any(|n| {
+                n.record.kind == NodeKind::Approval
+                    && n.record.status != crate::internal::node::NodeStatus::Retracted
+            });
             (!has).then(|| GuardViolation {
                 rule: rule.to_string(),
                 reason: "no approval recorded".into(),
@@ -1685,27 +1685,36 @@ allow_evidence = ["draft"]
 mod evaluate_tests {
     use super::*;
 
-    fn approval_node(actor: &str) -> crate::internal::node::Node {
-        crate::internal::node::Node {
-            node_id: format!("approval-{actor}"),
-            node_type: NodeKind::Approval,
-            actor: actor.into(),
+    fn approval_node(actor: &str) -> crate::internal::snapshot::store::NodeWithBody {
+        crate::internal::snapshot::store::NodeWithBody {
+            record: crate::internal::node::NodeRecord {
+                id: format!("approval-{actor}"),
+                kind: NodeKind::Approval,
+                created_by: actor.into(),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
 
-    fn objection_node() -> crate::internal::node::Node {
-        crate::internal::node::Node {
-            node_id: "obj1".into(),
-            node_type: NodeKind::Objection,
+    fn objection_node() -> crate::internal::snapshot::store::NodeWithBody {
+        crate::internal::snapshot::store::NodeWithBody {
+            record: crate::internal::node::NodeRecord {
+                id: "obj1".into(),
+                kind: NodeKind::Objection,
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
 
-    fn action_node() -> crate::internal::node::Node {
-        crate::internal::node::Node {
-            node_id: "act1".into(),
-            node_type: NodeKind::Action,
+    fn action_node() -> crate::internal::snapshot::store::NodeWithBody {
+        crate::internal::snapshot::store::NodeWithBody {
+            record: crate::internal::node::NodeRecord {
+                id: "act1".into(),
+                kind: NodeKind::Action,
+                ..Default::default()
+            },
             ..Default::default()
         }
     }

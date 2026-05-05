@@ -26,7 +26,7 @@ use serde::Serialize;
 
 use super::super::config;
 use super::super::error::ForumError;
-use super::super::node::{Node, NodeKind};
+use super::super::node::NodeKind;
 use super::super::thread::{self, ThreadState};
 use super::context::Context;
 use super::shared::resolve_tid;
@@ -196,10 +196,12 @@ fn format_link_summary(pairs: &[(String, usize)]) -> String {
     format!("{total} ({})", parts.join(", "))
 }
 
-fn canonical_node_counts(nodes: &[Node]) -> BTreeMap<String, usize> {
+fn canonical_node_counts(
+    nodes: &[crate::internal::snapshot::store::NodeWithBody],
+) -> BTreeMap<String, usize> {
     let mut acc: BTreeMap<String, usize> = BTreeMap::new();
     for n in nodes {
-        let label = match n.node_type {
+        let label = match n.record.kind {
             NodeKind::Comment => "comment",
             NodeKind::Approval => "approval",
             NodeKind::Objection => "objection",
@@ -287,7 +289,6 @@ pub fn read_incoming_link_counts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::node::Node;
     use crate::internal::thread::ThreadLink;
     use chrono::{TimeZone, Utc};
 
@@ -374,18 +375,27 @@ mod tests {
             created_at: Utc::now(),
             created_by: "ai/x".into(),
             nodes: vec![
-                Node {
-                    node_type: NodeKind::Comment,
-                    legacy_subtype: Some("claim".into()),
+                crate::internal::snapshot::store::NodeWithBody {
+                    record: crate::internal::node::NodeRecord {
+                        kind: NodeKind::Comment,
+                        legacy_label: Some("claim".into()),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
-                Node {
-                    node_type: NodeKind::Comment,
-                    legacy_subtype: Some("question".into()),
+                crate::internal::snapshot::store::NodeWithBody {
+                    record: crate::internal::node::NodeRecord {
+                        kind: NodeKind::Comment,
+                        legacy_label: Some("question".into()),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
-                Node {
-                    node_type: NodeKind::Approval,
+                crate::internal::snapshot::store::NodeWithBody {
+                    record: crate::internal::node::NodeRecord {
+                        kind: NodeKind::Approval,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
             ],

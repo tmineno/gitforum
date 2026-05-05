@@ -116,9 +116,10 @@ impl std::str::FromStr for NodeKind {
 }
 
 /// SPEC-3.0 §2.2 node status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeStatus {
+    #[default]
     Open,
     Resolved,
     Retracted,
@@ -130,7 +131,12 @@ pub enum NodeStatus {
 /// One file per node; the document is a flat key/value record (not a
 /// table or array). The paired `nodes/<id>.md` body file is owned by
 /// `snapshot::store`, not by this type.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Default` is derived (v3.1 step 3o, task `1v400j3l`) so test
+/// fixtures and migrate-projection helpers can elide unset optional
+/// fields with struct-update syntax (`NodeRecord { id: …, kind: …,
+/// ..Default::default() }`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct NodeRecord {
     pub id: String,
     #[serde(rename = "type")]

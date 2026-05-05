@@ -132,8 +132,14 @@ fn retract_multiple_nodes() {
     assert!(stdout.contains("Retracted"));
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    assert!(state.nodes[0].retracted);
-    assert!(state.nodes[1].retracted);
+    assert_eq!(
+        state.nodes[0].record.status,
+        git_forum::internal::node::NodeStatus::Retracted
+    );
+    assert_eq!(
+        state.nodes[1].record.status,
+        git_forum::internal::node::NodeStatus::Retracted
+    );
 }
 
 #[test]
@@ -235,7 +241,10 @@ fn single_node_id_still_works() {
     assert!(stdout.contains("Resolved"));
 
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    assert!(state.nodes[0].resolved);
+    assert_eq!(
+        state.nodes[0].record.status,
+        git_forum::internal::node::NodeStatus::Resolved
+    );
 }
 
 #[test]
@@ -268,7 +277,10 @@ fn bulk_retract_reports_failures_inline() {
 
     // Verify the valid node was retracted despite the failure.
     let state = thread::replay_thread(&git, &thread_id).unwrap();
-    assert!(state.nodes[0].retracted);
+    assert_eq!(
+        state.nodes[0].record.status,
+        git_forum::internal::node::NodeStatus::Retracted
+    );
 }
 
 #[test]

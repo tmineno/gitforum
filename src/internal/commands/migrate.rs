@@ -34,11 +34,11 @@ use sha2::{Digest, Sha256};
 
 use super::super::config::RepoPaths;
 use super::super::error::{ForumError, ForumResult};
-use super::super::evidence::{EvidenceFile, EvidenceRecord};
+use super::super::evidence::EvidenceFile;
 use super::super::git_ops::GitOps;
 use super::super::id_alloc;
 use super::super::legacy::event;
-use super::super::node::{NodeRecord, NodeStatus};
+use super::super::node::NodeRecord;
 use super::super::refs;
 use super::super::snapshot::{self, Link, Links, NodeWithBody, ThreadDocument};
 use super::super::thread::{ThreadSnapshot, ThreadState};
@@ -745,29 +745,23 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
         .nodes
         .iter()
         .map(|n| {
-            // After v3.1 step 3g, v2 Node.node_type is already NodeKind
-            // (the canonical 4); the v1 fold happened upstream during
-            // legacy event chain replay.
-            let status = if n.retracted {
-                NodeStatus::Retracted
-            } else if n.incorporated {
-                NodeStatus::Incorporated
-            } else if n.resolved {
-                NodeStatus::Resolved
-            } else {
-                NodeStatus::Open
-            };
+            // v3.1 step 3o: ThreadState.nodes is already
+            // `Vec<NodeWithBody>` (snapshot-native shape). The migrate
+            // projection still has to apply `tree_safe_node_id` to the
+            // id + reply_to, since legacy chains can carry actor-
+            // namespaced ids (`<sha>#human/alice`) that aren't legal
+            // tree filenames in `nodes/<id>.toml`.
             NodeWithBody {
                 record: NodeRecord {
-                    id: tree_safe_node_id(&n.node_id),
-                    kind: n.node_type,
-                    status,
-                    created_at: n.created_at,
-                    created_by: n.actor.clone(),
-                    updated_at: None,
-                    updated_by: None,
-                    reply_to: n.reply_to.as_deref().map(tree_safe_node_id),
-                    legacy_label: n.legacy_subtype.clone(),
+                    id: tree_safe_node_id(&n.record.id),
+                    kind: n.record.kind,
+                    status: n.record.status,
+                    created_at: n.record.created_at,
+                    created_by: n.record.created_by.clone(),
+                    updated_at: n.record.updated_at,
+                    updated_by: n.record.updated_by.clone(),
+                    reply_to: n.record.reply_to.as_deref().map(tree_safe_node_id),
+                    legacy_label: n.record.legacy_label.clone(),
                 },
                 body: n.body.clone(),
             }
@@ -788,17 +782,9 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
     };
 
     let evidence = EvidenceFile {
-        entries: state
-            .evidence_items
-            .iter()
-            .map(|e| EvidenceRecord {
-                id: e.evidence_id.clone(),
-                kind: e.kind.clone(),
-                ref_target: e.ref_target.clone(),
-                created_at: state.created_at,
-                created_by: state.created_by.clone(),
-            })
-            .collect(),
+        // v3.1 step 3o: ThreadState.evidence_items is already
+        // `Vec<EvidenceRecord>`; migrate just clones it through.
+        entries: state.evidence_items.clone(),
     };
 
     Ok((

@@ -324,18 +324,27 @@ pub fn apply_state_change_snapshot(
         .unwrap_or(projected.status);
     if resolve_open_actions {
         for n in projected.nodes.iter_mut() {
-            if n.node_type == crate::internal::node::NodeKind::Action && n.is_open() {
-                n.resolved = true;
+            if n.record.kind == crate::internal::node::NodeKind::Action
+                && n.record.status == NodeStatus::Open
+            {
+                n.record.status = NodeStatus::Resolved;
             }
         }
     }
+    let now_for_projection = clock.now();
     for approver in approve {
-        projected.nodes.push(crate::internal::node::Node {
-            node_id: format!("approval-{approver}"),
-            node_type: crate::internal::node::NodeKind::Approval,
-            actor: approver.clone(),
-            ..Default::default()
-        });
+        projected
+            .nodes
+            .push(crate::internal::snapshot::store::NodeWithBody {
+                record: crate::internal::node::NodeRecord {
+                    id: format!("approval-{approver}"),
+                    kind: crate::internal::node::NodeKind::Approval,
+                    created_at: now_for_projection,
+                    created_by: approver.clone(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
     }
     let guard_violations = crate::internal::policy::check_guards(policy, &projected, &from, target);
     if !guard_violations.is_empty() {

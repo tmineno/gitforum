@@ -1,10 +1,11 @@
 use chrono::{DateTime, Utc};
 
 use super::error::{ForumError, ForumResult};
-use super::evidence::Evidence;
+use super::evidence::EvidenceRecord;
 use super::git_ops::GitOps;
-use super::node::{Node, NodeKind};
+use super::node::{NodeKind, NodeStatus};
 use super::refs;
+use super::snapshot::store::NodeWithBody;
 use super::validate::StrictReplayIssue;
 
 pub const MIN_NODE_ID_PREFIX_LEN: usize = 4;
@@ -110,9 +111,14 @@ pub struct ThreadState {
     /// column, which now reads this field directly.
     pub updated_at: DateTime<Utc>,
     /// All discussion nodes (say/edit/retract/resolve/reopen applied).
-    pub nodes: Vec<Node>,
+    /// 3.0-native shape: each entry is a `NodeWithBody` (the snapshot
+    /// pair `nodes/<id>.toml` + `nodes/<id>.md`). v3.1 step 3o
+    /// (task `1v400j3l`) replaced the v2 `Vec<Node>` flat shape.
+    pub nodes: Vec<NodeWithBody>,
     /// Evidence items attached to this thread via Link events.
-    pub evidence_items: Vec<Evidence>,
+    /// 3.0-native shape per SPEC-3.0 §2.3 `evidence.toml` row. v3.1
+    /// step 3o (task `1v400j3l`) replaced the v2 `Vec<Evidence>` shape.
+    pub evidence_items: Vec<EvidenceRecord>,
     /// Links to other threads via Link events.
     pub links: Vec<ThreadLink>,
     /// Number of times the thread body has been revised.
@@ -150,32 +156,32 @@ pub struct NodeLookup {
     /// "kind" label via `policy::kind_label_for`.
     pub thread_category: String,
     pub thread_tags: Vec<String>,
-    pub node: Node,
+    pub node: NodeWithBody,
     pub links: Vec<ThreadLink>,
 }
 
 impl ThreadState {
     /// Open (unresolved, not retracted) objection nodes.
-    pub fn open_objections(&self) -> Vec<&Node> {
+    pub fn open_objections(&self) -> Vec<&NodeWithBody> {
         self.nodes
             .iter()
-            .filter(|n| n.node_type == NodeKind::Objection && n.is_open())
+            .filter(|n| n.record.kind == NodeKind::Objection && n.record.status == NodeStatus::Open)
             .collect()
     }
 
     /// Open (unresolved, not retracted) action nodes.
-    pub fn open_actions(&self) -> Vec<&Node> {
+    pub fn open_actions(&self) -> Vec<&NodeWithBody> {
         self.nodes
             .iter()
-            .filter(|n| n.node_type == NodeKind::Action && n.is_open())
+            .filter(|n| n.record.kind == NodeKind::Action && n.record.status == NodeStatus::Open)
             .collect()
     }
 
     /// Direct replies to a given node.
-    pub fn replies_to(&self, node_id: &str) -> Vec<&Node> {
+    pub fn replies_to(&self, node_id: &str) -> Vec<&NodeWithBody> {
         self.nodes
             .iter()
-            .filter(|n| n.reply_to.as_deref() == Some(node_id))
+            .filter(|n| n.record.reply_to.as_deref() == Some(node_id))
             .collect()
     }
 
@@ -184,10 +190,11 @@ impl ThreadState {
     /// 2.0: matches both raw 1.x `Summary` nodes (legacy reads) and canonical
     /// `Comment` nodes whose `legacy_subtype = "summary"` (native 2.0 writes
     /// from `git forum summary` and migrated 1.x events).
-    pub fn latest_summary(&self) -> Option<&Node> {
-        self.nodes
-            .iter()
-            .rfind(|n| !n.retracted && n.legacy_subtype.as_deref() == Some("summary"))
+    pub fn latest_summary(&self) -> Option<&NodeWithBody> {
+        self.nodes.iter().rfind(|n| {
+            n.record.status != NodeStatus::Retracted
+                && n.record.legacy_label.as_deref() == Some("summary")
+        })
     }
 }
 
@@ -233,8 +240,6 @@ pub fn replay_thread_strict(
 /// (`legacy::chain_replay::replay_chain_at`) can seed state from the
 /// snapshot at chain bottom on a mixed chain.
 pub fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocument) -> ThreadState {
-    use super::evidence::Evidence;
-    use super::node::NodeStatus;
     use super::snapshot::ThreadDocument;
 
     let ThreadDocument {
@@ -250,21 +255,9 @@ pub fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocume
     let status = snapshot.status.clone();
     let category = snapshot.category.clone();
 
-    let nodes: Vec<Node> = nodes
-        .into_iter()
-        .map(|n| Node {
-            node_id: n.record.id,
-            node_type: n.record.kind,
-            body: n.body,
-            actor: n.record.created_by,
-            created_at: n.record.created_at,
-            resolved: matches!(n.record.status, NodeStatus::Resolved),
-            retracted: matches!(n.record.status, NodeStatus::Retracted),
-            incorporated: matches!(n.record.status, NodeStatus::Incorporated),
-            reply_to: n.record.reply_to,
-            legacy_subtype: n.record.legacy_label,
-        })
-        .collect();
+    // v3.1 step 3o: ThreadState now carries SPEC-3.0 native types
+    // directly (`NodeWithBody` / `EvidenceRecord`); no v2 projection.
+    let evidence_items = evidence.entries;
 
     let links: Vec<ThreadLink> = links
         .entries
@@ -272,16 +265,6 @@ pub fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocume
         .map(|l| ThreadLink {
             target_thread_id: l.target,
             rel: l.rel,
-        })
-        .collect();
-
-    let evidence_items: Vec<Evidence> = evidence
-        .entries
-        .into_iter()
-        .map(|e| Evidence {
-            evidence_id: e.id,
-            kind: e.kind,
-            ref_target: e.ref_target,
         })
         .collect();
 
@@ -325,13 +308,13 @@ pub fn resolve_node_id_in_thread(
 ) -> ForumResult<String> {
     let state = replay_thread(git, thread_id)?;
 
-    let exact_matches: Vec<&Node> = state
+    let exact_matches: Vec<&NodeWithBody> = state
         .nodes
         .iter()
-        .filter(|node| node.node_id == node_ref)
+        .filter(|node| node.record.id == node_ref)
         .collect();
     match exact_matches.len() {
-        1 => return Ok(exact_matches[0].node_id.clone()),
+        1 => return Ok(exact_matches[0].record.id.clone()),
         2.. => {
             return Err(ForumError::Repo(format!(
                 "node '{node_ref}' is ambiguous in thread '{thread_id}'"
@@ -346,16 +329,16 @@ pub fn resolve_node_id_in_thread(
         )));
     }
 
-    let matches: Vec<&Node> = state
+    let matches: Vec<&NodeWithBody> = state
         .nodes
         .iter()
-        .filter(|node| node.node_id.starts_with(node_ref))
+        .filter(|node| node.record.id.starts_with(node_ref))
         .collect();
     match matches.len() {
         0 => Err(ForumError::Repo(format!(
             "node '{node_ref}' not found in thread '{thread_id}'"
         ))),
-        1 => Ok(matches[0].node_id.clone()),
+        1 => Ok(matches[0].record.id.clone()),
         _ => Err(ForumError::Repo(format_thread_ambiguity(
             thread_id, node_ref, &matches,
         ))),
@@ -368,7 +351,7 @@ pub fn find_node(git: &GitOps, node_ref: &str) -> ForumResult<NodeLookup> {
     let lookups = all_node_lookups(git)?;
     lookups
         .into_iter()
-        .find(|lookup| lookup.node.node_id == resolved)
+        .find(|lookup| lookup.node.record.id == resolved)
         .ok_or_else(|| ForumError::Repo(format!("node '{resolved}' not found")))
 }
 
@@ -383,7 +366,7 @@ pub fn find_node_in_thread(
     state
         .nodes
         .iter()
-        .find(|node| node.node_id == resolved)
+        .find(|node| node.record.id == resolved)
         .map(|node| build_node_lookup(&state, node))
         .ok_or_else(|| {
             ForumError::Repo(format!(
@@ -616,7 +599,7 @@ fn all_node_lookups(git: &GitOps) -> ForumResult<Vec<NodeLookup>> {
     Ok(lookups)
 }
 
-fn build_node_lookup(state: &ThreadState, node: &Node) -> NodeLookup {
+fn build_node_lookup(state: &ThreadState, node: &NodeWithBody) -> NodeLookup {
     NodeLookup {
         thread_id: state.id.clone(),
         thread_title: state.title.clone(),
@@ -633,10 +616,10 @@ fn resolve_node_id_global_from_lookups(
 ) -> ForumResult<String> {
     let exact_matches: Vec<&NodeLookup> = lookups
         .iter()
-        .filter(|lookup| lookup.node.node_id == node_ref)
+        .filter(|lookup| lookup.node.record.id == node_ref)
         .collect();
     match exact_matches.len() {
-        1 => return Ok(exact_matches[0].node.node_id.clone()),
+        1 => return Ok(exact_matches[0].node.record.id.clone()),
         2.. => {
             return Err(ForumError::Repo(format!(
                 "node '{node_ref}' is ambiguous across multiple threads"
@@ -653,22 +636,22 @@ fn resolve_node_id_global_from_lookups(
 
     let matches: Vec<&NodeLookup> = lookups
         .iter()
-        .filter(|lookup| lookup.node.node_id.starts_with(node_ref))
+        .filter(|lookup| lookup.node.record.id.starts_with(node_ref))
         .collect();
     match matches.len() {
         0 => Err(ForumError::Repo(format!("node '{node_ref}' not found"))),
-        1 => Ok(matches[0].node.node_id.clone()),
+        1 => Ok(matches[0].node.record.id.clone()),
         _ => Err(ForumError::Repo(format_global_ambiguity(
             node_ref, &matches,
         ))),
     }
 }
 
-fn format_thread_ambiguity(thread_id: &str, node_ref: &str, matches: &[&Node]) -> String {
+fn format_thread_ambiguity(thread_id: &str, node_ref: &str, matches: &[&NodeWithBody]) -> String {
     let mut message = format!("node id prefix '{node_ref}' is ambiguous in thread '{thread_id}'");
     message.push_str("\n  candidates:");
     for node in matches {
-        message.push_str(&format!("\n  - {}  {}", node.node_id, node.node_type));
+        message.push_str(&format!("\n  - {}  {}", node.record.id, node.record.kind));
     }
     message
 }
@@ -679,7 +662,7 @@ fn format_global_ambiguity(node_ref: &str, matches: &[&NodeLookup]) -> String {
     for lookup in matches {
         message.push_str(&format!(
             "\n  - {}  {} {}",
-            lookup.node.node_id, lookup.thread_id, lookup.node.node_type
+            lookup.node.record.id, lookup.thread_id, lookup.node.record.kind
         ));
     }
     message

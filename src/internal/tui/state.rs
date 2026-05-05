@@ -7,7 +7,7 @@ use crate::internal::error::{ForumError, ForumResult};
 use crate::internal::evidence::EvidenceFile;
 use crate::internal::git_ops::GitOps;
 use crate::internal::id_alloc;
-use crate::internal::node::{Node, NodeKind, NodeRecord, NodeStatus};
+use crate::internal::node::{NodeKind, NodeRecord, NodeStatus};
 use crate::internal::policy;
 use crate::internal::snapshot::history;
 use crate::internal::snapshot::list::{self as snapshot_list, ThreadRow};
@@ -84,7 +84,7 @@ pub(super) fn open_node_detail(
     app.node_detail_scroll = 0;
     app.view = View::NodeDetail {
         thread_id: thread_id.to_string(),
-        node_id: lookup.node.node_id,
+        node_id: lookup.node.record.id,
     };
     Ok(())
 }
@@ -100,23 +100,29 @@ pub(super) fn apply_node_status_action(
     let actor = actor::current_actor(git, git.default_actor());
     let clock = SystemClock;
 
+    let cur = lookup.node.record.status;
     let new_status = match action {
-        NodeStatusAction::Resolve if !lookup.node.resolved && !lookup.node.retracted => {
+        NodeStatusAction::Resolve
+            if cur != NodeStatus::Resolved && cur != NodeStatus::Retracted =>
+        {
             Some(NodeStatus::Resolved)
         }
-        NodeStatusAction::Reopen
-            if lookup.node.resolved || lookup.node.retracted || lookup.node.incorporated =>
-        {
-            Some(NodeStatus::Open)
-        }
-        NodeStatusAction::Retract if !lookup.node.retracted => Some(NodeStatus::Retracted),
+        NodeStatusAction::Reopen if cur != NodeStatus::Open => Some(NodeStatus::Open),
+        NodeStatusAction::Retract if cur != NodeStatus::Retracted => Some(NodeStatus::Retracted),
         _ => None,
     };
     if let Some(status) = new_status {
-        snapshot_update_node_status(git, thread_id, &lookup.node.node_id, status, &actor, &clock)?;
+        snapshot_update_node_status(
+            git,
+            thread_id,
+            &lookup.node.record.id,
+            status,
+            &actor,
+            &clock,
+        )?;
     }
 
-    open_node_detail(app, git, thread_id, &lookup.node.node_id)
+    open_node_detail(app, git, thread_id, &lookup.node.record.id)
 }
 
 pub(super) fn submit_create_thread(app: &mut App, git: &GitOps) -> ForumResult<()> {
@@ -226,21 +232,21 @@ pub fn snapshot_list_tip_shas(
 /// Build tree-ordered entries from a flat list of nodes using reply_to relationships.
 ///
 /// Returns entries in depth-first order with tree connector prefixes.
-pub(super) fn build_tree_entries(nodes: &[Node]) -> Vec<TreeEntry> {
+pub(super) fn build_tree_entries(nodes: &[NodeWithBody]) -> Vec<TreeEntry> {
     use std::collections::HashMap;
 
     // Build index: node_id -> position
     let id_to_idx: HashMap<&str, usize> = nodes
         .iter()
         .enumerate()
-        .map(|(i, n)| (n.node_id.as_str(), i))
+        .map(|(i, n)| (n.record.id.as_str(), i))
         .collect();
 
     // Build children map: parent_id -> [child indices]
     let mut children: HashMap<usize, Vec<usize>> = HashMap::new();
     let mut has_parent = vec![false; nodes.len()];
     for (i, node) in nodes.iter().enumerate() {
-        if let Some(ref parent_id) = node.reply_to {
+        if let Some(ref parent_id) = node.record.reply_to {
             if let Some(&parent_idx) = id_to_idx.get(parent_id.as_str()) {
                 children.entry(parent_idx).or_default().push(i);
                 has_parent[i] = true;
