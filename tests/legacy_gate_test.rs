@@ -37,11 +37,11 @@ use walkdir::WalkDir;
 //    through legacy::workflow::SPEC and legacy::v1::normalize_state_name.
 //    Steps 3g and 3h close these.
 //
-// 3. v2 read-path KEEP files (validate, commands/shared): residual v2
-//    read-path code that hasn't been rewired yet. commands/shared.rs
-//    uses `legacy::workflow::SPEC.preset_lookup` only inside
-//    `parse_thread_kind` (the Ls/Shortlog `--kind` filter surface);
-//    step 3f closes it.
+// 3. v2 read-path KEEP files (validate.rs only): residual v2 read-path
+//    code that hasn't been rewired yet. validate.rs uses
+//    `legacy::event::EventType` for event-shape validation in
+//    mixed-chain replay; cleared in step 3i when the v2
+//    ThreadState.events field is dropped.
 //
 // Already cleared by task 1v400j3l v3.1 follow-up:
 //   - commands/state.rs (3a): shorthand resolution → policy::resolve_shorthand
@@ -50,6 +50,8 @@ use walkdir::WalkDir;
 //   - commands/doctor.rs (3d): orphan-ref probe → 3.0-native tree-shape check
 //   - commands/ls.rs (3e): test fixture rebuilt with 3.0-native imports
 //   - commands/shortlog.rs (3e): terminal_state_date → snapshot::history walk
+//   - commands/shared.rs (3f): parse_thread_kind routes through
+//     policy::preset_lookup with a local preset-name → ThreadKind map
 //
 // Cleared earlier by Phase 4: the DELETE-list source files
 // (state_change, write_ops, create, repair, repair_workflow, prune,
@@ -67,7 +69,6 @@ const ALLOW_LIST: &[&str] = &[
     "src/internal/thread.rs",
     "src/internal/commands/migrate.rs",
     "src/internal/validate.rs",
-    "src/internal/commands/shared.rs",
 ];
 
 /// Walks every `syn::Path` and records whether any of them uses
@@ -217,9 +218,8 @@ const LEGACY_GATE_PERMANENT_EXEMPTIONS: &[&str] = &[
     "src/internal/node.rs",
     "src/internal/policy.rs",
     "src/internal/thread.rs",
-    // v2 read-path KEEP files (cleared in v3.1).
+    // v2 read-path KEEP files (cleared in v3.1 step 3i).
     "src/internal/validate.rs",
-    "src/internal/commands/shared.rs",
 ];
 
 #[test]

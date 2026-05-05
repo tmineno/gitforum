@@ -12,6 +12,7 @@ use crate::internal::config::{self, RepoPaths};
 use crate::internal::error::ForumError;
 use crate::internal::git_ops::GitOps;
 use crate::internal::operation_check;
+use crate::internal::policy;
 use crate::internal::thread;
 use crate::internal::thread::ThreadKind;
 
@@ -89,16 +90,27 @@ pub fn resolve_tid(git: &GitOps, user_input: &str) -> Result<String, ForumError>
 /// historical aliases) into the canonical `ThreadKind`. Used by `Ls`,
 /// `Shortlog`, and the `--kind` filter on `state bulk`.
 ///
-/// TODO(phase-4): the kind preset table itself disappears with the
-/// Phase 1 category rewrite; this helper goes with it.
+/// Routes through the 3.0-native `policy::preset_lookup` (returns a
+/// `CategoryPreset`) and maps the preset's canonical name to the v2
+/// `ThreadKind` enum locally. The whole helper retires in v3.1 step 3h
+/// when `ThreadKind` is dropped in favour of category strings.
 pub fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
-    use crate::internal::legacy::workflow::SPEC;
-    SPEC.preset_lookup(kind).map(|p| p.kind).ok_or_else(|| {
-        let valid: Vec<&str> = SPEC.presets().iter().map(|p| p.name).collect();
+    let preset = policy::preset_lookup(kind).ok_or_else(|| {
+        let valid: Vec<&str> = policy::presets().iter().map(|p| p.name).collect();
         ForumError::Config(format!(
             "unknown kind '{kind}'; valid presets: {}",
             valid.join(", "),
         ))
+    })?;
+    Ok(match preset.name {
+        "rfc" => ThreadKind::Rfc,
+        "dec" => ThreadKind::Dec,
+        "task" => ThreadKind::Task,
+        "issue" => ThreadKind::Issue,
+        // policy::presets() is closed over the four built-in preset
+        // names; any new preset must add a ThreadKind mapping here
+        // (or, post-3h, the whole helper goes away).
+        other => unreachable!("unmapped preset name: {other}"),
     })
 }
 
