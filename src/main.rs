@@ -121,7 +121,7 @@ struct Cli {
 enum Commands {
     /// Initialize a git-forum repository
     Init,
-    /// Diagnose repo health (config, index, refs)
+    /// Diagnose repo health (config, refs, snapshot integrity)
     Doctor {
         /// Show all checks including passing ones
         #[arg(long, short)]
@@ -361,9 +361,12 @@ enum Commands {
     Status { thread_id: String },
     /// Read-only single-thread digest (RFC-5wf2v8hv).
     ///
-    /// Reads only the named thread's events. Outgoing-link summary is grouped
-    /// by relation; incoming counts come from the SQLite reverse-link index.
-    /// Never reads linked threads' bodies, titles, or states.
+    /// Reads only the named thread's snapshot. Outgoing-link summary is
+    /// grouped by relation; incoming counts are not computed in v3.0.0
+    /// (the SQLite reverse-link index that backed them was deleted in
+    /// Phase 4 Step 3 — see RFC Exceptions: index reintroduction is
+    /// a v3.1 concern). Never reads linked threads' bodies, titles, or
+    /// states.
     Brief {
         thread_id: String,
         /// Emit a stable v1 JSON object instead of plaintext.
@@ -765,9 +768,9 @@ fn main() -> Result<(), ForumError> {
             doctor::run(doctor::DoctorArgs { verbose, strict }, &ctx)?;
         }
 
-        // Reindex/PruneOrphans/PruneStaleEvents arms removed at Phase 2
-        // slot 11 (RFC `7ymtc4b2`); the underlying modules are on the
-        // Phase 4 DELETE list (ADR-011 Decision 6: no index in v3.0.0).
+        // Reindex / PruneOrphans / PruneStaleEvents arms were removed
+        // at Phase 2 slot 11; the underlying modules deleted at Phase 4
+        // Step 3 (ADR-011 Decision 6: no index in v3.0.0).
         Commands::Migrate {
             to,
             dry_run,
@@ -784,9 +787,9 @@ fn main() -> Result<(), ForumError> {
             )?;
         }
 
-        // Repair / Purge / Search arms removed at Phase 2 slot 11
-        // (RFC `7ymtc4b2`); repair.rs / repair_workflow.rs / purge.rs /
-        // search-via-index.rs are on the Phase 4 DELETE list (ADR-011).
+        // Repair / Purge / Search arms were removed at Phase 2 slot 11;
+        // the underlying repair / repair_workflow / purge modules and the
+        // search-via-index path were deleted at Phase 4 Step 3 (ADR-011).
         Commands::Tui { thread_id } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             let thread_id = thread_id.map(|id| resolve_tid(&git, &id)).transpose()?;
@@ -794,9 +797,10 @@ fn main() -> Result<(), ForumError> {
             forum_tui::run(&git, &db_path, thread_id.as_deref())?;
         }
 
-        // Import / Export arms removed at Phase 2 slot 11 (RFC `7ymtc4b2`);
-        // github*.rs are on the Phase 4 DELETE list (ADR-011 Decision 7:
-        // GitHub bridge is not part of v3.0.0 core).
+        // Import / Export arms were removed at Phase 2 slot 11; the
+        // github / github_import / github_export modules were deleted at
+        // Phase 4 Step 3 (ADR-011 Decision 7 / SPEC-3.0 §13: GitHub
+        // bridge is not part of v3.0.0 core).
         Commands::Thread {
             cmd:
                 ThreadCmd::New {
@@ -1487,11 +1491,3 @@ fn main() -> Result<(), ForumError> {
 
     Ok(())
 }
-
-// `translate_legacy_kind_query` removed at slot 11 (went with the
-// deleted `Search` arm). `print_import_plan` / `print_export_plan`
-// removed at slot 11 (went with the deleted `Import` / `Export` arms).
-//
-// `collect_implements_children` / `fallback_scan_implements` relocated
-// to `commands::show` at slot 7c. `read_incoming_link_counts` relocated
-// to `commands::brief` at slot 7h.
