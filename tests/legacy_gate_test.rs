@@ -62,17 +62,19 @@ const ALLOW_LIST: &[&str] = &[
     // (all unreachable from runtime); the residual `Evidence` struct
     // doesn't import from legacy.
     "src/internal/commands/doctor.rs", // event::is_orphan_ref + legacy event chain probes
-    "src/internal/commands/state.rs",  // workflow::SPEC + workflow::ShorthandResolution
+    // commands/state.rs cleared in task 1v400j3l step 3a: shorthand
+    // resolution moved off legacy::workflow::SPEC onto the 3.0-native
+    // `internal::policy::resolve_shorthand` (keyed on category + tags).
     "src/internal/commands/thread_new.rs", // workflow::{KindPreset, SPEC}
-    "src/internal/commands/shared.rs", // workflow::SPEC (test code)
-    "src/internal/commands/show.rs",   // workflow::SPEC + test fixtures
-    "src/internal/commands/ls.rs",     // event::* test fixtures
-    "src/internal/commands/shortlog.rs", // event::EventType test fixture
-                                       // (Phase 4 Step 3 deleted the DELETE-list source files
-                                       // (state_change, write_ops, create, repair, repair_workflow,
-                                       // prune, purge, timeline, index, reindex, github, github_import,
-                                       // github_export, commands::repair_workflow). Their entries are
-                                       // gone with the files.)
+    "src/internal/commands/shared.rs",     // workflow::SPEC (test code)
+    "src/internal/commands/show.rs",       // workflow::SPEC + test fixtures
+    "src/internal/commands/ls.rs",         // event::* test fixtures
+    "src/internal/commands/shortlog.rs",   // event::EventType test fixture
+                                           // (Phase 4 Step 3 deleted the DELETE-list source files
+                                           // (state_change, write_ops, create, repair, repair_workflow,
+                                           // prune, purge, timeline, index, reindex, github, github_import,
+                                           // github_export, commands::repair_workflow). Their entries are
+                                           // gone with the files.)
 ];
 
 /// Walks every `syn::Path` and records whether any of them uses
@@ -234,7 +236,6 @@ const LEGACY_GATE_PERMANENT_EXEMPTIONS: &[&str] = &[
     // v2 read-path KEEP files (cleared in v3.1).
     "src/internal/validate.rs",
     "src/internal/commands/doctor.rs",
-    "src/internal/commands/state.rs",
     "src/internal/commands/thread_new.rs",
     "src/internal/commands/shared.rs",
     "src/internal/commands/show.rs",

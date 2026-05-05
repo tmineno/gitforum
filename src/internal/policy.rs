@@ -328,6 +328,69 @@ pub fn normalize_state_name(s: &str) -> &str {
 }
 
 // ---------------------------------------------------------------------
+// SPEC-3.0 §9.3 shorthand verb resolution (3.0-native)
+// ---------------------------------------------------------------------
+
+/// Result of resolving a CLI shorthand verb (`close`, `accept`, …) to a
+/// concrete target status for a given category.
+///
+/// Replaces the legacy `legacy::workflow::ShorthandResolution` (which was
+/// keyed on `Lifecycle`) per RFC `7ymtc4b2` v3.1 follow-up task
+/// `1v400j3l` step 3a.
+pub enum ShorthandResolution {
+    /// Resolved to a concrete 3.0 status name.
+    Target(&'static str),
+    /// Verb does not apply to this category. Carries the operator-facing
+    /// hint (e.g. `"close is rejected on rfc threads — use \`accept\`"`).
+    NotApplicable(&'static str),
+    /// Verb is not a known shorthand at all.
+    Unknown,
+}
+
+/// SPEC-2.0 §9.3 — resolve a CLI shorthand verb to a target status for a
+/// thread of `category`. The `decision` tag (SPEC-3.0 §8.3) distinguishes
+/// record-flavored task threads (closed via `accept`) from execution-
+/// flavored task threads (closed via `close`).
+///
+/// Inputs are the canonical 2.0 verb spellings (`closed`, `accepted`,
+/// `proposed`, `pending`, `rejected`, `deprecated`, `withdrawn`,
+/// `open`); upstream callers normalize their input before reaching this
+/// function.
+pub fn resolve_shorthand(verb: &str, category: &str, tags: &[String]) -> ShorthandResolution {
+    use ShorthandResolution::*;
+    let is_decision = tags.iter().any(|t| t == "decision");
+    match (verb, category, is_decision) {
+        ("closed", "rfc", _) => NotApplicable("close is rejected on an rfc thread — use `accept`"),
+        ("closed", "task", _) => Target("done"),
+
+        ("accepted", "rfc", _) | ("accepted", "task", true) => Target("done"),
+        ("accepted", "task", false) => {
+            NotApplicable("accept is rejected on an execution-flavored task thread — use `close`")
+        }
+
+        ("proposed", "rfc", _) => Target("open"),
+        ("proposed", _, _) => NotApplicable("propose is only valid on rfc threads"),
+
+        ("pending", "task", false) => Target("working"),
+        ("pending", _, _) => NotApplicable("pend is only valid on execution-flavored task threads"),
+
+        ("rejected", _, _) => Target("rejected"),
+        ("deprecated", _, _) => Target("deprecated"),
+
+        ("withdrawn", "rfc", _) => Target("withdrawn"),
+        ("withdrawn", _, _) => {
+            NotApplicable("withdraw is only valid on rfc threads — use `close` or `reject`")
+        }
+
+        // Unified `open` (thread reopen) — keep a single edge for every
+        // category and let the per-category transition graph reject
+        // unreachable cases.
+        ("open", _, _) => Target("open"),
+        _ => Unknown,
+    }
+}
+
+// ---------------------------------------------------------------------
 // SPEC-3.0 §3.2 guard rules
 // ---------------------------------------------------------------------
 
