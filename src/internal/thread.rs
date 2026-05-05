@@ -1,9 +1,10 @@
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use super::error::{ForumError, ForumResult};
 use super::event::{
     self, DomainEvent, Event, EventMeta, EventType, Lifecycle, LinkPayload, NodeType,
-    ProjectionError, ThreadKind, ThreadStatus,
+    ProjectionError, ThreadStatus,
 };
 use super::evidence::Evidence;
 use super::git_ops::GitOps;
@@ -12,6 +13,80 @@ use super::refs;
 use super::validate::StrictReplayIssue;
 
 pub const MIN_NODE_ID_PREFIX_LEN: usize = 4;
+
+// --------------------------------------------------------------------
+// `ThreadKind` (4-variant v2 enum) was relocated here from `event.rs`
+// in Phase 4 Step 1g (RFC `7ymtc4b2`, task `913c4s9v`). Co-locating
+// it with the other thread-shaped types lets KEEP files reach for a
+// kind label without importing `internal::event`. The 3.0-native
+// successor is the snapshot's `category` string (SPEC-3.0 §3.1);
+// ThreadKind survives until Phase 4 Step 5 deletes the v2 peer types.
+// --------------------------------------------------------------------
+
+/// Thread kinds supported by git-forum (v2 4-variant enum).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ThreadKind {
+    #[default]
+    Issue,
+    Rfc,
+    Dec,
+    Task,
+}
+
+impl ThreadKind {
+    /// Initial state for a new thread of this kind, in 2.0 vocabulary.
+    /// Delegates to the lifecycle's initial state per SPEC-2.0 §3.1.1
+    /// (proposal=draft, execution=open, record=open).
+    pub fn initial_status(self) -> &'static str {
+        self.lifecycle().initial_state()
+    }
+
+    /// Display ID prefix (e.g. "ASK", "RFC").
+    pub fn id_prefix(self) -> &'static str {
+        match self {
+            Self::Issue => "ASK",
+            Self::Rfc => "RFC",
+            Self::Dec => "DEC",
+            Self::Task => "JOB",
+        }
+    }
+
+    /// Parse a thread kind from an ID prefix string.
+    ///
+    /// Accepts both current prefixes (ASK, JOB) and legacy prefixes (ISSUE, TASK)
+    /// for backward compatibility.
+    pub fn from_id_prefix(prefix: &str) -> Option<ThreadKind> {
+        match prefix {
+            "ASK" | "ISSUE" => Some(Self::Issue),
+            "RFC" => Some(Self::Rfc),
+            "DEC" => Some(Self::Dec),
+            "JOB" | "TASK" => Some(Self::Task),
+            _ => None,
+        }
+    }
+
+    /// SPEC-2.0 §2.3.3: each 1.x kind maps to a canonical lifecycle facet.
+    /// Used to derive `lifecycle` for legacy threads with no `facet_set`
+    /// event in their chain.
+    ///
+    /// Routes through `SPEC::kind_lifecycle`, which sources from the
+    /// kind preset table.
+    pub fn lifecycle(self) -> Lifecycle {
+        super::workflow::SPEC.kind_lifecycle(self)
+    }
+}
+
+impl std::fmt::Display for ThreadKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Issue => write!(f, "issue"),
+            Self::Rfc => write!(f, "rfc"),
+            Self::Dec => write!(f, "dec"),
+            Self::Task => write!(f, "task"),
+        }
+    }
+}
 
 /// A link between two threads.
 #[derive(Debug, Clone)]

@@ -36,70 +36,11 @@ pub struct Approval {
     pub proof_ref: Option<String>,
 }
 
-/// Thread kinds supported by git-forum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum ThreadKind {
-    #[default]
-    Issue,
-    Rfc,
-    Dec,
-    Task,
-}
-
-impl ThreadKind {
-    /// Initial state for a new thread of this kind, in 2.0 vocabulary.
-    /// Delegates to the lifecycle's initial state per SPEC-2.0 §3.1.1
-    /// (proposal=draft, execution=open, record=open).
-    pub fn initial_status(self) -> &'static str {
-        self.lifecycle().initial_state()
-    }
-
-    /// Display ID prefix (e.g. "ASK", "RFC").
-    pub fn id_prefix(self) -> &'static str {
-        match self {
-            Self::Issue => "ASK",
-            Self::Rfc => "RFC",
-            Self::Dec => "DEC",
-            Self::Task => "JOB",
-        }
-    }
-
-    /// Parse a thread kind from an ID prefix string.
-    ///
-    /// Accepts both current prefixes (ASK, JOB) and legacy prefixes (ISSUE, TASK)
-    /// for backward compatibility.
-    pub fn from_id_prefix(prefix: &str) -> Option<ThreadKind> {
-        match prefix {
-            "ASK" | "ISSUE" => Some(Self::Issue),
-            "RFC" => Some(Self::Rfc),
-            "DEC" => Some(Self::Dec),
-            "JOB" | "TASK" => Some(Self::Task),
-            _ => None,
-        }
-    }
-
-    /// SPEC-2.0 §2.3.3: each 1.x kind maps to a canonical lifecycle facet.
-    /// Used to derive `lifecycle` for legacy threads with no `facet_set`
-    /// event in their chain.
-    ///
-    /// Routes through [`SPEC::kind_lifecycle`](super::workflow::WorkflowSpec::kind_lifecycle),
-    /// which sources from the kind preset table.
-    pub fn lifecycle(self) -> Lifecycle {
-        SPEC.kind_lifecycle(self)
-    }
-}
-
-impl std::fmt::Display for ThreadKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Issue => write!(f, "issue"),
-            Self::Rfc => write!(f, "rfc"),
-            Self::Dec => write!(f, "dec"),
-            Self::Task => write!(f, "task"),
-        }
-    }
-}
+// `ThreadKind` was relocated to `internal::thread` in Phase 4 Step 1g
+// (RFC `7ymtc4b2`, task `913c4s9v`). KEEP files import via the new
+// path; event.rs re-exports for back-compat with the legacy event
+// loaders that still consume it (deleted in Step 2/3).
+pub use super::thread::ThreadKind;
 
 /// SPEC-2.0 §3.1 — the canonical 2.0 state set across every lifecycle.
 ///

@@ -126,7 +126,8 @@ const ALLOW_LIST: &[&str] = &[
     "src/internal/policy.rs",
     "src/internal/operation_check.rs",
     "src/internal/validate.rs",
-    "src/internal/id_alloc.rs",
+    // id_alloc.rs cleared in Phase 4 Step 1g (RFC 7ymtc4b2,
+    // task 913c4s9v): switched event::ThreadKind to thread::ThreadKind.
     "src/internal/commands/show.rs",
     "src/internal/commands/ls.rs",
     // commands/diff.rs cleared in Phase 4 Step 1b (RFC 7ymtc4b2,
@@ -149,7 +150,8 @@ const ALLOW_LIST: &[&str] = &[
     // tui/input.rs cleared in Phase 4 Step 1c (RFC 7ymtc4b2,
     // task 913c4s9v): index/reindex imports replaced by
     // snapshot::list walker.
-    "src/internal/tui/render.rs",
+    // tui/render.rs cleared in Phase 4 Step 1g: switched
+    // event::ThreadKind to thread::ThreadKind.
     // tui/persist.rs cleared in Phase 4 Step 1c: ThreadRow now
     // imported from snapshot::list, no internal::index dependency.
 ];

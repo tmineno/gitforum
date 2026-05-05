@@ -10,10 +10,10 @@
 use crate::internal::actor;
 use crate::internal::config::{self, RepoPaths};
 use crate::internal::error::ForumError;
-use crate::internal::event::ThreadKind;
 use crate::internal::git_ops::GitOps;
 use crate::internal::operation_check;
 use crate::internal::thread;
+use crate::internal::thread::ThreadKind;
 
 /// Apply the result of an operation-check pass: print violations to stderr,
 /// and return a `Policy` error if any are blocking. `force` and `strict`

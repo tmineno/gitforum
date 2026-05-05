@@ -2298,7 +2298,7 @@ mod tests {
         let (_dir, git, _paths, _db_path) = setup_repo();
         let thread_id = crate::internal::create::create_thread(
             &git,
-            crate::internal::event::ThreadKind::Rfc,
+            crate::internal::thread::ThreadKind::Rfc,
             "Header test",
             None,
             "human/test-user",

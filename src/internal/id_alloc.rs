@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 
-use super::event::ThreadKind;
 use super::id::rand_bytes;
+use super::thread::ThreadKind;
 
 /// Generate a 1.x opaque kind-prefixed thread ID.
 ///

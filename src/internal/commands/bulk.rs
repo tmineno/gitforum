@@ -11,11 +11,11 @@ use super::context::Context;
 use super::shared::resolve_actor;
 use crate::internal::clock::Clock;
 use crate::internal::error::ForumError;
-use crate::internal::event::ThreadKind;
 use crate::internal::git_ops::GitOps;
 use crate::internal::policy::Policy;
 use crate::internal::refs;
 use crate::internal::thread;
+use crate::internal::thread::ThreadKind;
 
 /// Args for `commands::bulk::run` — `state bulk` selector + transition.
 pub struct BulkArgs {

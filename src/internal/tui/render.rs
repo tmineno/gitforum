@@ -4,10 +4,10 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
 use ratatui::Frame;
 
-use crate::internal::event::ThreadKind;
 use crate::internal::id;
 use crate::internal::node::Node;
 use crate::internal::snapshot::list::ThreadRow;
+use crate::internal::thread::ThreadKind;
 
 use super::markdown::markdown_to_text;
 use super::state::{
