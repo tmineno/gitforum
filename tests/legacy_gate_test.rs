@@ -22,68 +22,52 @@ use std::path::PathBuf;
 use syn::visit::Visit;
 use walkdir::WalkDir;
 
-/// Files allowed to reference `internal::legacy::*`.
-///
-/// Paths are relative to the crate root and use forward slashes.
-/// When Phase 2 cuts a domain module off the legacy compat layer,
-/// remove its entry — the test will then guard against regressions.
+// ---------------------------------------------------------------------
+// ALLOW_LIST contents (notes kept outside the array literal — rustfmt
+// re-indents trailing comments).
+//
+// Categories of entries below:
+//
+// 1. Structural / migration consumer — the legacy/* tree itself plus
+//    `commands/migrate.rs` (the legitimate Phase 4 consumer of legacy
+//    chains).
+//
+// 2. 3.0-native modules with v2-delegating impls (node, policy,
+//    thread): Lifecycle/ThreadKind/ThreadStatus helpers still route
+//    through legacy::workflow::SPEC and legacy::v1::normalize_state_name.
+//    Steps 3g and 3h close these.
+//
+// 3. v2 read-path KEEP files (validate, commands/shared): residual v2
+//    read-path code that hasn't been rewired yet. commands/shared.rs
+//    uses `legacy::workflow::SPEC.preset_lookup` only inside
+//    `parse_thread_kind` (the Ls/Shortlog `--kind` filter surface);
+//    step 3f closes it.
+//
+// Already cleared by task 1v400j3l v3.1 follow-up:
+//   - commands/state.rs (3a): shorthand resolution → policy::resolve_shorthand
+//   - commands/thread_new.rs (3b): kind preset → policy::CategoryPreset
+//   - commands/show.rs (3c): state-diagram → CategoryRegistry built_in
+//   - commands/doctor.rs (3d): orphan-ref probe → 3.0-native tree-shape check
+//   - commands/ls.rs (3e): test fixture rebuilt with 3.0-native imports
+//   - commands/shortlog.rs (3e): terminal_state_date → snapshot::history walk
+//
+// Cleared earlier by Phase 4: the DELETE-list source files
+// (state_change, write_ops, create, repair, repair_workflow, prune,
+// purge, timeline, index, reindex, github, github_import, github_export,
+// commands::repair_workflow) — entries gone with the files.
+// evidence.rs cleared by Phase 4 Step 5.
+// ---------------------------------------------------------------------
 const ALLOW_LIST: &[&str] = &[
-    // The legacy tree itself (internal references inside the module).
     "src/internal/legacy/mod.rs",
     "src/internal/legacy/v1.rs",
-    // Phase 4 Step 2b (RFC 7ymtc4b2, task 913c4s9v): event.rs and
-    // workflow.rs themselves now live under `legacy/`. Their internal
-    // sibling-imports (legacy/event.rs uses super::workflow,
-    // legacy/workflow.rs uses super::event) trigger the gate's path
-    // walker; exempt them because they are inside the relocation
-    // target.
     "src/internal/legacy/event.rs",
     "src/internal/legacy/workflow.rs",
-    // 2.0-native domain code that delegates to legacy::v1 per RFC 915yuegd P1.
-    // Phase 4 Step 1f (RFC 7ymtc4b2): NodeType relocated from event.rs
-    // to node.rs; its `canonical` / `is_canonical` / `legacy_subtype_label`
-    // impls still delegate to `legacy::v1` until Step 5 deletes the v2
-    // NodeType + Node struct alongside the other v2 peer types.
     "src/internal/node.rs",
     "src/internal/policy.rs",
     "src/internal/thread.rs",
-    // The migrate command — the legitimate Phase 4 consumer.
     "src/internal/commands/migrate.rs",
-    // Phase 4 Step 2b (RFC 7ymtc4b2, task 913c4s9v): KEEP files with
-    // residual v2 read-path code that was previously importing
-    // `super::event::*` / `super::workflow::*` (then resolving via the
-    // event.rs / workflow.rs ALLOW slots). Those files now reach into
-    // `internal::legacy::event` / `internal::legacy::workflow` directly
-    // and need their own exemption until Step 5 removes the v2 peer
-    // types they're projecting.
     "src/internal/validate.rs",
-    // evidence.rs cleared in Phase 4 Step 5 (RFC 7ymtc4b2,
-    // task 913c4s9v): dropped Locator + add_evidence + add_thread_link
-    // (all unreachable from runtime); the residual `Evidence` struct
-    // doesn't import from legacy.
-    // commands/doctor.rs cleared in task 1v400j3l step 3d: orphan-ref
-    // probe replaced by a 3.0-native tree-shape check (ls-tree of the
-    // bottom commit looks for `thread.toml` or `event.json` — pure
-    // tree inspection, no legacy codec call).
-    // commands/state.rs cleared in task 1v400j3l step 3a: shorthand
-    // resolution moved off legacy::workflow::SPEC onto the 3.0-native
-    // `internal::policy::resolve_shorthand` (keyed on category + tags).
-    // commands/thread_new.rs cleared in task 1v400j3l step 3b: kind
-    // preset moved off legacy::workflow::{KindPreset, SPEC} onto the
-    // 3.0-native `internal::policy::{CategoryPreset, preset_lookup,
-    // presets}`.
-    "src/internal/commands/shared.rs", // workflow::SPEC (test code)
-    // commands/show.rs cleared in task 1v400j3l step 3c: state-diagram
-    // rendering moved off legacy::workflow::SPEC.unified_transitions onto
-    // the 3.0-native `CategoryRegistry::built_in()` + per-category
-    // `transitions`. Test fixture rebuilt without legacy::event imports.
-    "src/internal/commands/ls.rs", // event::* test fixtures
-    "src/internal/commands/shortlog.rs", // event::EventType test fixture
-                                   // (Phase 4 Step 3 deleted the DELETE-list source files
-                                   // (state_change, write_ops, create, repair, repair_workflow,
-                                   // prune, purge, timeline, index, reindex, github, github_import,
-                                   // github_export, commands::repair_workflow). Their entries are
-                                   // gone with the files.)
+    "src/internal/commands/shared.rs",
 ];
 
 /// Walks every `syn::Path` and records whether any of them uses
@@ -180,11 +164,10 @@ fn no_legacy_imports_outside_allow_list() {
 
     assert!(
         violations.is_empty(),
-        "Modules outside the allow-list import internal::legacy::*:\n  - {}\n\n\
-         If this is a deliberate Phase 2/4 change, update ALLOW_LIST in tests/legacy_gate_test.rs.\n\
-         If this is a regression, remove the import — 3.0 modules must reach legacy via\n\
-         the snapshot/migration adapters only (ADR-011 Decision 2).",
-        violations.join("\n  - ")
+        "files outside ALLOW_LIST reach into `internal::legacy::*`:\n  {}\n\n\
+         If a new module needs the v1 compat surface, justify and add to\n\
+         ALLOW_LIST. The end state is no entries here outside legacy/ itself.",
+        violations.join("\n  "),
     );
 }
 
@@ -195,42 +178,34 @@ fn allow_list_paths_exist() {
         let full = PathBuf::from(crate_root).join(path);
         assert!(
             full.exists(),
-            "allow-list entry no longer exists: {} — remove it from ALLOW_LIST",
-            path
+            "ALLOW_LIST entry {path} does not exist on disk; remove it."
         );
     }
 }
 
-/// Phase 4 Step 5 (RFC `7ymtc4b2`, task `913c4s9v`) — codex objection
-/// 2ab3b2a4 issue 1: ADR-011 Decision 3 says only the migrate command
-/// may consume legacy event-chain code. v3.0.0 cannot enforce that
-/// strictly without the full Lifecycle→Category rewire (deferred from
-/// Step 1j to v3.1 per body revision 4). The list below documents
-/// every file v3.0.0 ships with as a sanctioned exemption — the test
-/// directly below locks `ALLOW_LIST` to this exact set, so any new
-/// transitional grandfathering trips CI.
+// ---------------------------------------------------------------------
+// Permanent-exemption contract for v3.0.0
+// ---------------------------------------------------------------------
+
+/// The v3.0.0 baseline of permanent exemptions.
 ///
-/// Categories:
-/// 1. **Structural** — inside `legacy/` itself: legacy/{mod, v1, event,
-///    workflow}.rs.
-/// 2. **Migration consumer** — commands/migrate.rs.
-/// 3. **3.0-native modules with v2-delegating impls** — node.rs
-///    (NodeType::canonical → legacy::v1), policy.rs (Lifecycle::*
-///    methods → legacy::workflow::SPEC; normalize_state_name →
-///    legacy::v1), thread.rs (replay_thread_at mixed-chain projection,
-///    ThreadKind::lifecycle → legacy::workflow::SPEC).
-/// 4. **v2 read-path KEEP files** — validate.rs (uses
-///    legacy::event::EventType for shape checks); commands/state.rs,
-///    thread_new.rs, shared.rs, show.rs (use legacy::workflow::SPEC
-///    for state-diagram and category-keyed lookups);
-///    commands/doctor.rs (uses legacy::event::is_orphan_ref for v2
-///    ref triage); commands/ls.rs, shortlog.rs (test fixtures only).
+/// Per ADR-011 Decision 3, the original target was "only
+/// `commands/migrate.rs` reaches `internal::legacy/*`". Phase 4
+/// (task `913c4s9v`) shipped with a documented set of exemptions
+/// instead; v3.1 task `1v400j3l` is closing them down. The remaining
+/// entries are tracked categories of legacy access:
 ///
-/// Categories 3 and 4 close in v3.1 when the full SPEC-3.0 §3
-/// Category surface replaces Lifecycle dispatch and the v2 peer types
-/// (ThreadState.events, ThreadState.evidence_items, the v2 NodeType
-/// enum, etc.) are removed. v3.0.0 ships with the exemption list as
-/// the contract; the gate locks against drift below.
+/// 1. Structural / migration consumer (legacy/* itself + migrate.rs).
+/// 2. 3.0-native modules with v2-delegating impls (node, policy,
+///    thread): Lifecycle/ThreadKind/ThreadStatus helpers still route
+///    through legacy::workflow::SPEC and legacy::v1::normalize_state_name.
+/// 3. v2 read-path KEEP files (validate, commands/shared): not yet
+///    rewired off the legacy event-shape projection.
+///
+/// The remaining 4 entries close in v3.1 steps 3f-3i + 3j when the
+/// SPEC-3.0 §3 Category surface fully replaces Lifecycle dispatch and
+/// the v2 peer types (ThreadState.events, ThreadState.evidence_items,
+/// the v2 NodeType enum, etc.) are removed.
 const LEGACY_GATE_PERMANENT_EXEMPTIONS: &[&str] = &[
     // Structural / migration consumer.
     "src/internal/legacy/mod.rs",
@@ -245,8 +220,6 @@ const LEGACY_GATE_PERMANENT_EXEMPTIONS: &[&str] = &[
     // v2 read-path KEEP files (cleared in v3.1).
     "src/internal/validate.rs",
     "src/internal/commands/shared.rs",
-    "src/internal/commands/ls.rs",
-    "src/internal/commands/shortlog.rs",
 ];
 
 #[test]
@@ -261,13 +234,13 @@ fn allow_list_matches_permanent_set() {
         .collect();
     assert!(
         extras.is_empty() && missing.is_empty(),
-        "v3.0.0 ALLOW_LIST must equal LEGACY_GATE_PERMANENT_EXEMPTIONS.\n\
+        "ALLOW_LIST must equal LEGACY_GATE_PERMANENT_EXEMPTIONS.\n\
          Extras (in ALLOW but not permanent): {:?}\n\
          Missing (permanent but not in ALLOW): {:?}\n\n\
          If a transitional KEEP file needs legacy access for a Phase 4\n\
          step, that file should be cleared (rewire) before merging — not\n\
-         grandfathered through v3.0.0. The Lifecycle/ThreadKind/etc.\n\
-         delegations are tracked for the v3.1 Category rewire.",
+         grandfathered through. The Lifecycle/ThreadKind/etc. delegations\n\
+         are tracked for the v3.1 Category rewire (task 1v400j3l).",
         extras,
         missing
     );
@@ -279,57 +252,50 @@ fn detector_flags_use_statement_importing_legacy() {
         use crate::internal::legacy::v1::EventCodec;
         pub fn forbidden() {}
     "#;
-    let file = syn::parse_file(synthetic).expect("synthetic source must parse");
+    let file = syn::parse_file(synthetic).unwrap();
     let mut finder = LegacyImportFinder::default();
     finder.visit_file(&file);
-    assert!(
-        finder.found,
-        "detector failed to flag `use crate::internal::legacy::v1::EventCodec`"
-    );
+    assert!(finder.found);
+}
+
+#[test]
+fn detector_flags_grouped_use_through_legacy() {
+    let synthetic = r#"
+        use crate::internal::legacy::v1::{EventCodec, EventLog};
+        pub fn forbidden() {}
+    "#;
+    let file = syn::parse_file(synthetic).unwrap();
+    let mut finder = LegacyImportFinder::default();
+    finder.visit_file(&file);
+    assert!(finder.found);
 }
 
 #[test]
 fn detector_flags_qualified_path_call_to_legacy() {
     let synthetic = r#"
         pub fn forbidden() {
-            let _ = super::legacy::v1::normalize_state_name("open");
+            crate::internal::legacy::v1::EventCodec::default();
         }
     "#;
-    let file = syn::parse_file(synthetic).expect("synthetic source must parse");
+    let file = syn::parse_file(synthetic).unwrap();
     let mut finder = LegacyImportFinder::default();
     finder.visit_file(&file);
-    assert!(
-        finder.found,
-        "detector failed to flag inline `super::legacy::v1::normalize_state_name` call"
-    );
-}
-
-#[test]
-fn detector_flags_grouped_use_through_legacy() {
-    let synthetic = r#"
-        use crate::internal::legacy::{v1::A, v1::B};
-    "#;
-    let file = syn::parse_file(synthetic).expect("synthetic source must parse");
-    let mut finder = LegacyImportFinder::default();
-    finder.visit_file(&file);
-    assert!(
-        finder.found,
-        "detector failed to flag `use crate::internal::legacy::{{...}}` group import"
-    );
+    assert!(finder.found);
 }
 
 #[test]
 fn detector_ignores_legacy_subtype_field_and_local_names() {
     let synthetic = r#"
-        use crate::internal::policy::Policy;
-        pub struct Event { pub legacy_subtype: Option<String> }
-        pub fn ok(legacy_id: &str) -> &str { legacy_id }
+        pub struct Frame {
+            pub legacy_subtype: Option<String>,
+        }
+        pub fn ok() {
+            let legacy = 7;
+            let _ = legacy;
+        }
     "#;
-    let file = syn::parse_file(synthetic).expect("synthetic source must parse");
+    let file = syn::parse_file(synthetic).unwrap();
     let mut finder = LegacyImportFinder::default();
     finder.visit_file(&file);
-    assert!(
-        !finder.found,
-        "detector raised a false positive on `legacy_subtype` / `legacy_id` identifiers"
-    );
+    assert!(!finder.found);
 }

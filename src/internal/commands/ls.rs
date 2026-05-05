@@ -231,7 +231,8 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::legacy::event::{Event, EventType, Lifecycle, ThreadKind, ThreadStatus};
+    use crate::internal::policy::Lifecycle;
+    use crate::internal::thread::{ThreadKind, ThreadStatus};
     use chrono::TimeZone;
 
     fn t() -> chrono::DateTime<chrono::Utc> {
@@ -247,16 +248,6 @@ mod tests {
             status: ThreadStatus::Draft,
             created_at: t(),
             created_by: "human/alice".into(),
-            events: vec![Event {
-                event_id: "evt-0001".into(),
-                thread_id: "RFC-0001".into(),
-                event_type: EventType::Create,
-                created_at: t(),
-                actor: "human/alice".into(),
-                title: Some("Test RFC".into()),
-                kind: Some(ThreadKind::Rfc),
-                ..Event::default()
-            }],
             ..ThreadState::default()
         }
     }
@@ -268,10 +259,9 @@ mod tests {
 
     #[test]
     fn ls_contains_all_threads() {
-        // Phase 2b: lifecycle replaces kind as the column.
         let mut s = fixed_state();
         s.branch = Some("feat/parser".into());
-        s.lifecycle = Lifecycle::Proposal; // kind=Rfc would derive this anyway
+        s.lifecycle = Lifecycle::Proposal;
         let out = render_ls(&[&s]);
         assert!(out.contains("LIFECYCLE"));
         assert!(out.contains("TAGS"));
