@@ -301,7 +301,7 @@ fn is_orphan_ref(git: &GitOps, thread_id: &str) -> ForumResult<bool> {
     let Some(oldest) = shas.last() else {
         return Ok(true);
     };
-    let tree_listing = git.run(&["ls-tree", "-r", "--name-only", oldest])?;
+    let tree_listing = git.run(&["ls-tree", "-r", "--full-tree", "--name-only", oldest])?;
     let has_recognised = tree_listing
         .lines()
         .any(|p| p == "thread.toml" || p == "event.json");

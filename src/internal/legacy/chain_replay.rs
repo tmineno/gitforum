@@ -711,7 +711,7 @@ pub fn replay_chain_at(git: &GitOps, start_rev: &str) -> ForumResult<ThreadState
     let mut issues: Vec<StrictReplayIssue> = Vec::new();
 
     for sha in &shas {
-        let listing = git.run(&["ls-tree", "--name-only", sha])?;
+        let listing = git.run(&["ls-tree", "--full-tree", "--name-only", sha])?;
         let names: Vec<&str> = listing.lines().collect();
         if names.contains(&"thread.toml") {
             // SPEC-3.0 snapshot commit — reset state to this snapshot's
@@ -771,7 +771,7 @@ pub fn replay_chain_strict_at(
     let mut tail_events: Vec<Event> = Vec::new();
 
     for sha in &shas {
-        let listing = git.run(&["ls-tree", "--name-only", sha])?;
+        let listing = git.run(&["ls-tree", "--full-tree", "--name-only", sha])?;
         let names: Vec<&str> = listing.lines().collect();
         if names.contains(&"thread.toml") {
             // SPEC-3.0 snapshot ancestor — reset state to its view.

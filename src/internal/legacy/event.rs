@@ -978,7 +978,7 @@ pub fn load_event_tail_at(
     let mut snapshot_ancestor: Option<String> = None;
 
     for sha in &shas {
-        let listing = git.run(&["ls-tree", "--name-only", sha])?;
+        let listing = git.run(&["ls-tree", "--full-tree", "--name-only", sha])?;
         let names: Vec<&str> = listing.lines().collect();
         if names.contains(&"thread.toml") {
             snapshot_ancestor = Some(sha.clone());

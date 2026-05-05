@@ -107,6 +107,27 @@ fn read_after_write_round_trip_minimal() {
 }
 
 #[test]
+fn read_works_when_gitops_root_is_subdir_of_repo() {
+    // Regression: `read_snapshot_at` invokes `git ls-tree -r
+    // --name-only <tip>` (and friends in the legacy/doctor paths).
+    // Without `--full-tree`, those listings are filtered by the
+    // process working directory relative to the repo root, so
+    // constructing `GitOps` with a subdirectory as its root made
+    // every read return `SnapshotMissing("commit X lacks
+    // thread.toml")` even though the tree contained one.
+    let repo = fresh_repo();
+    let root_git = GitOps::new(repo.path().to_path_buf());
+    let original = full_doc("SUBDIR1");
+    write_snapshot(&root_git, "SUBDIR1", &original, "create").unwrap();
+
+    let subdir = repo.path().join("nested/deep");
+    std::fs::create_dir_all(&subdir).unwrap();
+    let subdir_git = GitOps::new(subdir);
+    let loaded = read_snapshot(&subdir_git, "SUBDIR1").unwrap();
+    assert_eq!(loaded, original);
+}
+
+#[test]
 fn read_after_write_round_trip_full() {
     let repo = fresh_repo();
     let git = GitOps::new(repo.path().to_path_buf());

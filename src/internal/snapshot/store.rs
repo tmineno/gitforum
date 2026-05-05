@@ -192,7 +192,9 @@ fn write_snapshot_inner(
 /// the parent commit has no `legacy/` entry or when the entry is not
 /// a tree (defensive — same effect as no archive).
 fn parent_legacy_tree_sha(git: &GitOps, commit: &str) -> Result<Option<String>, ForumError> {
-    let out = git.run(&["ls-tree", commit, "legacy"])?;
+    // `--full-tree` is required so the `legacy` path filter resolves
+    // against the tree root regardless of the caller's cwd.
+    let out = git.run(&["ls-tree", "--full-tree", commit, "legacy"])?;
     let line = out.trim();
     if line.is_empty() {
         return Ok(None);
@@ -325,7 +327,11 @@ pub fn read_snapshot(git: &GitOps, thread_id: &str) -> Result<ThreadDocument, Fo
 /// (`thread::replay_thread`) to seed `ThreadState` from a snapshot
 /// commit that is no longer the tip.
 pub fn read_snapshot_at(git: &GitOps, tip: &str) -> Result<ThreadDocument, ForumError> {
-    let tree_listing = git.run(&["ls-tree", "-r", "--name-only", tip])?;
+    // `--full-tree` is required so paths are reported relative to the
+    // tree root rather than the caller's cwd. Without it, invoking
+    // git-forum from a subdirectory of the repo silently filters the
+    // listing and `paths.contains("thread.toml")` returns false.
+    let tree_listing = git.run(&["ls-tree", "-r", "--full-tree", "--name-only", tip])?;
     let paths: Vec<&str> = tree_listing.lines().collect();
 
     // Legacy pre-flight: an event.json blob at tip tree means this is
