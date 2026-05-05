@@ -1125,6 +1125,47 @@ pub fn load_thread_events_at(git: &GitOps, start_rev: &str) -> ForumResult<Vec<E
     Ok(events)
 }
 
+/// Like [`load_thread_events_at`], but stops walking at the first
+/// ancestor that is a SPEC-3.0 snapshot commit (one whose tree
+/// contains `thread.toml`). Returns the legacy event tail in
+/// chronological order plus the OID of the snapshot ancestor when
+/// one is present.
+///
+/// Used by migrate so a Phase-2 cutover ref (snapshot bottom +
+/// event tail at tip) does not error trying to parse the snapshot
+/// commit as `event.json`. `read_snapshot` only inspects the tip
+/// tree, so an event-tip + snapshot-ancestor ref still routes to
+/// migrate via [`crate::internal::error::ForumError::LegacyEventChain`]
+/// — this loader handles that case (task `9635buy0`,
+/// objection `bf678561`).
+pub fn load_event_tail_at(
+    git: &GitOps,
+    start_rev: &str,
+) -> ForumResult<(Vec<Event>, Option<String>)> {
+    // `rev_list` is newest-first. Walk forward, stop at the first
+    // snapshot ancestor — every commit *between* the start_rev and
+    // that ancestor must be an event commit; we collect those.
+    let shas = git.rev_list(start_rev)?;
+    let mut events: Vec<Event> = Vec::new();
+    let mut snapshot_ancestor: Option<String> = None;
+
+    for sha in &shas {
+        let listing = git.run(&["ls-tree", "--name-only", sha])?;
+        let names: Vec<&str> = listing.lines().collect();
+        if names.contains(&"thread.toml") {
+            snapshot_ancestor = Some(sha.clone());
+            break;
+        }
+        if names.contains(&"event.json") {
+            events.push(read_event(git, sha)?);
+        }
+        // Unknown shapes (empty merge commits, etc.) are skipped —
+        // same lenience as the mixed-chain replay walkers.
+    }
+    events.reverse(); // chronological
+    Ok((events, snapshot_ancestor))
+}
+
 /// Returns `true` when the thread ref's bottom (oldest) commit cannot be
 /// parsed as a valid `event.json`. Used by `doctor` and `prune-orphans` to
 /// distinguish a structurally empty ref (manually-created Git ref under

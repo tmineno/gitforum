@@ -982,3 +982,137 @@ fn migrate_handles_mixed_chain_with_snapshot_bottom_and_event_tail() {
         "tail event must be applied to the seeded state"
     );
 }
+
+#[test]
+fn migrate_cli_handles_mixed_chain_through_full_handler() {
+    // Task `9635buy0` follow-up to objection `bf678561`
+    // (codex re-check `a985cc17`): the prior fix only exercised
+    // `migrate_legacy_to_snapshot_strict_at` directly. The full CLI
+    // path (`commands::migrate::run` → `process_one`) used to call
+    // `event::load_thread_events_at` BEFORE projection, which parses
+    // every ancestor as event.json — so a mixed-chain ref would
+    // error on the snapshot ancestor before strict replay ever ran.
+    //
+    // After the fix, `process_one` walks via `load_event_tail_at`
+    // (stops at the snapshot ancestor) and records the ancestor as
+    // an `archive`-kind omission so the report explains why
+    // `legacy/events.ndjson` carries only the post-snapshot tail.
+    use git_forum::internal::node::{NodeKind, NodeRecord, NodeStatus};
+    use git_forum::internal::snapshot::{NodeWithBody, ThreadDocument};
+    use git_forum::internal::thread::ThreadSnapshot;
+
+    let (repo, git, _paths) = setup();
+    let id = "mixchaincli";
+    let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+
+    // Bottom: a SPEC-3.0 snapshot.
+    let mut doc = ThreadDocument::new(ThreadSnapshot {
+        schema_version: ThreadSnapshot::SCHEMA_VERSION,
+        id: id.into(),
+        title: "Mixed CLI".into(),
+        category: "rfc".into(),
+        status: "draft".into(),
+        tags: vec!["seeded".into()],
+        created_at: now,
+        created_by: "human/alice".into(),
+        updated_at: now,
+        updated_by: "human/alice".into(),
+        branch: None,
+        supersedes: vec![],
+    });
+    doc.nodes.push(NodeWithBody {
+        record: NodeRecord {
+            id: "seedcomment".into(),
+            kind: NodeKind::Comment,
+            status: NodeStatus::Open,
+            created_at: now,
+            created_by: "human/alice".into(),
+            updated_at: None,
+            updated_by: None,
+            reply_to: None,
+            legacy_label: None,
+        },
+        body: "seeded".into(),
+    });
+    snapshot::write_snapshot(&git, id, &doc, "create snapshot").unwrap();
+    let refname = format!("refs/forum/threads/{id}");
+    let snapshot_oid = git.resolve_ref(&refname).unwrap().unwrap();
+
+    // Tail: append a legacy event commit so the ref becomes
+    // event-tip + snapshot-ancestor.
+    let tail = Event {
+        thread_id: id.into(),
+        event_type: EventType::Say,
+        created_at: now + chrono::Duration::minutes(1),
+        actor: "human/bob".into(),
+        body: Some("after-snapshot tail".into()),
+        node_type: Some(git_forum::internal::event::NodeType::Comment),
+        ..Event::default()
+    };
+    let blob = git
+        .hash_object(serde_json::to_string(&tail).unwrap().as_bytes())
+        .unwrap();
+    let tree = git.mktree_single("event.json", &blob).unwrap();
+    let tail_commit = git
+        .commit_tree(&tree, &[&snapshot_oid], "tail event")
+        .unwrap();
+    git.update_ref_cas(&refname, &tail_commit, &snapshot_oid)
+        .unwrap();
+
+    // Drive the actual CLI binary.
+    let bin = env!("CARGO_BIN_EXE_git-forum");
+    let out = Command::new(bin)
+        .current_dir(repo.path())
+        .args(["migrate", "--to", "3.0"])
+        .output()
+        .expect("git-forum migrate should run");
+    assert!(
+        out.status.success(),
+        "migrate exited non-zero on mixed-chain ref:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("[migrated]"),
+        "mixed-chain ref must be migrated, not skipped/errored:\n{stdout}"
+    );
+
+    // Post-migration: read_snapshot must succeed and carry both the
+    // seeded state AND the tail event's node.
+    let post = snapshot::read_snapshot(&git, id)
+        .expect("post-migrate read_snapshot must return a 3.0 snapshot");
+    assert!(
+        post.snapshot.tags.iter().any(|t| t == "seeded"),
+        "snapshot-bottom tag `seeded` must survive, got {:?}",
+        post.snapshot.tags
+    );
+    assert!(
+        post.nodes.iter().any(|n| n.body == "after-snapshot tail"),
+        "tail event must be incorporated into the migrated snapshot"
+    );
+
+    // Report must record the snapshot ancestor as an `archive`-kind
+    // omission, so the operator sees why the new
+    // legacy/events.ndjson carries only the tail.
+    let report_path = repo.path().join(".git/forum/migration-report.json");
+    let report_json = std::fs::read_to_string(&report_path)
+        .expect("migration-report.json should be written by run()");
+    let report: serde_json::Value = serde_json::from_str(&report_json).unwrap();
+    let entry = report["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["thread_id"] == id)
+        .expect("report should contain the mixed-chain thread");
+    let omissions = entry["omissions"].as_array().expect("omissions array");
+    let archive_omission = omissions
+        .iter()
+        .find(|o| o["kind"] == "archive")
+        .expect("mixed-chain migration must emit an `archive` omission");
+    assert_eq!(
+        archive_omission["item"].as_str().unwrap(),
+        snapshot_oid,
+        "archive omission must point at the snapshot ancestor OID"
+    );
+}

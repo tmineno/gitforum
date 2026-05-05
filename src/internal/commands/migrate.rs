@@ -336,7 +336,7 @@ pub fn run(
 ///
 /// Concurrency: pins the chain tip before reading. The captured
 /// OID feeds both the projection (`migrate_legacy_to_snapshot_strict_at` /
-/// `load_thread_events_at`) and the CAS write
+/// `load_event_tail_at`) and the CAS write
 /// (`write_snapshot_with_archive_pinned`). If another event lands
 /// between the pin and the write, the CAS rejects with
 /// [`ForumError::SnapshotWriteConflict`] — recorded here as
@@ -379,10 +379,15 @@ fn process_one(git: &GitOps, thread_id: &str, dry_run: bool) -> ThreadReport {
         }
     };
 
-    let events = match event::load_thread_events_at(git, &expected_tip) {
-        Ok(ev) => ev,
+    // Phase-2 cutover ref shape: tip is event, ancestor may be a
+    // snapshot. Walk only the event tail; surface the snapshot
+    // ancestor (if any) as an `archive` omission so the report
+    // explains why the new `legacy/events.ndjson` carries only the
+    // tail (task `9635buy0`, objection `bf678561`).
+    let (events, snapshot_ancestor) = match event::load_event_tail_at(git, &expected_tip) {
+        Ok(pair) => pair,
         Err(e) => {
-            report.error = Some(format!("load_thread_events_at: {e}"));
+            report.error = Some(format!("load_event_tail_at: {e}"));
             return report;
         }
     };
@@ -401,6 +406,13 @@ fn process_one(git: &GitOps, thread_id: &str, dry_run: bool) -> ThreadReport {
     report
         .omissions
         .extend(projection.omissions.iter().cloned());
+    if let Some(anc) = &snapshot_ancestor {
+        report.omissions.push(Omission {
+            kind: "archive".into(),
+            item: anc.clone(),
+            reason: "snapshot ancestor; new legacy/events.ndjson contains only events after this commit (the ancestor's archive is preserved on its own commit)".into(),
+        });
+    }
     if projection.lifecycle_inferred {
         report.inferred_metadata = Some(
             "lifecycle inferred from legacy kind (no facet_set in chain — normal for 1.x)".into(),
