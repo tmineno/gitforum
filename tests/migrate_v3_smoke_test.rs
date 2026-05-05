@@ -86,7 +86,7 @@ fn migrate_walk_rewrites_legacy_chain_to_snapshot_with_archive() {
     assert_eq!(doc.snapshot.category, "task", "issue → task per §8.3");
     assert_eq!(
         doc.snapshot.status, "open",
-        "task initial_status must be `open`"
+        "legacy Issue starts at `open`; preserved into the v3 task category"
     );
     assert!(
         doc.snapshot.tags.iter().any(|t| t == "bug"),
@@ -257,6 +257,49 @@ fn state_event(thread_id: &str, new_state: &str, ts_offset_min: i64) -> Event {
         new_state: Some(new_state.into()),
         ..Event::default()
     }
+}
+
+#[test]
+fn migrate_preserves_legacy_done_status_end_to_end() {
+    // Regression: prior migrator hard-reset every thread to its
+    // category's `initial_status`, so a `done` v1 task became `open`
+    // post-migrate. SPEC-3.0 §8.1 step 4 (revised): preserve the
+    // legacy final status when it is valid in the target category.
+    let (repo, git, _paths) = setup();
+    let id = id_alloc::alloc_thread_id_with_nonce(
+        ThreadKind::Task.id_prefix(),
+        "human/alice",
+        "DonePreserved",
+        "2026-01-01T00:00:00Z",
+        &[9, 9, 9, 9, 9, 9, 9, 9],
+    );
+    event::write_event(&git, &create_event(&id, ThreadKind::Task, "DonePreserved")).unwrap();
+    // Drive the legacy chain to a done terminal status via canonical
+    // 2.0 transitions (open → working → done).
+    event::write_event(&git, &state_event(&id, "working", 1)).unwrap();
+    event::write_event(&git, &state_event(&id, "done", 2)).unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_git-forum");
+    let out = Command::new(bin)
+        .current_dir(repo.path())
+        .args(["migrate", "--to", "3.0"])
+        .output()
+        .expect("git-forum migrate should run");
+    assert!(
+        out.status.success(),
+        "migrate exited non-zero:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    let doc = snapshot::read_snapshot(&git, &id)
+        .expect("post-migrate read_snapshot must return a 3.0 snapshot");
+    assert_eq!(doc.snapshot.category, "task");
+    assert_eq!(
+        doc.snapshot.status, "done",
+        "legacy `done` task must survive migration; got {}",
+        doc.snapshot.status
+    );
 }
 
 #[test]

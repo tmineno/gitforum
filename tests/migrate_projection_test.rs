@@ -4,8 +4,11 @@
 //! Two SPEC-3.0 §8 invariants under test:
 //!
 //! - Item 5 / §8.1 step 4: the projected snapshot's `status` is the
+//!   replayed legacy final status when it is valid in the target
+//!   category's `statuses` list (every v3 category includes `done`,
+//!   `rejected`, etc., so terminal states survive); otherwise the
 //!   target category's `initial_status` from the v3 built-in
-//!   registry, NOT the replayed legacy final status.
+//!   registry.
 //! - Item 6 / §8.3: tag augmentation consults the **legacy kind**
 //!   (not just lifecycle), so `Issue → bug` and `Dec → decision`
 //!   land on the projected `tags` even when the source chain has no
@@ -76,11 +79,11 @@ fn build_chain(git: &GitOps, kind: ThreadKind, title: &str, tail: Vec<Event>) ->
 }
 
 #[test]
-fn projection_uses_target_category_initial_status_not_legacy_final() {
-    // A v1 RFC closed in `accepted` state must project to `draft`
-    // (the rfc category's initial_status). SPEC-3.0 §8.1 step 4:
-    // migration is intentionally lossy on state. The legacy final
-    // status survives as ancestor commits + legacy/events.ndjson.
+fn projection_preserves_legacy_done_for_rfc() {
+    // SPEC-3.0 §8.1 step 4 (post-fix): a v1 RFC whose final state is
+    // `accepted` (a 1.x synonym for canonical `done`) must project to
+    // `done`, because the v3 `rfc` category's `statuses` list includes
+    // `done`. The legacy final status is NOT silently reset.
     let (_repo, git, _paths) = setup();
     let id = build_chain(
         &git,
@@ -92,14 +95,17 @@ fn projection_uses_target_category_initial_status_not_legacy_final() {
     let doc = migrate::migrate_legacy_to_snapshot(&git, &id).unwrap();
     assert_eq!(doc.snapshot.category, "rfc");
     assert_eq!(
-        doc.snapshot.status, "draft",
-        "v3 rfc.initial_status must override the legacy final status; got {}",
+        doc.snapshot.status, "done",
+        "legacy `accepted` must canonicalise to `done` and survive into the snapshot; got {}",
         doc.snapshot.status
     );
 }
 
 #[test]
-fn projection_uses_task_initial_status_open_for_execution() {
+fn projection_preserves_legacy_done_for_task() {
+    // 1.x `closed` folds to canonical `done`; both v3 `task.statuses`
+    // and `rfc.statuses` include `done`, so the projected snapshot
+    // stays `done` rather than reverting to `open`.
     let (_repo, git, _paths) = setup();
     let id = build_chain(
         &git,
@@ -110,7 +116,45 @@ fn projection_uses_task_initial_status_open_for_execution() {
 
     let doc = migrate::migrate_legacy_to_snapshot(&git, &id).unwrap();
     assert_eq!(doc.snapshot.category, "task");
-    assert_eq!(doc.snapshot.status, "open");
+    assert_eq!(doc.snapshot.status, "done");
+}
+
+#[test]
+fn projection_resets_to_initial_when_legacy_status_invalid_for_category() {
+    // `withdrawn` is valid in `rfc` but not in `task`. A task that
+    // ends in `withdrawn` cannot keep that status under the v3 task
+    // category, so it must reset to the category's `initial_status`
+    // (`open`) and surface a `state` omission via the strict path.
+    let (_repo, git, _paths) = setup();
+    let id = build_chain(
+        &git,
+        ThreadKind::Task,
+        "A withdrawn task",
+        vec![state_event("PLACEHOLDER", "withdrawn", 1)],
+    );
+
+    // Lenient path drops omissions; check the doc itself.
+    let doc = migrate::migrate_legacy_to_snapshot(&git, &id).unwrap();
+    assert_eq!(doc.snapshot.category, "task");
+    assert_eq!(
+        doc.snapshot.status, "open",
+        "withdrawn is not in task.statuses; must reset to initial_status `open`"
+    );
+
+    // Strict path must record the reset as a `state` omission.
+    let tip = git
+        .resolve_ref(&format!("refs/forum/threads/{id}"))
+        .unwrap()
+        .unwrap();
+    let projection = migrate::migrate_legacy_to_snapshot_strict_at(&git, &id, &tip).unwrap();
+    assert!(
+        projection
+            .omissions
+            .iter()
+            .any(|o| o.kind == "state" && o.item == "withdrawn"),
+        "reset must surface as a `state` omission; got {:?}",
+        projection.omissions
+    );
 }
 
 #[test]

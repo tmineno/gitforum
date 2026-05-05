@@ -595,10 +595,16 @@ minimum useful user-facing material:
 - readable discussion content;
 - outgoing links;
 - tags;
-- legacy kind or lifecycle mapped to a 3.0 category.
+- legacy kind or lifecycle mapped to a 3.0 category;
+- the legacy final status, when it is a valid status under the target category.
 
 It does not preserve exact 1.x/2.x state-machine semantics, policy outcomes,
 node-type behavior, evidence behavior, repair metadata, or timeline semantics.
+Status preservation is best-effort: the legacy final status is folded onto the
+canonical 2.0 status name, then carried over only if the target category's
+`statuses` list (§3.1) accepts it. Otherwise the snapshot uses the target
+category's `initial_status` and the reset is recorded as a `state` omission in
+the migration report.
 Implementations MAY use the existing 1.x/2.x replay/materialization code inside
 the migration module to avoid duplicating event parsing logic, but that legacy
 adapter MUST NOT be part of the native 3.0 read or write path.
@@ -616,7 +622,10 @@ For each 1.x/2.x `refs/forum/threads/<id>` event-chain ref:
 2. Map the legacy kind or lifecycle to a 3.0 category using the fixed table in
    §8.3.
 3. Project only the preserved material listed above into a 3.0 snapshot.
-4. Create the snapshot using the target category's `initial_status`.
+4. Set the snapshot status to the legacy final status when that status (folded
+   to its canonical 2.0 name) appears in the target category's `statuses`
+   list. Otherwise use the target category's `initial_status` and record the
+   reset as a `state` omission in the migration report.
 5. Convert preserved textual discussion material to `body.md` and `comment`
    nodes. Legacy approvals, objections, actions, reviews, questions, claims,
    risks, summaries, and other non-native semantics MAY be flattened to

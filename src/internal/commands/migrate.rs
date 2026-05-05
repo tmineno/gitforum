@@ -551,12 +551,13 @@ fn build_archive_ndjson(events: &[event::Event]) -> ForumResult<Vec<u8>> {
 /// [`ThreadDocument`].
 ///
 /// Per SPEC-3.0 §8.1 step 4 (and task `9635buy0` item 5), the
-/// projected snapshot's `status` is the target category's
-/// `initial_status` from `CategoryRegistry::built_in()`, NOT the
-/// replayed legacy final status. Migration is intentionally lossy
-/// on state: a closed v1 RFC migrates to `draft`, a working v2 task
-/// to `open`, and so on. The legacy events themselves remain
-/// reachable as ancestor commits and in `legacy/events.ndjson`.
+/// projected snapshot's `status` is the legacy final status when it
+/// is valid in the target category's `statuses` list (e.g. a `done`
+/// v1 RFC stays `done`); otherwise it falls back to the target
+/// category's `initial_status` from `CategoryRegistry::built_in()`
+/// and the reset is recorded as a `state` omission in the per-thread
+/// report. The legacy events themselves remain reachable as ancestor
+/// commits and in `legacy/events.ndjson`.
 ///
 /// Per SPEC-3.0 §8.3 (and task item 6), the projected `tags` include
 /// canonical augmentation by **legacy kind** (`bug` for `bug`/`issue`,
@@ -726,20 +727,42 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
     let category = state.category.clone();
     let label = super::super::policy::lifecycle_label_for(&category, &tags);
     super::thread_new::augment_tags_for_lifecycle_label(label, &mut tags);
-    // SPEC-3.0 §8.1 step 4: target-category `initial_status`, not
-    // the replayed legacy final status. `CategoryRegistry::built_in()`
-    // is the right registry here (NOT `policy.effective_registry()`):
-    // at migration time a v2 `policy.toml` may not parse under the
-    // v3 parser, and the v3 built-ins are the authoritative migration
-    // target by SPEC.
-    let initial_status = super::super::policy::CategoryRegistry::built_in()
-        .get(&category)
-        .map(|def| def.initial_status.clone())
-        .ok_or_else(|| {
-            ForumError::Config(format!(
-                "migration target category `{category}` not in built-in registry"
-            ))
-        })?;
+    // SPEC-3.0 §8.1 step 4: preserve the replayed legacy final
+    // status when it is valid in the target category's `statuses`
+    // list; otherwise fall back to the category's `initial_status`
+    // and surface a `state` omission so the report explains the
+    // reset. `CategoryRegistry::built_in()` is the right registry
+    // here (NOT `policy.effective_registry()`): at migration time a
+    // v2 `policy.toml` may not parse under the v3 parser, and the
+    // v3 built-ins are the authoritative migration target by SPEC.
+    //
+    // Most legacy chains land here with `state.status` already
+    // canonical (chain_replay normalises via `ThreadStatus::parse_lenient`),
+    // but we re-fold through `canonical_status_lenient` so that
+    // edge cases (snapshot-seeded states, malformed terminals)
+    // still get one shot at synonym resolution before the fallback.
+    let registry = super::super::policy::CategoryRegistry::built_in();
+    let category_def = registry.get(&category).ok_or_else(|| {
+        ForumError::Config(format!(
+            "migration target category `{category}` not in built-in registry"
+        ))
+    })?;
+    let canonical_legacy = super::super::policy::canonical_status_lenient(&state.status)
+        .map(str::to_string)
+        .unwrap_or_else(|| state.status.clone());
+    let initial_status = if category_def.has_status(&canonical_legacy) {
+        canonical_legacy
+    } else {
+        omissions.push(Omission {
+            kind: "state".into(),
+            item: state.status.clone(),
+            reason: format!(
+                "legacy status `{}` not in category `{category}` statuses; reset to initial_status `{}`",
+                state.status, category_def.initial_status
+            ),
+        });
+        category_def.initial_status.clone()
+    };
 
     let nodes: Vec<NodeWithBody> = state
         .nodes
