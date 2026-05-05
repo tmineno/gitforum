@@ -12,9 +12,7 @@
 
 use super::super::error::ForumError;
 use super::super::git_ops::GitOps;
-use super::super::legacy::workflow::SPEC;
-use super::super::policy::Lifecycle;
-use super::super::policy::{self, Policy};
+use super::super::policy::{self, CategoryRegistry, Policy};
 use super::super::refs::thread_ref;
 use super::super::snapshot::history::{self, SnapshotLogEntry};
 use super::super::thread::{self, NodeLookup, ThreadState};
@@ -197,7 +195,8 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
         }
         if !compact {
             lines.push("transitions:".into());
-            for diagram_line in render_state_diagram(state.lifecycle, state.status.as_str()) {
+            let category = policy::lifecycle_to_category(state.lifecycle);
+            for diagram_line in render_state_diagram(category, state.status.as_str()) {
                 lines.push(diagram_line);
             }
         }
@@ -697,25 +696,44 @@ fn render_action_hint(state: &ThreadState, policy: &Policy) -> String {
 }
 
 // ============================================================
-//  State diagram — table-driven from Lifecycle
+//  State diagram — table-driven from CategoryDefinition
 // ============================================================
 
-/// SPEC-2.0 §3.1.1: per-lifecycle "happy-path" spine. Every other allowed
-/// state is rendered as a branch off whichever spine state it leaves from.
-fn lifecycle_spine(lifecycle: Lifecycle) -> &'static [&'static str] {
-    match lifecycle {
-        Lifecycle::Proposal => &["draft", "open", "review", "done", "deprecated"],
-        Lifecycle::Execution => &["open", "working", "review", "done", "deprecated"],
-        Lifecycle::Record => &["open", "done", "deprecated"],
+/// SPEC-3.0 §3.1: per-category "happy-path" spine for the built-in
+/// categories. Every other reachable status is rendered as a branch off
+/// whichever spine status it leaves from.
+///
+/// Custom categories (no entry here) render as a flat list of edges
+/// without a spotlighted spine.
+fn category_spine(category: &str) -> &'static [&'static str] {
+    match category {
+        "rfc" => &["draft", "open", "review", "done", "deprecated"],
+        "task" => &["open", "working", "review", "done", "deprecated"],
+        _ => &[],
     }
 }
 
-/// Render a compact Unicode state diagram for `lifecycle` with `current`
+/// Render a compact Unicode state diagram for `category` with `current`
 /// highlighted in `[brackets]`. Forward edges use `→`; branch edges use
-/// `├→` / `└→`. Driven entirely by `WorkflowSpec::unified_transitions()` filtered by the
-/// lifecycle's allowed states (§3.1).
-pub fn render_state_diagram(lifecycle: Lifecycle, current: &str) -> Vec<String> {
-    let spine = lifecycle_spine(lifecycle);
+/// `├→` / `└→`. Driven entirely by the SPEC-3.0 §3.1
+/// [`CategoryDefinition::transitions`] of the built-in registry.
+///
+/// Replaces the legacy lifecycle-keyed renderer (which read
+/// `WorkflowSpec::unified_transitions()` filtered by
+/// `Lifecycle::allows_state`) per RFC `7ymtc4b2` v3.1 follow-up task
+/// `1v400j3l` step 3c.
+pub fn render_state_diagram(category: &str, current: &str) -> Vec<String> {
+    let registry = CategoryRegistry::built_in();
+    let cat_def = match registry.get(category) {
+        Some(d) => d,
+        None => return vec![format!("  (unknown category `{category}`)")],
+    };
+    let edges: Vec<(&str, &str)> = cat_def
+        .transitions
+        .iter()
+        .filter_map(|t| t.split_once("->"))
+        .collect();
+    let spine = category_spine(category);
     let fmt_state = |s: &str| -> String {
         if s == current {
             format!("[{s}]")
@@ -729,12 +747,9 @@ pub fn render_state_diagram(lifecycle: Lifecycle, current: &str) -> Vec<String> 
     lines.push(format!("  {}", spine_parts.join(" → ")));
 
     for &src in spine {
-        let branches: Vec<&str> = SPEC
-            .unified_transitions()
+        let branches: Vec<&str> = edges
             .iter()
-            .filter_map(|&(s, d)| {
-                (s == src && lifecycle.allows_state(d) && !is_spine_edge(spine, s, d)).then_some(d)
-            })
+            .filter_map(|&(s, d)| (s == src && !is_spine_edge(spine, s, d)).then_some(d))
             .collect();
         if branches.is_empty() {
             continue;
@@ -751,10 +766,7 @@ pub fn render_state_diagram(lifecycle: Lifecycle, current: &str) -> Vec<String> 
     }
 
     // Branches whose source is not on the spine (e.g. rejected → open).
-    for &(src, dst) in SPEC.unified_transitions() {
-        if !lifecycle.allows_state(src) || !lifecycle.allows_state(dst) {
-            continue;
-        }
+    for &(src, dst) in &edges {
         if spine.contains(&src) {
             continue;
         }
@@ -1063,11 +1075,9 @@ fn fallback_scan_implements(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::legacy::event::{
-        Event, EventType, Lifecycle, NodeType, ThreadKind, ThreadStatus,
-    };
-    use crate::internal::node::Node;
-    use crate::internal::thread::ThreadState;
+    use crate::internal::node::{Node, NodeType};
+    use crate::internal::policy::Lifecycle;
+    use crate::internal::thread::{ThreadKind, ThreadState, ThreadStatus};
     use chrono::TimeZone;
 
     fn fixed_state() -> ThreadState {
@@ -1075,23 +1085,12 @@ mod tests {
         ThreadState {
             id: "RFC-0001".into(),
             kind: ThreadKind::Rfc,
-            // Phase 2c: lifecycle is independent — keep it kind-aligned.
             lifecycle: Lifecycle::Proposal,
             title: "Test RFC".into(),
             body: Some("Thread body".into()),
             status: ThreadStatus::Draft,
             created_at: t,
             created_by: "human/alice".into(),
-            events: vec![Event {
-                event_id: "evt-0001".into(),
-                thread_id: "RFC-0001".into(),
-                event_type: EventType::Create,
-                created_at: t,
-                actor: "human/alice".into(),
-                title: Some("Test RFC".into()),
-                kind: Some(ThreadKind::Rfc),
-                ..Event::default()
-            }],
             ..ThreadState::default()
         }
     }
@@ -1130,19 +1129,17 @@ mod tests {
     }
 
     #[test]
-    fn state_diagram_filters_by_lifecycle() {
-        // Proposal: withdrawn is reachable (from draft).
-        assert!(render_state_diagram(Lifecycle::Proposal, "open")
+    fn state_diagram_filters_by_category() {
+        // rfc: withdrawn is in the registry (draft→withdrawn,
+        // open→withdrawn).
+        assert!(render_state_diagram("rfc", "open")
             .join("\n")
             .contains("withdrawn"));
-        // Execution: withdrawn excluded by §3.1.1 allowed_states.
-        let exec = render_state_diagram(Lifecycle::Execution, "open").join("\n");
-        assert!(!exec.contains("withdrawn"));
-        assert!(exec.contains("working") && exec.contains("review"));
-        // Record: minimal — no review/working.
-        let record = render_state_diagram(Lifecycle::Record, "open").join("\n");
-        assert!(!record.contains("review") && !record.contains("working"));
-        assert!(record.contains("[open]") && record.contains("done"));
+        // task: no withdrawn status in the registry.
+        let task = render_state_diagram("task", "open").join("\n");
+        assert!(!task.contains("withdrawn"));
+        assert!(task.contains("working") && task.contains("review"));
+        assert!(task.contains("[open]") && task.contains("done"));
     }
 
     #[test]

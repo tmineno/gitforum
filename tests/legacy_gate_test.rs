@@ -70,14 +70,17 @@ const ALLOW_LIST: &[&str] = &[
     // 3.0-native `internal::policy::{CategoryPreset, preset_lookup,
     // presets}`.
     "src/internal/commands/shared.rs", // workflow::SPEC (test code)
-    "src/internal/commands/show.rs",   // workflow::SPEC + test fixtures
-    "src/internal/commands/ls.rs",     // event::* test fixtures
+    // commands/show.rs cleared in task 1v400j3l step 3c: state-diagram
+    // rendering moved off legacy::workflow::SPEC.unified_transitions onto
+    // the 3.0-native `CategoryRegistry::built_in()` + per-category
+    // `transitions`. Test fixture rebuilt without legacy::event imports.
+    "src/internal/commands/ls.rs", // event::* test fixtures
     "src/internal/commands/shortlog.rs", // event::EventType test fixture
-                                       // (Phase 4 Step 3 deleted the DELETE-list source files
-                                       // (state_change, write_ops, create, repair, repair_workflow,
-                                       // prune, purge, timeline, index, reindex, github, github_import,
-                                       // github_export, commands::repair_workflow). Their entries are
-                                       // gone with the files.)
+                                   // (Phase 4 Step 3 deleted the DELETE-list source files
+                                   // (state_change, write_ops, create, repair, repair_workflow,
+                                   // prune, purge, timeline, index, reindex, github, github_import,
+                                   // github_export, commands::repair_workflow). Their entries are
+                                   // gone with the files.)
 ];
 
 /// Walks every `syn::Path` and records whether any of them uses
@@ -240,7 +243,6 @@ const LEGACY_GATE_PERMANENT_EXEMPTIONS: &[&str] = &[
     "src/internal/validate.rs",
     "src/internal/commands/doctor.rs",
     "src/internal/commands/shared.rs",
-    "src/internal/commands/show.rs",
     "src/internal/commands/ls.rs",
     "src/internal/commands/shortlog.rs",
 ];
