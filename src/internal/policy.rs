@@ -293,42 +293,27 @@ pub fn category_for_state(state: &ThreadState) -> &str {
     &state.category
 }
 
-/// SPEC-2.0 §3.1.2 — pure text-level normalization of 1.x state names
-/// to 2.0 canonical form.
+/// Lenient parse: fold 1.x state-name synonyms onto canonical 2.0
+/// names per SPEC-2.0 §3.1.2 and verify the result is one of the
+/// eight canonical statuses (draft / open / working / review / done /
+/// rejected / withdrawn / deprecated). Returns `None` if the input
+/// is neither a known alias nor already canonical.
 ///
-/// 3.0 snapshots store status in canonical form natively; this fold
-/// stays for compat with policy.toml files written against 1.x state
-/// names (e.g. `"closed"` → `"done"`) and for v2 ThreadState reads
-/// that ride mixed-chain replay.
-pub fn normalize_state_name(s: &str) -> &str {
-    const STATE_ALIASES: &[(&str, &str)] = &[
-        ("proposed", "open"),
-        ("under-review", "review"),
-        ("reviewing", "review"),
-        ("accepted", "done"),
-        ("closed", "done"),
-        ("pending", "working"),
-        ("designing", "working"),
-        ("implementing", "working"),
-    ];
-    STATE_ALIASES
-        .iter()
-        .find_map(|&(legacy, canonical)| (legacy == s).then_some(canonical))
-        .unwrap_or(s)
-}
-
-/// Lenient parse: normalize 1.x synonyms onto canonical 2.0 status
-/// names and verify the result is one of the eight canonical statuses
-/// (draft / open / working / review / done / rejected / withdrawn /
-/// deprecated). Returns `None` if the normalized string isn't
-/// canonical.
-///
-/// 3.0-native replacement for `legacy::chain_replay::ThreadStatus
-/// ::parse_lenient` for non-legacy callers (state.rs's CLI input
-/// path, etc.) — keeps them off the typed v2 enum while preserving
-/// the lenient input behavior. v3.1 step 3l (task `1v400j3l`).
+/// 3.0-native replacement for the v2 `policy::normalize_state_name`
+/// helper (removed in v3.1 step 3p, task `1v400j3l`) — the alias
+/// table is now embedded here. v3 KEEP code that wants
+/// "fold-or-passthrough" behavior writes
+/// `canonical_status_lenient(s).unwrap_or(s)` at the call site so
+/// the lenient surface remains obvious.
 pub fn canonical_status_lenient(s: &str) -> Option<&'static str> {
-    match normalize_state_name(s) {
+    let aliased = match s {
+        "proposed" => "open",
+        "under-review" | "reviewing" => "review",
+        "accepted" | "closed" => "done",
+        "pending" | "designing" | "implementing" => "working",
+        other => other,
+    };
+    match aliased {
         "draft" => Some("draft"),
         "open" => Some("open"),
         "working" => Some("working"),
@@ -951,8 +936,8 @@ pub fn check_guards(
     // Normalize 1.x state names (under-review, accepted, etc.) so legacy
     // policies and migrated chains line up with category-table keys that
     // use SPEC-3.0 canonical statuses.
-    let from = normalize_state_name(from);
-    let to = normalize_state_name(to);
+    let from = canonical_status_lenient(from).unwrap_or(from);
+    let to = canonical_status_lenient(to).unwrap_or(to);
     let transition = format!("{from}->{to}");
     let Some(rules) = policy.guards_for_transition(category, &transition) else {
         return Vec::new();

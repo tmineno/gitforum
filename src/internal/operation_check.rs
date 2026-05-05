@@ -6,23 +6,28 @@
 //! `"task"`) along with the relevant status / node kind for dispatch.
 
 use super::node::NodeKind;
-use super::policy::{normalize_state_name, Policy};
+use super::policy::{canonical_status_lenient, Policy};
+
+/// Fold a status name through the SPEC-2.0 §3.1.2 alias table; passes
+/// through unchanged when the input is neither a known alias nor
+/// canonical. Local helper so each call site stays terse.
+fn fold_status(s: &str) -> &str {
+    canonical_status_lenient(s).unwrap_or(s)
+}
 
 /// State-name allow-list match that tolerates 1.x↔2.0 name mismatches
 /// inherited from migrated chains. State stored in 3.0 snapshots is
 /// always 2.0-canonical, but the helper preserves migration tolerance
 /// for legacy fixtures.
 fn allow_list_contains(allow: &[String], status: &str) -> bool {
-    let target = normalize_state_name(status);
-    allow
-        .iter()
-        .any(|s| normalize_state_name(s.as_str()) == target)
+    let target = fold_status(status);
+    allow.iter().any(|s| fold_status(s.as_str()) == target)
 }
 
 fn render_allow_list_for_hint(allow: &[String]) -> String {
     let mut seen: Vec<&str> = Vec::new();
     for entry in allow {
-        let canonical = normalize_state_name(entry.as_str());
+        let canonical = fold_status(entry.as_str());
         if !seen.contains(&canonical) {
             seen.push(canonical);
         }
@@ -182,7 +187,7 @@ fn check_say_inner(
 ) -> Vec<OperationViolation> {
     let mut violations = Vec::new();
     let target_kind = node_type;
-    let target_status = normalize_state_name(status);
+    let target_status = fold_status(status);
 
     // 3.0 lookup is direct on the canonical status name; allow_list_contains
     // remains in case migrated fixtures still carry 1.x state names.
@@ -195,7 +200,7 @@ fn check_say_inner(
     let entry = cat
         .allowed_node_types
         .iter()
-        .find(|(k, _)| normalize_state_name(k.as_str()) == target_status);
+        .find(|(k, _)| fold_status(k.as_str()) == target_status);
     if let Some((_, allowed)) = entry {
         if !allowed.contains(&target_kind) {
             violations.push(OperationViolation {
@@ -265,7 +270,7 @@ fn check_revise_inner(
     }
 
     let target = if is_body { "body" } else { "node" };
-    let canonical_status = normalize_state_name(status);
+    let canonical_status = fold_status(status);
     let hint = if allowed.is_empty() {
         format!("{target} revision is denied in every status (allow list is empty)")
     } else {
@@ -306,7 +311,7 @@ fn check_evidence_inner(policy: &Policy, category: &str, status: &str) -> Vec<Op
         return violations;
     }
 
-    let canonical_status = normalize_state_name(status);
+    let canonical_status = fold_status(status);
     let hint = if allowed.is_empty() {
         "evidence is denied in every status (allow list is empty)".to_string()
     } else {

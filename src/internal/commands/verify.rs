@@ -9,7 +9,7 @@
 
 use super::super::error::{ForumError, ForumResult};
 use super::super::git_ops::GitOps;
-use super::super::policy::{self, normalize_state_name, GuardViolation, Policy};
+use super::super::policy::{self, GuardViolation, Policy};
 use super::super::thread;
 use super::context::Context;
 use super::shared::resolve_tid;
@@ -139,7 +139,8 @@ fn forward_target(state: &thread::ThreadState, p: &Policy) -> Option<String> {
     let category = policy::category_for_state(state);
     let registry = p.effective_registry();
     let cat_def = registry.get(category)?;
-    let normalized = normalize_state_name(state.status.as_str());
+    let status = state.status.as_str();
+    let normalized = policy::canonical_status_lenient(status).unwrap_or(status);
     cat_def
         .valid_targets(normalized)
         .into_iter()

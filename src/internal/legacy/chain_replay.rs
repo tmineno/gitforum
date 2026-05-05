@@ -113,11 +113,11 @@ impl ThreadStatus {
     }
 
     /// Accepts canonical 2.0 names AND 1.x synonyms by routing through
-    /// [`super::super::policy::normalize_state_name`]. The lenient
+    /// [`super::v1::normalize_state_name`]. The lenient
     /// `apply_event` path uses this so legacy event chains keep
     /// replaying.
     pub fn parse_lenient(s: &str) -> Option<Self> {
-        Self::parse(super::super::policy::normalize_state_name(s))
+        Self::parse(super::v1::normalize_state_name(s))
     }
 
     pub fn as_str(self) -> &'static str {
