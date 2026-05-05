@@ -26,19 +26,16 @@ use walkdir::WalkDir;
 // ALLOW_LIST contents (notes kept outside the array literal — rustfmt
 // re-indents trailing comments).
 //
-// Categories of entries below:
+// As of v3.1 step 3k (task `1v400j3l`) the ALLOW set has shrunk to its
+// permanent structural shape — six entries:
 //
-// 1. Structural / migration consumer — the legacy/* tree itself plus
-//    `commands/migrate.rs` (the legitimate Phase 4 consumer of legacy
-//    chains).
+// 1. The legacy/* tree itself (mod, v1, event, workflow, chain_replay
+//    — five entries). Files inside legacy/ structurally belong there;
+//    the gate's job is keeping non-legacy code from importing them.
+// 2. commands/migrate.rs — the single sanctioned non-legacy consumer
+//    of legacy chains, per ADR-011 Decision 1.
 //
-// 2. 3.0-native module with v2-delegating impls (thread): the v2
-//    event-chain replay machinery (DomainEvent, EventType, etc.)
-//    still consumed during mixed-chain reads. Step 3j splits
-//    `replay_thread` so non-migrate callers never reach the legacy
-//    branch, fully clearing thread.rs.
-//
-// Already cleared by task 1v400j3l v3.1 follow-up:
+// Cleared by task 1v400j3l v3.1 follow-up steps:
 //   - commands/state.rs (3a): shorthand resolution → policy::resolve_shorthand
 //   - commands/thread_new.rs (3b): kind preset → policy::CategoryPreset
 //   - commands/show.rs (3c): state-diagram → CategoryRegistry built_in
@@ -56,11 +53,12 @@ use walkdir::WalkDir;
 //     Lifecycle/ThreadKind/ThreadStatus enum removal — the deeper
 //     part of step 3h — is deferred; the surface stays for now.
 //   - validate.rs (3i, partial): StrictReplayIssue's `event_type`
-//     field changed from the v2 `EventType` enum to a plain `String`
-//     (callers pass `event_type.to_string()`). Dropping the v2
-//     ThreadState fields (Vec<Event>/Vec<Node>/Vec<Evidence>) — the
-//     deeper part of step 3i — is deferred until thread.rs's replay
-//     split (step 3j) makes that surface narrow enough to delete.
+//     field changed from the v2 `EventType` enum to a plain `String`.
+//   - thread.rs (3j): event-chain replay machinery moved to
+//     `internal::legacy::chain_replay` (a new entry in this list);
+//     `replay_thread` and `replay_thread_strict` are now snapshot-only.
+//     The v2 `events: Vec<Event>` field is gone from `ThreadState`
+//     (the deferred deeper part of step 3i landed alongside 3j).
 //
 // Cleared earlier by Phase 4: the DELETE-list source files
 // (state_change, write_ops, create, repair, repair_workflow, prune,
@@ -73,7 +71,7 @@ const ALLOW_LIST: &[&str] = &[
     "src/internal/legacy/v1.rs",
     "src/internal/legacy/event.rs",
     "src/internal/legacy/workflow.rs",
-    "src/internal/thread.rs",
+    "src/internal/legacy/chain_replay.rs",
     "src/internal/commands/migrate.rs",
 ];
 
@@ -194,29 +192,27 @@ fn allow_list_paths_exist() {
 // Permanent-exemption contract for v3.0.0
 // ---------------------------------------------------------------------
 
-/// The v3.0.0 baseline of permanent exemptions.
+/// The v3.1 permanent ALLOW set, locked at step 3k.
 ///
 /// Per ADR-011 Decision 3, the original target was "only
 /// `commands/migrate.rs` reaches `internal::legacy/*`". Phase 4
-/// (task `913c4s9v`) shipped with a documented set of exemptions
-/// instead; v3.1 task `1v400j3l` is closing them down. After steps
-/// 3a-3i the remaining entries are:
+/// (task `913c4s9v`) shipped with a documented set of exemptions;
+/// v3.1 task `1v400j3l` closed them down to the structural minimum:
 ///
-/// 1. Structural / migration consumer (legacy/* itself + migrate.rs).
-/// 2. 3.0-native module with v2 event-chain replay machinery
-///    (thread.rs): the v2 `replay_thread` path still consumes
-///    DomainEvent / EventType / etc. Cleared in step 3j when
-///    `replay_thread` splits into a snapshot-only public API plus a
-///    migrate-internal legacy reader.
+/// 1. The legacy/* tree itself (mod, v1, event, workflow, chain_replay)
+///    — files inside legacy/ structurally belong there.
+/// 2. commands/migrate.rs — the single sanctioned non-legacy
+///    consumer of legacy chains.
+///
+/// Six entries total. Anything else reaching into `internal::legacy::*`
+/// is a regression that must be rewired, not grandfathered.
 const LEGACY_GATE_PERMANENT_EXEMPTIONS: &[&str] = &[
-    // Structural / migration consumer.
     "src/internal/legacy/mod.rs",
     "src/internal/legacy/v1.rs",
     "src/internal/legacy/event.rs",
     "src/internal/legacy/workflow.rs",
+    "src/internal/legacy/chain_replay.rs",
     "src/internal/commands/migrate.rs",
-    // 3.0-native module pending step 3j replay split.
-    "src/internal/thread.rs",
 ];
 
 #[test]
