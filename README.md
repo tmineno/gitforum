@@ -127,7 +127,14 @@ git forum migrate --to 3.0
 
 Migration preserves useful user-facing content and links, projects the thread
 into a 3.0 snapshot, and keeps the old event commits reachable in Git history.
-Native 3.0 commands do not replay legacy event chains.
+The legacy final status carries over when it is valid in the target category
+(e.g. a closed/done v2 task stays `done`); statuses that don't fit fall back
+to the category's `initial_status` and are listed as `state` omissions in the
+report. Native 3.0 commands do not replay legacy event chains.
+
+Always inspect `--dry-run` output (and the per-thread report at
+`.git/forum/migration-report.json`) before the real run, then sanity-check
+with `git forum ls --status done` afterwards.
 
 ## Privacy
 

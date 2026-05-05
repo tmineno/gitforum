@@ -89,7 +89,7 @@ git forum policy check <ID> --to <STATE>             Re-evaluate guards
 
 # repo health and migration
 git forum doctor [--strict] [-v]                     Diagnose repo
-git forum migrate [--dry-run]                        1.x/2.x → 3.0
+git forum migrate --to 3.0 [--dry-run]               1.x/2.x → 3.0
 
 # hooks and TUI
 git forum hook install                               Install commit-msg
@@ -942,11 +942,34 @@ git forum migrate --as ai/migrate        # tag the synthetic actor
 
 Migration is one-way and intentionally lossy. The migrator
 preserves: thread title, body, readable discussion content,
-outgoing links, tags, and the legacy kind/lifecycle mapped to a
-3.0 category (SPEC-3.0 §8.1). It does not preserve: 1.x/2.x
-state-machine semantics, exact policy outcomes, original
-node-type labels (rhetorical shorthands collapse to `comment`
-nodes with a `legacy_label` field), or strict event order.
+outgoing links, tags, the legacy kind/lifecycle mapped to a
+3.0 category, and the legacy final status when it is valid
+in the target category's `statuses` list (SPEC-3.0 §8.1). It
+does not preserve: exact 1.x/2.x state-machine semantics or
+policy outcomes, original node-type labels (rhetorical
+shorthands collapse to `comment` nodes with a `legacy_label`
+field), or strict event order.
+
+Status preservation is best-effort. The legacy final status is
+folded onto its canonical 2.0 name (so 1.x synonyms like
+`accepted`, `closed`, `proposed`, `under-review`, `pending`,
+`designing`, `implementing` collapse to `done` / `open` /
+`review` / `working`) and then carried over only if the target
+v3 category accepts it. The built-in `task` and `rfc`
+categories both accept `done`, `rejected`, and `deprecated`,
+so the everyday "closed" terminal states survive. Statuses
+that don't fit (e.g. `withdrawn` on a thread that maps to
+`task`) reset to the category's `initial_status` and surface
+in the migration report as `kind: "state"` omissions.
+
+Recommended workflow:
+
+```text
+git forum migrate --to 3.0 --dry-run     # plan
+git forum migrate --to 3.0               # rewrite refs
+git forum ls --status done               # spot-check terminal states
+cat .git/forum/migration-report.json     # inspect omissions
+```
 
 After migration, every `refs/forum/threads/<id>` carries a
 3.0 snapshot tree. The original event-chain commits are still
