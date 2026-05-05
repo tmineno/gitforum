@@ -63,46 +63,12 @@ pub use super::thread::ThreadStatus;
 // 2/3.
 pub use super::policy::Lifecycle;
 
-/// SPEC-2.0 §2.3.5 tag grammar:
-/// - ASCII lowercase only, `[a-z0-9-]`
-/// - Starts with a letter `[a-z]`
-/// - Length 2..=32
-/// - Not a reserved literal (`all`, `none`, `any`, `untagged`)
-pub fn validate_tag(tag: &str) -> Result<(), String> {
-    const RESERVED: &[&str] = &["all", "none", "any", "untagged"];
-    if tag.len() < 2 {
-        return Err(format!(
-            "{tag:?}: tag length must be 2–32 characters (got {})",
-            tag.len()
-        ));
-    }
-    if tag.len() > 32 {
-        return Err(format!(
-            "{tag:?}: tag length must be 2–32 characters (got {})",
-            tag.len()
-        ));
-    }
-    let first = tag.chars().next().expect("non-empty after length check");
-    if !first.is_ascii_lowercase() {
-        return Err(format!(
-            "{tag:?}: tag must start with a lowercase letter `[a-z]`"
-        ));
-    }
-    for c in tag.chars() {
-        if !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
-            return Err(format!(
-                "{tag:?}: invalid character {c:?} (allowed: `[a-z0-9-]`)"
-            ));
-        }
-    }
-    if RESERVED.contains(&tag) {
-        return Err(format!(
-            "{tag:?} is a reserved filter literal (one of {:?})",
-            RESERVED
-        ));
-    }
-    Ok(())
-}
+// `validate_tag` was relocated to `internal::thread` in Phase 4
+// Step 2a (RFC `7ymtc4b2`, task `913c4s9v`). It's a SPEC-2.0 §2.3.5
+// (carried into SPEC-3.0 §2.3.5) tag-grammar check, naturally a
+// thread-shaped concern. event.rs back-imports for legacy callers
+// retired in Steps 2/3.
+pub use super::thread::validate_tag;
 
 // `impl Lifecycle { ... }` and `impl Display for Lifecycle` were
 // relocated alongside the enum definition to `internal::policy` in

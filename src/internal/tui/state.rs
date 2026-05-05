@@ -4,7 +4,6 @@ use crate::internal::actor;
 use crate::internal::clock::{Clock, SystemClock};
 use crate::internal::commands::show;
 use crate::internal::error::{ForumError, ForumResult};
-use crate::internal::event;
 use crate::internal::evidence::EvidenceFile;
 use crate::internal::git_ops::GitOps;
 use crate::internal::id_alloc;
@@ -350,7 +349,7 @@ pub(super) fn parse_tag_input(input: &str) -> Result<Vec<String>, String> {
         if t.is_empty() {
             continue;
         }
-        event::validate_tag(t).map_err(|e| e.to_string())?;
+        thread::validate_tag(t).map_err(|e| e.to_string())?;
         if !tags.iter().any(|x: &String| x == t) {
             tags.push(t.to_string());
         }

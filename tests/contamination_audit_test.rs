@@ -156,7 +156,10 @@ const ALLOW_LIST: &[&str] = &[
     // event::NodeType to node::NodeType; no other event:: import remains.
     "src/internal/commands/shared.rs",
     "src/internal/tui/mod.rs",
-    "src/internal/tui/state.rs",
+    // tui/state.rs cleared in Phase 4 Step 2a (RFC 7ymtc4b2,
+    // task 913c4s9v): switched its lone `event::validate_tag` call to
+    // `thread::validate_tag` (the helper relocated to thread.rs as a
+    // SPEC-3.0 §2.3.5 grammar concern, not v2 event surface).
     // tui/input.rs cleared in Phase 4 Step 1c (RFC 7ymtc4b2,
     // task 913c4s9v): index/reindex imports replaced by
     // snapshot::list walker.
