@@ -138,7 +138,10 @@ const ALLOW_LIST: &[&str] = &[
     // commands/bulk.rs cleared in Phase 4 Step 1i: switched
     // event::normalize_state_name and event::ThreadKind to their
     // 3.0-native homes (policy.rs, thread.rs).
-    "src/internal/commands/brief.rs",
+    // commands/brief.rs cleared in Phase 4 Step 1j (RFC 7ymtc4b2,
+    // task 913c4s9v): test imports split off `event::{Lifecycle,
+    // ThreadKind, ThreadStatus}` to their 3.0-native homes (policy::,
+    // thread::).
     // commands/verify.rs cleared in Phase 4 Step 1i: switched
     // event::normalize_state_name and ThreadStatus / ThreadKind to
     // their 3.0-native homes; the residual `event::{self}` glob was

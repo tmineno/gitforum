@@ -48,15 +48,20 @@ pub use super::thread::ThreadKind;
 // retired in Steps 2/3.
 pub use super::thread::ThreadStatus;
 
-/// SPEC-2.0 §2.3.1 — the sole required facet, gates the unified state machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum Lifecycle {
-    Proposal,
-    #[default]
-    Execution,
-    Record,
-}
+// `Lifecycle` was relocated to `internal::policy` in Phase 4 Step 1j
+// (RFC `7ymtc4b2`, task `913c4s9v`). Co-located with the existing v2
+// ↔ 3.0 mapping helpers (`lifecycle_to_category`,
+// `legacy_lifecycle_for_category`, `category_for_state`) so the v2
+// state-machine surface lives in one place. The full SPEC-3.0 §3
+// Category rewire (no Lifecycle dispatch in 3.0 read paths) is a
+// v3.1 concern — v3.0.0's `CategoryRegistry` already exists side-by-
+// side and v2 reads continue to use Lifecycle.
+//
+// event.rs keeps `pub use super::policy::Lifecycle;` for legacy /
+// DELETE-list callers (write_ops, state_change, github_*, repair,
+// create, workflow, legacy/v1, commands/migrate) retired in Steps
+// 2/3.
+pub use super::policy::Lifecycle;
 
 /// SPEC-2.0 §2.3.5 tag grammar:
 /// - ASCII lowercase only, `[a-z0-9-]`
@@ -99,38 +104,9 @@ pub fn validate_tag(tag: &str) -> Result<(), String> {
     Ok(())
 }
 
-impl Lifecycle {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Proposal => "proposal",
-            Self::Execution => "execution",
-            Self::Record => "record",
-        }
-    }
-
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "proposal" => Some(Self::Proposal),
-            "execution" => Some(Self::Execution),
-            "record" => Some(Self::Record),
-            _ => None,
-        }
-    }
-
-    /// SPEC-2.0 §3.1.1 — initial state per lifecycle.
-    pub fn initial_state(self) -> &'static str {
-        SPEC.initial_state(self)
-    }
-
-    /// SPEC-2.0 §3.1.1 — states reachable for this lifecycle.
-    pub fn allowed_states(self) -> &'static [&'static str] {
-        SPEC.allowed_states(self)
-    }
-
-    pub fn allows_state(self, state: &str) -> bool {
-        SPEC.allows_state(self, state)
-    }
-}
+// `impl Lifecycle { ... }` and `impl Display for Lifecycle` were
+// relocated alongside the enum definition to `internal::policy` in
+// Phase 4 Step 1j.
 
 /// SPEC-2.0 §3.1 — single unified transition graph.
 ///
@@ -174,12 +150,6 @@ pub fn is_valid_transition(lifecycle: Lifecycle, from: &str, to: &str) -> bool {
 /// Thin wrapper over [`SPEC::valid_targets`](super::workflow::WorkflowSpec::valid_targets).
 pub fn valid_targets(lifecycle: Lifecycle, from: &str) -> Vec<&'static str> {
     SPEC.valid_targets(lifecycle, from)
-}
-
-impl std::fmt::Display for Lifecycle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
 }
 
 /// Event types as defined in the spec.

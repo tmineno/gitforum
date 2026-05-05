@@ -11,8 +11,8 @@
 use chrono::{DateTime, Utc};
 
 use super::super::error::ForumError;
-use super::super::event::Lifecycle;
 use super::super::index::SearchRow;
+use super::super::policy::Lifecycle;
 use super::super::thread::{self, ThreadKind, ThreadState};
 use super::context::Context;
 use super::show::short_oid;

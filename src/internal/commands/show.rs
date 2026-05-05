@@ -11,8 +11,8 @@
 //! only path.
 
 use super::super::error::ForumError;
-use super::super::event::Lifecycle;
 use super::super::git_ops::GitOps;
+use super::super::policy::Lifecycle;
 use super::super::policy::{self, Policy};
 use super::super::refs::thread_ref;
 use super::super::snapshot::history::{self, SnapshotLogEntry};

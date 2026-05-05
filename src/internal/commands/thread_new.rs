@@ -39,8 +39,8 @@ use crate::internal::workflow::{KindPreset, SPEC};
 // surface. Slot 2 will replace the operation_check call with the
 // 3.0 category surface; slot 1 keeps the existing check in place
 // but routes the write through the snapshot writer.
-use crate::internal::event::Lifecycle;
 use crate::internal::operation_check;
+use crate::internal::policy::Lifecycle;
 
 use super::shared::{
     apply_operation_checks, discover_repo_with_init_warning, resolve_actor, resolve_tid,

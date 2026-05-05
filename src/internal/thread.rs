@@ -480,7 +480,7 @@ fn suppress_self_healed_invalid_transitions(
     });
 }
 
-fn is_self_healed_after(tail: &[Event], lifecycle: super::event::Lifecycle, target: &str) -> bool {
+fn is_self_healed_after(tail: &[Event], lifecycle: super::policy::Lifecycle, target: &str) -> bool {
     let Some(target_status) = ThreadStatus::parse_lenient(target) else {
         return false;
     };

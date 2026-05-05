@@ -303,9 +303,9 @@ pub fn read_incoming_link_counts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::event::{Lifecycle, ThreadKind, ThreadStatus};
     use crate::internal::node::Node;
-    use crate::internal::thread::ThreadLink;
+    use crate::internal::policy::Lifecycle;
+    use crate::internal::thread::{ThreadKind, ThreadLink, ThreadStatus};
     use chrono::{TimeZone, Utc};
 
     fn make_state() -> ThreadState {

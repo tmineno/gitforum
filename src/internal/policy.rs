@@ -26,11 +26,74 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::error::{ForumError, ForumResult};
-use super::event::Lifecycle;
 use super::evidence::EvidenceKind;
 use super::lint_emit::{self, LintEmitter};
 use super::node::{NodeKind, NodeType};
 use super::thread::ThreadState;
+
+// --------------------------------------------------------------------
+// `Lifecycle` (3-variant v2 enum) was relocated here from `event.rs`
+// in Phase 4 Step 1j (RFC `7ymtc4b2`, task `913c4s9v`). Co-located
+// with the existing v2 ↔ 3.0 mapping helpers
+// (`lifecycle_to_category`, `legacy_lifecycle_for_category`,
+// `category_for_state`) so the entire v2 state-machine surface lives
+// in one place.
+//
+// SPEC-3.0 §3 replaces Lifecycle dispatch with the
+// `CategoryRegistry` (defined further down). v3.0.0 read paths still
+// use Lifecycle for legacy snapshots; the full Lifecycle removal is
+// a v3.1 follow-up — v3.0.0 just relocates the enum to a 3.0-native
+// home so KEEP files don't reach into `internal::event`.
+// --------------------------------------------------------------------
+
+/// SPEC-2.0 §2.3.1 — the sole required facet, gates the unified state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Lifecycle {
+    Proposal,
+    #[default]
+    Execution,
+    Record,
+}
+
+impl Lifecycle {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Proposal => "proposal",
+            Self::Execution => "execution",
+            Self::Record => "record",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "proposal" => Some(Self::Proposal),
+            "execution" => Some(Self::Execution),
+            "record" => Some(Self::Record),
+            _ => None,
+        }
+    }
+
+    /// SPEC-2.0 §3.1.1 — initial state per lifecycle.
+    pub fn initial_state(self) -> &'static str {
+        super::workflow::SPEC.initial_state(self)
+    }
+
+    /// SPEC-2.0 §3.1.1 — states reachable for this lifecycle.
+    pub fn allowed_states(self) -> &'static [&'static str] {
+        super::workflow::SPEC.allowed_states(self)
+    }
+
+    pub fn allows_state(self, state: &str) -> bool {
+        super::workflow::SPEC.allows_state(self, state)
+    }
+}
+
+impl std::fmt::Display for Lifecycle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 // ---------------------------------------------------------------------
 // SPEC-3.0 §3.1 category registry
@@ -1482,7 +1545,7 @@ allow_evidence = ["draft"]
 #[cfg(test)]
 mod evaluate_tests {
     use super::*;
-    use crate::internal::event::ThreadKind;
+    use crate::internal::thread::ThreadKind;
 
     fn approval_node(actor: &str) -> crate::internal::node::Node {
         crate::internal::node::Node {
