@@ -5,41 +5,34 @@
 //! selectors). Callers pass the thread's `category` (`"rfc"` or
 //! `"task"`) along with the relevant status / node kind for dispatch.
 
-use super::node::{NodeKind, NodeType};
-use super::policy::{normalize_state_name, Policy};
+use super::node::NodeKind;
+use super::policy::{canonical_status_lenient, Policy};
+
+/// Fold a status name through the SPEC-2.0 §3.1.2 alias table; passes
+/// through unchanged when the input is neither a known alias nor
+/// canonical. Local helper so each call site stays terse.
+fn fold_status(s: &str) -> &str {
+    canonical_status_lenient(s).unwrap_or(s)
+}
 
 /// State-name allow-list match that tolerates 1.x↔2.0 name mismatches
 /// inherited from migrated chains. State stored in 3.0 snapshots is
 /// always 2.0-canonical, but the helper preserves migration tolerance
 /// for legacy fixtures.
 fn allow_list_contains(allow: &[String], status: &str) -> bool {
-    let target = normalize_state_name(status);
-    allow
-        .iter()
-        .any(|s| normalize_state_name(s.as_str()) == target)
+    let target = fold_status(status);
+    allow.iter().any(|s| fold_status(s.as_str()) == target)
 }
 
 fn render_allow_list_for_hint(allow: &[String]) -> String {
     let mut seen: Vec<&str> = Vec::new();
     for entry in allow {
-        let canonical = normalize_state_name(entry.as_str());
+        let canonical = fold_status(entry.as_str());
         if !seen.contains(&canonical) {
             seen.push(canonical);
         }
     }
     seen.join(", ")
-}
-
-/// Map a v2 [`NodeType`] to its 3.0 [`NodeKind`] for policy dispatch.
-fn node_type_to_kind(nt: NodeType) -> NodeKind {
-    match nt.canonical() {
-        NodeType::Comment => NodeKind::Comment,
-        NodeType::Approval => NodeKind::Approval,
-        NodeType::Objection => NodeKind::Objection,
-        NodeType::Action => NodeKind::Action,
-        // canonical() always returns one of the four, but be safe.
-        _ => NodeKind::Comment,
-    }
 }
 
 fn node_kind_str(k: NodeKind) -> &'static str {
@@ -65,7 +58,7 @@ pub enum Op<'a> {
     Say {
         category: &'a str,
         status: &'a str,
-        node_type: NodeType,
+        node_type: NodeKind,
     },
     /// Revising the body or a node body of an existing thread.
     Revise {
@@ -181,7 +174,7 @@ pub fn check_say(
     policy: &Policy,
     category: &str,
     status: &str,
-    node_type: NodeType,
+    node_type: NodeKind,
 ) -> Vec<OperationViolation> {
     check_say_inner(policy, category, status, node_type)
 }
@@ -190,11 +183,11 @@ fn check_say_inner(
     policy: &Policy,
     category: &str,
     status: &str,
-    node_type: NodeType,
+    node_type: NodeKind,
 ) -> Vec<OperationViolation> {
     let mut violations = Vec::new();
-    let target_kind = node_type_to_kind(node_type);
-    let target_status = normalize_state_name(status);
+    let target_kind = node_type;
+    let target_status = fold_status(status);
 
     // 3.0 lookup is direct on the canonical status name; allow_list_contains
     // remains in case migrated fixtures still carry 1.x state names.
@@ -207,7 +200,7 @@ fn check_say_inner(
     let entry = cat
         .allowed_node_types
         .iter()
-        .find(|(k, _)| normalize_state_name(k.as_str()) == target_status);
+        .find(|(k, _)| fold_status(k.as_str()) == target_status);
     if let Some((_, allowed)) = entry {
         if !allowed.contains(&target_kind) {
             violations.push(OperationViolation {
@@ -277,7 +270,7 @@ fn check_revise_inner(
     }
 
     let target = if is_body { "body" } else { "node" };
-    let canonical_status = normalize_state_name(status);
+    let canonical_status = fold_status(status);
     let hint = if allowed.is_empty() {
         format!("{target} revision is denied in every status (allow list is empty)")
     } else {
@@ -318,7 +311,7 @@ fn check_evidence_inner(policy: &Policy, category: &str, status: &str) -> Vec<Op
         return violations;
     }
 
-    let canonical_status = normalize_state_name(status);
+    let canonical_status = fold_status(status);
     let hint = if allowed.is_empty() {
         "evidence is denied in every status (allow list is empty)".to_string()
     } else {
@@ -543,14 +536,14 @@ mod tests {
             "draft",
             vec![NodeKind::Comment, NodeKind::Objection, NodeKind::Action],
         );
-        let v = check_say(&policy, "rfc", "draft", NodeType::Comment);
+        let v = check_say(&policy, "rfc", "draft", NodeKind::Comment);
         assert!(v.is_empty());
     }
 
     #[test]
     fn check_say_blocked() {
         let policy = policy_with_node_rules("rfc", "done", vec![]);
-        let v = check_say(&policy, "rfc", "done", NodeType::Comment);
+        let v = check_say(&policy, "rfc", "done", NodeKind::Comment);
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].rule, "node_type_restricted");
     }
@@ -559,14 +552,14 @@ mod tests {
     fn check_say_unlisted_state_allows_all() {
         let policy = policy_with_node_rules("rfc", "done", vec![]);
         // "draft" not listed → all allowed.
-        let v = check_say(&policy, "rfc", "draft", NodeType::Comment);
+        let v = check_say(&policy, "rfc", "draft", NodeKind::Comment);
         assert!(v.is_empty());
     }
 
     #[test]
     fn check_say_no_policy_allows_all() {
         let policy = Policy::default();
-        let v = check_say(&policy, "rfc", "done", NodeType::Comment);
+        let v = check_say(&policy, "rfc", "done", NodeKind::Comment);
         assert!(v.is_empty());
     }
 
@@ -819,7 +812,7 @@ mod tests {
             Op::Say {
                 category: "rfc",
                 status: "done",
-                node_type: NodeType::Comment,
+                node_type: NodeKind::Comment,
             },
         );
         assert_eq!(v.len(), 1);

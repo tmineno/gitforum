@@ -21,7 +21,7 @@ use crate::internal::clock::Clock;
 use crate::internal::commands::show;
 use crate::internal::error::ForumError;
 use crate::internal::id_alloc;
-use crate::internal::node::{NodeKind, NodeRecord, NodeStatus, NodeType};
+use crate::internal::node::{NodeKind, NodeRecord, NodeStatus};
 use crate::internal::operation_check;
 use crate::internal::policy::Policy;
 use crate::internal::snapshot::{self, store::write_snapshot, NodeWithBody};
@@ -32,13 +32,6 @@ use super::shared::{
     apply_operation_checks, discover_repo_with_init_warning, resolve_actor, resolve_tid,
 };
 use super::thread_new::resolve_body_required;
-
-// Note on `internal::event::NodeType`: imported only for
-// `operation_check::check_say` (policy is keyed on NodeType) — the
-// import does not bridge legacy event-chain reads/writes. ADR-011
-// Decision 3 forbids non-migrate paths from consuming legacy event
-// chains; this module honors that by bailing on `LegacyEventChain`
-// instead of migrating-on-write.
 
 /// Args for `commands::shorthand_say::run` — shared field set used by
 /// `comment` / `objection` / `action` (and `node add` after slot 7f).
@@ -95,15 +88,9 @@ pub fn run_shorthand_say(
         &format!("Compose a {} node", node_kind_label(kind)),
     )?;
 
-    // Operation check is still keyed on the v2 ThreadStatus + NodeType.
-    // Project the SPEC-3.0 NodeKind back into the four canonical NodeType
-    // variants for policy lookup; the conversion is internal to this
-    // helper so main.rs stays free of `internal::event` imports.
-    let policy_node_type = node_kind_to_policy_type(kind);
     let state = thread::replay_thread(&git, thread_id)?;
     let category = crate::internal::policy::category_for_state(&state);
-    let violations =
-        operation_check::check_say(&policy, category, state.status.as_str(), policy_node_type);
+    let violations = operation_check::check_say(&policy, category, state.status.as_str(), kind);
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
     let resolved_reply = resolve_reply_to(&git, thread_id, reply_to.as_deref())?;
@@ -170,22 +157,6 @@ fn write_node_to_snapshot(
     doc.snapshot.updated_by = actor.into();
     write_snapshot(git, thread_id, &doc, "node add")?;
     Ok(())
-}
-
-/// Project a SPEC-3.0 [`NodeKind`] back to the v2 [`NodeType`]
-/// vocabulary used by `policy.toml`. Phase 2 keeps the policy schema
-/// keyed on NodeType; the conversion is total because the four
-/// canonical NodeKind variants each map 1:1 to the four canonical
-/// NodeType variants. This is the only consumer of `internal::event`
-/// in this module, and it stays internal so main.rs no longer imports
-/// `event::NodeType` (audit grep contract).
-fn node_kind_to_policy_type(kind: NodeKind) -> NodeType {
-    match kind {
-        NodeKind::Comment => NodeType::Comment,
-        NodeKind::Approval => NodeType::Approval,
-        NodeKind::Objection => NodeType::Objection,
-        NodeKind::Action => NodeType::Action,
-    }
 }
 
 fn node_kind_label(kind: NodeKind) -> &'static str {

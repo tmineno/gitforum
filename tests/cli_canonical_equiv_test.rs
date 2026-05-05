@@ -7,7 +7,7 @@ use std::process::Command;
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
-use git_forum::internal::legacy::event::NodeType;
+use git_forum::internal::node::NodeKind;
 use git_forum::internal::thread;
 
 fn bin() -> String {
@@ -100,8 +100,8 @@ fn objection_shorthand_equals_node_add_objection() {
     assert!(out.status.success());
     let state_b = replay(repo_b.path(), &id_b);
 
-    assert_eq!(state_a.nodes[0].node_type, NodeType::Objection);
-    assert_eq!(state_b.nodes[0].node_type, NodeType::Objection);
+    assert_eq!(state_a.nodes[0].record.kind, NodeKind::Objection);
+    assert_eq!(state_b.nodes[0].record.kind, NodeKind::Objection);
     assert_eq!(state_a.nodes[0].body, state_b.nodes[0].body);
 }
 

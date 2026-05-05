@@ -12,8 +12,8 @@ use crate::internal::config::{self, RepoPaths};
 use crate::internal::error::ForumError;
 use crate::internal::git_ops::GitOps;
 use crate::internal::operation_check;
+use crate::internal::policy;
 use crate::internal::thread;
-use crate::internal::thread::ThreadKind;
 
 /// Apply the result of an operation-check pass: print violations to stderr,
 /// and return a `Policy` error if any are blocking. `force` and `strict`
@@ -86,25 +86,28 @@ pub fn resolve_tid(git: &GitOps, user_input: &str) -> Result<String, ForumError>
 // =============================================================================
 
 /// Parse a kind preset name (`rfc`, `dec`, `task`, `issue`, `bug`, plus
-/// historical aliases) into the canonical `ThreadKind`. Used by `Ls`,
-/// `Shortlog`, and the `--kind` filter on `state bulk`.
+/// historical aliases) into the canonical preset name string used by
+/// `policy::kind_label_for` for filtering. Used by `Ls`, `Shortlog`,
+/// and the `--kind` filter on `state bulk`.
 ///
-/// TODO(phase-4): the kind preset table itself disappears with the
-/// Phase 1 category rewrite; this helper goes with it.
-pub fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
-    use crate::internal::legacy::workflow::SPEC;
-    SPEC.preset_lookup(kind).map(|p| p.kind).ok_or_else(|| {
-        let valid: Vec<&str> = SPEC.presets().iter().map(|p| p.name).collect();
+/// Routes through the 3.0-native `policy::preset_lookup` (returns a
+/// `CategoryPreset`); the canonical name is the row's `name` field.
+/// v3.1 step 3n (task `1v400j3l`) replaced the typed `ThreadKind`
+/// return shape with the canonical preset name string.
+pub fn parse_thread_kind(kind: &str) -> Result<&'static str, ForumError> {
+    let preset = policy::preset_lookup(kind).ok_or_else(|| {
+        let valid: Vec<&str> = policy::presets().iter().map(|p| p.name).collect();
         ForumError::Config(format!(
             "unknown kind '{kind}'; valid presets: {}",
             valid.join(", "),
         ))
-    })
+    })?;
+    Ok(preset.name)
 }
 
 /// Optional-input variant of [`parse_thread_kind`]. Returns `Ok(None)`
 /// when the caller passed `None` (no `--kind` flag).
-pub fn parse_thread_kind_filter(kind: Option<&str>) -> Result<Option<ThreadKind>, ForumError> {
+pub fn parse_thread_kind_filter(kind: Option<&str>) -> Result<Option<&'static str>, ForumError> {
     kind.map(parse_thread_kind).transpose()
 }
 

@@ -24,26 +24,29 @@
 //!   lifecycle (P0 #34ith16h). Lenient replay still applies any
 //!   `parse_lenient`-able state, so legacy chains keep replaying.
 
-use super::legacy::event::EventType;
-
 /// A semantic issue detected by strict replay.
 ///
 /// Each variant names the offending event and the rule it violated. The
 /// lenient `replay()` path swallows these; doctor / migration / tests use
 /// `replay_strict()` to surface them.
+///
+/// `event_type` is stored as a string label (the v2 `EventType`'s
+/// `Display` form) so this module no longer reaches into
+/// `internal::legacy::event` for the typed enum. Migrate callers that
+/// have a typed `EventType` in hand pass `event_type.to_string()`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StrictReplayIssue {
     /// `Edit` / `Retract` / `Resolve` / `Reopen` / `Retype` referenced a node
     /// that does not exist in the replayed state.
     UnknownTargetNode {
         event_id: String,
-        event_type: EventType,
+        event_type: String,
         target_node_id: String,
     },
     /// An event lacked a field that its `event_type` requires.
     MissingRequiredField {
         event_id: String,
-        event_type: EventType,
+        event_type: String,
         field: &'static str,
     },
     /// SPEC-2.0 §7.3: a second `facet_set` carrying `lifecycle` was applied.

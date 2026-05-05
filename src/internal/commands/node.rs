@@ -12,7 +12,7 @@ use std::str::FromStr;
 
 use super::super::clock::Clock;
 use super::super::error::ForumError;
-use super::super::node::{NodeKind, NodeType};
+use super::super::node::NodeKind;
 use super::super::refs::thread_ref;
 use super::super::snapshot::history;
 use super::super::thread;
@@ -69,13 +69,13 @@ pub fn run_show(args: NodeShowArgs, ctx: &Context) -> Result<(), ForumError> {
 /// with the explicit `--type` from the CLI; the `force` and edit
 /// flags pass through unchanged.
 pub fn run_add(args: NodeAddArgs, clock: &dyn Clock) -> Result<(), ForumError> {
-    // Parse `--type` into NodeType (canonical fold collapses any
-    // legacy alias into one of the four 3.0 NodeKind variants), then
-    // map to NodeKind. `run_shorthand_say` performs its own
+    // Parse `--type` directly into the SPEC-3.0 NodeKind. Legacy 1.x
+    // rhetorical types (claim/question/summary/etc.) are not valid for
+    // 3.0 native writes — the user gets a typed error pointing at the
+    // canonical four. `run_shorthand_say` performs its own
     // discover/init-warning, so we don't construct a Context here.
-    let parsed = NodeType::from_str(&args.node_type)
+    let kind = NodeKind::from_str(&args.node_type)
         .map_err(|e| ForumError::Config(format!("invalid --type: {e}")))?;
-    let kind = node_type_to_kind(parsed)?;
     run_shorthand_say(
         &args.thread_id,
         args.body_positional,
@@ -88,16 +88,4 @@ pub fn run_add(args: NodeAddArgs, clock: &dyn Clock) -> Result<(), ForumError> {
         args.force,
         clock,
     )
-}
-
-fn node_type_to_kind(node_type: NodeType) -> Result<NodeKind, ForumError> {
-    match node_type.canonical() {
-        NodeType::Comment => Ok(NodeKind::Comment),
-        NodeType::Approval => Ok(NodeKind::Approval),
-        NodeType::Objection => Ok(NodeKind::Objection),
-        NodeType::Action => Ok(NodeKind::Action),
-        other => Err(ForumError::Config(format!(
-            "node type `{other}` cannot be expressed as a SPEC-3.0 NodeKind"
-        ))),
-    }
 }

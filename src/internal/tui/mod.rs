@@ -20,8 +20,8 @@ use ratatui::Terminal;
 
 use super::error::{ForumError, ForumResult};
 use super::git_ops::GitOps;
-use super::node::Node;
 use super::snapshot::list::ThreadRow;
+use super::snapshot::store::NodeWithBody;
 
 use input::{handle_key, handle_mouse};
 use render::render;
@@ -297,7 +297,7 @@ pub struct App {
     filter_bar: Option<FilterBar>,
     pub thread_text: String,
     pub thread_scroll: u16,
-    pub thread_nodes: Vec<Node>,
+    pub thread_nodes: Vec<NodeWithBody>,
     /// Tree-ordered entries for the nodes panel (may differ from thread_nodes order).
     tree_entries: Vec<TreeEntry>,
     pub node_table_state: TableState,
@@ -639,7 +639,7 @@ impl App {
                 self.visible_tree_indices.get(i - 1)
             })
             .and_then(|&ti| self.tree_entries.get(ti))
-            .map(|entry| self.thread_nodes[entry.node_index].node_id.clone())
+            .map(|entry| self.thread_nodes[entry.node_index].record.id.clone())
     }
 
     /// Returns true if the current form view has unsaved user input.
@@ -688,7 +688,12 @@ impl App {
         let selected = node_id.and_then(|id| {
             self.visible_tree_indices
                 .iter()
-                .position(|&ti| self.thread_nodes[self.tree_entries[ti].node_index].node_id == id)
+                .position(|&ti| {
+                    self.thread_nodes[self.tree_entries[ti].node_index]
+                        .record
+                        .id
+                        == id
+                })
                 .map(|pos| pos + 1) // +1 for thread root row at index 0
         });
         self.node_table_state
@@ -710,7 +715,7 @@ impl App {
                 }
                 skip_depth = None;
             }
-            let node_id = &self.thread_nodes[entry.node_index].node_id;
+            let node_id = &self.thread_nodes[entry.node_index].record.id;
             if entry.has_children && self.collapsed.contains(node_id) {
                 skip_depth = Some(entry.depth);
             }
@@ -770,7 +775,7 @@ impl App {
     /// When a node is selected (row > 0), the body pane shows the node's
     /// metadata + body. Otherwise it shows the thread text.
     fn body_pane_content(&self) -> String {
-        let selected_node: Option<&super::node::Node> = self
+        let selected_node: Option<&NodeWithBody> = self
             .node_table_state
             .selected()
             .and_then(|i| i.checked_sub(1))
@@ -779,24 +784,22 @@ impl App {
             .map(|entry| &self.thread_nodes[entry.node_index]);
 
         if let Some(node) = selected_node {
+            use super::node::NodeStatus;
             let mut content = String::new();
-            content.push_str(&format!("**type:**     {}\n", node.node_type));
-            let status = if node.retracted {
-                "retracted"
-            } else if node.incorporated {
-                "incorporated"
-            } else if node.resolved {
-                "resolved"
-            } else {
-                "open"
+            content.push_str(&format!("**type:**     {}\n", node.record.kind));
+            let status = match node.record.status {
+                NodeStatus::Retracted => "retracted",
+                NodeStatus::Incorporated => "incorporated",
+                NodeStatus::Resolved => "resolved",
+                NodeStatus::Open => "open",
             };
             content.push_str(&format!("**status:**   {status}\n"));
-            content.push_str(&format!("**actor:**    {}\n", node.actor));
+            content.push_str(&format!("**actor:**    {}\n", node.record.created_by));
             content.push_str(&format!(
                 "**created:**  {}\n",
-                node.created_at.format("%Y-%m-%dT%H:%M:%SZ")
+                node.record.created_at.format("%Y-%m-%dT%H:%M:%SZ")
             ));
-            if let Some(ref reply_to) = node.reply_to {
+            if let Some(ref reply_to) = node.record.reply_to {
                 content.push_str(&format!(
                     "**reply-to:** {}\n",
                     &reply_to[..reply_to.len().min(16)]
@@ -1573,13 +1576,16 @@ mod tests {
         let mut app = App::new(vec![]);
         app.view = View::ThreadDetail("RFC-0001".into());
         app.thread_text = "RFC-0001 Test RFC\nkind: rfc\n".into();
-        app.thread_nodes = vec![Node {
-            node_id: "abcdef1234567890".into(),
-            node_type: crate::internal::node::NodeType::Question,
+        app.thread_nodes = vec![NodeWithBody {
+            record: crate::internal::node::NodeRecord {
+                id: "abcdef1234567890".into(),
+                kind: crate::internal::node::NodeKind::Comment,
+                created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+                created_by: "human/alice".into(),
+                legacy_label: Some("question".into()),
+                ..Default::default()
+            },
             body: "What is this?".into(),
-            actor: "human/alice".into(),
-            created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-            ..Node::default()
         }];
         app.tree_entries = build_tree_entries(&app.thread_nodes);
         app.recompute_visible_tree();
@@ -2183,21 +2189,27 @@ mod tests {
     fn move_node_down_stops_at_end() {
         let mut app = App::new(vec![]);
         app.thread_nodes = vec![
-            Node {
-                node_id: "a".into(),
-                node_type: crate::internal::node::NodeType::Question,
+            NodeWithBody {
+                record: crate::internal::node::NodeRecord {
+                    id: "a".into(),
+                    kind: crate::internal::node::NodeKind::Comment,
+                    created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+                    created_by: "human/alice".into(),
+                    legacy_label: Some("question".into()),
+                    ..Default::default()
+                },
                 body: "A".into(),
-                actor: "human/alice".into(),
-                created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-                ..Node::default()
             },
-            Node {
-                node_id: "b".into(),
-                node_type: crate::internal::node::NodeType::Question,
+            NodeWithBody {
+                record: crate::internal::node::NodeRecord {
+                    id: "b".into(),
+                    kind: crate::internal::node::NodeKind::Comment,
+                    created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
+                    created_by: "human/alice".into(),
+                    legacy_label: Some("question".into()),
+                    ..Default::default()
+                },
                 body: "B".into(),
-                actor: "human/alice".into(),
-                created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
-                ..Node::default()
             },
         ];
         app.tree_entries = build_tree_entries(&app.thread_nodes);
@@ -2390,11 +2402,11 @@ mod tests {
 
         assert_eq!(app.thread_nodes.len(), 1);
         assert_eq!(
-            app.thread_nodes[0].node_type,
-            crate::internal::node::NodeType::Comment
+            app.thread_nodes[0].record.kind,
+            crate::internal::node::NodeKind::Comment
         );
         assert!(
-            app.thread_nodes[0].legacy_subtype.is_none(),
+            app.thread_nodes[0].record.legacy_label.is_none(),
             "default Comment must have no legacy_subtype"
         );
     }

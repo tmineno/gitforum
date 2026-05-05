@@ -60,7 +60,7 @@ fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
 
 fn alloc_id(kind: ThreadKind, title: &str, salt: u8) -> String {
     id_alloc::alloc_thread_id_with_nonce(
-        kind,
+        kind.id_prefix(),
         "human/alice",
         title,
         "2026-01-01T00:00:00Z",

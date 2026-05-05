@@ -5,9 +5,8 @@ use ratatui::widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, R
 use ratatui::Frame;
 
 use crate::internal::id;
-use crate::internal::node::Node;
 use crate::internal::snapshot::list::ThreadRow;
-use crate::internal::thread::ThreadKind;
+use crate::internal::snapshot::store::NodeWithBody;
 
 use super::markdown::markdown_to_text;
 use super::state::{
@@ -73,19 +72,12 @@ pub(super) fn display_thread_id(thread_id: &str) -> String {
     id::display_thread_id(thread_id)
 }
 
-/// SPEC-2.0 §2.3.3: the conventional tag set a 1.x kind would emit if it
-/// were created today via the kind preset. Used by `tui/state.rs` to seed
-/// the thread-detail tag panel for unmigrated threads (no `facet_set` and
-/// no replayed tags); migrated threads use [`row_tags`] which now reads
-/// from the real `thread_tags` column.
-pub(super) fn conventional_tags_for_kind(kind: ThreadKind) -> Vec<String> {
-    match kind {
-        ThreadKind::Rfc => vec!["cross-cutting".to_string()],
-        ThreadKind::Issue => vec!["bug".to_string()],
-        ThreadKind::Task => vec!["task".to_string()],
-        ThreadKind::Dec => Vec::new(),
-    }
-}
+// `conventional_tags_for_kind` was the kind→tag fallback for
+// unmigrated 1.x threads in the TUI thread-detail panel. v3.1 step 3n
+// (task `1v400j3l`) removed it: `materialize_thread_state_from_snapshot`
+// always sets `lifecycle_explicit = true`, and the public
+// `thread::replay_thread` is snapshot-only since step 3j — so the
+// fallback path was unreachable for any thread the TUI could open.
 
 /// Lifecycle string for a `ThreadRow`. Phase 3: reads the real `lifecycle`
 /// column (no longer kind-derived). Falls back to a kind-based guess when
@@ -163,15 +155,13 @@ fn short_datetime(s: &str) -> String {
     }
 }
 
-pub(super) fn node_status(node: &Node) -> &'static str {
-    if node.retracted {
-        "retracted"
-    } else if node.incorporated {
-        "incorporated"
-    } else if node.resolved {
-        "resolved"
-    } else {
-        "open"
+pub(super) fn node_status(node: &NodeWithBody) -> &'static str {
+    use crate::internal::node::NodeStatus;
+    match node.record.status {
+        NodeStatus::Retracted => "retracted",
+        NodeStatus::Incorporated => "incorporated",
+        NodeStatus::Resolved => "resolved",
+        NodeStatus::Open => "open",
     }
 }
 
@@ -207,8 +197,9 @@ fn node_status_color(status: &str) -> Color {
     }
 }
 
-fn node_row_modifier(node: &Node) -> Modifier {
-    if node.retracted || node.resolved || node.incorporated {
+fn node_row_modifier(node: &NodeWithBody) -> Modifier {
+    use crate::internal::node::NodeStatus;
+    if node.record.status != NodeStatus::Open {
         Modifier::DIM
     } else {
         Modifier::empty()
@@ -243,10 +234,10 @@ fn render_select_mode(f: &mut Frame, area: Rect, app: &mut App) {
             if let Some(node) = node {
                 selected_node_body = format!(
                     "type:     {}\nstatus:   {}\nactor:    {}\ncreated:  {}\nbody:\n{}",
-                    node.node_type,
+                    node.record.kind,
                     node_status(node),
-                    node.actor,
-                    node.created_at.format("%Y-%m-%dT%H:%M:%SZ"),
+                    node.record.created_by,
+                    node.record.created_at.format("%Y-%m-%dT%H:%M:%SZ"),
                     node.body,
                 );
                 &selected_node_body
@@ -629,7 +620,7 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
 
         // Feature 3: show selected node body in left pane
         // Row 0 is the thread root; node rows start at index 1
-        let selected_node: Option<&Node> = app
+        let selected_node: Option<&NodeWithBody> = app
             .node_table_state
             .selected()
             .and_then(|i| i.checked_sub(1))
@@ -638,16 +629,16 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
             .map(|entry| &app.thread_nodes[entry.node_index]);
 
         let (body_title, body_content) = if let Some(node) = selected_node {
-            let title = format!(" {} {} ", short_id(&node.node_id), node.node_type);
+            let title = format!(" {} {} ", short_id(&node.record.id), node.record.kind);
             let mut content = String::new();
-            content.push_str(&format!("**type:**     {}\n", node.node_type));
+            content.push_str(&format!("**type:**     {}\n", node.record.kind));
             content.push_str(&format!("**status:**   {}\n", node_status(node)));
-            content.push_str(&format!("**actor:**    {}\n", node.actor));
+            content.push_str(&format!("**actor:**    {}\n", node.record.created_by));
             content.push_str(&format!(
                 "**created:**  {}\n",
-                node.created_at.format("%Y-%m-%dT%H:%M:%SZ")
+                node.record.created_at.format("%Y-%m-%dT%H:%M:%SZ")
             ));
-            if let Some(ref reply_to) = node.reply_to {
+            if let Some(ref reply_to) = node.record.reply_to {
                 content.push_str(&format!("**reply-to:** {}\n", short_id(reply_to)));
             }
             content.push_str(&format!(
@@ -734,10 +725,10 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let node_rows = app.visible_tree_indices.iter().map(|&ti| {
         let entry = &app.tree_entries[ti];
         let node = &app.thread_nodes[entry.node_index];
-        let type_str = node.node_type.to_string();
+        let type_str = node.record.kind.to_string();
         let status_str = node_status(node);
         let dim = node_row_modifier(node);
-        let node_id = &node.node_id;
+        let node_id = &node.record.id;
         // Collapse indicator for nodes with children
         let fold_indicator = if entry.has_children {
             if app.collapsed.contains(node_id) {
@@ -755,7 +746,7 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         };
         let body_max = 36usize.saturating_sub(entry.depth as usize * 2);
         Row::new(vec![
-            Cell::from(short_id(&node.node_id)),
+            Cell::from(short_id(&node.record.id)),
             Cell::from(type_display).style(Style::default().fg(node_type_color(&type_str))),
             Cell::from(status_str).style(Style::default().fg(node_status_color(status_str))),
             Cell::from(single_line_preview(&node.body, body_max)),

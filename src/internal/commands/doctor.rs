@@ -14,7 +14,6 @@ use super::super::config::RepoPaths;
 use super::super::error::{ForumError, ForumResult};
 use super::super::git_ops::GitOps;
 use super::super::init;
-use super::super::legacy::event;
 use super::super::refs;
 use super::super::snapshot;
 use super::super::thread;
@@ -189,7 +188,7 @@ fn run_with_mode(git: &GitOps, paths: &RepoPaths, strict: bool) -> ForumResult<D
     if let Some(ids) = &thread_ids {
         let mut snapshot_ok = 0u32;
         for id in ids {
-            if matches!(event::is_orphan_ref(git, id), Ok(true)) {
+            if matches!(is_orphan_ref(git, id), Ok(true)) {
                 continue; // orphan refs handled in the replay block
             }
             let ref_name = refs::thread_ref(id);
@@ -267,7 +266,7 @@ fn run_with_mode(git: &GitOps, paths: &RepoPaths, strict: bool) -> ForumResult<D
                     }
                     replayed_states.push(state);
                 }
-                Err(e) => match event::is_orphan_ref(git, id) {
+                Err(e) => match is_orphan_ref(git, id) {
                     Ok(true) => checks.push(warn(
                         &format!("orphan ref {ref_name}"),
                         "ref has no usable create event; run `git forum prune-orphans` to delete",
@@ -286,6 +285,27 @@ fn run_with_mode(git: &GitOps, paths: &RepoPaths, strict: bool) -> ForumResult<D
     let advisories = build_cross_thread_advisories(&replayed_states);
 
     Ok(DoctorReport { checks, advisories })
+}
+
+/// `true` when the ref's bottom (oldest) commit's tree carries no
+/// recognisable git-forum content — neither a SPEC-3.0 `thread.toml`
+/// nor a SPEC-2.0 `event.json`. An empty ref (no commits at all) is
+/// also reported as orphan.
+///
+/// 3.0-native replacement for `legacy::event::is_orphan_ref`: this
+/// looks at tree shape only and does not parse either codec, so the
+/// doctor's orphan probe doesn't reach into `internal::legacy`.
+fn is_orphan_ref(git: &GitOps, thread_id: &str) -> ForumResult<bool> {
+    let ref_name = refs::thread_ref(thread_id);
+    let shas = git.rev_list(&ref_name)?;
+    let Some(oldest) = shas.last() else {
+        return Ok(true);
+    };
+    let tree_listing = git.run(&["ls-tree", "-r", "--name-only", oldest])?;
+    let has_recognised = tree_listing
+        .lines()
+        .any(|p| p == "thread.toml" || p == "event.json");
+    Ok(!has_recognised)
 }
 
 /// Collect cross-thread advisory lines from already-replayed thread states.
@@ -328,14 +348,12 @@ fn build_cross_thread_advisories(states: &[thread::ThreadState]) -> Vec<String> 
         let Some(parent) = by_id.get(parent_id.as_str()) else {
             continue; // referenced parent not in this repo's refs — skip silently
         };
-        if parent.status != thread::ThreadStatus::Done {
+        if parent.status != "done" {
             continue;
         }
         let children = &implements_children_by_parent[parent_id];
-        let open_children: Vec<&&thread::ThreadState> = children
-            .iter()
-            .filter(|c| c.status != thread::ThreadStatus::Done)
-            .collect();
+        let open_children: Vec<&&thread::ThreadState> =
+            children.iter().filter(|c| c.status != "done").collect();
         if open_children.is_empty() {
             continue;
         }

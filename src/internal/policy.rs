@@ -28,70 +28,74 @@ use serde::{Deserialize, Serialize};
 use super::error::{ForumError, ForumResult};
 use super::evidence::EvidenceKind;
 use super::lint_emit::{self, LintEmitter};
-use super::node::{NodeKind, NodeType};
+use super::node::NodeKind;
 use super::thread::ThreadState;
 
-// --------------------------------------------------------------------
-// `Lifecycle` (3-variant v2 enum) was relocated here from `event.rs`
-// in Phase 4 Step 1j (RFC `7ymtc4b2`, task `913c4s9v`). Co-located
-// with the existing v2 ↔ 3.0 mapping helpers
-// (`lifecycle_to_category`, `legacy_lifecycle_for_category`,
-// `category_for_state`) so the entire v2 state-machine surface lives
-// in one place.
-//
-// SPEC-3.0 §3 replaces Lifecycle dispatch with the
-// `CategoryRegistry` (defined further down). v3.0.0 read paths still
-// use Lifecycle for legacy snapshots; the full Lifecycle removal is
-// a v3.1 follow-up — v3.0.0 just relocates the enum to a 3.0-native
-// home so KEEP files don't reach into `internal::event`.
-// --------------------------------------------------------------------
+// `Lifecycle` (the v2 3-variant enum) was removed from
+// `internal::policy` in v3.1 step 3m (task `1v400j3l`). The
+// SPEC-3.0 successor is the snapshot's `category` string +
+// `tags`; the user-facing "lifecycle" label is computed via
+// `lifecycle_label_for` below. The typed enum survives only inside
+// `internal::legacy::workflow` where the v2 event-chain transition
+// graph genuinely needs it (re-exported through
+// `internal::legacy::event`).
 
-/// SPEC-2.0 §2.3.1 — the sole required facet, gates the unified state machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum Lifecycle {
-    Proposal,
-    #[default]
-    Execution,
-    Record,
-}
-
-impl Lifecycle {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Proposal => "proposal",
-            Self::Execution => "execution",
-            Self::Record => "record",
+/// Compute the v2-style lifecycle label ("proposal" / "execution" /
+/// "record") from a SPEC-3.0 category + tag set per §8.3. Used by
+/// display surfaces (`ls`, `brief`, `show`, TUI) and by
+/// migrate-internal helpers that still speak in lifecycle terms.
+///
+/// The mapping mirrors `legacy_lifecycle_for_category`'s logic but
+/// returns the canonical string label directly, avoiding a typed
+/// `Lifecycle` round-trip on the public surface.
+pub fn lifecycle_label_for(category: &str, tags: &[String]) -> &'static str {
+    match category {
+        "rfc" => "proposal",
+        "task" => {
+            if tags.iter().any(|t| t == "decision") {
+                "record"
+            } else {
+                "execution"
+            }
         }
-    }
-
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "proposal" => Some(Self::Proposal),
-            "execution" => Some(Self::Execution),
-            "record" => Some(Self::Record),
-            _ => None,
-        }
-    }
-
-    /// SPEC-2.0 §3.1.1 — initial state per lifecycle.
-    pub fn initial_state(self) -> &'static str {
-        super::legacy::workflow::SPEC.initial_state(self)
-    }
-
-    /// SPEC-2.0 §3.1.1 — states reachable for this lifecycle.
-    pub fn allowed_states(self) -> &'static [&'static str] {
-        super::legacy::workflow::SPEC.allowed_states(self)
-    }
-
-    pub fn allows_state(self, state: &str) -> bool {
-        super::legacy::workflow::SPEC.allows_state(self, state)
+        _ => "proposal",
     }
 }
 
-impl std::fmt::Display for Lifecycle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
+/// Compute the v2-style kind preset name (`"rfc"` / `"dec"` /
+/// `"issue"` / `"task"`) from a SPEC-3.0 category + tag set per §8.3.
+/// Replaces the public `ThreadKind` enum's display path on read
+/// surfaces (`ls --kind` filter, `verify` advisory message) per v3.1
+/// step 3n (task `1v400j3l`). The typed enum survives only inside
+/// `legacy/`.
+pub fn kind_label_for(category: &str, tags: &[String]) -> &'static str {
+    match category {
+        "rfc" => "rfc",
+        "task" => {
+            if tags.iter().any(|t| t == "decision") {
+                "dec"
+            } else if tags.iter().any(|t| t == "bug") {
+                "issue"
+            } else {
+                "task"
+            }
+        }
+        _ => "task",
+    }
+}
+
+/// Compute the v2 thread-ID prefix (`"RFC"` / `"DEC"` / `"ASK"` /
+/// `"JOB"`) from a SPEC-3.0 category + tag set per §8.3. Used by
+/// `id_alloc::alloc_thread_id` (legacy KIND-prefixed allocator,
+/// retained for migration-window code paths). New 3.0 writes use the
+/// bare-token form via `id_alloc::alloc_bare_thread_id` and never
+/// touch this helper. v3.1 step 3n (task `1v400j3l`).
+pub fn id_prefix_for(category: &str, tags: &[String]) -> &'static str {
+    match kind_label_for(category, tags) {
+        "rfc" => "RFC",
+        "dec" => "DEC",
+        "issue" => "ASK",
+        _ => "JOB",
     }
 }
 
@@ -281,50 +285,170 @@ fn built_in_task() -> CategoryDefinition {
 // SPEC-3.0 §8.3 lifecycle ↔ category mapping
 // ---------------------------------------------------------------------
 
-/// SPEC-3.0 §8.3: legacy lifecycle → 3.0 category mapping. Used by both
-/// the read-side adapter (`category_for_state`) and the migration
-/// projection.
-pub fn lifecycle_to_category(lifecycle: Lifecycle) -> &'static str {
-    match lifecycle {
-        Lifecycle::Proposal => "rfc",
-        Lifecycle::Execution | Lifecycle::Record => "task",
+/// Resolve a thread state's 3.0 category. Trivial helper preserved as
+/// a stable seam for callers that fan out over `ThreadState` — v3.1
+/// step 3m switched ThreadState's storage from a typed `Lifecycle`
+/// to a category string, so this just exposes that field.
+pub fn category_for_state(state: &ThreadState) -> &str {
+    &state.category
+}
+
+/// Lenient parse: fold 1.x state-name synonyms onto canonical 2.0
+/// names per SPEC-2.0 §3.1.2 and verify the result is one of the
+/// eight canonical statuses (draft / open / working / review / done /
+/// rejected / withdrawn / deprecated). Returns `None` if the input
+/// is neither a known alias nor already canonical.
+///
+/// 3.0-native replacement for the v2 `policy::normalize_state_name`
+/// helper (removed in v3.1 step 3p, task `1v400j3l`) — the alias
+/// table is now embedded here. v3 KEEP code that wants
+/// "fold-or-passthrough" behavior writes
+/// `canonical_status_lenient(s).unwrap_or(s)` at the call site so
+/// the lenient surface remains obvious.
+pub fn canonical_status_lenient(s: &str) -> Option<&'static str> {
+    let aliased = match s {
+        "proposed" => "open",
+        "under-review" | "reviewing" => "review",
+        "accepted" | "closed" => "done",
+        "pending" | "designing" | "implementing" => "working",
+        other => other,
+    };
+    match aliased {
+        "draft" => Some("draft"),
+        "open" => Some("open"),
+        "working" => Some("working"),
+        "review" => Some("review"),
+        "done" => Some("done"),
+        "rejected" => Some("rejected"),
+        "withdrawn" => Some("withdrawn"),
+        "deprecated" => Some("deprecated"),
+        _ => None,
     }
 }
 
-/// Inverse helper for the few read paths that still need a `Lifecycle`
-/// value. Per SPEC-3.0 §8.3 the `task` category covers both Execution
-/// and Record; the `decision` tag distinguishes the two on read.
-pub fn legacy_lifecycle_for_category(category: &str, tags: &[String]) -> Lifecycle {
-    match category {
-        "task" => {
-            if tags.iter().any(|t| t == "decision") {
-                Lifecycle::Record
-            } else {
-                Lifecycle::Execution
-            }
+// ---------------------------------------------------------------------
+// SPEC-3.0 §9.1 kind preset registry (3.0-native)
+// ---------------------------------------------------------------------
+
+/// One row in the `git forum new <preset>` registry per SPEC-2.0 §9.1.
+///
+/// 3.0-native shape: presets bind a CLI name (and optional aliases) to a
+/// SPEC-3.0 §3.1 `category` + default tag set. The legacy `kind` and
+/// `lifecycle` axes are derivable from `(category, tags)` via
+/// `policy::kind_label_for` / `policy::lifecycle_label_for` and no
+/// longer ride on the preset row (v3.1 steps 3m / 3n removed both
+/// typed enums from the public surface).
+///
+/// Replaces the legacy `legacy::workflow::KindPreset` (which carried a
+/// v2 `ThreadKind` field that the snapshot writer no longer consumes)
+/// per RFC `7ymtc4b2` v3.1 follow-up task `1v400j3l` step 3b.
+pub struct CategoryPreset {
+    pub name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub category: &'static str,
+    pub tags: &'static [&'static str],
+}
+
+const CATEGORY_PRESETS: &[CategoryPreset] = &[
+    CategoryPreset {
+        name: "rfc",
+        aliases: &[],
+        category: "rfc",
+        tags: &["cross-cutting"],
+    },
+    CategoryPreset {
+        name: "dec",
+        aliases: &[],
+        category: "task",
+        tags: &["decision"],
+    },
+    CategoryPreset {
+        name: "task",
+        aliases: &["job"],
+        category: "task",
+        tags: &["task"],
+    },
+    CategoryPreset {
+        name: "issue",
+        aliases: &["ask", "bug"],
+        category: "task",
+        tags: &["bug"],
+    },
+];
+
+/// SPEC-2.0 §9.1 — look up a preset by primary name OR alias.
+pub fn preset_lookup(name: &str) -> Option<&'static CategoryPreset> {
+    CATEGORY_PRESETS
+        .iter()
+        .find(|p| p.name == name || p.aliases.contains(&name))
+}
+
+/// All preset rows (for error-message enumeration).
+pub fn presets() -> &'static [CategoryPreset] {
+    CATEGORY_PRESETS
+}
+
+// ---------------------------------------------------------------------
+// SPEC-3.0 §9.3 shorthand verb resolution (3.0-native)
+// ---------------------------------------------------------------------
+
+/// Result of resolving a CLI shorthand verb (`close`, `accept`, …) to a
+/// concrete target status for a given category.
+///
+/// Replaces the legacy `legacy::workflow::ShorthandResolution` (which was
+/// keyed on `Lifecycle`) per RFC `7ymtc4b2` v3.1 follow-up task
+/// `1v400j3l` step 3a.
+pub enum ShorthandResolution {
+    /// Resolved to a concrete 3.0 status name.
+    Target(&'static str),
+    /// Verb does not apply to this category. Carries the operator-facing
+    /// hint (e.g. `"close is rejected on rfc threads — use \`accept\`"`).
+    NotApplicable(&'static str),
+    /// Verb is not a known shorthand at all.
+    Unknown,
+}
+
+/// SPEC-2.0 §9.3 — resolve a CLI shorthand verb to a target status for a
+/// thread of `category`. The `decision` tag (SPEC-3.0 §8.3) distinguishes
+/// record-flavored task threads (closed via `accept`) from execution-
+/// flavored task threads (closed via `close`).
+///
+/// Inputs are the canonical 2.0 verb spellings (`closed`, `accepted`,
+/// `proposed`, `pending`, `rejected`, `deprecated`, `withdrawn`,
+/// `open`); upstream callers normalize their input before reaching this
+/// function.
+pub fn resolve_shorthand(verb: &str, category: &str, tags: &[String]) -> ShorthandResolution {
+    use ShorthandResolution::*;
+    let is_decision = tags.iter().any(|t| t == "decision");
+    match (verb, category, is_decision) {
+        ("closed", "rfc", _) => NotApplicable("close is rejected on an rfc thread — use `accept`"),
+        ("closed", "task", _) => Target("done"),
+
+        ("accepted", "rfc", _) | ("accepted", "task", true) => Target("done"),
+        ("accepted", "task", false) => {
+            NotApplicable("accept is rejected on an execution-flavored task thread — use `close`")
         }
-        _ => Lifecycle::Proposal,
+
+        ("proposed", "rfc", _) => Target("open"),
+        ("proposed", _, _) => NotApplicable("propose is only valid on rfc threads"),
+
+        ("pending", "task", false) => Target("working"),
+        ("pending", _, _) => NotApplicable("pend is only valid on execution-flavored task threads"),
+
+        ("rejected", _, _) => Target("rejected"),
+        ("deprecated", _, _) => Target("deprecated"),
+
+        ("withdrawn", "rfc", _) => Target("withdrawn"),
+        ("withdrawn", _, _) => {
+            NotApplicable("withdraw is only valid on rfc threads — use `close` or `reject`")
+        }
+
+        // Unified `open` (thread reopen) — keep a single edge for every
+        // category and let the per-category transition graph reject
+        // unreachable cases.
+        ("open", _, _) => Target("open"),
+        _ => Unknown,
     }
-}
-
-/// Resolve a thread state's 3.0 category from its lifecycle facet.
-///
-/// Used by the v2 read path (`ThreadState`-bearing callers) to pick the
-/// right `[categories.<NAME>]` slice in the 3.0 policy.
-pub fn category_for_state(state: &ThreadState) -> &'static str {
-    lifecycle_to_category(state.lifecycle)
-}
-
-/// SPEC-2.0 §3.1.2 — pure text-level normalization of 1.x state names
-/// to 2.0. Phase 4 Step 1i (RFC `7ymtc4b2`, task `913c4s9v`) relocated
-/// this from `event.rs`; `internal::event::normalize_state_name`
-/// remains as a `pub use` re-export for legacy / DELETE-list callers.
-///
-/// Thin wrapper that re-exports [`super::legacy::v1::normalize_state_name`].
-/// New domain code should call into [`super::legacy::v1`] directly per
-/// RFC 915yuegd P1.
-pub fn normalize_state_name(s: &str) -> &str {
-    super::legacy::v1::normalize_state_name(s)
 }
 
 // ---------------------------------------------------------------------
@@ -812,8 +936,8 @@ pub fn check_guards(
     // Normalize 1.x state names (under-review, accepted, etc.) so legacy
     // policies and migrated chains line up with category-table keys that
     // use SPEC-3.0 canonical statuses.
-    let from = normalize_state_name(from);
-    let to = normalize_state_name(to);
+    let from = canonical_status_lenient(from).unwrap_or(from);
+    let to = canonical_status_lenient(to).unwrap_or(to);
     let transition = format!("{from}->{to}");
     let Some(rules) = policy.guards_for_transition(category, &transition) else {
         return Vec::new();
@@ -845,10 +969,10 @@ pub fn evaluate_rule(rule: &GuardRule, state: &ThreadState) -> Option<GuardViola
         GuardRule::OneApproval => {
             // SPEC-3.0 §3.2: "At least one non-retracted `approval` node
             // exists on the thread, regardless of actor type."
-            let has = state
-                .nodes
-                .iter()
-                .any(|n| n.node_type == NodeType::Approval && !n.retracted);
+            let has = state.nodes.iter().any(|n| {
+                n.record.kind == NodeKind::Approval
+                    && n.record.status != crate::internal::node::NodeStatus::Retracted
+            });
             (!has).then(|| GuardViolation {
                 rule: rule.to_string(),
                 reason: "no approval recorded".into(),
@@ -1545,37 +1669,48 @@ allow_evidence = ["draft"]
 #[cfg(test)]
 mod evaluate_tests {
     use super::*;
-    use crate::internal::thread::ThreadKind;
 
-    fn approval_node(actor: &str) -> crate::internal::node::Node {
-        crate::internal::node::Node {
-            node_id: format!("approval-{actor}"),
-            node_type: NodeType::Approval,
-            actor: actor.into(),
+    fn approval_node(actor: &str) -> crate::internal::snapshot::store::NodeWithBody {
+        crate::internal::snapshot::store::NodeWithBody {
+            record: crate::internal::node::NodeRecord {
+                id: format!("approval-{actor}"),
+                kind: NodeKind::Approval,
+                created_by: actor.into(),
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
 
-    fn objection_node() -> crate::internal::node::Node {
-        crate::internal::node::Node {
-            node_id: "obj1".into(),
-            node_type: NodeType::Objection,
+    fn objection_node() -> crate::internal::snapshot::store::NodeWithBody {
+        crate::internal::snapshot::store::NodeWithBody {
+            record: crate::internal::node::NodeRecord {
+                id: "obj1".into(),
+                kind: NodeKind::Objection,
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
 
-    fn action_node() -> crate::internal::node::Node {
-        crate::internal::node::Node {
-            node_id: "act1".into(),
-            node_type: NodeType::Action,
+    fn action_node() -> crate::internal::snapshot::store::NodeWithBody {
+        crate::internal::snapshot::store::NodeWithBody {
+            record: crate::internal::node::NodeRecord {
+                id: "act1".into(),
+                kind: NodeKind::Action,
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
 
-    fn state_for(kind: ThreadKind) -> ThreadState {
+    /// 3.0-shape state fixture keyed on the SPEC-3.0 §3.1 category
+    /// string (`"rfc"` or `"task"`). Replaces the v3.1 step 3n removed
+    /// `state_for(ThreadKind)` shape; the typed kind enum is no
+    /// longer on the public surface.
+    fn state_for(category: &str) -> ThreadState {
         ThreadState {
-            kind,
-            lifecycle: kind.lifecycle(),
+            category: category.into(),
             ..Default::default()
         }
     }
@@ -1583,31 +1718,31 @@ mod evaluate_tests {
     #[test]
     fn one_approval_accepts_any_actor_type() {
         // SPEC-3.0 §3.2: regardless of actor type.
-        let mut state = state_for(ThreadKind::Rfc);
+        let mut state = state_for("rfc");
         state.nodes.push(approval_node("ai/codex"));
         assert!(evaluate_rule(&GuardRule::OneApproval, &state).is_none());
 
-        let mut state2 = state_for(ThreadKind::Rfc);
+        let mut state2 = state_for("rfc");
         state2.nodes.push(approval_node("human/alice"));
         assert!(evaluate_rule(&GuardRule::OneApproval, &state2).is_none());
     }
 
     #[test]
     fn one_approval_fails_when_no_approvals() {
-        let state = state_for(ThreadKind::Rfc);
+        let state = state_for("rfc");
         let v = evaluate_rule(&GuardRule::OneApproval, &state).unwrap();
         assert_eq!(v.rule, "one_approval");
     }
 
     #[test]
     fn no_open_objections_passes_when_thread_clean() {
-        let state = state_for(ThreadKind::Rfc);
+        let state = state_for("rfc");
         assert!(evaluate_rule(&GuardRule::NoOpenObjections, &state).is_none());
     }
 
     #[test]
     fn no_open_objections_fails_when_open_objection_present() {
-        let mut state = state_for(ThreadKind::Rfc);
+        let mut state = state_for("rfc");
         state.nodes.push(objection_node());
         let v = evaluate_rule(&GuardRule::NoOpenObjections, &state).unwrap();
         assert!(v.reason.contains("1 open objection"));
@@ -1615,7 +1750,7 @@ mod evaluate_tests {
 
     #[test]
     fn no_open_actions_fails_when_open_action_present() {
-        let mut state = state_for(ThreadKind::Issue);
+        let mut state = state_for("task");
         state.nodes.push(action_node());
         let v = evaluate_rule(&GuardRule::NoOpenActions, &state).unwrap();
         assert!(v.reason.contains("1 open action"));
@@ -1624,7 +1759,7 @@ mod evaluate_tests {
     #[test]
     fn check_guards_empty_when_no_rules_for_transition() {
         let policy = Policy::default();
-        let state = state_for(ThreadKind::Rfc);
+        let state = state_for("rfc");
         let v = check_guards(&policy, &state, "draft", "open");
         assert!(v.is_empty());
     }
@@ -1639,7 +1774,7 @@ mod evaluate_tests {
         );
         policy.categories.insert("rfc".into(), rfc);
 
-        let mut state = state_for(ThreadKind::Rfc);
+        let mut state = state_for("rfc");
         state.nodes.push(objection_node());
         let v = check_guards(&policy, &state, "review", "done");
         assert_eq!(v.len(), 2);

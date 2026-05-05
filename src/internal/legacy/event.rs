@@ -36,32 +36,34 @@ pub struct Approval {
     pub proof_ref: Option<String>,
 }
 
-// `ThreadKind` was relocated to `internal::thread` in Phase 4 Step 1g
-// (RFC `7ymtc4b2`, task `913c4s9v`). KEEP files import via the new
-// path; event.rs re-exports for back-compat with the legacy event
-// loaders that still consume it (deleted in Step 2/3).
-pub use super::super::thread::ThreadKind;
+// `ThreadKind` (v2 4-variant enum) is no longer on the public surface.
+// v3.1 step 3n (task `1v400j3l`) relocated it from `internal::thread`
+// to `super::workflow`, alongside the other v2 dispatch axes
+// (`Lifecycle`, `ThreadStatus`). The 3.0-native ThreadState carries
+// `category: String` + `tags`; the v2 kind label is derived via
+// `policy::kind_label_for` for read paths. The typed enum lives only
+// inside `legacy/`, where the event-chain replay state machine and
+// migrate projection still need it. Re-exported through event.rs for
+// legacy chain reader and integration-test consumers.
+pub use super::workflow::ThreadKind;
 
-// `ThreadStatus` was relocated to `internal::thread` in Phase 4
-// Step 1h (RFC `7ymtc4b2`, task `913c4s9v`). KEEP files import via
-// the new path; event.rs re-exports for legacy/DELETE-list callers
-// retired in Steps 2/3.
-pub use super::super::thread::ThreadStatus;
+// v3.1 step 3l (task `1v400j3l`): `ThreadStatus` (the v2 8-variant
+// enum) moved out of `internal::thread` into
+// `internal::legacy::chain_replay`. The 3.0-native ThreadState
+// carries `status: String`; the typed enum survives only inside
+// the legacy event-chain reader's state machine. event.rs's own
+// tests of `parse_lenient` consume it via this re-export.
+pub use super::chain_replay::ThreadStatus;
 
-// `Lifecycle` was relocated to `internal::policy` in Phase 4 Step 1j
-// (RFC `7ymtc4b2`, task `913c4s9v`). Co-located with the existing v2
-// ↔ 3.0 mapping helpers (`lifecycle_to_category`,
-// `legacy_lifecycle_for_category`, `category_for_state`) so the v2
-// state-machine surface lives in one place. The full SPEC-3.0 §3
-// Category rewire (no Lifecycle dispatch in 3.0 read paths) is a
-// v3.1 concern — v3.0.0's `CategoryRegistry` already exists side-by-
-// side and v2 reads continue to use Lifecycle.
+// v3.1 step 3m (task `1v400j3l`): `Lifecycle` enum is no longer in
+// `internal::policy`. The 3.0-native ThreadState carries
+// `category: String` + `tags`; the lifecycle "label" is derived
+// via `policy::lifecycle_label_for`. The typed enum lives only
+// inside legacy/, where the v2 event-chain state machine still
+// needs it. Re-exported through event.rs for legacy chain reader
+// convenience.
 //
-// event.rs keeps `pub use super::super::policy::Lifecycle;` for legacy /
-// DELETE-list callers (write_ops, state_change, github_*, repair,
-// create, workflow, legacy/v1, commands/migrate) retired in Steps
-// 2/3.
-pub use super::super::policy::Lifecycle;
+pub use super::workflow::Lifecycle;
 
 // `validate_tag` was relocated to `internal::thread` in Phase 4
 // Step 2a (RFC `7ymtc4b2`, task `913c4s9v`). It's a SPEC-2.0 §2.3.5
@@ -86,11 +88,13 @@ pub fn unified_transitions() -> &'static [(&'static str, &'static str)] {
     SPEC.unified_transitions()
 }
 
-// `normalize_state_name` was relocated to `internal::policy` in
-// Phase 4 Step 1i (RFC `7ymtc4b2`, task `913c4s9v`). KEEP files import
-// via the new path; event.rs re-exports for legacy / DELETE-list
-// callers retired in Steps 2/3.
-pub use super::super::policy::normalize_state_name;
+// `normalize_state_name` was relocated out of `internal::policy` and
+// back into `internal::legacy::v1` in v3.1 step 3p (task `1v400j3l`).
+// 3.0 stores canonical status names natively; the alias fold survives
+// only here, where the v2 chain reader and migrate projection still
+// need it. event.rs re-exports for legacy callers and the in-module
+// tests of `parse_lenient` below.
+pub use super::v1::normalize_state_name;
 
 /// SPEC-2.0 §3.1.1 / §3.1.2 — kind-aware migration of a 1.x state name to a
 /// 2.0 state in the lifecycle's allowed set.
@@ -164,14 +168,152 @@ impl std::fmt::Display for EventType {
     }
 }
 
-// `NodeType` was relocated to `internal::node` in Phase 4 Step 1f
-// (RFC `7ymtc4b2`, task `913c4s9v`) so KEEP files no longer need to
-// import from `internal::event` just for the type. Importers should
-// switch to `crate::internal::node::NodeType`. event.rs back-imports
-// here so internal references inside this file (and the legacy
-// `Event` struct's `node_type` field) keep working until Step 2
-// moves event.rs into `internal::legacy/`.
-pub use super::super::node::NodeType;
+// --------------------------------------------------------------------
+// `NodeType` (12-variant v2 enum) lives here as of task `1v400j3l`
+// step 3g: it is the legacy event-codec's own type, no longer
+// re-exported from `internal::node`. The 4 canonical 2.0 variants
+// remain (Comment / Approval / Objection / Action) alongside the 8
+// legacy 1.x rhetorical labels (Claim / Question / Evidence /
+// Summary / Risk / Review / Alternative / Assumption) so the v1 →
+// v3 migration projection still parses historical event payloads
+// verbatim.
+//
+// 3.0-native code uses `internal::node::NodeKind` (4 variants); only
+// the migration consumer in `internal::commands::migrate` and the
+// legacy event codec here reach for the 12-variant `NodeType`.
+// --------------------------------------------------------------------
+
+/// 2.0 + 1.x node type. Carries the 4 canonical 2.0 variants and the
+/// 8 legacy 1.x rhetorical labels so v1 event payloads parse verbatim
+/// during migration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum NodeType {
+    // -- 2.0 canonical variants --
+    #[default]
+    Comment,
+    Approval,
+    Objection,
+    Action,
+    // -- Legacy 1.x rhetorical labels --
+    Claim,
+    Question,
+    Evidence,
+    Summary,
+    Risk,
+    Review,
+    Alternative,
+    Assumption,
+}
+
+impl NodeType {
+    /// Map any variant to its 2.0 canonical form (Comment for the 1.x
+    /// rhetorical labels). Used by the v1 → v3 migration projection
+    /// to fold rhetorical types into SPEC-3.0 NodeKind.
+    pub fn canonical(self) -> Self {
+        match self {
+            Self::Comment | Self::Approval | Self::Objection | Self::Action => self,
+            Self::Claim
+            | Self::Question
+            | Self::Evidence
+            | Self::Summary
+            | Self::Risk
+            | Self::Review
+            | Self::Alternative
+            | Self::Assumption => Self::Comment,
+        }
+    }
+
+    /// True iff this is one of the 4 canonical 2.0 variants.
+    pub fn is_canonical(self) -> bool {
+        matches!(
+            self,
+            Self::Comment | Self::Approval | Self::Objection | Self::Action
+        )
+    }
+
+    /// Legacy 1.x label for non-canonical variants, or `None` for
+    /// canonical types. Used by the migration projection to populate
+    /// `NodeRecord::legacy_label`.
+    pub fn legacy_subtype_label(self) -> Option<&'static str> {
+        match self {
+            Self::Claim => Some("claim"),
+            Self::Question => Some("question"),
+            Self::Evidence => Some("evidence"),
+            Self::Summary => Some("summary"),
+            Self::Risk => Some("risk"),
+            Self::Review => Some("review"),
+            Self::Alternative => Some("alternative"),
+            Self::Assumption => Some("assumption"),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for NodeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Comment => "comment",
+            Self::Approval => "approval",
+            Self::Objection => "objection",
+            Self::Action => "action",
+            Self::Claim => "claim",
+            Self::Question => "question",
+            Self::Evidence => "evidence",
+            Self::Summary => "summary",
+            Self::Risk => "risk",
+            Self::Review => "review",
+            Self::Alternative => "alternative",
+            Self::Assumption => "assumption",
+        };
+        f.write_str(s)
+    }
+}
+
+impl std::str::FromStr for NodeType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "comment" => Ok(Self::Comment),
+            "approval" => Ok(Self::Approval),
+            "objection" => Ok(Self::Objection),
+            "action" => Ok(Self::Action),
+            "claim" => Ok(Self::Claim),
+            "question" => Ok(Self::Question),
+            "evidence" => Ok(Self::Evidence),
+            "summary" => Ok(Self::Summary),
+            "risk" => Ok(Self::Risk),
+            "review" => Ok(Self::Review),
+            "alternative" => Ok(Self::Alternative),
+            "assumption" => Ok(Self::Assumption),
+            _ => Err(format!("unknown node type '{s}'")),
+        }
+    }
+}
+
+/// Fold a v2 [`NodeType`] (12-variant) to a SPEC-3.0 [`NodeKind`]
+/// (4-variant) plus the rhetorical-subtype label for non-canonical
+/// inputs. Used by the v2 → v3 read-path adapter when projecting v2
+/// `Node` records into the 3.0-native shape.
+pub fn node_type_to_kind_and_subtype(
+    nt: NodeType,
+) -> (super::super::node::NodeKind, Option<String>) {
+    use super::super::node::NodeKind;
+    match nt {
+        NodeType::Comment => (NodeKind::Comment, None),
+        NodeType::Approval => (NodeKind::Approval, None),
+        NodeType::Objection => (NodeKind::Objection, None),
+        NodeType::Action => (NodeKind::Action, None),
+        NodeType::Claim => (NodeKind::Comment, Some("claim".into())),
+        NodeType::Question => (NodeKind::Comment, Some("question".into())),
+        NodeType::Evidence => (NodeKind::Comment, Some("evidence".into())),
+        NodeType::Summary => (NodeKind::Comment, Some("summary".into())),
+        NodeType::Risk => (NodeKind::Comment, Some("risk".into())),
+        NodeType::Review => (NodeKind::Comment, Some("review".into())),
+        NodeType::Alternative => (NodeKind::Comment, Some("alternative".into())),
+        NodeType::Assumption => (NodeKind::Comment, Some("assumption".into())),
+    }
+}
 
 /// An immutable event in a thread's history.
 ///
@@ -1361,7 +1503,7 @@ mod tests {
         // Acceptance criterion (JOB-41f5guw8): every (1.x kind, 1.x state)
         // pair migrates to a valid 2.0 (lifecycle, state) pair.
         for &(kind, state) in all_1x_states() {
-            let lifecycle = kind.lifecycle();
+            let lifecycle = super::super::v1::lifecycle_for_legacy_kind(kind);
             let migrated = migrate_legacy_state(kind, state);
             assert!(
                 lifecycle.allows_state(migrated),

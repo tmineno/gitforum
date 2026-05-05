@@ -7,8 +7,8 @@ use crate::internal::error::{ForumError, ForumResult};
 use crate::internal::evidence::EvidenceFile;
 use crate::internal::git_ops::GitOps;
 use crate::internal::id_alloc;
-use crate::internal::node::{Node, NodeKind, NodeRecord, NodeStatus, NodeType};
-use crate::internal::policy::Lifecycle;
+use crate::internal::node::{NodeKind, NodeRecord, NodeStatus};
+use crate::internal::policy;
 use crate::internal::snapshot::history;
 use crate::internal::snapshot::list::{self as snapshot_list, ThreadRow};
 use crate::internal::snapshot::{self, store::write_snapshot, Link, Links, NodeWithBody};
@@ -27,15 +27,15 @@ pub(super) fn open_thread_detail(
     let state = thread::replay_thread(git, thread_id)?;
 
     app.thread_title = state.title.clone();
-    app.thread_lifecycle = Some(state.lifecycle.as_str().to_string());
-    // SPEC-2.0 §2.3.3: unmigrated 1.x threads (no facet_set) display the
-    // conventional tag derived from kind; migrated threads use replayed tags.
-    app.thread_tags = if !state.lifecycle_explicit && state.tags.is_empty() {
-        super::render::conventional_tags_for_kind(state.kind)
-    } else {
-        state.tags.clone()
-    };
-    app.thread_status = state.status.to_string();
+    app.thread_lifecycle =
+        Some(policy::lifecycle_label_for(&state.category, &state.tags).to_string());
+    // 3.0 snapshots always carry `lifecycle_explicit = true` (set by
+    // `materialize_thread_state_from_snapshot`) and a populated tag
+    // set; the v3.1 step 3n removal of the typed `state.kind` made
+    // the previous "kind-derived conventional tags" fallback dead
+    // code.
+    app.thread_tags = state.tags.clone();
+    app.thread_status = state.status.clone();
     // Phase 4 Step 1d (RFC `7ymtc4b2`): per-thread timeline panel reads
     // the snapshot ref's git history (SPEC-3.0 §5.4). `read_log` returns
     // `None` on legacy event-chain refs — the renderer falls back to its
@@ -84,7 +84,7 @@ pub(super) fn open_node_detail(
     app.node_detail_scroll = 0;
     app.view = View::NodeDetail {
         thread_id: thread_id.to_string(),
-        node_id: lookup.node.node_id,
+        node_id: lookup.node.record.id,
     };
     Ok(())
 }
@@ -100,23 +100,29 @@ pub(super) fn apply_node_status_action(
     let actor = actor::current_actor(git, git.default_actor());
     let clock = SystemClock;
 
+    let cur = lookup.node.record.status;
     let new_status = match action {
-        NodeStatusAction::Resolve if !lookup.node.resolved && !lookup.node.retracted => {
+        NodeStatusAction::Resolve
+            if cur != NodeStatus::Resolved && cur != NodeStatus::Retracted =>
+        {
             Some(NodeStatus::Resolved)
         }
-        NodeStatusAction::Reopen
-            if lookup.node.resolved || lookup.node.retracted || lookup.node.incorporated =>
-        {
-            Some(NodeStatus::Open)
-        }
-        NodeStatusAction::Retract if !lookup.node.retracted => Some(NodeStatus::Retracted),
+        NodeStatusAction::Reopen if cur != NodeStatus::Open => Some(NodeStatus::Open),
+        NodeStatusAction::Retract if cur != NodeStatus::Retracted => Some(NodeStatus::Retracted),
         _ => None,
     };
     if let Some(status) = new_status {
-        snapshot_update_node_status(git, thread_id, &lookup.node.node_id, status, &actor, &clock)?;
+        snapshot_update_node_status(
+            git,
+            thread_id,
+            &lookup.node.record.id,
+            status,
+            &actor,
+            &clock,
+        )?;
     }
 
-    open_node_detail(app, git, thread_id, &lookup.node.node_id)
+    open_node_detail(app, git, thread_id, &lookup.node.record.id)
 }
 
 pub(super) fn submit_create_thread(app: &mut App, git: &GitOps) -> ForumResult<()> {
@@ -226,21 +232,21 @@ pub fn snapshot_list_tip_shas(
 /// Build tree-ordered entries from a flat list of nodes using reply_to relationships.
 ///
 /// Returns entries in depth-first order with tree connector prefixes.
-pub(super) fn build_tree_entries(nodes: &[Node]) -> Vec<TreeEntry> {
+pub(super) fn build_tree_entries(nodes: &[NodeWithBody]) -> Vec<TreeEntry> {
     use std::collections::HashMap;
 
     // Build index: node_id -> position
     let id_to_idx: HashMap<&str, usize> = nodes
         .iter()
         .enumerate()
-        .map(|(i, n)| (n.node_id.as_str(), i))
+        .map(|(i, n)| (n.record.id.as_str(), i))
         .collect();
 
     // Build children map: parent_id -> [child indices]
     let mut children: HashMap<usize, Vec<usize>> = HashMap::new();
     let mut has_parent = vec![false; nodes.len()];
     for (i, node) in nodes.iter().enumerate() {
-        if let Some(ref parent_id) = node.reply_to {
+        if let Some(ref parent_id) = node.record.reply_to {
             if let Some(&parent_idx) = id_to_idx.get(parent_id.as_str()) {
                 children.entry(parent_idx).or_default().push(i);
                 has_parent[i] = true;
@@ -306,8 +312,8 @@ pub(super) fn build_tree_entries(nodes: &[Node]) -> Vec<TreeEntry> {
     entries
 }
 
-pub(super) fn thread_lifecycle_values() -> [Lifecycle; 3] {
-    [Lifecycle::Proposal, Lifecycle::Execution, Lifecycle::Record]
+pub(super) fn thread_lifecycle_values() -> [&'static str; 3] {
+    ["proposal", "execution", "record"]
 }
 
 pub(super) fn thread_lifecycle_labels() -> [&'static str; 3] {
@@ -323,16 +329,16 @@ pub(super) fn default_thread_lifecycle_index(lifecycle_filter: Option<&str>) -> 
     }
 }
 
-/// SPEC-2.0 §2.5: the four canonical 2.0 node types offered for creation.
-/// Legacy prose-only types (claim, question, summary, risk, review,
-/// alternative, assumption) are no longer offered; pre-existing nodes still
-/// render with their stored label.
-pub(super) fn node_type_values() -> [NodeType; 4] {
+/// SPEC-3.0 §2.2: the four canonical node kinds offered for creation.
+/// Legacy 1.x prose-only types (claim, question, summary, risk, review,
+/// alternative, assumption) are no longer offered; pre-existing nodes
+/// still render with their stored `legacy_subtype` label.
+pub(super) fn node_type_values() -> [NodeKind; 4] {
     [
-        NodeType::Comment,
-        NodeType::Approval,
-        NodeType::Objection,
-        NodeType::Action,
+        NodeKind::Comment,
+        NodeKind::Approval,
+        NodeKind::Objection,
+        NodeKind::Action,
     ]
 }
 
@@ -561,20 +567,13 @@ fn snapshot_update_node_status(
 fn snapshot_append_node(
     git: &GitOps,
     thread_id: &str,
-    node_type: NodeType,
+    kind: NodeKind,
     body: &str,
     actor: &str,
     clock: &dyn Clock,
 ) -> ForumResult<String> {
     let mut doc = snapshot::read_snapshot(git, thread_id)?;
     let now = clock.now();
-    let kind = match node_type.canonical() {
-        NodeType::Comment => NodeKind::Comment,
-        NodeType::Approval => NodeKind::Approval,
-        NodeType::Objection => NodeKind::Objection,
-        NodeType::Action => NodeKind::Action,
-        _ => NodeKind::Comment,
-    };
     let id = id_alloc::alloc_bare_thread_id(actor, body, &now.to_rfc3339());
     doc.nodes.push(NodeWithBody {
         record: NodeRecord {
@@ -638,18 +637,18 @@ fn snapshot_create_thread(
     git: &GitOps,
     title: &str,
     body: Option<&str>,
-    lifecycle: Lifecycle,
+    lifecycle_label: &str,
     tags: &[String],
     actor: &str,
     clock: &dyn Clock,
 ) -> ForumResult<String> {
     use crate::internal::commands::thread_new::{
-        augment_tags_for_lifecycle, lifecycle_to_category,
+        augment_tags_for_lifecycle_label, lifecycle_label_to_category,
     };
     let now = clock.now();
     let mut tags = tags.to_vec();
-    augment_tags_for_lifecycle(lifecycle, &mut tags);
-    let category = lifecycle_to_category(lifecycle).to_string();
+    augment_tags_for_lifecycle_label(lifecycle_label, &mut tags);
+    let category = lifecycle_label_to_category(lifecycle_label).to_string();
     let thread_id = id_alloc::alloc_bare_thread_id(actor, title, &now.to_rfc3339());
     let doc = snapshot::ThreadDocument {
         snapshot: ThreadSnapshot {

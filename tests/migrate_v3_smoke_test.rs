@@ -44,7 +44,7 @@ fn create_event(thread_id: &str, kind: ThreadKind, title: &str) -> Event {
 fn migrate_walk_rewrites_legacy_chain_to_snapshot_with_archive() {
     let (repo, git, _paths) = setup();
     let id = id_alloc::alloc_thread_id_with_nonce(
-        ThreadKind::Issue,
+        ThreadKind::Issue.id_prefix(),
         "human/alice",
         "Smoke",
         "2026-01-01T00:00:00Z",
@@ -168,7 +168,7 @@ fn migrate_pinned_write_rejects_concurrent_event() {
 
     let (_repo, git, _paths) = setup();
     let id = id_alloc::alloc_thread_id_with_nonce(
-        ThreadKind::Issue,
+        ThreadKind::Issue.id_prefix(),
         "human/alice",
         "Race",
         "2026-01-01T00:00:00Z",
@@ -268,7 +268,7 @@ fn migrate_strict_surfaces_invalid_state_event_as_warning() {
     use std::process::Command;
     let (repo, git, _paths) = setup();
     let id = id_alloc::alloc_thread_id_with_nonce(
-        ThreadKind::Rfc,
+        ThreadKind::Rfc.id_prefix(),
         "human/alice",
         "Strict",
         "2026-01-01T00:00:00Z",
@@ -312,7 +312,7 @@ fn migrate_with_missing_facet_set_succeeds_for_1x_chain() {
     use std::process::Command;
     let (repo, git, _paths) = setup();
     let id = id_alloc::alloc_thread_id_with_nonce(
-        ThreadKind::Issue,
+        ThreadKind::Issue.id_prefix(),
         "human/alice",
         "Pre-2.0",
         "2026-01-01T00:00:00Z",
@@ -364,7 +364,7 @@ fn migrate_dry_run_does_not_advance_the_ref_tip() {
     // MUST be byte-identical before and after.
     let (repo, git, _paths) = setup();
     let id = id_alloc::alloc_thread_id_with_nonce(
-        ThreadKind::Rfc,
+        ThreadKind::Rfc.id_prefix(),
         "human/alice",
         "DryRun",
         "2026-01-01T00:00:00Z",
@@ -428,7 +428,7 @@ fn migrate_dry_run_followed_by_real_run_writes_snapshot() {
     // subsequent real run.
     let (repo, git, _paths) = setup();
     let id = id_alloc::alloc_thread_id_with_nonce(
-        ThreadKind::Issue,
+        ThreadKind::Issue.id_prefix(),
         "human/alice",
         "PlanThenGo",
         "2026-01-01T00:00:00Z",
@@ -472,7 +472,7 @@ fn migrate_writes_machine_readable_report_under_git_dir() {
     // Build one legacy thread + one v3-native thread so the report
     // exercises both Migrated and AlreadyMigrated outcomes.
     let legacy_id = id_alloc::alloc_thread_id_with_nonce(
-        ThreadKind::Issue,
+        ThreadKind::Issue.id_prefix(),
         "human/alice",
         "Legacy",
         "2026-01-01T00:00:00Z",
@@ -551,7 +551,7 @@ fn migrate_is_idempotent_second_run_is_all_already_migrated() {
     // exit 0.
     let (repo, git, _paths) = setup();
     let id = id_alloc::alloc_thread_id_with_nonce(
-        ThreadKind::Rfc,
+        ThreadKind::Rfc.id_prefix(),
         "human/alice",
         "Idem",
         "2026-01-01T00:00:00Z",
@@ -607,7 +607,7 @@ fn migrate_strict_issue_records_omission_in_report() {
     // project/write errors do, per item 10).
     let (repo, git, paths) = setup();
     let id = id_alloc::alloc_thread_id_with_nonce(
-        ThreadKind::Rfc,
+        ThreadKind::Rfc.id_prefix(),
         "human/alice",
         "Strict",
         "2026-01-01T00:00:00Z",
@@ -652,7 +652,7 @@ fn migrate_unparseable_event_payload_records_error_outcome() {
     let (repo, git, paths) = setup();
     // A healthy thread that should still migrate cleanly.
     let healthy_id = id_alloc::alloc_thread_id_with_nonce(
-        ThreadKind::Rfc,
+        ThreadKind::Rfc.id_prefix(),
         "human/alice",
         "Healthy",
         "2026-01-01T00:00:00Z",
@@ -720,7 +720,7 @@ fn migrate_handles_legacy_approval_node_ids_with_slashes() {
     use git_forum::internal::legacy::event::{Approval, ApprovalMechanism};
     let (repo, git, _paths) = setup();
     let id = id_alloc::alloc_thread_id_with_nonce(
-        ThreadKind::Rfc,
+        ThreadKind::Rfc.id_prefix(),
         "human/alice",
         "ApprovalSlash",
         "2026-01-01T00:00:00Z",
@@ -796,7 +796,7 @@ fn migrate_drops_invalid_tags_and_records_them_in_report() {
     // its own tag grammar.
     let (repo, git, paths) = setup();
     let id = id_alloc::alloc_thread_id_with_nonce(
-        ThreadKind::Issue,
+        ThreadKind::Issue.id_prefix(),
         "human/alice",
         "InvalidTag",
         "2026-01-01T00:00:00Z",

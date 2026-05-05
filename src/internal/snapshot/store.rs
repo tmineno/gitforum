@@ -40,7 +40,11 @@ pub struct ThreadDocument {
 
 /// One node's metadata + body, paired so the writer can emit the two
 /// files atomically inside `nodes/`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Default` is derived (v3.1 step 3o, task `1v400j3l`) so v2-flavored
+/// constructors can elide unset fields with struct-update syntax —
+/// keeping chain-replay / TUI fixtures terse.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NodeWithBody {
     pub record: NodeRecord,
     pub body: String,

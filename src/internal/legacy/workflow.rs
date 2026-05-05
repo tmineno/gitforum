@@ -27,7 +27,168 @@
 
 use std::collections::VecDeque;
 
-use super::event::{Lifecycle, ThreadKind};
+use serde::{Deserialize, Serialize};
+
+// --------------------------------------------------------------------
+// `ThreadKind` (4-variant v2 enum). Relocated here from
+// `internal::thread` in v3.1 step 3n (task `1v400j3l`). The enum is
+// a v2 dispatch axis (rfc/issue/task/dec); the SPEC-3.0 successor
+// is the snapshot's `category` string + canonical §8.3 tags. Read
+// paths derive the user-facing "kind" label via
+// `policy::kind_label_for`. The typed enum survives only inside
+// `internal::legacy` where the v2 event-chain replay state machine
+// and the migrate projection genuinely need it.
+// --------------------------------------------------------------------
+
+/// Thread kinds supported by git-forum (v2 4-variant enum).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ThreadKind {
+    #[default]
+    Issue,
+    Rfc,
+    Dec,
+    Task,
+}
+
+impl ThreadKind {
+    /// Initial state for a new thread of this kind. Mirrors the
+    /// initial_status field on each `policy::CATEGORY_PRESETS` row
+    /// (proposal=draft, execution=open, record=open).
+    pub fn initial_status(self) -> &'static str {
+        match self {
+            Self::Rfc => "draft",
+            Self::Issue | Self::Task | Self::Dec => "open",
+        }
+    }
+
+    /// Display ID prefix (e.g. "ASK", "RFC").
+    pub fn id_prefix(self) -> &'static str {
+        match self {
+            Self::Issue => "ASK",
+            Self::Rfc => "RFC",
+            Self::Dec => "DEC",
+            Self::Task => "JOB",
+        }
+    }
+
+    /// Parse a thread kind from an ID prefix string.
+    ///
+    /// Accepts both current prefixes (ASK, JOB) and legacy prefixes (ISSUE, TASK)
+    /// for backward compatibility.
+    pub fn from_id_prefix(prefix: &str) -> Option<ThreadKind> {
+        match prefix {
+            "ASK" | "ISSUE" => Some(Self::Issue),
+            "RFC" => Some(Self::Rfc),
+            "DEC" => Some(Self::Dec),
+            "JOB" | "TASK" => Some(Self::Task),
+            _ => None,
+        }
+    }
+
+    /// SPEC-3.0 §3.1: each v2 kind maps to a 3.0 category. Used during
+    /// legacy-chain replay to populate `ThreadState::category` before the
+    /// v3 surface takes over.
+    pub fn category(self) -> &'static str {
+        match self {
+            Self::Rfc => "rfc",
+            Self::Issue | Self::Task | Self::Dec => "task",
+        }
+    }
+}
+
+impl std::fmt::Display for ThreadKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Issue => write!(f, "issue"),
+            Self::Rfc => write!(f, "rfc"),
+            Self::Dec => write!(f, "dec"),
+            Self::Task => write!(f, "task"),
+        }
+    }
+}
+
+// --------------------------------------------------------------------
+// `Lifecycle` (3-variant v2 enum). Relocated here from
+// `internal::policy` in v3.1 step 3m (task `1v400j3l`). The enum is
+// a v2 dispatch axis (proposal/execution/record); the SPEC-3.0
+// successor is the snapshot's `category` string. Read paths derive
+// the user-facing "lifecycle" label from category+tags via
+// `policy::lifecycle_label_for`. The typed enum survives only inside
+// `internal::legacy` where the v2 event-chain transition graph
+// genuinely needs it.
+// --------------------------------------------------------------------
+
+/// SPEC-2.0 §2.3.1 — the sole required facet, gates the unified state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Lifecycle {
+    Proposal,
+    #[default]
+    Execution,
+    Record,
+}
+
+impl Lifecycle {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Proposal => "proposal",
+            Self::Execution => "execution",
+            Self::Record => "record",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "proposal" => Some(Self::Proposal),
+            "execution" => Some(Self::Execution),
+            "record" => Some(Self::Record),
+            _ => None,
+        }
+    }
+
+    /// SPEC-2.0 §3.1.1 — initial state per lifecycle.
+    pub fn initial_state(self) -> &'static str {
+        match self {
+            Self::Proposal => "draft",
+            Self::Execution | Self::Record => "open",
+        }
+    }
+
+    /// SPEC-2.0 §3.1.1 — states reachable for this lifecycle.
+    pub fn allowed_states(self) -> &'static [&'static str] {
+        match self {
+            Self::Proposal => &[
+                "draft",
+                "open",
+                "review",
+                "done",
+                "rejected",
+                "withdrawn",
+                "deprecated",
+            ],
+            Self::Execution => &[
+                "open",
+                "working",
+                "review",
+                "done",
+                "rejected",
+                "deprecated",
+            ],
+            Self::Record => &["open", "done", "rejected", "deprecated"],
+        }
+    }
+
+    pub fn allows_state(self, state: &str) -> bool {
+        self.allowed_states().contains(&state)
+    }
+}
+
+impl std::fmt::Display for Lifecycle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// Per-lifecycle workflow data, owned in one place per SPEC-2.0 §3.1.
 struct LifecycleData {

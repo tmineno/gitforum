@@ -14,6 +14,7 @@ use super::super::error::ForumError;
 use super::super::git_ops::GitOps;
 use super::super::policy::TERMINAL_STATES;
 use super::super::refs;
+use super::super::snapshot::history::{self, SnapshotOp};
 use super::super::thread::ThreadState;
 use super::context::Context;
 
@@ -47,29 +48,31 @@ pub fn run(args: ShortlogArgs, ctx: &Context) -> Result<(), ForumError> {
 /// Find the timestamp at which a thread reached its current terminal
 /// state. Returns `None` when the thread is not currently terminal.
 ///
-/// Phase 2 slot 7b: snapshot-only threads (no event chain) use the git
-/// commit timestamp of `refs/forum/threads/<id>` as the terminal-state
-/// date. Mixed-chain threads with a tail event still resolve via the
-/// legacy `EventType::State` scan; pure-event-chain threads keep the
-/// pre-cutover behaviour. Either path returns the same answer for
-/// threads that are currently terminal.
+/// SPEC-3.0 §5.4 snapshot-history walk: scans the thread ref's commit
+/// log newest-first and returns the timestamp of the most recent
+/// `state <id> <from>-><to>` commit whose `to` matches the current
+/// terminal status. Falls back to the ref tip's commit timestamp when
+/// no such transition is recorded (e.g. the thread was created in its
+/// current terminal status, or the snapshot history was rebuilt
+/// without preserving operation-shaped subjects).
+///
+/// Replaces the legacy `state.events` + `EventType::State` scan per
+/// RFC `7ymtc4b2` v3.1 follow-up task `1v400j3l` step 3e.
 pub fn terminal_state_date(git: &GitOps, state: &ThreadState) -> Option<DateTime<Utc>> {
-    use crate::internal::legacy::event::EventType;
-
     if !TERMINAL_STATES.contains(&state.status.as_str()) {
         return None;
     }
-    if let Some(date) = state.events.iter().rev().find_map(|e| {
-        if e.event_type == EventType::State && e.new_state.as_deref() == Some(state.status.as_str())
-        {
-            Some(e.created_at)
-        } else {
-            None
+    let refname = refs::thread_ref(&state.id);
+    let target = state.status.as_str();
+    if let Ok(entries) = history::read_log(git, &refname) {
+        for entry in &entries {
+            if let SnapshotOp::State { to, .. } = &entry.op {
+                if to == target {
+                    return Some(entry.timestamp);
+                }
+            }
         }
-    }) {
-        return Some(date);
     }
-    // SPEC-3.0 §5.4: snapshot-only thread — use the git commit
-    // timestamp of the thread ref tip as the terminal-state date.
-    git.commit_timestamp(&refs::thread_ref(&state.id)).ok()
+    // Fallback: ref-tip commit timestamp.
+    git.commit_timestamp(&refname).ok()
 }

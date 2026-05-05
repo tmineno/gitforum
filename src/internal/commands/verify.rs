@@ -9,8 +9,8 @@
 
 use super::super::error::{ForumError, ForumResult};
 use super::super::git_ops::GitOps;
-use super::super::policy::{self, normalize_state_name, GuardViolation, Policy};
-use super::super::thread::{self, ThreadKind, ThreadStatus};
+use super::super::policy::{self, GuardViolation, Policy};
+use super::super::thread;
 use super::context::Context;
 use super::shared::resolve_tid;
 
@@ -54,7 +54,6 @@ pub struct LookaheadEntry {
 #[derive(Debug, Clone)]
 pub struct LinkedAdvisory {
     pub linked_thread_id: String,
-    pub linked_kind: ThreadKind,
     pub linked_status: String,
     pub rel: String,
     pub message: String,
@@ -113,17 +112,17 @@ fn build_linked_advisories(git: &GitOps, state: &thread::ThreadState) -> Vec<Lin
         let Ok(linked) = thread::replay_thread(git, &canonical) else {
             continue;
         };
-        if linked.status == ThreadStatus::Done {
+        if linked.status == "done" {
             continue;
         }
+        let kind_label = policy::kind_label_for(&linked.category, &linked.tags);
         out.push(LinkedAdvisory {
             linked_thread_id: linked.id.clone(),
-            linked_kind: linked.kind,
-            linked_status: linked.status.to_string(),
+            linked_status: linked.status.clone(),
             rel: link.rel.clone(),
             message: format!(
                 "linked {} {} ({}) is not yet `done` — informational only",
-                linked.kind, linked.id, linked.status
+                kind_label, linked.id, linked.status
             ),
         });
     }
@@ -140,7 +139,8 @@ fn forward_target(state: &thread::ThreadState, p: &Policy) -> Option<String> {
     let category = policy::category_for_state(state);
     let registry = p.effective_registry();
     let cat_def = registry.get(category)?;
-    let normalized = normalize_state_name(state.status.as_str());
+    let status = state.status.as_str();
+    let normalized = policy::canonical_status_lenient(status).unwrap_or(status);
     cat_def
         .valid_targets(normalized)
         .into_iter()
@@ -260,7 +260,7 @@ pub fn remediation_hint(rule: &str, state: &thread::ThreadState, thread_id: &str
             let ids: Vec<String> = state
                 .open_actions()
                 .iter()
-                .map(|n| n.node_id[..n.node_id.len().min(16)].to_string())
+                .map(|n| n.record.id[..n.record.id.len().min(16)].to_string())
                 .collect();
             if ids.is_empty() {
                 return String::new();
@@ -274,7 +274,7 @@ pub fn remediation_hint(rule: &str, state: &thread::ThreadState, thread_id: &str
             let ids: Vec<String> = state
                 .open_objections()
                 .iter()
-                .map(|n| n.node_id[..n.node_id.len().min(16)].to_string())
+                .map(|n| n.record.id[..n.record.id.len().min(16)].to_string())
                 .collect();
             if ids.is_empty() {
                 return String::new();

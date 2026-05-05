@@ -11,8 +11,8 @@
 use chrono::{DateTime, Utc};
 
 use super::super::error::ForumError;
-use super::super::policy::Lifecycle;
-use super::super::thread::{self, ThreadKind, ThreadState};
+use super::super::policy;
+use super::super::thread::{self, ThreadState};
 use super::context::Context;
 
 /// Args for [`run`] — `git forum ls` filters.
@@ -38,7 +38,7 @@ pub fn run(args: LsArgs, ctx: &Context) -> Result<(), ForumError> {
         (_, Some(flag)) => Some(flag),
         (None, None) => None,
     };
-    let kind_filter: Option<ThreadKind> = effective_kind
+    let kind_filter: Option<&'static str> = effective_kind
         .map(super::shared::parse_thread_kind)
         .transpose()?;
     let states = super::bulk::list_thread_states(&ctx.git, kind_filter, args.branch.as_deref())?;
@@ -79,13 +79,13 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
         .clamp(12, 20);
     let lifecycle_width = states
         .iter()
-        .map(|s| s.lifecycle.as_str().len())
+        .map(|s| policy::lifecycle_label_for(&s.category, &s.tags).len())
         .max()
         .unwrap_or(10)
         .clamp(10, 12);
     let status_width = states
         .iter()
-        .map(|s| s.status.as_str().len())
+        .map(|s| s.status.len())
         .max()
         .unwrap_or(14)
         .clamp(10, 16);
@@ -113,17 +113,13 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
     lines.push("-".repeat(fixed_cols));
     for s in states {
         let created = s.created_at.format("%Y-%m-%d %H:%M").to_string();
-        let updated = s
-            .events
-            .last()
-            .map(|e| e.created_at.format("%Y-%m-%d %H:%M").to_string())
-            .unwrap_or_else(|| "-".into());
+        let updated = s.updated_at.format("%Y-%m-%d %H:%M").to_string();
         let title = truncate_with_ellipsis(&s.title, title_max);
         let tags = join_tags(&s.tags);
         lines.push(format!(
             "{:<id_width$}  {:<lifecycle_width$}  {:<status_width$}  {:<tags_width$}  {:<branch_width$}  {:<date_width$}  {:<date_width$}  {}",
             s.id,
-            s.lifecycle.as_str(),
+            policy::lifecycle_label_for(&s.category, &s.tags),
             s.status,
             truncate_with_ellipsis(&tags, tags_width),
             s.branch.as_deref().unwrap_or("-"),
@@ -149,14 +145,15 @@ pub fn render_shortlog(entries: &[(&ThreadState, DateTime<Utc>)]) -> String {
     if entries.is_empty() {
         return "no threads reached terminal state in the given period\n".into();
     }
-    // Phase 2b: group by lifecycle, not kind. The three lifecycles are
-    // listed in spec-canonical order (proposal -> execution -> record).
-    let lifecycle_order = [Lifecycle::Proposal, Lifecycle::Execution, Lifecycle::Record];
+    // Group by lifecycle label (proposal/execution/record), not by category.
+    // v3.1 step 3m: lifecycle is now a derived display label rather than
+    // a typed enum, computed from category+tags via `policy::lifecycle_label_for`.
+    let lifecycle_order = ["proposal", "execution", "record"];
     let mut lines: Vec<String> = Vec::new();
     for lifecycle in &lifecycle_order {
         let mut group: Vec<(&ThreadState, DateTime<Utc>)> = entries
             .iter()
-            .filter(|(s, _)| s.lifecycle == *lifecycle)
+            .filter(|(s, _)| policy::lifecycle_label_for(&s.category, &s.tags) == *lifecycle)
             .copied()
             .collect();
         if group.is_empty() {
@@ -179,7 +176,7 @@ pub fn render_shortlog(entries: &[(&ThreadState, DateTime<Utc>)]) -> String {
             .clamp(12, 20);
         let status_width = group
             .iter()
-            .map(|(s, _)| s.status.as_str().len())
+            .map(|(s, _)| s.status.len())
             .max()
             .unwrap_or(10)
             .clamp(10, 16);
@@ -231,7 +228,6 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::legacy::event::{Event, EventType, Lifecycle, ThreadKind, ThreadStatus};
     use chrono::TimeZone;
 
     fn t() -> chrono::DateTime<chrono::Utc> {
@@ -241,22 +237,12 @@ mod tests {
     fn fixed_state() -> ThreadState {
         ThreadState {
             id: "RFC-0001".into(),
-            kind: ThreadKind::Rfc,
             title: "Test RFC".into(),
             body: Some("Thread body".into()),
-            status: ThreadStatus::Draft,
+            status: "draft".into(),
             created_at: t(),
             created_by: "human/alice".into(),
-            events: vec![Event {
-                event_id: "evt-0001".into(),
-                thread_id: "RFC-0001".into(),
-                event_type: EventType::Create,
-                created_at: t(),
-                actor: "human/alice".into(),
-                title: Some("Test RFC".into()),
-                kind: Some(ThreadKind::Rfc),
-                ..Event::default()
-            }],
+            category: "rfc".into(),
             ..ThreadState::default()
         }
     }
@@ -268,10 +254,9 @@ mod tests {
 
     #[test]
     fn ls_contains_all_threads() {
-        // Phase 2b: lifecycle replaces kind as the column.
         let mut s = fixed_state();
         s.branch = Some("feat/parser".into());
-        s.lifecycle = Lifecycle::Proposal; // kind=Rfc would derive this anyway
+        s.category = "rfc".into();
         let out = render_ls(&[&s]);
         assert!(out.contains("LIFECYCLE"));
         assert!(out.contains("TAGS"));

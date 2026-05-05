@@ -34,14 +34,14 @@ use sha2::{Digest, Sha256};
 
 use super::super::config::RepoPaths;
 use super::super::error::{ForumError, ForumResult};
-use super::super::evidence::{EvidenceFile, EvidenceRecord};
+use super::super::evidence::EvidenceFile;
 use super::super::git_ops::GitOps;
 use super::super::id_alloc;
-use super::super::legacy::event::{self, NodeType, ThreadKind};
-use super::super::node::{NodeKind, NodeRecord, NodeStatus};
+use super::super::legacy::event;
+use super::super::node::NodeRecord;
 use super::super::refs;
 use super::super::snapshot::{self, Link, Links, NodeWithBody, ThreadDocument};
-use super::super::thread::{self, ThreadSnapshot, ThreadState};
+use super::super::thread::{ThreadSnapshot, ThreadState};
 use super::super::validate::StrictReplayIssue;
 
 /// SPEC-2.0 §10: v→2 alias entries live under
@@ -546,29 +546,6 @@ fn build_archive_ndjson(events: &[event::Event]) -> ForumResult<Vec<u8>> {
 
 // ---------- v→3.0 snapshot bridge ----------
 
-/// SPEC-3.0 §8.3 canonical-tag augmentation by **legacy kind**, which
-/// is finer-grained than the lifecycle augmentation in
-/// `thread_new::augment_tags_for_lifecycle`. `Lifecycle::Execution`
-/// collapses `bug`/`issue`/`task`/`job`, so a lifecycle-only mapping
-/// cannot distinguish a `bug`-source thread from a plain `task`.
-///
-/// Migration uses the legacy kind to recover the §8.3 canonical tag:
-/// - `Issue` (covers v1 `bug`/`issue`/`ASK-*`) → `Some("bug")`
-/// - `Dec` (covers v1 `dec`/`record`/`DEC-*`) → `Some("decision")`
-/// - `Rfc` and `Task` → `None` (no canonical augmentation; the source
-///   kind is already the category itself)
-///
-/// Migration-only helper: non-migrate code paths see SPEC-3.0
-/// snapshots already and do not need legacy-kind awareness
-/// (ADR-011 Decision 3).
-pub fn legacy_kind_to_canonical_tag(kind: ThreadKind) -> Option<&'static str> {
-    match kind {
-        ThreadKind::Issue => Some("bug"),
-        ThreadKind::Dec => Some("decision"),
-        ThreadKind::Rfc | ThreadKind::Task => None,
-    }
-}
-
 /// Read a legacy event-chain thread via the mixed-chain replay
 /// reader and project the resulting state back into a SPEC-3.0
 /// [`ThreadDocument`].
@@ -607,7 +584,7 @@ pub fn migrate_legacy_to_snapshot_at(
     thread_id: &str,
     start_rev: &str,
 ) -> Result<ThreadDocument, ForumError> {
-    let state = thread::replay_thread_at(git, start_rev)?;
+    let state = super::super::legacy::chain_replay::replay_chain_at(git, start_rev)?;
     if state.id != thread_id {
         return Err(ForumError::Repo(format!(
             "rev {start_rev} replays as thread `{}`, not `{thread_id}` — refs out of sync",
@@ -663,7 +640,8 @@ pub fn migrate_legacy_to_snapshot_strict_at(
     thread_id: &str,
     start_rev: &str,
 ) -> Result<MigrationProjection, ForumError> {
-    let (state, issues) = thread::replay_thread_strict_at(git, start_rev)?;
+    let (state, issues) =
+        super::super::legacy::chain_replay::replay_chain_strict_at(git, start_rev)?;
     if state.id != thread_id {
         return Err(ForumError::Repo(format!(
             "rev {start_rev} replays as thread `{}`, not `{thread_id}` — refs out of sync",
@@ -734,13 +712,20 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
             }),
         }
     }
-    super::thread_new::augment_tags_for_lifecycle(state.lifecycle, &mut tags);
-    if let Some(canon) = legacy_kind_to_canonical_tag(state.kind) {
-        if !tags.iter().any(|t| t == canon) {
-            tags.push(canon.into());
-        }
-    }
-    let category = super::thread_new::lifecycle_to_category(state.lifecycle).to_string();
+    // v3.1 step 3m: ThreadState carries `category` directly; pull
+    // through, and propagate the lifecycle-derived `decision` tag for
+    // record-flavored task threads (already added by chain_replay
+    // when the chain saw an explicit `facet_set lifecycle=record`,
+    // but legacy chains without one rely on the kind-derived path).
+    //
+    // v3.1 step 3n: the canonical SPEC-3.0 §8.3 tag (`bug` for legacy
+    // Issue, `decision` for legacy Dec) is augmented inside
+    // `chain_replay::augment_canonical_kind_tag` at the end of replay,
+    // so `state.tags` already encodes the source kind. Migrate just
+    // propagates them through the validity filter above.
+    let category = state.category.clone();
+    let label = super::super::policy::lifecycle_label_for(&category, &tags);
+    super::thread_new::augment_tags_for_lifecycle_label(label, &mut tags);
     // SPEC-3.0 §8.1 step 4: target-category `initial_status`, not
     // the replayed legacy final status. `CategoryRegistry::built_in()`
     // is the right registry here (NOT `policy.effective_registry()`):
@@ -759,37 +744,27 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
     let nodes: Vec<NodeWithBody> = state
         .nodes
         .iter()
-        .filter_map(|n| {
-            let kind = match n.node_type.canonical() {
-                NodeType::Comment => NodeKind::Comment,
-                NodeType::Approval => NodeKind::Approval,
-                NodeType::Objection => NodeKind::Objection,
-                NodeType::Action => NodeKind::Action,
-                _ => return None, // canonical() always returns one of the four
-            };
-            let status = if n.retracted {
-                NodeStatus::Retracted
-            } else if n.incorporated {
-                NodeStatus::Incorporated
-            } else if n.resolved {
-                NodeStatus::Resolved
-            } else {
-                NodeStatus::Open
-            };
-            Some(NodeWithBody {
+        .map(|n| {
+            // v3.1 step 3o: ThreadState.nodes is already
+            // `Vec<NodeWithBody>` (snapshot-native shape). The migrate
+            // projection still has to apply `tree_safe_node_id` to the
+            // id + reply_to, since legacy chains can carry actor-
+            // namespaced ids (`<sha>#human/alice`) that aren't legal
+            // tree filenames in `nodes/<id>.toml`.
+            NodeWithBody {
                 record: NodeRecord {
-                    id: tree_safe_node_id(&n.node_id),
-                    kind,
-                    status,
-                    created_at: n.created_at,
-                    created_by: n.actor.clone(),
-                    updated_at: None,
-                    updated_by: None,
-                    reply_to: n.reply_to.as_deref().map(tree_safe_node_id),
-                    legacy_label: n.legacy_subtype.clone(),
+                    id: tree_safe_node_id(&n.record.id),
+                    kind: n.record.kind,
+                    status: n.record.status,
+                    created_at: n.record.created_at,
+                    created_by: n.record.created_by.clone(),
+                    updated_at: n.record.updated_at,
+                    updated_by: n.record.updated_by.clone(),
+                    reply_to: n.record.reply_to.as_deref().map(tree_safe_node_id),
+                    legacy_label: n.record.legacy_label.clone(),
                 },
                 body: n.body.clone(),
-            })
+            }
         })
         .collect();
 
@@ -807,17 +782,9 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
     };
 
     let evidence = EvidenceFile {
-        entries: state
-            .evidence_items
-            .iter()
-            .map(|e| EvidenceRecord {
-                id: e.evidence_id.clone(),
-                kind: e.kind.clone(),
-                ref_target: e.ref_target.clone(),
-                created_at: state.created_at,
-                created_by: state.created_by.clone(),
-            })
-            .collect(),
+        // v3.1 step 3o: ThreadState.evidence_items is already
+        // `Vec<EvidenceRecord>`; migrate just clones it through.
+        entries: state.evidence_items.clone(),
     };
 
     Ok((
@@ -849,19 +816,10 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
 mod tests {
     use super::*;
 
-    // SPEC-3.0 §8.3 canonical-tag table — kind-keyed augmentation.
-    #[test]
-    fn legacy_kind_to_canonical_tag_covers_spec_table() {
-        assert_eq!(legacy_kind_to_canonical_tag(ThreadKind::Issue), Some("bug"));
-        assert_eq!(
-            legacy_kind_to_canonical_tag(ThreadKind::Dec),
-            Some("decision")
-        );
-        // RFC and Task source kinds carry no canonical extra tag —
-        // the category itself is the classification.
-        assert_eq!(legacy_kind_to_canonical_tag(ThreadKind::Rfc), None);
-        assert_eq!(legacy_kind_to_canonical_tag(ThreadKind::Task), None);
-    }
+    // SPEC-3.0 §8.3 canonical-tag augmentation moved to
+    // `legacy::chain_replay::augment_canonical_kind_tag` in v3.1
+    // step 3n; the migrate-side `legacy_kind_to_canonical_tag` was
+    // dropped along with the public `ThreadKind` enum.
 
     #[test]
     fn tree_safe_node_id_strips_actor_namespace_slash() {

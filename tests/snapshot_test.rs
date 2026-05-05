@@ -3,10 +3,8 @@ mod support;
 use chrono::TimeZone;
 use git_forum::internal::commands::ls;
 use git_forum::internal::commands::show;
-use git_forum::internal::legacy::event::{
-    Event, EventType, Lifecycle, NodeType, ThreadKind, ThreadStatus,
-};
-use git_forum::internal::node::Node;
+use git_forum::internal::node::{NodeKind, NodeRecord};
+use git_forum::internal::snapshot::store::NodeWithBody;
 use git_forum::internal::thread::{NodeLookup, ThreadLink, ThreadState};
 
 const SNAPSHOT_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots");
@@ -37,26 +35,15 @@ fn base_state() -> ThreadState {
     let t = fixed_time();
     ThreadState {
         id: "RFC-a1b2c3d4".into(),
-        kind: ThreadKind::Rfc,
-        // Phase 2c: keep lifecycle aligned with kind so the snapshot's
-        // proposal-flavored state-machine transitions don't pick up
-        // execution lifecycle's `working` state by default.
-        lifecycle: Lifecycle::Proposal,
+        // Category is the 3.0-native classification per SPEC-3.0 §3.1
+        // (rfc → Proposal lifecycle).
+        category: "rfc".into(),
         title: "Test RFC".into(),
         body: Some("Initial thread body.".into()),
-        status: ThreadStatus::Draft,
+        status: "draft".into(),
         created_at: t,
         created_by: "human/alice".into(),
-        events: vec![Event {
-            event_id: "evt-0001".into(),
-            thread_id: "RFC-a1b2c3d4".into(),
-            event_type: EventType::Create,
-            created_at: t,
-            actor: "human/alice".into(),
-            title: Some("Test RFC".into()),
-            kind: Some(ThreadKind::Rfc),
-            ..Event::default()
-        }],
+        updated_at: t,
         ..ThreadState::default()
     }
 }
@@ -67,48 +54,32 @@ fn rich_state() -> ThreadState {
     let t3 = t + chrono::Duration::hours(2);
     let mut state = base_state();
     // Lenient parse so 1.x-flavored fixture data still produces a valid 2.0 status.
-    state.status = ThreadStatus::parse_lenient("under-review").unwrap();
+    state.status = "review".into();
     state.branch = Some("feat/solver".into());
+    state.updated_at = t3;
     state.nodes = vec![
-        Node {
-            node_id: "node-0001".into(),
-            node_type: NodeType::Objection,
+        NodeWithBody {
+            record: NodeRecord {
+                id: "node-0001".into(),
+                kind: NodeKind::Objection,
+                created_at: t2,
+                created_by: "ai/reviewer".into(),
+                ..Default::default()
+            },
             body: "Benchmarks are missing.".into(),
-            actor: "ai/reviewer".into(),
-            created_at: t2,
-            ..Node::default()
         },
-        Node {
-            node_id: "node-0002".into(),
-            node_type: NodeType::Summary,
+        NodeWithBody {
+            record: NodeRecord {
+                id: "node-0002".into(),
+                kind: NodeKind::Comment,
+                created_at: t3,
+                created_by: "human/alice".into(),
+                legacy_label: Some("summary".into()),
+                ..Default::default()
+            },
             body: "Direction is sound; migration evidence needed.".into(),
-            actor: "human/alice".into(),
-            created_at: t3,
-            ..Node::default()
         },
     ];
-    state.events.push(Event {
-        event_id: "evt-0002".into(),
-        thread_id: "RFC-a1b2c3d4".into(),
-        event_type: EventType::Say,
-        created_at: t2,
-        actor: "ai/reviewer".into(),
-        body: Some("Benchmarks are missing.".into()),
-        node_type: Some(NodeType::Objection),
-        target_node_id: Some("node-0001".into()),
-        ..Event::default()
-    });
-    state.events.push(Event {
-        event_id: "evt-0003".into(),
-        thread_id: "RFC-a1b2c3d4".into(),
-        event_type: EventType::Say,
-        created_at: t3,
-        actor: "human/alice".into(),
-        body: Some("Direction is sound; migration evidence needed.".into()),
-        node_type: Some(NodeType::Summary),
-        target_node_id: Some("node-0002".into()),
-        ..Event::default()
-    });
     state
 }
 
@@ -177,33 +148,24 @@ fn node_show_question() {
     let lookup = NodeLookup {
         thread_id: "RFC-a1b2c3d4".into(),
         thread_title: "Test RFC".into(),
-        thread_kind: ThreadKind::Rfc,
-        // Phase 2b: NodeLookup carries the parent's lifecycle / tags so
-        // `node show` can display the canonical 2.0 axes.
-        thread_lifecycle: Lifecycle::Proposal,
+        // NodeLookup carries the parent thread's category + tags;
+        // `node show` derives the lifecycle label via `policy::lifecycle_label_for`.
+        thread_category: "rfc".into(),
         thread_tags: vec!["cross-cutting".into()],
-        node: Node {
-            node_id: "node-0001".into(),
-            node_type: NodeType::Question,
+        node: NodeWithBody {
+            record: NodeRecord {
+                id: "node-0001".into(),
+                kind: NodeKind::Comment,
+                created_at: t,
+                created_by: "ai/reviewer".into(),
+                legacy_label: Some("question".into()),
+                ..Default::default()
+            },
             body: "What is the migration plan?".into(),
-            actor: "ai/reviewer".into(),
-            created_at: t,
-            ..Node::default()
         },
         links: vec![ThreadLink {
             target_thread_id: "ASK-e5f6a7b8".into(),
             rel: "implements".into(),
-        }],
-        events: vec![Event {
-            event_id: "evt-0010".into(),
-            thread_id: "RFC-a1b2c3d4".into(),
-            event_type: EventType::Say,
-            created_at: t,
-            actor: "ai/reviewer".into(),
-            body: Some("What is the migration plan?".into()),
-            node_type: Some(NodeType::Question),
-            target_node_id: Some("node-0001".into()),
-            ..Event::default()
         }],
     };
     let out = show::render_node_show(&lookup, &show::ShowOptions::default());
@@ -223,12 +185,12 @@ fn ls_two_threads() {
     let s1 = base_state();
     let mut s2 = base_state();
     s2.id = "ASK-e5f6a7b8".into();
-    s2.kind = ThreadKind::Issue;
-    // Phase 2b: keep lifecycle aligned when changing kind on a fixture.
-    s2.lifecycle = Lifecycle::Execution;
+    // SPEC-3.0 §8.3: legacy `Issue` kind → category `task` + canonical
+    // `bug` tag.
+    s2.category = "task".into();
     s2.tags = vec!["bug".into()];
     s2.title = "Implement trait backend".into();
-    s2.status = ThreadStatus::Open;
+    s2.status = "open".into();
     s2.branch = Some("feat/parser".into());
     let out = ls::render_ls(&[&s1, &s2]);
     assert_snapshot("ls_two_threads", &out);

@@ -21,10 +21,8 @@ use crate::internal::clock::Clock;
 use crate::internal::commands::show;
 use crate::internal::error::ForumError;
 use crate::internal::id_alloc;
-use crate::internal::legacy::workflow::SPEC;
 use crate::internal::node::{NodeKind, NodeRecord, NodeStatus};
-use crate::internal::policy::Lifecycle;
-use crate::internal::policy::Policy;
+use crate::internal::policy::{self, Policy};
 use crate::internal::snapshot::{self, store::write_snapshot, Link, NodeWithBody, ThreadDocument};
 use crate::internal::thread;
 
@@ -87,42 +85,31 @@ pub fn run(args: StateShorthandArgs, ctx: &Context) -> Result<(), ForumError> {
     )
 }
 
-/// Resolve a state-change shorthand to a concrete target state for the
-/// thread's current lifecycle, per SPEC-2.0 §9.3.
-pub fn shorthand_target_for_lifecycle(
-    shorthand: &str,
-    lifecycle: Lifecycle,
-) -> Result<&'static str, ForumError> {
-    use crate::internal::legacy::workflow::ShorthandResolution::*;
-    match SPEC.shorthand_target(shorthand, lifecycle) {
-        Target(t) => Ok(t),
-        NotApplicable(hint) => Err(ForumError::Config(format!("{hint} (SPEC-2.0 §9.3)"))),
-        Unknown => Err(ForumError::Config(format!(
-            "unknown state-change shorthand '{shorthand}'",
-        ))),
-    }
-}
-
 /// Resolve `new_state` as either a §9.3 shorthand verb (`close`,
-/// `accept`, etc.) or a canonical 2.0 state name (`done`, `accepted`,
+/// `accept`, etc.) or a canonical 3.0 status name (`done`, `accepted`,
 /// `open`, …). Used by both the shorthand arms and the canonical
 /// `git forum state <ID> <STATE>` form.
-fn resolve_target_state(new_state: &str, lifecycle: Lifecycle) -> Result<&'static str, ForumError> {
-    use crate::internal::legacy::workflow::ShorthandResolution::*;
-    match SPEC.shorthand_target(new_state, lifecycle) {
+///
+/// Routes through the 3.0-native `policy::resolve_shorthand` (keyed on
+/// `category` + `tags`) instead of the legacy lifecycle-keyed table.
+fn resolve_target_state(
+    new_state: &str,
+    category: &str,
+    tags: &[String],
+) -> Result<&'static str, ForumError> {
+    use policy::ShorthandResolution::*;
+    match policy::resolve_shorthand(new_state, category, tags) {
         Target(t) => Ok(t),
         NotApplicable(hint) => Err(ForumError::Config(format!("{hint} (SPEC-2.0 §9.3)"))),
         Unknown => {
             // Try as a canonical state name. The legacy 1.x → 2.0
             // alias fold (`closed` → `done`, `proposed` → `open`,
-            // etc.) lives in `event::ThreadStatus::parse_lenient`.
-            crate::internal::thread::ThreadStatus::parse_lenient(new_state)
-                .map(|s| s.as_str())
-                .ok_or_else(|| {
-                    ForumError::Config(format!(
-                        "unknown state '{new_state}' for {lifecycle} lifecycle"
-                    ))
-                })
+            // etc.) lives in `policy::canonical_status_lenient`.
+            policy::canonical_status_lenient(new_state).ok_or_else(|| {
+                ForumError::Config(format!(
+                    "unknown state '{new_state}' for category `{category}`"
+                ))
+            })
         }
     }
 }
@@ -146,13 +133,9 @@ pub fn run_state_shorthand(
     let policy = Policy::load(&paths.dot_forum.join("policy.toml"))?;
     let actor = resolve_actor(as_actor, &git);
 
-    // Replay once up front to resolve the lifecycle facet — the §9.3
-    // table is keyed on lifecycle, not on the legacy `kind` field.
-    let pre_state = thread::replay_thread(&git, thread_id)?;
-    let target = resolve_target_state(new_state, pre_state.lifecycle)?;
-
     let mut doc = snapshot::read_snapshot(&git, thread_id)?;
     let from = doc.snapshot.status.clone();
+    let target = resolve_target_state(new_state, &doc.snapshot.category, &doc.snapshot.tags)?;
     let now = clock.now();
 
     if from == target {
@@ -298,11 +281,10 @@ pub fn apply_state_change_snapshot(
     clock: &dyn Clock,
     resolve_open_actions: bool,
 ) -> Result<(String, &'static str), ForumError> {
-    let pre_state = thread::replay_thread(git, thread_id)?;
-    let target = resolve_target_state(new_state, pre_state.lifecycle)?;
-
     let mut doc = snapshot::read_snapshot(git, thread_id)?;
     let from = doc.snapshot.status.clone();
+    let target = resolve_target_state(new_state, &doc.snapshot.category, &doc.snapshot.tags)?;
+    let pre_state = thread::replay_thread(git, thread_id)?;
     if from == target {
         return Ok((from, target));
     }
@@ -337,22 +319,32 @@ pub fn apply_state_change_snapshot(
     // about to write — `--resolve-open-actions` cures `no_open_actions`,
     // and explicit `--approve <ACTOR>` cures `one_human_approval`.
     let mut projected = pre_state.clone();
-    projected.status =
-        crate::internal::thread::ThreadStatus::parse_lenient(target).unwrap_or(projected.status);
+    projected.status = crate::internal::policy::canonical_status_lenient(target)
+        .map(str::to_string)
+        .unwrap_or(projected.status);
     if resolve_open_actions {
         for n in projected.nodes.iter_mut() {
-            if n.node_type == crate::internal::node::NodeType::Action && n.is_open() {
-                n.resolved = true;
+            if n.record.kind == crate::internal::node::NodeKind::Action
+                && n.record.status == NodeStatus::Open
+            {
+                n.record.status = NodeStatus::Resolved;
             }
         }
     }
+    let now_for_projection = clock.now();
     for approver in approve {
-        projected.nodes.push(crate::internal::node::Node {
-            node_id: format!("approval-{approver}"),
-            node_type: crate::internal::node::NodeType::Approval,
-            actor: approver.clone(),
-            ..Default::default()
-        });
+        projected
+            .nodes
+            .push(crate::internal::snapshot::store::NodeWithBody {
+                record: crate::internal::node::NodeRecord {
+                    id: format!("approval-{approver}"),
+                    kind: crate::internal::node::NodeKind::Approval,
+                    created_at: now_for_projection,
+                    created_by: approver.clone(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
     }
     let guard_violations = crate::internal::policy::check_guards(policy, &projected, &from, target);
     if !guard_violations.is_empty() {

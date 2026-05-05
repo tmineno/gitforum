@@ -12,9 +12,7 @@
 
 use super::super::error::ForumError;
 use super::super::git_ops::GitOps;
-use super::super::legacy::workflow::SPEC;
-use super::super::policy::Lifecycle;
-use super::super::policy::{self, Policy};
+use super::super::policy::{self, CategoryRegistry, Policy};
 use super::super::refs::thread_ref;
 use super::super::snapshot::history::{self, SnapshotLogEntry};
 use super::super::thread::{self, NodeLookup, ThreadState};
@@ -94,8 +92,8 @@ pub fn render_node_show(lookup: &NodeLookup, options: &ShowOptions) -> String {
 
     lines.push(format!(
         "## {} {}",
-        short_oid(&node.node_id),
-        node.node_type
+        short_oid(&node.record.id),
+        node_display_label(node)
     ));
     lines.push(String::new());
     lines.push(format!(
@@ -103,17 +101,20 @@ pub fn render_node_show(lookup: &NodeLookup, options: &ShowOptions) -> String {
         lookup.thread_id, lookup.thread_title
     ));
     // Phase 2b: lifecycle + tags, not kind.
-    lines.push(format!("**lifecycle:** {}", lookup.thread_lifecycle));
+    lines.push(format!(
+        "**lifecycle:** {}",
+        super::super::policy::lifecycle_label_for(&lookup.thread_category, &lookup.thread_tags)
+    ));
     if !lookup.thread_tags.is_empty() {
         lines.push(format!("**tags:**      {}", lookup.thread_tags.join(", ")));
     }
     lines.push(format!("**status:**    {}", node_status(node)));
     lines.push(format!(
         "**created:**   {}",
-        node.created_at.format("%Y-%m-%dT%H:%M:%SZ")
+        node.record.created_at.format("%Y-%m-%dT%H:%M:%SZ")
     ));
-    lines.push(format!("**by:**        {}", node.actor));
-    if let Some(ref parent_id) = node.reply_to {
+    lines.push(format!("**by:**        {}", node.record.created_by));
+    if let Some(ref parent_id) = node.record.reply_to {
         lines.push(format!("**reply-to:**  {}", short_oid(parent_id)));
     }
     lines.push(String::new());
@@ -138,7 +139,7 @@ pub fn render_node_show(lookup: &NodeLookup, options: &ShowOptions) -> String {
         lines.push(String::new());
         lines.push("### history".into());
         lines.push(String::new());
-        lines.extend(node_history_lines(&lookup.node.node_id, options));
+        lines.extend(node_history_lines(&lookup.node.record.id, options));
         lines.push(String::new());
     }
 
@@ -186,7 +187,10 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
     // classification axis. The legacy `kind` field stays in storage for
     // backward compatibility (per ADR-002) but is no longer surfaced as
     // a primary display label.
-    lines.push(format!("**lifecycle:** {}", state.lifecycle));
+    lines.push(format!(
+        "**lifecycle:** {}",
+        policy::lifecycle_label_for(&state.category, &state.tags)
+    ));
     if !state.tags.is_empty() {
         lines.push(format!("**tags:**      {}", state.tags.join(", ")));
     }
@@ -197,7 +201,7 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
         }
         if !compact {
             lines.push("transitions:".into());
-            for diagram_line in render_state_diagram(state.lifecycle, state.status.as_str()) {
+            for diagram_line in render_state_diagram(&state.category, state.status.as_str()) {
                 lines.push(diagram_line);
             }
         }
@@ -223,13 +227,17 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
     }
 
     if !compact {
-        let incorporated: Vec<&super::super::node::Node> =
-            state.nodes.iter().filter(|n| n.incorporated).collect();
+        use super::super::node::NodeStatus;
+        let incorporated: Vec<&super::super::snapshot::store::NodeWithBody> = state
+            .nodes
+            .iter()
+            .filter(|n| n.record.status == NodeStatus::Incorporated)
+            .collect();
         render_item_list(&mut lines, "incorporated nodes", &incorporated, |node| {
             format!(
                 "  - {} {} {}",
-                short_oid(&node.node_id),
-                node.node_type,
+                short_oid(&node.record.id),
+                node_display_label(node),
                 body_or_truncated(&node.body, 60, false)
             )
         });
@@ -260,7 +268,7 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
 
     if !compact {
         render_item_list(&mut lines, "evidence", &state.evidence_items, |ev| {
-            let id_short = &ev.evidence_id[..ev.evidence_id.len().min(8)];
+            let id_short = &ev.id[..ev.id.len().min(8)];
             format!("  - {}  {}  {}", id_short, ev.kind, ev.ref_target)
         });
     }
@@ -346,7 +354,7 @@ fn push_open_items(
     lines: &mut Vec<String>,
     thread_id: &str,
     label: &str,
-    items: &[&super::super::node::Node],
+    items: &[&super::super::snapshot::store::NodeWithBody],
     compact: bool,
     with_reply: bool,
 ) {
@@ -355,7 +363,7 @@ fn push_open_items(
     }
     lines.push(format!("**{label}:** {}", items.len()));
     for node in items {
-        let nid = short_oid(&node.node_id);
+        let nid = short_oid(&node.record.id);
         lines.push(format!(
             "  - {nid} {}",
             body_or_truncated(&node.body, 60, compact)
@@ -376,7 +384,12 @@ fn push_conversations(lines: &mut Vec<String>, state: &ThreadState, compact: boo
         return;
     }
     if compact {
-        let inc_count = state.nodes.iter().filter(|n| n.incorporated).count();
+        use super::super::node::NodeStatus;
+        let inc_count = state
+            .nodes
+            .iter()
+            .filter(|n| n.record.status == NodeStatus::Incorporated)
+            .count();
         let inc_hint = if inc_count > 0 {
             format!(" ({inc_count} incorporated)")
         } else {
@@ -391,10 +404,10 @@ fn push_conversations(lines: &mut Vec<String>, state: &ThreadState, compact: boo
             let root = convo[0];
             lines.push(format!(
                 "  {} {} [{}] {} — {}",
-                short_oid(&root.node_id),
-                root.node_type,
+                short_oid(&root.record.id),
+                node_display_label(root),
                 node_status(root),
-                root.actor,
+                root.record.created_by,
                 single_line_preview(&root.body, 60)
             ));
         }
@@ -404,8 +417,8 @@ fn push_conversations(lines: &mut Vec<String>, state: &ThreadState, compact: boo
             let root = convo[0];
             lines.push(format!(
                 "  {} {} [{}] {}",
-                short_oid(&root.node_id),
-                root.node_type,
+                short_oid(&root.record.id),
+                node_display_label(root),
                 node_status(root),
                 body_or_truncated(&root.body, 50, false)
             ));
@@ -413,19 +426,19 @@ fn push_conversations(lines: &mut Vec<String>, state: &ThreadState, compact: boo
             for reply in &convo[1..] {
                 lines.push(format!(
                     "    -> {} {} {} {}",
-                    short_oid(&reply.node_id),
-                    reply.node_type,
-                    reply.actor,
+                    short_oid(&reply.record.id),
+                    node_display_label(reply),
+                    reply.record.created_by,
                     body_or_truncated(&reply.body, 50, false)
                 ));
                 render_indented_body(lines, &reply.body, "        ");
             }
             let last = convo.last().unwrap();
-            if last.is_open() {
+            if last.record.status == super::super::node::NodeStatus::Open {
                 lines.push(format!(
                     "    reply: git forum claim {} --reply-to {} --body \"...\"",
                     state.id,
-                    short_oid(&last.node_id)
+                    short_oid(&last.record.id)
                 ));
             }
         }
@@ -494,12 +507,16 @@ fn render_status_block(state: &ThreadState) -> String {
         state.id, state.title, state.status
     ));
 
+    use super::super::node::NodeStatus;
     let open_obj = state.open_objections();
     let open_act = state.open_actions();
-    let open_questions: Vec<&super::super::node::Node> = state
+    let open_questions: Vec<&super::super::snapshot::store::NodeWithBody> = state
         .nodes
         .iter()
-        .filter(|n| n.node_type == super::super::node::NodeType::Question && n.is_open())
+        .filter(|n| {
+            n.record.legacy_label.as_deref() == Some("question")
+                && n.record.status == NodeStatus::Open
+        })
         .collect();
 
     if open_obj.is_empty() && open_act.is_empty() && open_questions.is_empty() {
@@ -513,7 +530,11 @@ fn render_status_block(state: &ThreadState) -> String {
     lines.join("\n")
 }
 
-fn push_status_group(lines: &mut Vec<String>, label: &str, items: &[&super::super::node::Node]) {
+fn push_status_group(
+    lines: &mut Vec<String>,
+    label: &str,
+    items: &[&super::super::snapshot::store::NodeWithBody],
+) {
     if items.is_empty() {
         return;
     }
@@ -521,7 +542,7 @@ fn push_status_group(lines: &mut Vec<String>, label: &str, items: &[&super::supe
     for node in items {
         lines.push(format!(
             "    - {} {}",
-            short_oid(&node.node_id),
+            short_oid(&node.record.id),
             truncate_body(&node.body, 60)
         ));
     }
@@ -679,17 +700,17 @@ fn render_action_hint(state: &ThreadState, policy: &Policy) -> String {
         for node in &open_obj {
             lines.push(format!(
                 "    objection {} — resolve with: resolve {} {}",
-                short_oid(&node.node_id),
+                short_oid(&node.record.id),
                 state.id,
-                short_oid(&node.node_id)
+                short_oid(&node.record.id)
             ));
         }
         for node in &open_act {
             lines.push(format!(
                 "    action {} — resolve with: resolve {} {}",
-                short_oid(&node.node_id),
+                short_oid(&node.record.id),
                 state.id,
-                short_oid(&node.node_id)
+                short_oid(&node.record.id)
             ));
         }
     }
@@ -697,25 +718,44 @@ fn render_action_hint(state: &ThreadState, policy: &Policy) -> String {
 }
 
 // ============================================================
-//  State diagram — table-driven from Lifecycle
+//  State diagram — table-driven from CategoryDefinition
 // ============================================================
 
-/// SPEC-2.0 §3.1.1: per-lifecycle "happy-path" spine. Every other allowed
-/// state is rendered as a branch off whichever spine state it leaves from.
-fn lifecycle_spine(lifecycle: Lifecycle) -> &'static [&'static str] {
-    match lifecycle {
-        Lifecycle::Proposal => &["draft", "open", "review", "done", "deprecated"],
-        Lifecycle::Execution => &["open", "working", "review", "done", "deprecated"],
-        Lifecycle::Record => &["open", "done", "deprecated"],
+/// SPEC-3.0 §3.1: per-category "happy-path" spine for the built-in
+/// categories. Every other reachable status is rendered as a branch off
+/// whichever spine status it leaves from.
+///
+/// Custom categories (no entry here) render as a flat list of edges
+/// without a spotlighted spine.
+fn category_spine(category: &str) -> &'static [&'static str] {
+    match category {
+        "rfc" => &["draft", "open", "review", "done", "deprecated"],
+        "task" => &["open", "working", "review", "done", "deprecated"],
+        _ => &[],
     }
 }
 
-/// Render a compact Unicode state diagram for `lifecycle` with `current`
+/// Render a compact Unicode state diagram for `category` with `current`
 /// highlighted in `[brackets]`. Forward edges use `→`; branch edges use
-/// `├→` / `└→`. Driven entirely by `WorkflowSpec::unified_transitions()` filtered by the
-/// lifecycle's allowed states (§3.1).
-pub fn render_state_diagram(lifecycle: Lifecycle, current: &str) -> Vec<String> {
-    let spine = lifecycle_spine(lifecycle);
+/// `├→` / `└→`. Driven entirely by the SPEC-3.0 §3.1
+/// [`CategoryDefinition::transitions`] of the built-in registry.
+///
+/// Replaces the legacy lifecycle-keyed renderer (which read
+/// `WorkflowSpec::unified_transitions()` filtered by
+/// `Lifecycle::allows_state`) per RFC `7ymtc4b2` v3.1 follow-up task
+/// `1v400j3l` step 3c.
+pub fn render_state_diagram(category: &str, current: &str) -> Vec<String> {
+    let registry = CategoryRegistry::built_in();
+    let cat_def = match registry.get(category) {
+        Some(d) => d,
+        None => return vec![format!("  (unknown category `{category}`)")],
+    };
+    let edges: Vec<(&str, &str)> = cat_def
+        .transitions
+        .iter()
+        .filter_map(|t| t.split_once("->"))
+        .collect();
+    let spine = category_spine(category);
     let fmt_state = |s: &str| -> String {
         if s == current {
             format!("[{s}]")
@@ -729,12 +769,9 @@ pub fn render_state_diagram(lifecycle: Lifecycle, current: &str) -> Vec<String> 
     lines.push(format!("  {}", spine_parts.join(" → ")));
 
     for &src in spine {
-        let branches: Vec<&str> = SPEC
-            .unified_transitions()
+        let branches: Vec<&str> = edges
             .iter()
-            .filter_map(|&(s, d)| {
-                (s == src && lifecycle.allows_state(d) && !is_spine_edge(spine, s, d)).then_some(d)
-            })
+            .filter_map(|&(s, d)| (s == src && !is_spine_edge(spine, s, d)).then_some(d))
             .collect();
         if branches.is_empty() {
             continue;
@@ -751,10 +788,7 @@ pub fn render_state_diagram(lifecycle: Lifecycle, current: &str) -> Vec<String> 
     }
 
     // Branches whose source is not on the spine (e.g. rejected → open).
-    for &(src, dst) in SPEC.unified_transitions() {
-        if !lifecycle.allows_state(src) || !lifecycle.allows_state(dst) {
-            continue;
-        }
+    for &(src, dst) in &edges {
         if spine.contains(&src) {
             continue;
         }
@@ -762,6 +796,18 @@ pub fn render_state_diagram(lifecycle: Lifecycle, current: &str) -> Vec<String> 
     }
 
     lines
+}
+
+/// Display label for a node: prefer the rhetorical `legacy_subtype`
+/// (e.g. `summary`, `question`, `claim`) when set, else the canonical
+/// SPEC-3.0 NodeKind name. Migrated v1 nodes carry their original
+/// rhetorical label here even though the persisted `node_type`
+/// collapses to one of the four canonical kinds.
+fn node_display_label(node: &super::super::snapshot::store::NodeWithBody) -> String {
+    node.record
+        .legacy_label
+        .clone()
+        .unwrap_or_else(|| node.record.kind.to_string())
 }
 
 fn is_spine_edge(spine: &[&str], src: &str, dst: &str) -> bool {
@@ -791,24 +837,27 @@ fn spine_indent(spine: &[&str], src: &str, current: &str) -> String {
 /// A conversation is a root node (no in-thread parent) plus all transitive
 /// replies, in chronological order. Only nodes participating in a reply
 /// chain appear; standalone nodes are shown elsewhere.
-fn build_conversations(nodes: &[super::super::node::Node]) -> Vec<Vec<&super::super::node::Node>> {
+fn build_conversations(
+    nodes: &[super::super::snapshot::store::NodeWithBody],
+) -> Vec<Vec<&super::super::snapshot::store::NodeWithBody>> {
     use std::collections::{HashMap, HashSet, VecDeque};
 
-    let node_ids: HashSet<&str> = nodes.iter().map(|n| n.node_id.as_str()).collect();
-    let mut children: HashMap<&str, Vec<&super::super::node::Node>> = HashMap::new();
+    let node_ids: HashSet<&str> = nodes.iter().map(|n| n.record.id.as_str()).collect();
+    let mut children: HashMap<&str, Vec<&super::super::snapshot::store::NodeWithBody>> =
+        HashMap::new();
     let mut has_parent: HashSet<&str> = HashSet::new();
     for node in nodes {
-        if let Some(ref parent_id) = node.reply_to {
+        if let Some(ref parent_id) = node.record.reply_to {
             if node_ids.contains(parent_id.as_str()) {
                 children.entry(parent_id.as_str()).or_default().push(node);
-                has_parent.insert(node.node_id.as_str());
+                has_parent.insert(node.record.id.as_str());
             }
         }
     }
 
     let mut conversations = Vec::new();
     for node in nodes {
-        if has_parent.contains(node.node_id.as_str()) {
+        if has_parent.contains(node.record.id.as_str()) {
             continue;
         }
         // SPEC-3.0 transitional (RFC `7ymtc4b2`): in the v2 event-chain
@@ -819,12 +868,12 @@ fn build_conversations(nodes: &[super::super::node::Node]) -> Vec<Vec<&super::su
         // here too. The pre-Phase-2 leaf-only filter is removed.
         let mut chain = vec![node];
         let mut queue: VecDeque<&str> = VecDeque::new();
-        queue.push_back(node.node_id.as_str());
+        queue.push_back(node.record.id.as_str());
         while let Some(parent_id) = queue.pop_front() {
             if let Some(replies) = children.get(parent_id) {
                 for reply in replies {
                     chain.push(reply);
-                    queue.push_back(reply.node_id.as_str());
+                    queue.push_back(reply.record.id.as_str());
                 }
             }
         }
@@ -885,15 +934,13 @@ fn size_summary(size: usize) -> String {
     }
 }
 
-fn node_status(node: &super::super::node::Node) -> &'static str {
-    if node.retracted {
-        "retracted"
-    } else if node.incorporated {
-        "incorporated"
-    } else if node.resolved {
-        "resolved"
-    } else {
-        "open"
+fn node_status(node: &super::super::snapshot::store::NodeWithBody) -> &'static str {
+    use super::super::node::NodeStatus;
+    match node.record.status {
+        NodeStatus::Retracted => "retracted",
+        NodeStatus::Incorporated => "incorporated",
+        NodeStatus::Resolved => "resolved",
+        NodeStatus::Open => "open",
     }
 }
 
@@ -924,7 +971,7 @@ pub struct TreeChild {
 /// list that is already filtered to `rel == "implements"` (see
 /// `index::find_incoming_links`).
 pub fn render_tree(parent: &ThreadState, children: &[TreeChild]) -> String {
-    let parent_lifecycle = parent.lifecycle.as_str();
+    let parent_lifecycle = policy::lifecycle_label_for(&parent.category, &parent.tags);
     let mut lines = Vec::new();
     lines.push(format!(
         "{}  {}/{}    {}",
@@ -1018,8 +1065,12 @@ pub fn collect_implements_children(
             Ok(child_state) => out.push(TreeChild {
                 id: child_state.id.clone(),
                 title: child_state.title.clone(),
-                lifecycle_label: child_state.lifecycle.as_str().to_string(),
-                status: child_state.status.to_string(),
+                lifecycle_label: policy::lifecycle_label_for(
+                    &child_state.category,
+                    &child_state.tags,
+                )
+                .to_string(),
+                status: child_state.status.clone(),
             }),
             Err(_) => continue,
         }
@@ -1063,10 +1114,7 @@ fn fallback_scan_implements(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::legacy::event::{
-        Event, EventType, Lifecycle, NodeType, ThreadKind, ThreadStatus,
-    };
-    use crate::internal::node::Node;
+    use crate::internal::node::NodeKind;
     use crate::internal::thread::ThreadState;
     use chrono::TimeZone;
 
@@ -1074,24 +1122,12 @@ mod tests {
         let t = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
         ThreadState {
             id: "RFC-0001".into(),
-            kind: ThreadKind::Rfc,
-            // Phase 2c: lifecycle is independent — keep it kind-aligned.
-            lifecycle: Lifecycle::Proposal,
+            category: "rfc".into(),
             title: "Test RFC".into(),
             body: Some("Thread body".into()),
-            status: ThreadStatus::Draft,
+            status: "draft".into(),
             created_at: t,
             created_by: "human/alice".into(),
-            events: vec![Event {
-                event_id: "evt-0001".into(),
-                thread_id: "RFC-0001".into(),
-                event_type: EventType::Create,
-                created_at: t,
-                actor: "human/alice".into(),
-                title: Some("Test RFC".into()),
-                kind: Some(ThreadKind::Rfc),
-                ..Event::default()
-            }],
             ..ThreadState::default()
         }
     }
@@ -1130,19 +1166,17 @@ mod tests {
     }
 
     #[test]
-    fn state_diagram_filters_by_lifecycle() {
-        // Proposal: withdrawn is reachable (from draft).
-        assert!(render_state_diagram(Lifecycle::Proposal, "open")
+    fn state_diagram_filters_by_category() {
+        // rfc: withdrawn is in the registry (draft→withdrawn,
+        // open→withdrawn).
+        assert!(render_state_diagram("rfc", "open")
             .join("\n")
             .contains("withdrawn"));
-        // Execution: withdrawn excluded by §3.1.1 allowed_states.
-        let exec = render_state_diagram(Lifecycle::Execution, "open").join("\n");
-        assert!(!exec.contains("withdrawn"));
-        assert!(exec.contains("working") && exec.contains("review"));
-        // Record: minimal — no review/working.
-        let record = render_state_diagram(Lifecycle::Record, "open").join("\n");
-        assert!(!record.contains("review") && !record.contains("working"));
-        assert!(record.contains("[open]") && record.contains("done"));
+        // task: no withdrawn status in the registry.
+        let task = render_state_diagram("task", "open").join("\n");
+        assert!(!task.contains("withdrawn"));
+        assert!(task.contains("working") && task.contains("review"));
+        assert!(task.contains("[open]") && task.contains("done"));
     }
 
     #[test]
@@ -1179,14 +1213,18 @@ mod tests {
     #[test]
     fn status_mode_lists_open_items() {
         let mut state = fixed_state();
-        state.nodes.push(Node {
-            node_id: "node-0001".into(),
-            node_type: NodeType::Objection,
-            body: "Bench results missing".into(),
-            actor: "ai/reviewer".into(),
-            created_at: state.created_at,
-            ..Node::default()
-        });
+        state
+            .nodes
+            .push(crate::internal::snapshot::store::NodeWithBody {
+                record: crate::internal::node::NodeRecord {
+                    id: "node-0001".into(),
+                    kind: NodeKind::Objection,
+                    created_at: state.created_at,
+                    created_by: "ai/reviewer".into(),
+                    ..Default::default()
+                },
+                body: "Bench results missing".into(),
+            });
         let out = render_show(
             &state,
             &ShowOptions {
@@ -1203,9 +1241,9 @@ mod tests {
     fn render_tree_lists_implements_children() {
         let parent = ThreadState {
             id: "RFC-PARENT".into(),
-            kind: ThreadKind::Rfc,
+            category: "rfc".into(),
             title: "Parent RFC".into(),
-            status: ThreadStatus::Done,
+            status: "done".into(),
             ..Default::default()
         };
         let children = vec![
@@ -1234,9 +1272,9 @@ mod tests {
     fn render_tree_no_children_shows_marker() {
         let parent = ThreadState {
             id: "RFC-LONELY".into(),
-            kind: ThreadKind::Rfc,
+            category: "rfc".into(),
             title: "Lonely RFC".into(),
-            status: ThreadStatus::Draft,
+            status: "draft".into(),
             ..Default::default()
         };
         let out = render_tree(&parent, &[]);

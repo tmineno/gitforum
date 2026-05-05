@@ -1,7 +1,16 @@
 use sha2::{Digest, Sha256};
 
 use super::id::rand_bytes;
-use super::thread::ThreadKind;
+
+/// Known v2 thread ID prefixes (current + legacy). Was derived from
+/// `ThreadKind::from_id_prefix` until v3.1 step 3n (task `1v400j3l`)
+/// dropped that enum from the public surface; the table is now owned
+/// by id_alloc directly so it has no `legacy::` import.
+const KNOWN_THREAD_PREFIXES: &[&str] = &["ASK", "ISSUE", "RFC", "DEC", "JOB", "TASK"];
+
+fn is_known_thread_prefix(prefix: &str) -> bool {
+    KNOWN_THREAD_PREFIXES.contains(&prefix)
+}
 
 /// Generate a 1.x opaque kind-prefixed thread ID.
 ///
@@ -11,23 +20,25 @@ use super::thread::ThreadKind;
 /// point is retained for the migration window so legacy callers keep
 /// compiling. New code should prefer the bare form.
 ///
+/// `prefix` is the literal display prefix (`"RFC"`, `"ASK"`, …); upstream
+/// callers compute it via `policy::id_prefix_for(category, tags)`.
+///
 /// Preconditions: none (pure function).
 /// Postconditions: returns a valid thread ID string.
 /// Failure modes: none.
 /// Side effects: reads system entropy for nonce.
-pub fn alloc_thread_id(kind: ThreadKind, actor: &str, title: &str, timestamp: &str) -> String {
-    alloc_thread_id_with_nonce(kind, actor, title, timestamp, &rand_bytes::<8>())
+pub fn alloc_thread_id(prefix: &str, actor: &str, title: &str, timestamp: &str) -> String {
+    alloc_thread_id_with_nonce(prefix, actor, title, timestamp, &rand_bytes::<8>())
 }
 
 /// Generate an opaque thread ID with a specific nonce (for deterministic testing).
 pub fn alloc_thread_id_with_nonce(
-    kind: ThreadKind,
+    prefix: &str,
     actor: &str,
     title: &str,
     timestamp: &str,
     nonce: &[u8],
 ) -> String {
-    let prefix = kind.id_prefix();
     let token = compute_token(actor, title, timestamp, nonce);
     format!("{prefix}-{token}")
 }
@@ -82,7 +93,7 @@ pub fn is_opaque_id(id: &str) -> bool {
     let Some((prefix, token)) = id.split_once('-') else {
         return false;
     };
-    ThreadKind::from_id_prefix(prefix).is_some()
+    is_known_thread_prefix(prefix)
         && token.len() == 8
         && token
             .chars()
@@ -95,9 +106,7 @@ pub fn is_sequential_id(id: &str) -> bool {
     let Some((prefix, num)) = id.split_once('-') else {
         return false;
     };
-    ThreadKind::from_id_prefix(prefix).is_some()
-        && num.len() == 4
-        && num.chars().all(|c| c.is_ascii_digit())
+    is_known_thread_prefix(prefix) && num.len() == 4 && num.chars().all(|c| c.is_ascii_digit())
 }
 
 /// Check whether a string is the 2.0 bare-token form: 8 base36 chars, not all-digit, no `-`.
@@ -126,7 +135,7 @@ mod tests {
     #[test]
     fn alloc_id_format_opaque() {
         let id = alloc_thread_id_with_nonce(
-            ThreadKind::Rfc,
+            "RFC",
             "human/alice",
             "Test RFC",
             "2026-01-01T00:00:00Z",
@@ -146,14 +155,14 @@ mod tests {
     #[test]
     fn different_nonces_produce_different_ids() {
         let id1 = alloc_thread_id_with_nonce(
-            ThreadKind::Issue,
+            "ASK",
             "human/alice",
             "Same title",
             "2026-01-01T00:00:00Z",
             &[1, 2, 3, 4, 5, 6, 7, 8],
         );
         let id2 = alloc_thread_id_with_nonce(
-            ThreadKind::Issue,
+            "ASK",
             "human/alice",
             "Same title",
             "2026-01-01T00:00:00Z",
@@ -164,18 +173,8 @@ mod tests {
 
     #[test]
     fn nonce_randomness_produces_unique_ids() {
-        let id1 = alloc_thread_id(
-            ThreadKind::Rfc,
-            "human/alice",
-            "Title",
-            "2026-01-01T00:00:00Z",
-        );
-        let id2 = alloc_thread_id(
-            ThreadKind::Rfc,
-            "human/alice",
-            "Title",
-            "2026-01-01T00:00:00Z",
-        );
+        let id1 = alloc_thread_id("RFC", "human/alice", "Title", "2026-01-01T00:00:00Z");
+        let id2 = alloc_thread_id("RFC", "human/alice", "Title", "2026-01-01T00:00:00Z");
         assert_ne!(id1, id2);
     }
 
@@ -251,7 +250,7 @@ mod tests {
         let bare =
             alloc_bare_thread_id_with_nonce("human/alice", "Title", "2026-01-01T00:00:00Z", &nonce);
         let prefixed = alloc_thread_id_with_nonce(
-            ThreadKind::Rfc,
+            "RFC",
             "human/alice",
             "Title",
             "2026-01-01T00:00:00Z",

@@ -26,7 +26,7 @@ use serde::Serialize;
 
 use super::super::config;
 use super::super::error::ForumError;
-use super::super::node::{Node, NodeType};
+use super::super::node::NodeKind;
 use super::super::thread::{self, ThreadState};
 use super::context::Context;
 use super::shared::resolve_tid;
@@ -83,7 +83,7 @@ pub struct LinkCount {
 /// Output shape matches the example in RFC-5wf2v8hv body. Deterministic given
 /// deterministic input.
 pub fn render_plaintext(state: &ThreadState, incoming: &IncomingLinkCounts) -> String {
-    let lifecycle = state.lifecycle.as_str();
+    let lifecycle = super::super::policy::lifecycle_label_for(&state.category, &state.tags);
     let tags_disp = if state.tags.is_empty() {
         "-".to_string()
     } else {
@@ -143,9 +143,10 @@ pub fn build_json(state: &ThreadState, incoming: &IncomingLinkCounts) -> BriefJs
     BriefJson {
         id: state.id.clone(),
         title: state.title.clone(),
-        lifecycle: state.lifecycle.as_str().to_string(),
+        lifecycle: super::super::policy::lifecycle_label_for(&state.category, &state.tags)
+            .to_string(),
         tags: state.tags.clone(),
-        status: state.status.to_string(),
+        status: state.status.clone(),
         created_at: state.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
         created_by: state.created_by.clone(),
         branch: state.branch.clone(),
@@ -195,35 +196,20 @@ fn format_link_summary(pairs: &[(String, usize)]) -> String {
     format!("{total} ({})", parts.join(", "))
 }
 
-fn canonical_node_counts(nodes: &[Node]) -> BTreeMap<String, usize> {
+fn canonical_node_counts(
+    nodes: &[crate::internal::snapshot::store::NodeWithBody],
+) -> BTreeMap<String, usize> {
     let mut acc: BTreeMap<String, usize> = BTreeMap::new();
     for n in nodes {
-        let label = match n.node_type.canonical() {
-            NodeType::Comment => "comment",
-            NodeType::Approval => "approval",
-            NodeType::Objection => "objection",
-            NodeType::Action => "action",
-            // canonical() never returns the legacy variants below; included
-            // for exhaustiveness to keep this stable as new variants are added.
-            other => other_to_label(other),
+        let label = match n.record.kind {
+            NodeKind::Comment => "comment",
+            NodeKind::Approval => "approval",
+            NodeKind::Objection => "objection",
+            NodeKind::Action => "action",
         };
         *acc.entry(label.to_string()).or_default() += 1;
     }
     acc
-}
-
-fn other_to_label(nt: NodeType) -> &'static str {
-    match nt {
-        NodeType::Claim => "claim",
-        NodeType::Question => "question",
-        NodeType::Evidence => "evidence",
-        NodeType::Summary => "summary",
-        NodeType::Risk => "risk",
-        NodeType::Review => "review",
-        NodeType::Alternative => "alternative",
-        NodeType::Assumption => "assumption",
-        _ => "other",
-    }
 }
 
 fn format_node_breakdown(counts: &BTreeMap<String, usize>) -> String {
@@ -303,22 +289,16 @@ pub fn read_incoming_link_counts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::node::Node;
-    use crate::internal::policy::Lifecycle;
-    use crate::internal::thread::{ThreadKind, ThreadLink, ThreadStatus};
+    use crate::internal::thread::ThreadLink;
     use chrono::{TimeZone, Utc};
 
     fn make_state() -> ThreadState {
-        // Phase 2c: lifecycle is now an independent field (no longer derived
-        // from kind on read), so test fixtures must set it explicitly to
-        // match the kind-implied value.
         let t = Utc.with_ymd_and_hms(2026, 4, 30, 12, 0, 0).unwrap();
         ThreadState {
             id: "RFC-x9k2".into(),
-            kind: ThreadKind::Rfc,
             title: "Replace LIKE scan with FTS5".into(),
-            status: ThreadStatus::Done,
-            lifecycle: Lifecycle::Proposal,
+            status: "done".into(),
+            category: "rfc".into(),
             created_at: t,
             created_by: "ai/claude".into(),
             tags: vec!["cross-cutting".into()],
@@ -349,9 +329,9 @@ mod tests {
     fn plaintext_minimal_thread_renders() {
         let state = ThreadState {
             id: "TASK-123".into(),
-            kind: ThreadKind::Task,
+            category: "task".into(),
             title: "Lonely task".into(),
-            status: ThreadStatus::Open,
+            status: "open".into(),
             created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             created_by: "human/alice".into(),
             ..Default::default()
@@ -389,29 +369,41 @@ mod tests {
     fn node_counts_collapse_legacy_variants() {
         let state = ThreadState {
             id: "RFC-1".into(),
-            kind: ThreadKind::Rfc,
+            category: "rfc".into(),
             title: "T".into(),
-            status: ThreadStatus::Draft,
+            status: "draft".into(),
             created_at: Utc::now(),
             created_by: "ai/x".into(),
             nodes: vec![
-                Node {
-                    node_type: NodeType::Claim,
+                crate::internal::snapshot::store::NodeWithBody {
+                    record: crate::internal::node::NodeRecord {
+                        kind: NodeKind::Comment,
+                        legacy_label: Some("claim".into()),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
-                Node {
-                    node_type: NodeType::Question,
+                crate::internal::snapshot::store::NodeWithBody {
+                    record: crate::internal::node::NodeRecord {
+                        kind: NodeKind::Comment,
+                        legacy_label: Some("question".into()),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
-                Node {
-                    node_type: NodeType::Approval,
+                crate::internal::snapshot::store::NodeWithBody {
+                    record: crate::internal::node::NodeRecord {
+                        kind: NodeKind::Approval,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
             ],
             ..Default::default()
         };
         let counts = canonical_node_counts(&state.nodes);
-        // Claim + Question collapse to comment; Approval is its own bucket.
+        // Both legacy-labelled comments collapse to the canonical
+        // `comment` bucket; Approval is its own bucket.
         assert_eq!(counts.get("comment"), Some(&2));
         assert_eq!(counts.get("approval"), Some(&1));
     }
