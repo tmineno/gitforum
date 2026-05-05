@@ -15,11 +15,15 @@ Current state is read directly from the snapshot, and history is ordinary
 config:
   theme: "base"
   themeVariables:
-    fontSize: 15px
+    fontSize: 18px
+    primaryColor: "#fff5e6"
+    primaryBorderColor: "#d97706"
+    primaryTextColor: "#1f2937"
+    lineColor: "#6b7280"
 ---
-flowchart LR
+flowchart TD
     need([Need a change]) --> rfc[Open RFC<br/>category=rfc]
-    rfc --> discuss{Discuss with<br/>comments, objections, actions}
+    rfc --> discuss{Discuss with comments,<br/>objections, actions}
     discuss --> evidence[Attach evidence<br/>files, tests, commits, docs]
     evidence --> decision{Ready?}
     decision -- no --> discuss
