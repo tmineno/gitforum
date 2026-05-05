@@ -15,7 +15,7 @@ Current state is read directly from the snapshot, and history is ordinary
 config:
   theme: "base"
   themeVariables:
-    fontSize: 18px
+    fontSize: 15px
     primaryColor: "#fff5e6"
     primaryBorderColor: "#d97706"
     primaryTextColor: "#1f2937"
