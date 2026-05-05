@@ -61,7 +61,10 @@ const ALLOW_LIST: &[&str] = &[
     // task 913c4s9v): dropped Locator + add_evidence + add_thread_link
     // (all unreachable from runtime); the residual `Evidence` struct
     // doesn't import from legacy.
-    "src/internal/commands/doctor.rs", // event::is_orphan_ref + legacy event chain probes
+    // commands/doctor.rs cleared in task 1v400j3l step 3d: orphan-ref
+    // probe replaced by a 3.0-native tree-shape check (ls-tree of the
+    // bottom commit looks for `thread.toml` or `event.json` — pure
+    // tree inspection, no legacy codec call).
     // commands/state.rs cleared in task 1v400j3l step 3a: shorthand
     // resolution moved off legacy::workflow::SPEC onto the 3.0-native
     // `internal::policy::resolve_shorthand` (keyed on category + tags).
@@ -241,7 +244,6 @@ const LEGACY_GATE_PERMANENT_EXEMPTIONS: &[&str] = &[
     "src/internal/thread.rs",
     // v2 read-path KEEP files (cleared in v3.1).
     "src/internal/validate.rs",
-    "src/internal/commands/doctor.rs",
     "src/internal/commands/shared.rs",
     "src/internal/commands/ls.rs",
     "src/internal/commands/shortlog.rs",
