@@ -1096,14 +1096,13 @@ fn fallback_scan_implements(
 mod tests {
     use super::*;
     use crate::internal::node::{Node, NodeKind};
-    use crate::internal::thread::{ThreadKind, ThreadState};
+    use crate::internal::thread::ThreadState;
     use chrono::TimeZone;
 
     fn fixed_state() -> ThreadState {
         let t = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
         ThreadState {
             id: "RFC-0001".into(),
-            kind: ThreadKind::Rfc,
             category: "rfc".into(),
             title: "Test RFC".into(),
             body: Some("Thread body".into()),
@@ -1219,7 +1218,7 @@ mod tests {
     fn render_tree_lists_implements_children() {
         let parent = ThreadState {
             id: "RFC-PARENT".into(),
-            kind: ThreadKind::Rfc,
+            category: "rfc".into(),
             title: "Parent RFC".into(),
             status: "done".into(),
             ..Default::default()
@@ -1250,7 +1249,7 @@ mod tests {
     fn render_tree_no_children_shows_marker() {
         let parent = ThreadState {
             id: "RFC-LONELY".into(),
-            kind: ThreadKind::Rfc,
+            category: "rfc".into(),
             title: "Lonely RFC".into(),
             status: "draft".into(),
             ..Default::default()

@@ -6,10 +6,16 @@ mod support;
 use git_forum::internal::id_alloc;
 use git_forum::internal::legacy::event::ThreadKind;
 
+// `id_alloc::alloc_thread_id*` takes the literal display prefix
+// (`"ASK"`, `"RFC"`, …) since v3.1 step 3n dropped the `ThreadKind`
+// public surface. Tests still spell prefixes via the legacy enum's
+// `.id_prefix()` helper for readability — the typed enum survives in
+// `internal::legacy::event::ThreadKind`.
+
 #[test]
 fn alloc_issue_id_has_correct_prefix() {
     let id = id_alloc::alloc_thread_id(
-        ThreadKind::Issue,
+        ThreadKind::Issue.id_prefix(),
         "human/alice",
         "Bug",
         "2026-01-01T00:00:00Z",
@@ -33,13 +39,13 @@ fn alloc_issue_id_has_correct_prefix() {
 #[test]
 fn alloc_ids_are_unique_with_different_nonces() {
     let id1 = id_alloc::alloc_thread_id(
-        ThreadKind::Rfc,
+        ThreadKind::Rfc.id_prefix(),
         "human/alice",
         "Title",
         "2026-01-01T00:00:00Z",
     );
     let id2 = id_alloc::alloc_thread_id(
-        ThreadKind::Rfc,
+        ThreadKind::Rfc.id_prefix(),
         "human/alice",
         "Title",
         "2026-01-01T00:00:00Z",
@@ -50,14 +56,14 @@ fn alloc_ids_are_unique_with_different_nonces() {
 #[test]
 fn alloc_deterministic_with_nonce() {
     let id1 = id_alloc::alloc_thread_id_with_nonce(
-        ThreadKind::Rfc,
+        ThreadKind::Rfc.id_prefix(),
         "human/alice",
         "Test",
         "2026-01-01",
         &[1, 2, 3, 4, 5, 6, 7, 8],
     );
     let id2 = id_alloc::alloc_thread_id_with_nonce(
-        ThreadKind::Rfc,
+        ThreadKind::Rfc.id_prefix(),
         "human/alice",
         "Test",
         "2026-01-01",

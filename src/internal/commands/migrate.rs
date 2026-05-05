@@ -37,7 +37,7 @@ use super::super::error::{ForumError, ForumResult};
 use super::super::evidence::{EvidenceFile, EvidenceRecord};
 use super::super::git_ops::GitOps;
 use super::super::id_alloc;
-use super::super::legacy::event::{self, ThreadKind};
+use super::super::legacy::event;
 use super::super::node::{NodeRecord, NodeStatus};
 use super::super::refs;
 use super::super::snapshot::{self, Link, Links, NodeWithBody, ThreadDocument};
@@ -546,29 +546,6 @@ fn build_archive_ndjson(events: &[event::Event]) -> ForumResult<Vec<u8>> {
 
 // ---------- v→3.0 snapshot bridge ----------
 
-/// SPEC-3.0 §8.3 canonical-tag augmentation by **legacy kind**, which
-/// is finer-grained than the lifecycle augmentation in
-/// `thread_new::augment_tags_for_lifecycle`. `Lifecycle::Execution`
-/// collapses `bug`/`issue`/`task`/`job`, so a lifecycle-only mapping
-/// cannot distinguish a `bug`-source thread from a plain `task`.
-///
-/// Migration uses the legacy kind to recover the §8.3 canonical tag:
-/// - `Issue` (covers v1 `bug`/`issue`/`ASK-*`) → `Some("bug")`
-/// - `Dec` (covers v1 `dec`/`record`/`DEC-*`) → `Some("decision")`
-/// - `Rfc` and `Task` → `None` (no canonical augmentation; the source
-///   kind is already the category itself)
-///
-/// Migration-only helper: non-migrate code paths see SPEC-3.0
-/// snapshots already and do not need legacy-kind awareness
-/// (ADR-011 Decision 3).
-pub fn legacy_kind_to_canonical_tag(kind: ThreadKind) -> Option<&'static str> {
-    match kind {
-        ThreadKind::Issue => Some("bug"),
-        ThreadKind::Dec => Some("decision"),
-        ThreadKind::Rfc | ThreadKind::Task => None,
-    }
-}
-
 /// Read a legacy event-chain thread via the mixed-chain replay
 /// reader and project the resulting state back into a SPEC-3.0
 /// [`ThreadDocument`].
@@ -740,14 +717,15 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
     // record-flavored task threads (already added by chain_replay
     // when the chain saw an explicit `facet_set lifecycle=record`,
     // but legacy chains without one rely on the kind-derived path).
+    //
+    // v3.1 step 3n: the canonical SPEC-3.0 §8.3 tag (`bug` for legacy
+    // Issue, `decision` for legacy Dec) is augmented inside
+    // `chain_replay::augment_canonical_kind_tag` at the end of replay,
+    // so `state.tags` already encodes the source kind. Migrate just
+    // propagates them through the validity filter above.
     let category = state.category.clone();
     let label = super::super::policy::lifecycle_label_for(&category, &tags);
     super::thread_new::augment_tags_for_lifecycle_label(label, &mut tags);
-    if let Some(canon) = legacy_kind_to_canonical_tag(state.kind) {
-        if !tags.iter().any(|t| t == canon) {
-            tags.push(canon.into());
-        }
-    }
     // SPEC-3.0 §8.1 step 4: target-category `initial_status`, not
     // the replayed legacy final status. `CategoryRegistry::built_in()`
     // is the right registry here (NOT `policy.effective_registry()`):
@@ -852,19 +830,10 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
 mod tests {
     use super::*;
 
-    // SPEC-3.0 §8.3 canonical-tag table — kind-keyed augmentation.
-    #[test]
-    fn legacy_kind_to_canonical_tag_covers_spec_table() {
-        assert_eq!(legacy_kind_to_canonical_tag(ThreadKind::Issue), Some("bug"));
-        assert_eq!(
-            legacy_kind_to_canonical_tag(ThreadKind::Dec),
-            Some("decision")
-        );
-        // RFC and Task source kinds carry no canonical extra tag —
-        // the category itself is the classification.
-        assert_eq!(legacy_kind_to_canonical_tag(ThreadKind::Rfc), None);
-        assert_eq!(legacy_kind_to_canonical_tag(ThreadKind::Task), None);
-    }
+    // SPEC-3.0 §8.3 canonical-tag augmentation moved to
+    // `legacy::chain_replay::augment_canonical_kind_tag` in v3.1
+    // step 3n; the migrate-side `legacy_kind_to_canonical_tag` was
+    // dropped along with the public `ThreadKind` enum.
 
     #[test]
     fn tree_safe_node_id_strips_actor_namespace_slash() {

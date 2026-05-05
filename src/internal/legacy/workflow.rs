@@ -29,7 +29,84 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
-use super::event::ThreadKind;
+// --------------------------------------------------------------------
+// `ThreadKind` (4-variant v2 enum). Relocated here from
+// `internal::thread` in v3.1 step 3n (task `1v400j3l`). The enum is
+// a v2 dispatch axis (rfc/issue/task/dec); the SPEC-3.0 successor
+// is the snapshot's `category` string + canonical §8.3 tags. Read
+// paths derive the user-facing "kind" label via
+// `policy::kind_label_for`. The typed enum survives only inside
+// `internal::legacy` where the v2 event-chain replay state machine
+// and the migrate projection genuinely need it.
+// --------------------------------------------------------------------
+
+/// Thread kinds supported by git-forum (v2 4-variant enum).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ThreadKind {
+    #[default]
+    Issue,
+    Rfc,
+    Dec,
+    Task,
+}
+
+impl ThreadKind {
+    /// Initial state for a new thread of this kind. Mirrors the
+    /// initial_status field on each `policy::CATEGORY_PRESETS` row
+    /// (proposal=draft, execution=open, record=open).
+    pub fn initial_status(self) -> &'static str {
+        match self {
+            Self::Rfc => "draft",
+            Self::Issue | Self::Task | Self::Dec => "open",
+        }
+    }
+
+    /// Display ID prefix (e.g. "ASK", "RFC").
+    pub fn id_prefix(self) -> &'static str {
+        match self {
+            Self::Issue => "ASK",
+            Self::Rfc => "RFC",
+            Self::Dec => "DEC",
+            Self::Task => "JOB",
+        }
+    }
+
+    /// Parse a thread kind from an ID prefix string.
+    ///
+    /// Accepts both current prefixes (ASK, JOB) and legacy prefixes (ISSUE, TASK)
+    /// for backward compatibility.
+    pub fn from_id_prefix(prefix: &str) -> Option<ThreadKind> {
+        match prefix {
+            "ASK" | "ISSUE" => Some(Self::Issue),
+            "RFC" => Some(Self::Rfc),
+            "DEC" => Some(Self::Dec),
+            "JOB" | "TASK" => Some(Self::Task),
+            _ => None,
+        }
+    }
+
+    /// SPEC-3.0 §3.1: each v2 kind maps to a 3.0 category. Used during
+    /// legacy-chain replay to populate `ThreadState::category` before the
+    /// v3 surface takes over.
+    pub fn category(self) -> &'static str {
+        match self {
+            Self::Rfc => "rfc",
+            Self::Issue | Self::Task | Self::Dec => "task",
+        }
+    }
+}
+
+impl std::fmt::Display for ThreadKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Issue => write!(f, "issue"),
+            Self::Rfc => write!(f, "rfc"),
+            Self::Dec => write!(f, "dec"),
+            Self::Task => write!(f, "task"),
+        }
+    }
+}
 
 // --------------------------------------------------------------------
 // `Lifecycle` (3-variant v2 enum). Relocated here from

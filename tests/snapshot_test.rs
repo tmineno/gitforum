@@ -4,7 +4,7 @@ use chrono::TimeZone;
 use git_forum::internal::commands::ls;
 use git_forum::internal::commands::show;
 use git_forum::internal::node::{Node, NodeKind};
-use git_forum::internal::thread::{NodeLookup, ThreadKind, ThreadLink, ThreadState};
+use git_forum::internal::thread::{NodeLookup, ThreadLink, ThreadState};
 
 const SNAPSHOT_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots");
 
@@ -34,8 +34,8 @@ fn base_state() -> ThreadState {
     let t = fixed_time();
     ThreadState {
         id: "RFC-a1b2c3d4".into(),
-        kind: ThreadKind::Rfc,
-        // Category mirrors kind per SPEC-3.0 §8.3 (rfc → Proposal lifecycle).
+        // Category is the 3.0-native classification per SPEC-3.0 §3.1
+        // (rfc → Proposal lifecycle).
         category: "rfc".into(),
         title: "Test RFC".into(),
         body: Some("Initial thread body.".into()),
@@ -143,7 +143,6 @@ fn node_show_question() {
     let lookup = NodeLookup {
         thread_id: "RFC-a1b2c3d4".into(),
         thread_title: "Test RFC".into(),
-        thread_kind: ThreadKind::Rfc,
         // NodeLookup carries the parent thread's category + tags;
         // `node show` derives the lifecycle label via `policy::lifecycle_label_for`.
         thread_category: "rfc".into(),
@@ -179,8 +178,8 @@ fn ls_two_threads() {
     let s1 = base_state();
     let mut s2 = base_state();
     s2.id = "ASK-e5f6a7b8".into();
-    s2.kind = ThreadKind::Issue;
-    // Mirror kind change with the matching category.
+    // SPEC-3.0 §8.3: legacy `Issue` kind → category `task` + canonical
+    // `bug` tag.
     s2.category = "task".into();
     s2.tags = vec!["bug".into()];
     s2.title = "Implement trait backend".into();

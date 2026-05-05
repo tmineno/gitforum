@@ -12,16 +12,18 @@ use super::shared::resolve_actor;
 use crate::internal::clock::Clock;
 use crate::internal::error::ForumError;
 use crate::internal::git_ops::GitOps;
-use crate::internal::policy::Policy;
+use crate::internal::policy::{self, Policy};
 use crate::internal::refs;
 use crate::internal::thread;
-use crate::internal::thread::ThreadKind;
 
 /// Args for `commands::bulk::run` — `state bulk` selector + transition.
 pub struct BulkArgs {
     pub thread_ids: Vec<String>,
     pub branch: Option<String>,
-    pub kind: Option<ThreadKind>,
+    /// Canonical preset name (`"rfc"` / `"dec"` / `"task"` /
+    /// `"issue"`) per `policy::kind_label_for`. v3.1 step 3n
+    /// (task `1v400j3l`) replaced the typed `ThreadKind` filter.
+    pub kind: Option<&'static str>,
     pub status: Option<String>,
     pub new_state: String,
     pub approve: Vec<String>,
@@ -60,7 +62,7 @@ pub fn run(args: BulkArgs, ctx: &Context) -> Result<(), ForumError> {
 #[derive(Clone, Copy)]
 pub struct BulkSelectors<'a> {
     pub branch: Option<&'a str>,
-    pub kind: Option<ThreadKind>,
+    pub kind: Option<&'static str>,
     pub status: Option<&'a str>,
 }
 
@@ -82,7 +84,7 @@ pub struct BulkStateReport {
 /// return the materialised states sorted by creation time.
 pub fn list_thread_states(
     git: &GitOps,
-    kind: Option<ThreadKind>,
+    kind: Option<&'static str>,
     branch: Option<&str>,
 ) -> Result<Vec<thread::ThreadState>, ForumError> {
     let all_ids = thread::list_thread_ids(git)?;
@@ -108,15 +110,17 @@ pub fn list_thread_states(
     Ok(states)
 }
 
-/// Predicate for `state.kind == ?` AND `state.branch == ?` AND `state.status == ?`.
-/// Each filter is `None` to skip; non-`None` matches the field.
+/// Predicate for kind AND branch AND status filters. Each filter is
+/// `None` to skip; non-`None` matches the field. Kind is matched by
+/// computing `policy::kind_label_for(category, tags)` (the canonical
+/// preset name) since v3.1 step 3n removed `state.kind`.
 pub fn thread_matches_filters(
     state: &thread::ThreadState,
-    kind: Option<ThreadKind>,
+    kind: Option<&'static str>,
     branch: Option<&str>,
     status: Option<&str>,
 ) -> bool {
-    kind.is_none_or(|kind| state.kind == kind)
+    kind.is_none_or(|kind| policy::kind_label_for(&state.category, &state.tags) == kind)
         && branch.is_none_or(|branch| state.branch.as_deref() == Some(branch))
         && status.is_none_or(|status| state.status.as_str() == status)
 }

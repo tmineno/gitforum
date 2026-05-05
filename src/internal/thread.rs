@@ -1,5 +1,4 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
 use super::error::{ForumError, ForumResult};
 use super::evidence::Evidence;
@@ -10,84 +9,15 @@ use super::validate::StrictReplayIssue;
 
 pub const MIN_NODE_ID_PREFIX_LEN: usize = 4;
 
-// --------------------------------------------------------------------
-// `ThreadKind` (4-variant v2 enum) was relocated here from `event.rs`
-// in Phase 4 Step 1g (RFC `7ymtc4b2`, task `913c4s9v`). Co-locating
-// it with the other thread-shaped types lets KEEP files reach for a
-// kind label without importing `internal::event`. The 3.0-native
-// successor is the snapshot's `category` string (SPEC-3.0 §3.1);
-// ThreadKind survives until Phase 4 Step 5 deletes the v2 peer types.
-// --------------------------------------------------------------------
-
-/// Thread kinds supported by git-forum (v2 4-variant enum).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum ThreadKind {
-    #[default]
-    Issue,
-    Rfc,
-    Dec,
-    Task,
-}
-
-impl ThreadKind {
-    /// Initial state for a new thread of this kind. Mirrors the
-    /// initial_status field on each `policy::CATEGORY_PRESETS` row
-    /// (proposal=draft, execution=open, record=open).
-    pub fn initial_status(self) -> &'static str {
-        match self {
-            Self::Rfc => "draft",
-            Self::Issue | Self::Task | Self::Dec => "open",
-        }
-    }
-
-    /// Display ID prefix (e.g. "ASK", "RFC").
-    pub fn id_prefix(self) -> &'static str {
-        match self {
-            Self::Issue => "ASK",
-            Self::Rfc => "RFC",
-            Self::Dec => "DEC",
-            Self::Task => "JOB",
-        }
-    }
-
-    /// Parse a thread kind from an ID prefix string.
-    ///
-    /// Accepts both current prefixes (ASK, JOB) and legacy prefixes (ISSUE, TASK)
-    /// for backward compatibility.
-    pub fn from_id_prefix(prefix: &str) -> Option<ThreadKind> {
-        match prefix {
-            "ASK" | "ISSUE" => Some(Self::Issue),
-            "RFC" => Some(Self::Rfc),
-            "DEC" => Some(Self::Dec),
-            "JOB" | "TASK" => Some(Self::Task),
-            _ => None,
-        }
-    }
-
-    /// SPEC-3.0 §3.1: each v2 kind maps to a 3.0 category +
-    /// (optionally) a tag. Mirrors the kind-preset rows in
-    /// `legacy::workflow::KIND_PRESETS` and `policy::CATEGORY_PRESETS`.
-    /// Used during legacy-chain replay to populate
-    /// [`ThreadState::category`] before the v3 surface takes over.
-    pub fn category(self) -> &'static str {
-        match self {
-            Self::Rfc => "rfc",
-            Self::Issue | Self::Task | Self::Dec => "task",
-        }
-    }
-}
-
-impl std::fmt::Display for ThreadKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Issue => write!(f, "issue"),
-            Self::Rfc => write!(f, "rfc"),
-            Self::Dec => write!(f, "dec"),
-            Self::Task => write!(f, "task"),
-        }
-    }
-}
+// `ThreadKind` (the v2 4-variant enum) was removed from
+// `internal::thread` in v3.1 step 3n (task `1v400j3l`). ThreadState's
+// `kind` field is gone; the 3.0-native shape is `category: String`
+// + canonical §8.3 `tags`. Display surfaces compute the kind label
+// via `policy::kind_label_for(category, tags)`. The typed enum
+// survives only inside `internal::legacy::workflow`, where the v2
+// event-chain replay state machine still needs it to validate
+// transitions against the v2 graph (re-exported through
+// `internal::legacy::event::ThreadKind` for legacy reader callers).
 
 // `ThreadStatus` (the v2 8-variant enum) was removed in v3.1 step 3l
 // (task `1v400j3l`). ThreadState's `status` field is now a plain
@@ -156,12 +86,11 @@ pub struct ThreadLink {
 /// Materialized state of a thread, derived from event replay.
 ///
 /// `Default` is derived so test fixtures and helpers can construct partial
-/// states with `ThreadState { id: …, kind: …, ..Default::default() }`,
+/// states with `ThreadState { id: …, category: …, ..Default::default() }`,
 /// matching the pattern used on `Event` and `Node`.
 #[derive(Debug, Clone, Default)]
 pub struct ThreadState {
     pub id: String,
-    pub kind: ThreadKind,
     pub title: String,
     pub body: Option<String>,
     pub branch: Option<String>,
@@ -215,13 +144,10 @@ pub struct ThreadState {
 pub struct NodeLookup {
     pub thread_id: String,
     pub thread_title: String,
-    /// Kept on the lookup for storage-shape compatibility; not the
-    /// primary display label (`node show` uses the parent thread's
-    /// category + tags directly).
-    pub thread_kind: ThreadKind,
     /// SPEC-3.0 §3.1 category — populated from the parent thread's
     /// [`ThreadState::category`]. Display surfaces compute the
-    /// "lifecycle" label via `policy::lifecycle_label_for`.
+    /// "lifecycle" label via `policy::lifecycle_label_for` and the
+    /// "kind" label via `policy::kind_label_for`.
     pub thread_category: String,
     pub thread_tags: Vec<String>,
     pub node: Node,
@@ -319,7 +245,6 @@ pub fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocume
         evidence,
     } = doc;
 
-    let kind = category_to_legacy_kind(&snapshot.category, &snapshot.tags);
     // Snapshot writes already canonicalised `status` and `category`;
     // copy through as-is.
     let status = snapshot.status.clone();
@@ -362,7 +287,6 @@ pub fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocume
 
     ThreadState {
         id: snapshot.id,
-        kind,
         title: snapshot.title,
         body,
         branch: snapshot.branch,
@@ -378,34 +302,6 @@ pub fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocume
         category,
         lifecycle_explicit: true,
         tags: snapshot.tags,
-    }
-}
-
-/// Map a SPEC-3.0 category + tag set back to a legacy [`ThreadKind`]
-/// for `ThreadState` materialization.
-///
-/// Phase 2 transitional: the v2 kind axis (Rfc/Dec/Issue/Task) is
-/// folded onto SPEC-3.0's two built-in categories (`rfc`, `task`).
-/// The kind is recovered from the canonical tag fingerprint defined
-/// by SPEC-3.0 §8.3:
-///
-/// - `task` + `decision` → `Dec` (record lifecycle)
-/// - `task` + `bug`      → `Issue`
-/// - `task` otherwise    → `Task`
-/// - `rfc`               → `Rfc`
-fn category_to_legacy_kind(category: &str, tags: &[String]) -> ThreadKind {
-    match category {
-        "rfc" => ThreadKind::Rfc,
-        "task" => {
-            if tags.iter().any(|t| t == "decision") {
-                ThreadKind::Dec
-            } else if tags.iter().any(|t| t == "bug") {
-                ThreadKind::Issue
-            } else {
-                ThreadKind::Task
-            }
-        }
-        _ => ThreadKind::Issue,
     }
 }
 
@@ -724,7 +620,6 @@ fn build_node_lookup(state: &ThreadState, node: &Node) -> NodeLookup {
     NodeLookup {
         thread_id: state.id.clone(),
         thread_title: state.title.clone(),
-        thread_kind: state.kind,
         thread_category: state.category.clone(),
         thread_tags: state.tags.clone(),
         node: node.clone(),

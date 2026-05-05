@@ -233,9 +233,13 @@ fn replay_with_issues_inner(
     } else {
         Vec::new()
     };
+    // Track the legacy v2 kind locally so post-replay tag augmentation
+    // (SPEC-3.0 §8.3 — push canonical `bug`/`decision`) can recover
+    // the source kind even after a `facet_set` event replaces tags.
+    // ThreadState no longer carries `kind` post v3.1 step 3n.
+    let source_kind = kind;
     let mut state = ThreadState {
         id: first.thread_id.clone(),
-        kind,
         title,
         body,
         branch,
@@ -275,7 +279,28 @@ fn replay_with_issues_inner(
     if suppress_self_healed {
         suppress_self_healed_invalid_transitions(events, &state, &mut issues);
     }
+    augment_canonical_kind_tag(&mut state, source_kind);
     Ok((state, issues))
+}
+
+/// SPEC-3.0 §8.3: push the canonical category-augmenting tag (`bug`
+/// for legacy `Issue`, `decision` for legacy `Dec`) onto `state.tags`
+/// if it isn't already present. Migration projection used to do this
+/// from `state.kind` directly; v3.1 step 3n moved the augmentation
+/// upstream into chain replay so `ThreadState` no longer needs to
+/// carry the typed v2 kind. Idempotent — a `facet_set` event that
+/// already set the tag is preserved unchanged.
+fn augment_canonical_kind_tag(state: &mut ThreadState, source_kind: super::event::ThreadKind) {
+    let canonical = match source_kind {
+        super::event::ThreadKind::Issue => Some("bug"),
+        super::event::ThreadKind::Dec => Some("decision"),
+        super::event::ThreadKind::Rfc | super::event::ThreadKind::Task => None,
+    };
+    if let Some(tag) = canonical {
+        if !state.tags.iter().any(|t| t == tag) {
+            state.tags.push(tag.into());
+        }
+    }
 }
 
 /// SPEC-2.0 §3.1 / #uu9wxn1d: drop `InvalidTransition` issues whose offending
@@ -794,7 +819,7 @@ pub fn replay_thread_strict(
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::thread::ThreadKind;
+    use super::super::event::ThreadKind;
     use super::*;
     use chrono::{TimeZone, Utc};
 
@@ -828,7 +853,7 @@ mod tests {
         let events = vec![make_create("RFC-0001", ThreadKind::Rfc, "Test RFC")];
         let state = replay(&events).unwrap();
         assert_eq!(state.id, "RFC-0001");
-        assert_eq!(state.kind, ThreadKind::Rfc);
+        assert_eq!(state.category, "rfc");
         assert_eq!(state.title, "Test RFC");
         assert_eq!(state.body, None);
         assert_eq!(state.status, "draft");

@@ -288,14 +288,13 @@ pub fn read_incoming_link_counts(
 mod tests {
     use super::*;
     use crate::internal::node::Node;
-    use crate::internal::thread::{ThreadKind, ThreadLink};
+    use crate::internal::thread::ThreadLink;
     use chrono::{TimeZone, Utc};
 
     fn make_state() -> ThreadState {
         let t = Utc.with_ymd_and_hms(2026, 4, 30, 12, 0, 0).unwrap();
         ThreadState {
             id: "RFC-x9k2".into(),
-            kind: ThreadKind::Rfc,
             title: "Replace LIKE scan with FTS5".into(),
             status: "done".into(),
             category: "rfc".into(),
@@ -329,7 +328,7 @@ mod tests {
     fn plaintext_minimal_thread_renders() {
         let state = ThreadState {
             id: "TASK-123".into(),
-            kind: ThreadKind::Task,
+            category: "task".into(),
             title: "Lonely task".into(),
             status: "open".into(),
             created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
@@ -369,7 +368,7 @@ mod tests {
     fn node_counts_collapse_legacy_variants() {
         let state = ThreadState {
             id: "RFC-1".into(),
-            kind: ThreadKind::Rfc,
+            category: "rfc".into(),
             title: "T".into(),
             status: "draft".into(),
             created_at: Utc::now(),

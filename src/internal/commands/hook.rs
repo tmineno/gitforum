@@ -240,7 +240,9 @@ pub fn fix_index_blobs(git: &GitOps) -> ForumResult<FixIndexResult> {
     Ok(FixIndexResult { fixed, warnings })
 }
 
-/// Known thread ID prefixes (must match ThreadKind::id_prefix values).
+/// Known v2 thread ID prefixes (must match the prefix table in
+/// `id_alloc::KNOWN_THREAD_PREFIXES` and the legacy
+/// `ThreadKind::id_prefix` mapping).
 const KNOWN_PREFIXES: &[&str] = &["ASK", "ISSUE", "RFC", "DEC", "JOB", "TASK"];
 
 /// Result of checking a commit message for thread references.

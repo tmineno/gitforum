@@ -59,7 +59,7 @@ fn state_event(thread_id: &str, new_state: &str, ts_offset_min: i64) -> Event {
 
 fn build_chain(git: &GitOps, kind: ThreadKind, title: &str, tail: Vec<Event>) -> String {
     let id = id_alloc::alloc_thread_id_with_nonce(
-        kind,
+        kind.id_prefix(),
         "human/alice",
         title,
         "2026-01-01T00:00:00Z",

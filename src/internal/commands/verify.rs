@@ -10,7 +10,7 @@
 use super::super::error::{ForumError, ForumResult};
 use super::super::git_ops::GitOps;
 use super::super::policy::{self, normalize_state_name, GuardViolation, Policy};
-use super::super::thread::{self, ThreadKind};
+use super::super::thread;
 use super::context::Context;
 use super::shared::resolve_tid;
 
@@ -54,7 +54,6 @@ pub struct LookaheadEntry {
 #[derive(Debug, Clone)]
 pub struct LinkedAdvisory {
     pub linked_thread_id: String,
-    pub linked_kind: ThreadKind,
     pub linked_status: String,
     pub rel: String,
     pub message: String,
@@ -116,14 +115,14 @@ fn build_linked_advisories(git: &GitOps, state: &thread::ThreadState) -> Vec<Lin
         if linked.status == "done" {
             continue;
         }
+        let kind_label = policy::kind_label_for(&linked.category, &linked.tags);
         out.push(LinkedAdvisory {
             linked_thread_id: linked.id.clone(),
-            linked_kind: linked.kind,
             linked_status: linked.status.clone(),
             rel: link.rel.clone(),
             message: format!(
                 "linked {} {} ({}) is not yet `done` — informational only",
-                linked.kind, linked.id, linked.status
+                kind_label, linked.id, linked.status
             ),
         });
     }

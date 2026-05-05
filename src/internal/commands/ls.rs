@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 
 use super::super::error::ForumError;
 use super::super::policy;
-use super::super::thread::{self, ThreadKind, ThreadState};
+use super::super::thread::{self, ThreadState};
 use super::context::Context;
 
 /// Args for [`run`] — `git forum ls` filters.
@@ -38,7 +38,7 @@ pub fn run(args: LsArgs, ctx: &Context) -> Result<(), ForumError> {
         (_, Some(flag)) => Some(flag),
         (None, None) => None,
     };
-    let kind_filter: Option<ThreadKind> = effective_kind
+    let kind_filter: Option<&'static str> = effective_kind
         .map(super::shared::parse_thread_kind)
         .transpose()?;
     let states = super::bulk::list_thread_states(&ctx.git, kind_filter, args.branch.as_deref())?;
@@ -228,7 +228,6 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::internal::thread::ThreadKind;
     use chrono::TimeZone;
 
     fn t() -> chrono::DateTime<chrono::Utc> {
@@ -238,7 +237,6 @@ mod tests {
     fn fixed_state() -> ThreadState {
         ThreadState {
             id: "RFC-0001".into(),
-            kind: ThreadKind::Rfc,
             title: "Test RFC".into(),
             body: Some("Thread body".into()),
             status: "draft".into(),

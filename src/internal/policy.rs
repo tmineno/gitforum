@@ -62,6 +62,43 @@ pub fn lifecycle_label_for(category: &str, tags: &[String]) -> &'static str {
     }
 }
 
+/// Compute the v2-style kind preset name (`"rfc"` / `"dec"` /
+/// `"issue"` / `"task"`) from a SPEC-3.0 category + tag set per §8.3.
+/// Replaces the public `ThreadKind` enum's display path on read
+/// surfaces (`ls --kind` filter, `verify` advisory message) per v3.1
+/// step 3n (task `1v400j3l`). The typed enum survives only inside
+/// `legacy/`.
+pub fn kind_label_for(category: &str, tags: &[String]) -> &'static str {
+    match category {
+        "rfc" => "rfc",
+        "task" => {
+            if tags.iter().any(|t| t == "decision") {
+                "dec"
+            } else if tags.iter().any(|t| t == "bug") {
+                "issue"
+            } else {
+                "task"
+            }
+        }
+        _ => "task",
+    }
+}
+
+/// Compute the v2 thread-ID prefix (`"RFC"` / `"DEC"` / `"ASK"` /
+/// `"JOB"`) from a SPEC-3.0 category + tag set per §8.3. Used by
+/// `id_alloc::alloc_thread_id` (legacy KIND-prefixed allocator,
+/// retained for migration-window code paths). New 3.0 writes use the
+/// bare-token form via `id_alloc::alloc_bare_thread_id` and never
+/// touch this helper. v3.1 step 3n (task `1v400j3l`).
+pub fn id_prefix_for(category: &str, tags: &[String]) -> &'static str {
+    match kind_label_for(category, tags) {
+        "rfc" => "RFC",
+        "dec" => "DEC",
+        "issue" => "ASK",
+        _ => "JOB",
+    }
+}
+
 // ---------------------------------------------------------------------
 // SPEC-3.0 §3.1 category registry
 // ---------------------------------------------------------------------
@@ -311,11 +348,11 @@ pub fn canonical_status_lenient(s: &str) -> Option<&'static str> {
 /// One row in the `git forum new <preset>` registry per SPEC-2.0 §9.1.
 ///
 /// 3.0-native shape: presets bind a CLI name (and optional aliases) to a
-/// SPEC-3.0 §3.1 `category` + default tag set. The redundant
-/// `lifecycle` field rides along until v3.1 step 3h finishes the
-/// Lifecycle removal — keeping it here lets the existing
-/// `commands::thread_new::run_canonical_thread_new(lifecycle, tags)`
-/// signature stay stable across step 3b.
+/// SPEC-3.0 §3.1 `category` + default tag set. The legacy `kind` and
+/// `lifecycle` axes are derivable from `(category, tags)` via
+/// `policy::kind_label_for` / `policy::lifecycle_label_for` and no
+/// longer ride on the preset row (v3.1 steps 3m / 3n removed both
+/// typed enums from the public surface).
 ///
 /// Replaces the legacy `legacy::workflow::KindPreset` (which carried a
 /// v2 `ThreadKind` field that the snapshot writer no longer consumes)
@@ -1647,7 +1684,6 @@ allow_evidence = ["draft"]
 #[cfg(test)]
 mod evaluate_tests {
     use super::*;
-    use crate::internal::thread::ThreadKind;
 
     fn approval_node(actor: &str) -> crate::internal::node::Node {
         crate::internal::node::Node {
@@ -1674,10 +1710,13 @@ mod evaluate_tests {
         }
     }
 
-    fn state_for(kind: ThreadKind) -> ThreadState {
+    /// 3.0-shape state fixture keyed on the SPEC-3.0 §3.1 category
+    /// string (`"rfc"` or `"task"`). Replaces the v3.1 step 3n removed
+    /// `state_for(ThreadKind)` shape; the typed kind enum is no
+    /// longer on the public surface.
+    fn state_for(category: &str) -> ThreadState {
         ThreadState {
-            kind,
-            category: kind.category().to_string(),
+            category: category.into(),
             ..Default::default()
         }
     }
@@ -1685,31 +1724,31 @@ mod evaluate_tests {
     #[test]
     fn one_approval_accepts_any_actor_type() {
         // SPEC-3.0 §3.2: regardless of actor type.
-        let mut state = state_for(ThreadKind::Rfc);
+        let mut state = state_for("rfc");
         state.nodes.push(approval_node("ai/codex"));
         assert!(evaluate_rule(&GuardRule::OneApproval, &state).is_none());
 
-        let mut state2 = state_for(ThreadKind::Rfc);
+        let mut state2 = state_for("rfc");
         state2.nodes.push(approval_node("human/alice"));
         assert!(evaluate_rule(&GuardRule::OneApproval, &state2).is_none());
     }
 
     #[test]
     fn one_approval_fails_when_no_approvals() {
-        let state = state_for(ThreadKind::Rfc);
+        let state = state_for("rfc");
         let v = evaluate_rule(&GuardRule::OneApproval, &state).unwrap();
         assert_eq!(v.rule, "one_approval");
     }
 
     #[test]
     fn no_open_objections_passes_when_thread_clean() {
-        let state = state_for(ThreadKind::Rfc);
+        let state = state_for("rfc");
         assert!(evaluate_rule(&GuardRule::NoOpenObjections, &state).is_none());
     }
 
     #[test]
     fn no_open_objections_fails_when_open_objection_present() {
-        let mut state = state_for(ThreadKind::Rfc);
+        let mut state = state_for("rfc");
         state.nodes.push(objection_node());
         let v = evaluate_rule(&GuardRule::NoOpenObjections, &state).unwrap();
         assert!(v.reason.contains("1 open objection"));
@@ -1717,7 +1756,7 @@ mod evaluate_tests {
 
     #[test]
     fn no_open_actions_fails_when_open_action_present() {
-        let mut state = state_for(ThreadKind::Issue);
+        let mut state = state_for("task");
         state.nodes.push(action_node());
         let v = evaluate_rule(&GuardRule::NoOpenActions, &state).unwrap();
         assert!(v.reason.contains("1 open action"));
@@ -1726,7 +1765,7 @@ mod evaluate_tests {
     #[test]
     fn check_guards_empty_when_no_rules_for_transition() {
         let policy = Policy::default();
-        let state = state_for(ThreadKind::Rfc);
+        let state = state_for("rfc");
         let v = check_guards(&policy, &state, "draft", "open");
         assert!(v.is_empty());
     }
@@ -1741,7 +1780,7 @@ mod evaluate_tests {
         );
         policy.categories.insert("rfc".into(), rfc);
 
-        let mut state = state_for(ThreadKind::Rfc);
+        let mut state = state_for("rfc");
         state.nodes.push(objection_node());
         let v = check_guards(&policy, &state, "review", "done");
         assert_eq!(v.len(), 2);

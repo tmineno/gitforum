@@ -29,13 +29,12 @@ pub(super) fn open_thread_detail(
     app.thread_title = state.title.clone();
     app.thread_lifecycle =
         Some(policy::lifecycle_label_for(&state.category, &state.tags).to_string());
-    // SPEC-2.0 §2.3.3: unmigrated 1.x threads (no facet_set) display the
-    // conventional tag derived from kind; migrated threads use replayed tags.
-    app.thread_tags = if !state.lifecycle_explicit && state.tags.is_empty() {
-        super::render::conventional_tags_for_kind(state.kind)
-    } else {
-        state.tags.clone()
-    };
+    // 3.0 snapshots always carry `lifecycle_explicit = true` (set by
+    // `materialize_thread_state_from_snapshot`) and a populated tag
+    // set; the v3.1 step 3n removal of the typed `state.kind` made
+    // the previous "kind-derived conventional tags" fallback dead
+    // code.
+    app.thread_tags = state.tags.clone();
     app.thread_status = state.status.clone();
     // Phase 4 Step 1d (RFC `7ymtc4b2`): per-thread timeline panel reads
     // the snapshot ref's git history (SPEC-3.0 §5.4). `read_log` returns

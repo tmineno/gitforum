@@ -14,7 +14,6 @@ use crate::internal::git_ops::GitOps;
 use crate::internal::operation_check;
 use crate::internal::policy;
 use crate::internal::thread;
-use crate::internal::thread::ThreadKind;
 
 /// Apply the result of an operation-check pass: print violations to stderr,
 /// and return a `Policy` error if any are blocking. `force` and `strict`
@@ -87,14 +86,15 @@ pub fn resolve_tid(git: &GitOps, user_input: &str) -> Result<String, ForumError>
 // =============================================================================
 
 /// Parse a kind preset name (`rfc`, `dec`, `task`, `issue`, `bug`, plus
-/// historical aliases) into the canonical `ThreadKind`. Used by `Ls`,
-/// `Shortlog`, and the `--kind` filter on `state bulk`.
+/// historical aliases) into the canonical preset name string used by
+/// `policy::kind_label_for` for filtering. Used by `Ls`, `Shortlog`,
+/// and the `--kind` filter on `state bulk`.
 ///
 /// Routes through the 3.0-native `policy::preset_lookup` (returns a
-/// `CategoryPreset`) and maps the preset's canonical name to the v2
-/// `ThreadKind` enum locally. The whole helper retires in v3.1 step 3h
-/// when `ThreadKind` is dropped in favour of category strings.
-pub fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
+/// `CategoryPreset`); the canonical name is the row's `name` field.
+/// v3.1 step 3n (task `1v400j3l`) replaced the typed `ThreadKind`
+/// return shape with the canonical preset name string.
+pub fn parse_thread_kind(kind: &str) -> Result<&'static str, ForumError> {
     let preset = policy::preset_lookup(kind).ok_or_else(|| {
         let valid: Vec<&str> = policy::presets().iter().map(|p| p.name).collect();
         ForumError::Config(format!(
@@ -102,21 +102,12 @@ pub fn parse_thread_kind(kind: &str) -> Result<ThreadKind, ForumError> {
             valid.join(", "),
         ))
     })?;
-    Ok(match preset.name {
-        "rfc" => ThreadKind::Rfc,
-        "dec" => ThreadKind::Dec,
-        "task" => ThreadKind::Task,
-        "issue" => ThreadKind::Issue,
-        // policy::presets() is closed over the four built-in preset
-        // names; any new preset must add a ThreadKind mapping here
-        // (or, post-3h, the whole helper goes away).
-        other => unreachable!("unmapped preset name: {other}"),
-    })
+    Ok(preset.name)
 }
 
 /// Optional-input variant of [`parse_thread_kind`]. Returns `Ok(None)`
 /// when the caller passed `None` (no `--kind` flag).
-pub fn parse_thread_kind_filter(kind: Option<&str>) -> Result<Option<ThreadKind>, ForumError> {
+pub fn parse_thread_kind_filter(kind: Option<&str>) -> Result<Option<&'static str>, ForumError> {
     kind.map(parse_thread_kind).transpose()
 }
 

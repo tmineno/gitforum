@@ -36,11 +36,16 @@ pub struct Approval {
     pub proof_ref: Option<String>,
 }
 
-// `ThreadKind` was relocated to `internal::thread` in Phase 4 Step 1g
-// (RFC `7ymtc4b2`, task `913c4s9v`). KEEP files import via the new
-// path; event.rs re-exports for back-compat with the legacy event
-// loaders that still consume it (deleted in Step 2/3).
-pub use super::super::thread::ThreadKind;
+// `ThreadKind` (v2 4-variant enum) is no longer on the public surface.
+// v3.1 step 3n (task `1v400j3l`) relocated it from `internal::thread`
+// to `super::workflow`, alongside the other v2 dispatch axes
+// (`Lifecycle`, `ThreadStatus`). The 3.0-native ThreadState carries
+// `category: String` + `tags`; the v2 kind label is derived via
+// `policy::kind_label_for` for read paths. The typed enum lives only
+// inside `legacy/`, where the event-chain replay state machine and
+// migrate projection still need it. Re-exported through event.rs for
+// legacy chain reader and integration-test consumers.
+pub use super::workflow::ThreadKind;
 
 // v3.1 step 3l (task `1v400j3l`): `ThreadStatus` (the v2 8-variant
 // enum) moved out of `internal::thread` into

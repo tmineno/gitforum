@@ -7,7 +7,6 @@ use ratatui::Frame;
 use crate::internal::id;
 use crate::internal::node::Node;
 use crate::internal::snapshot::list::ThreadRow;
-use crate::internal::thread::ThreadKind;
 
 use super::markdown::markdown_to_text;
 use super::state::{
@@ -73,19 +72,12 @@ pub(super) fn display_thread_id(thread_id: &str) -> String {
     id::display_thread_id(thread_id)
 }
 
-/// SPEC-2.0 §2.3.3: the conventional tag set a 1.x kind would emit if it
-/// were created today via the kind preset. Used by `tui/state.rs` to seed
-/// the thread-detail tag panel for unmigrated threads (no `facet_set` and
-/// no replayed tags); migrated threads use [`row_tags`] which now reads
-/// from the real `thread_tags` column.
-pub(super) fn conventional_tags_for_kind(kind: ThreadKind) -> Vec<String> {
-    match kind {
-        ThreadKind::Rfc => vec!["cross-cutting".to_string()],
-        ThreadKind::Issue => vec!["bug".to_string()],
-        ThreadKind::Task => vec!["task".to_string()],
-        ThreadKind::Dec => Vec::new(),
-    }
-}
+// `conventional_tags_for_kind` was the kind→tag fallback for
+// unmigrated 1.x threads in the TUI thread-detail panel. v3.1 step 3n
+// (task `1v400j3l`) removed it: `materialize_thread_state_from_snapshot`
+// always sets `lifecycle_explicit = true`, and the public
+// `thread::replay_thread` is snapshot-only since step 3j — so the
+// fallback path was unreachable for any thread the TUI could open.
 
 /// Lifecycle string for a `ThreadRow`. Phase 3: reads the real `lifecycle`
 /// column (no longer kind-derived). Falls back to a kind-based guess when
