@@ -50,20 +50,15 @@ pub use super::super::thread::ThreadKind;
 // tests of `parse_lenient` consume it via this re-export.
 pub use super::chain_replay::ThreadStatus;
 
-// `Lifecycle` was relocated to `internal::policy` in Phase 4 Step 1j
-// (RFC `7ymtc4b2`, task `913c4s9v`). Co-located with the existing v2
-// ↔ 3.0 mapping helpers (`lifecycle_to_category`,
-// `legacy_lifecycle_for_category`, `category_for_state`) so the v2
-// state-machine surface lives in one place. The full SPEC-3.0 §3
-// Category rewire (no Lifecycle dispatch in 3.0 read paths) is a
-// v3.1 concern — v3.0.0's `CategoryRegistry` already exists side-by-
-// side and v2 reads continue to use Lifecycle.
+// v3.1 step 3m (task `1v400j3l`): `Lifecycle` enum is no longer in
+// `internal::policy`. The 3.0-native ThreadState carries
+// `category: String` + `tags`; the lifecycle "label" is derived
+// via `policy::lifecycle_label_for`. The typed enum lives only
+// inside legacy/, where the v2 event-chain state machine still
+// needs it. Re-exported through event.rs for legacy chain reader
+// convenience.
 //
-// event.rs keeps `pub use super::super::policy::Lifecycle;` for legacy /
-// DELETE-list callers (write_ops, state_change, github_*, repair,
-// create, workflow, legacy/v1, commands/migrate) retired in Steps
-// 2/3.
-pub use super::super::policy::Lifecycle;
+pub use super::workflow::Lifecycle;
 
 // `validate_tag` was relocated to `internal::thread` in Phase 4
 // Step 2a (RFC `7ymtc4b2`, task `913c4s9v`). It's a SPEC-2.0 §2.3.5
@@ -1501,7 +1496,7 @@ mod tests {
         // Acceptance criterion (JOB-41f5guw8): every (1.x kind, 1.x state)
         // pair migrates to a valid 2.0 (lifecycle, state) pair.
         for &(kind, state) in all_1x_states() {
-            let lifecycle = kind.lifecycle();
+            let lifecycle = super::super::v1::lifecycle_for_legacy_kind(kind);
             let migrated = migrate_legacy_state(kind, state);
             assert!(
                 lifecycle.allows_state(migrated),

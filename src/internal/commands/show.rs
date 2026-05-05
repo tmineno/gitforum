@@ -101,7 +101,10 @@ pub fn render_node_show(lookup: &NodeLookup, options: &ShowOptions) -> String {
         lookup.thread_id, lookup.thread_title
     ));
     // Phase 2b: lifecycle + tags, not kind.
-    lines.push(format!("**lifecycle:** {}", lookup.thread_lifecycle));
+    lines.push(format!(
+        "**lifecycle:** {}",
+        super::super::policy::lifecycle_label_for(&lookup.thread_category, &lookup.thread_tags)
+    ));
     if !lookup.thread_tags.is_empty() {
         lines.push(format!("**tags:**      {}", lookup.thread_tags.join(", ")));
     }
@@ -184,7 +187,10 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
     // classification axis. The legacy `kind` field stays in storage for
     // backward compatibility (per ADR-002) but is no longer surfaced as
     // a primary display label.
-    lines.push(format!("**lifecycle:** {}", state.lifecycle));
+    lines.push(format!(
+        "**lifecycle:** {}",
+        policy::lifecycle_label_for(&state.category, &state.tags)
+    ));
     if !state.tags.is_empty() {
         lines.push(format!("**tags:**      {}", state.tags.join(", ")));
     }
@@ -195,8 +201,7 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
         }
         if !compact {
             lines.push("transitions:".into());
-            let category = policy::lifecycle_to_category(state.lifecycle);
-            for diagram_line in render_state_diagram(category, state.status.as_str()) {
+            for diagram_line in render_state_diagram(&state.category, state.status.as_str()) {
                 lines.push(diagram_line);
             }
         }
@@ -947,7 +952,7 @@ pub struct TreeChild {
 /// list that is already filtered to `rel == "implements"` (see
 /// `index::find_incoming_links`).
 pub fn render_tree(parent: &ThreadState, children: &[TreeChild]) -> String {
-    let parent_lifecycle = parent.lifecycle.as_str();
+    let parent_lifecycle = policy::lifecycle_label_for(&parent.category, &parent.tags);
     let mut lines = Vec::new();
     lines.push(format!(
         "{}  {}/{}    {}",
@@ -1041,8 +1046,12 @@ pub fn collect_implements_children(
             Ok(child_state) => out.push(TreeChild {
                 id: child_state.id.clone(),
                 title: child_state.title.clone(),
-                lifecycle_label: child_state.lifecycle.as_str().to_string(),
-                status: child_state.status.to_string(),
+                lifecycle_label: policy::lifecycle_label_for(
+                    &child_state.category,
+                    &child_state.tags,
+                )
+                .to_string(),
+                status: child_state.status.clone(),
             }),
             Err(_) => continue,
         }
@@ -1087,7 +1096,6 @@ fn fallback_scan_implements(
 mod tests {
     use super::*;
     use crate::internal::node::{Node, NodeKind};
-    use crate::internal::policy::Lifecycle;
     use crate::internal::thread::{ThreadKind, ThreadState};
     use chrono::TimeZone;
 
@@ -1096,7 +1104,7 @@ mod tests {
         ThreadState {
             id: "RFC-0001".into(),
             kind: ThreadKind::Rfc,
-            lifecycle: Lifecycle::Proposal,
+            category: "rfc".into(),
             title: "Test RFC".into(),
             body: Some("Thread body".into()),
             status: "draft".into(),

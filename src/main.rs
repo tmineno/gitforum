@@ -25,7 +25,8 @@ use git_forum::internal::commands::state::StateCmd;
 use git_forum::internal::commands::thread_new::ThreadCmd;
 use git_forum::internal::commands::thread_new::ThreadNewInline;
 use git_forum::internal::commands::thread_new::{
-    parse_lifecycle, preset_lookup, valid_preset_names,
+    augment_tags_for_lifecycle_label, lifecycle_label_to_category, parse_lifecycle_label,
+    preset_lookup, valid_preset_names,
 };
 use git_forum::internal::commands::verify;
 use git_forum::internal::commands::Context;
@@ -808,7 +809,10 @@ fn main() -> Result<(), ForumError> {
                 },
         } => {
             let ctx = Context::discover(Box::new(SystemClock))?;
-            let lifecycle = parse_lifecycle(&lifecycle)?;
+            let label = parse_lifecycle_label(&lifecycle)?;
+            let mut tags = tag;
+            augment_tags_for_lifecycle_label(label, &mut tags);
+            let category = lifecycle_label_to_category(label).to_string();
             commands::thread_new::run(
                 commands::thread_new::ThreadNewArgs {
                     title,
@@ -823,8 +827,8 @@ fn main() -> Result<(), ForumError> {
                     from_thread,
                     inline: ThreadNewInline::default(),
                     force,
-                    lifecycle,
-                    tags: tag,
+                    category,
+                    tags,
                 },
                 &ctx,
             )?;
@@ -878,7 +882,7 @@ fn main() -> Result<(), ForumError> {
                         summary,
                     },
                     force,
-                    lifecycle: preset.lifecycle,
+                    category: preset.category.to_string(),
                     tags: preset.tags.iter().map(|s| s.to_string()).collect(),
                 },
                 &ctx,

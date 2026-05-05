@@ -4,7 +4,6 @@ use chrono::TimeZone;
 use git_forum::internal::commands::ls;
 use git_forum::internal::commands::show;
 use git_forum::internal::node::{Node, NodeKind};
-use git_forum::internal::policy::Lifecycle;
 use git_forum::internal::thread::{NodeLookup, ThreadKind, ThreadLink, ThreadState};
 
 const SNAPSHOT_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots");
@@ -36,10 +35,8 @@ fn base_state() -> ThreadState {
     ThreadState {
         id: "RFC-a1b2c3d4".into(),
         kind: ThreadKind::Rfc,
-        // Phase 2c: keep lifecycle aligned with kind so the snapshot's
-        // proposal-flavored state-machine transitions don't pick up
-        // execution lifecycle's `working` state by default.
-        lifecycle: Lifecycle::Proposal,
+        // Category mirrors kind per SPEC-3.0 §8.3 (rfc → Proposal lifecycle).
+        category: "rfc".into(),
         title: "Test RFC".into(),
         body: Some("Initial thread body.".into()),
         status: "draft".into(),
@@ -147,9 +144,9 @@ fn node_show_question() {
         thread_id: "RFC-a1b2c3d4".into(),
         thread_title: "Test RFC".into(),
         thread_kind: ThreadKind::Rfc,
-        // Phase 2b: NodeLookup carries the parent's lifecycle / tags so
-        // `node show` can display the canonical 2.0 axes.
-        thread_lifecycle: Lifecycle::Proposal,
+        // NodeLookup carries the parent thread's category + tags;
+        // `node show` derives the lifecycle label via `policy::lifecycle_label_for`.
+        thread_category: "rfc".into(),
         thread_tags: vec!["cross-cutting".into()],
         node: Node {
             node_id: "node-0001".into(),
@@ -183,8 +180,8 @@ fn ls_two_threads() {
     let mut s2 = base_state();
     s2.id = "ASK-e5f6a7b8".into();
     s2.kind = ThreadKind::Issue;
-    // Phase 2b: keep lifecycle aligned when changing kind on a fixture.
-    s2.lifecycle = Lifecycle::Execution;
+    // Mirror kind change with the matching category.
+    s2.category = "task".into();
     s2.tags = vec!["bug".into()];
     s2.title = "Implement trait backend".into();
     s2.status = "open".into();

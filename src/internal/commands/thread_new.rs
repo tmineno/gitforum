@@ -27,7 +27,7 @@ use crate::internal::evidence::{EvidenceFile, EvidenceKind, EvidenceRecord};
 use crate::internal::git_ops::GitOps;
 use crate::internal::id_alloc;
 use crate::internal::node::{NodeKind, NodeRecord, NodeStatus};
-use crate::internal::policy::{self, CategoryPreset, Lifecycle, Policy};
+use crate::internal::policy::{self, CategoryPreset, Policy};
 use crate::internal::snapshot::{
     self, store::write_snapshot, Link, Links, NodeWithBody, ThreadDocument,
 };
@@ -117,7 +117,13 @@ pub struct ThreadNewArgs {
     pub from_thread: Option<String>,
     pub inline: ThreadNewInline,
     pub force: bool,
-    pub lifecycle: Lifecycle,
+    /// SPEC-3.0 §3.1 category for the new thread (`"rfc"` or `"task"`).
+    /// Replaces the v2 `lifecycle: Lifecycle` field; the caller
+    /// resolves CLI input (`--lifecycle proposal|execution|record` or
+    /// `git forum new <preset>`) to a category string + an
+    /// already-augmented tag set (e.g. `record` ⇒ `category="task"`,
+    /// tags include `"decision"`).
+    pub category: String,
     pub tags: Vec<String>,
 }
 
@@ -137,7 +143,7 @@ pub fn run(args: ThreadNewArgs, ctx: &Context) -> Result<(), ForumError> {
         args.from_thread,
         args.inline,
         args.force,
-        args.lifecycle,
+        args.category,
         args.tags,
         ctx.clock.as_ref(),
     )
@@ -166,18 +172,14 @@ pub fn run_canonical_thread_new(
     from_thread: Option<String>,
     inline: ThreadNewInline,
     force: bool,
-    lifecycle: Lifecycle,
-    mut tags: Vec<String>,
+    category: String,
+    tags: Vec<String>,
     clock: &dyn Clock,
 ) -> Result<(), ForumError> {
     let (git, paths) = discover_repo_with_init_warning()?;
     let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
     let actor = resolve_actor(as_actor, &git);
 
-    let category = lifecycle_to_category(lifecycle).to_string();
-    // SPEC-3.0 §8.3: preserve dec/record classification with a
-    // canonical `decision` tag when collapsing to the task category.
-    augment_tags_for_lifecycle(lifecycle, &mut tags);
     // SPEC-3.0 §3.1: honour `[categories.X] initial_status = ...` overrides
     // from policy.toml so a repo that re-pins the rfc/task initial state
     // (or defines a custom category) gets the configured starting point.
@@ -187,7 +189,8 @@ pub fn run_canonical_thread_new(
         .map(|d| d.initial_status.clone())
         .unwrap_or_else(|| "open".into());
 
-    let edit_hint = format!("Compose body for new {lifecycle} thread");
+    let lifecycle_label = policy::lifecycle_label_for(&category, &tags);
+    let edit_hint = format!("Compose body for new {lifecycle_label} thread");
 
     let (effective_title, effective_body, commit_ref, source_thread) = if let Some(ref source_id) =
         from_thread
@@ -198,12 +201,13 @@ pub fn run_canonical_thread_new(
         // surfaces `LegacyEventChain` *before* any write happens — no
         // partial-state risk if the source needs migration.
         let source = snapshot::read_snapshot(&git, source_id)?;
-        let source_lifecycle =
-            legacy_lifecycle_for_category(&source.snapshot.category, &source.snapshot.tags);
         // SPEC-2.0 §9.3 lifecycle-keyed restatement of 1.x §9.2: an
-        // execution thread cannot supersede a proposal. Use
+        // execution thread cannot supersede a proposal. v3.1 step 3m:
+        // restated in category vocabulary — `task` (without
+        // `decision`) cannot supersede `rfc`. Use
         // `link --rel implements` instead.
-        if source_lifecycle == Lifecycle::Proposal && lifecycle == Lifecycle::Execution {
+        let new_is_execution = category == "task" && !tags.iter().any(|t| t == "decision");
+        if source.snapshot.category == "rfc" && new_is_execution {
             return Err(ForumError::Config(
                 "cannot create an execution thread --from-thread a proposal thread; \
                      an execution thread does not supersede a proposal. \
@@ -213,7 +217,12 @@ pub fn run_canonical_thread_new(
         }
         let t = title.unwrap_or_else(|| format!("v2: {}", source.snapshot.title));
         let b = resolve_thread_body(body, body_file, edit, &edit_hint)?.or(source.body.clone());
-        (t, b, None, Some((source_id.clone(), source_lifecycle)))
+        (
+            t,
+            b,
+            None,
+            Some((source_id.clone(), source.snapshot.category.clone())),
+        )
     } else if let Some(rev) = from_commit {
         let commit_sha = git.resolve_commit(&rev)?;
         let msg = git.run(&["log", "-1", "--format=%B", &commit_sha])?;
@@ -392,7 +401,7 @@ pub fn run_canonical_thread_new(
     // event-write `state_change::*` from the snapshot path would
     // break the cli regression tests by mixing storage shapes on
     // the source ref).
-    if let Some((source_id, _source_lifecycle)) = source_thread.as_ref() {
+    if let Some((source_id, _source_category)) = source_thread.as_ref() {
         write_back_supersede_link(&git, source_id, &thread_id, &actor, now)?;
         println!("Created {thread_id} (supersedes {source_id})");
         eprintln!("hint: consider closing {source_id} (now superseded)");
@@ -490,58 +499,34 @@ fn short_evidence_id(sha: &str) -> String {
     format!("c-{}", sha.chars().take(8).collect::<String>())
 }
 
-/// Map a v2-shape [`Lifecycle`] onto a SPEC-3.0 built-in category.
+/// SPEC-3.0 §8.3: map a CLI-supplied lifecycle label to its 3.0
+/// category string. v3.1 step 3m replaced the v2 `Lifecycle` enum
+/// with a label-string surface.
 ///
-/// Per SPEC-3.0 §8.3 (category mapping table):
-/// - `Proposal` → `rfc` (drafted-then-accepted)
-/// - `Execution` → `task` (open-then-done)
-/// - `Record` → `task` (decisions ride the task category; the
-///   classification is preserved via the canonical `decision` tag,
-///   not via a separate category).
-pub fn lifecycle_to_category(lifecycle: Lifecycle) -> &'static str {
-    match lifecycle {
-        Lifecycle::Proposal => "rfc",
-        Lifecycle::Execution | Lifecycle::Record => "task",
+/// - `"proposal"` → `"rfc"`
+/// - `"execution"` / `"record"` → `"task"` (record-flavored threads
+///   ride the task category and carry a canonical `decision` tag,
+///   added by `augment_tags_for_lifecycle_label`).
+pub fn lifecycle_label_to_category(label: &str) -> &'static str {
+    match label {
+        "proposal" => "rfc",
+        _ => "task",
     }
 }
 
-/// SPEC-3.0 §8.3 canonical-tag augmentation. Adds the
-/// classification tags that the category collapse would otherwise
-/// erase, without overriding tags the caller has already set.
+/// SPEC-3.0 §8.3 canonical-tag augmentation, keyed on the CLI
+/// lifecycle label. Adds the classification tag that the category
+/// collapse would otherwise erase, without overriding tags the
+/// caller has already set.
 ///
-/// - `Lifecycle::Record` → ensures `decision` is in `tags`
+/// - `"record"` → ensures `decision` is in `tags`
 ///
-/// `Lifecycle::Execution` is split further by the kind preset
-/// (`issue`/`bug` get tag `bug` from the preset row, `task`/`job`
-/// get `task`); no augmentation needed here.
-pub fn augment_tags_for_lifecycle(lifecycle: Lifecycle, tags: &mut Vec<String>) {
-    let extra: Option<&'static str> = match lifecycle {
-        Lifecycle::Record => Some("decision"),
-        Lifecycle::Proposal | Lifecycle::Execution => None,
-    };
-    if let Some(t) = extra {
-        if !tags.iter().any(|x| x == t) {
-            tags.push(t.into());
-        }
-    }
-}
-
-/// Inverse of [`lifecycle_to_category`] for the few read paths that
-/// still need a `Lifecycle` value (e.g. the supersede-direction guard
-/// in `--from-thread`).
-///
-/// Per SPEC-3.0 §8.3 the `task` category covers both Execution and
-/// Record; the `decision` tag is what distinguishes the two on read.
-pub fn legacy_lifecycle_for_category(category: &str, tags: &[String]) -> Lifecycle {
-    match category {
-        "task" => {
-            if tags.iter().any(|t| t == "decision") {
-                Lifecycle::Record
-            } else {
-                Lifecycle::Execution
-            }
-        }
-        _ => Lifecycle::Proposal,
+/// `"execution"` is split further by the kind preset (`issue`/`bug`
+/// get tag `bug` from the preset row, `task`/`job` get `task`); no
+/// augmentation needed here.
+pub fn augment_tags_for_lifecycle_label(label: &str, tags: &mut Vec<String>) {
+    if label == "record" && !tags.iter().any(|x| x == "decision") {
+        tags.push("decision".into());
     }
 }
 
@@ -561,14 +546,18 @@ pub fn valid_preset_names() -> String {
         .join(", ")
 }
 
-/// Parse a lifecycle string (`proposal` / `execution` / `record`) into
-/// its enum.
-pub fn parse_lifecycle(s: &str) -> Result<Lifecycle, ForumError> {
-    Lifecycle::parse(s).ok_or_else(|| {
-        ForumError::Config(format!(
+/// Validate a CLI lifecycle label (`proposal` / `execution` /
+/// `record`). v3.1 step 3m replaced the v2 `Lifecycle` enum with a
+/// label-string surface; the parser now just gates known values.
+pub fn parse_lifecycle_label(s: &str) -> Result<&'static str, ForumError> {
+    match s {
+        "proposal" => Ok("proposal"),
+        "execution" => Ok("execution"),
+        "record" => Ok("record"),
+        _ => Err(ForumError::Config(format!(
             "unknown lifecycle '{s}'; valid: proposal, execution, record"
-        ))
-    })
+        ))),
+    }
 }
 
 /// Resolve a body-source flag triple (`--body` / `--body-file` / `--edit`)

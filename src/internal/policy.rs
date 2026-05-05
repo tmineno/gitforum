@@ -31,89 +31,34 @@ use super::lint_emit::{self, LintEmitter};
 use super::node::NodeKind;
 use super::thread::ThreadState;
 
-// --------------------------------------------------------------------
-// `Lifecycle` (3-variant v2 enum) was relocated here from `event.rs`
-// in Phase 4 Step 1j (RFC `7ymtc4b2`, task `913c4s9v`). Co-located
-// with the existing v2 ↔ 3.0 mapping helpers
-// (`lifecycle_to_category`, `legacy_lifecycle_for_category`,
-// `category_for_state`) so the entire v2 state-machine surface lives
-// in one place.
-//
-// SPEC-3.0 §3 replaces Lifecycle dispatch with the
-// `CategoryRegistry` (defined further down). v3.0.0 read paths still
-// use Lifecycle for legacy snapshots; the full Lifecycle removal is
-// a v3.1 follow-up — v3.0.0 just relocates the enum to a 3.0-native
-// home so KEEP files don't reach into `internal::event`.
-// --------------------------------------------------------------------
+// `Lifecycle` (the v2 3-variant enum) was removed from
+// `internal::policy` in v3.1 step 3m (task `1v400j3l`). The
+// SPEC-3.0 successor is the snapshot's `category` string +
+// `tags`; the user-facing "lifecycle" label is computed via
+// `lifecycle_label_for` below. The typed enum survives only inside
+// `internal::legacy::workflow` where the v2 event-chain transition
+// graph genuinely needs it (re-exported through
+// `internal::legacy::event`).
 
-/// SPEC-2.0 §2.3.1 — the sole required facet, gates the unified state machine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum Lifecycle {
-    Proposal,
-    #[default]
-    Execution,
-    Record,
-}
-
-impl Lifecycle {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Proposal => "proposal",
-            Self::Execution => "execution",
-            Self::Record => "record",
+/// Compute the v2-style lifecycle label ("proposal" / "execution" /
+/// "record") from a SPEC-3.0 category + tag set per §8.3. Used by
+/// display surfaces (`ls`, `brief`, `show`, TUI) and by
+/// migrate-internal helpers that still speak in lifecycle terms.
+///
+/// The mapping mirrors `legacy_lifecycle_for_category`'s logic but
+/// returns the canonical string label directly, avoiding a typed
+/// `Lifecycle` round-trip on the public surface.
+pub fn lifecycle_label_for(category: &str, tags: &[String]) -> &'static str {
+    match category {
+        "rfc" => "proposal",
+        "task" => {
+            if tags.iter().any(|t| t == "decision") {
+                "record"
+            } else {
+                "execution"
+            }
         }
-    }
-
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "proposal" => Some(Self::Proposal),
-            "execution" => Some(Self::Execution),
-            "record" => Some(Self::Record),
-            _ => None,
-        }
-    }
-
-    /// SPEC-2.0 §3.1.1 — initial state per lifecycle.
-    pub fn initial_state(self) -> &'static str {
-        match self {
-            Self::Proposal => "draft",
-            Self::Execution | Self::Record => "open",
-        }
-    }
-
-    /// SPEC-2.0 §3.1.1 — states reachable for this lifecycle.
-    pub fn allowed_states(self) -> &'static [&'static str] {
-        match self {
-            Self::Proposal => &[
-                "draft",
-                "open",
-                "review",
-                "done",
-                "rejected",
-                "withdrawn",
-                "deprecated",
-            ],
-            Self::Execution => &[
-                "open",
-                "working",
-                "review",
-                "done",
-                "rejected",
-                "deprecated",
-            ],
-            Self::Record => &["open", "done", "rejected", "deprecated"],
-        }
-    }
-
-    pub fn allows_state(self, state: &str) -> bool {
-        self.allowed_states().contains(&state)
-    }
-}
-
-impl std::fmt::Display for Lifecycle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
+        _ => "proposal",
     }
 }
 
@@ -303,38 +248,12 @@ fn built_in_task() -> CategoryDefinition {
 // SPEC-3.0 §8.3 lifecycle ↔ category mapping
 // ---------------------------------------------------------------------
 
-/// SPEC-3.0 §8.3: legacy lifecycle → 3.0 category mapping. Used by both
-/// the read-side adapter (`category_for_state`) and the migration
-/// projection.
-pub fn lifecycle_to_category(lifecycle: Lifecycle) -> &'static str {
-    match lifecycle {
-        Lifecycle::Proposal => "rfc",
-        Lifecycle::Execution | Lifecycle::Record => "task",
-    }
-}
-
-/// Inverse helper for the few read paths that still need a `Lifecycle`
-/// value. Per SPEC-3.0 §8.3 the `task` category covers both Execution
-/// and Record; the `decision` tag distinguishes the two on read.
-pub fn legacy_lifecycle_for_category(category: &str, tags: &[String]) -> Lifecycle {
-    match category {
-        "task" => {
-            if tags.iter().any(|t| t == "decision") {
-                Lifecycle::Record
-            } else {
-                Lifecycle::Execution
-            }
-        }
-        _ => Lifecycle::Proposal,
-    }
-}
-
-/// Resolve a thread state's 3.0 category from its lifecycle facet.
-///
-/// Used by the v2 read path (`ThreadState`-bearing callers) to pick the
-/// right `[categories.<NAME>]` slice in the 3.0 policy.
-pub fn category_for_state(state: &ThreadState) -> &'static str {
-    lifecycle_to_category(state.lifecycle)
+/// Resolve a thread state's 3.0 category. Trivial helper preserved as
+/// a stable seam for callers that fan out over `ThreadState` — v3.1
+/// step 3m switched ThreadState's storage from a typed `Lifecycle`
+/// to a category string, so this just exposes that field.
+pub fn category_for_state(state: &ThreadState) -> &str {
+    &state.category
 }
 
 /// SPEC-2.0 §3.1.2 — pure text-level normalization of 1.x state names
@@ -405,7 +324,6 @@ pub struct CategoryPreset {
     pub name: &'static str,
     pub aliases: &'static [&'static str],
     pub category: &'static str,
-    pub lifecycle: Lifecycle,
     pub tags: &'static [&'static str],
 }
 
@@ -414,28 +332,24 @@ const CATEGORY_PRESETS: &[CategoryPreset] = &[
         name: "rfc",
         aliases: &[],
         category: "rfc",
-        lifecycle: Lifecycle::Proposal,
         tags: &["cross-cutting"],
     },
     CategoryPreset {
         name: "dec",
         aliases: &[],
         category: "task",
-        lifecycle: Lifecycle::Record,
-        tags: &[],
+        tags: &["decision"],
     },
     CategoryPreset {
         name: "task",
         aliases: &["job"],
         category: "task",
-        lifecycle: Lifecycle::Execution,
         tags: &["task"],
     },
     CategoryPreset {
         name: "issue",
         aliases: &["ask", "bug"],
         category: "task",
-        lifecycle: Lifecycle::Execution,
         tags: &["bug"],
     },
 ];
@@ -1763,7 +1677,7 @@ mod evaluate_tests {
     fn state_for(kind: ThreadKind) -> ThreadState {
         ThreadState {
             kind,
-            lifecycle: kind.lifecycle(),
+            category: kind.category().to_string(),
             ..Default::default()
         }
     }

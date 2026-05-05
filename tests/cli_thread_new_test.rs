@@ -374,9 +374,12 @@ fn canonical_thread_new_with_lifecycle_and_tag() {
     let git = GitOps::new(repo.path().to_path_buf());
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(
-        state.lifecycle,
-        git_forum::internal::legacy::event::Lifecycle::Execution,
-        "facet_set should persist execution lifecycle"
+        state.category, "task",
+        "facet_set should persist execution lifecycle (category=task)"
+    );
+    assert!(
+        !state.tags.iter().any(|t| t == "decision"),
+        "execution should not carry the decision tag"
     );
     assert!(
         state.lifecycle_explicit,
@@ -434,28 +437,28 @@ fn canonical_thread_new_rejects_unknown_lifecycle() {
 /// (P0 §34ith16h) so the structural change cannot regress the contract.
 #[test]
 fn preset_aliases_resolve_to_canonical_axes() {
-    use git_forum::internal::legacy::event::Lifecycle;
     let repo = support::repo::TestRepo::new();
     let paths = RepoPaths::from_repo_root(repo.path());
     init::init_forum(&paths).unwrap();
 
-    let cases: &[(&str, Lifecycle, &[&str])] = &[
-        // (alias, expected lifecycle, expected tags)
-        ("ask", Lifecycle::Execution, &["bug"]),
-        ("bug", Lifecycle::Execution, &["bug"]),
-        ("issue", Lifecycle::Execution, &["bug"]),
-        ("job", Lifecycle::Execution, &["task"]),
-        ("task", Lifecycle::Execution, &["task"]),
-        ("rfc", Lifecycle::Proposal, &["cross-cutting"]),
-        // SPEC-3.0 §8.3 (Phase 2 slot 1): `dec`/`record` collapse onto
-        // category `task`; the canonical `decision` tag preserves the
-        // classification so `Lifecycle::Record` round-trips through
-        // the snapshot reader.
-        ("dec", Lifecycle::Record, &["decision"]),
+    // (alias, expected category, expected tags)
+    // v3.1 step 3m: lifecycle was a typed enum; now the canonical
+    // SPEC-3.0 fingerprint is `category + tags` (the lifecycle label
+    // is derived for display via `policy::lifecycle_label_for`).
+    let cases: &[(&str, &str, &[&str])] = &[
+        ("ask", "task", &["bug"]),
+        ("bug", "task", &["bug"]),
+        ("issue", "task", &["bug"]),
+        ("job", "task", &["task"]),
+        ("task", "task", &["task"]),
+        ("rfc", "rfc", &["cross-cutting"]),
+        // SPEC-3.0 §8.3: `dec`/`record` collapse onto category `task`
+        // with the canonical `decision` tag.
+        ("dec", "task", &["decision"]),
     ];
 
     let git = GitOps::new(repo.path().to_path_buf());
-    for &(alias, expected_lifecycle, expected_tags) in cases {
+    for &(alias, expected_category, expected_tags) in cases {
         let title = format!("Preset alias {alias}");
         let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
             .current_dir(repo.path())
@@ -472,7 +475,10 @@ fn preset_aliases_resolve_to_canonical_axes() {
         );
         let id = extract_created_id(&output);
         let state = thread::replay_thread(&git, &id).unwrap();
-        assert_eq!(state.lifecycle, expected_lifecycle, "alias={alias} id={id}");
+        assert_eq!(
+            state.category, expected_category,
+            "alias={alias} id={id} category"
+        );
         let mut got = state.tags.clone();
         got.sort();
         let mut want: Vec<String> = expected_tags.iter().map(|s| s.to_string()).collect();

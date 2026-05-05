@@ -8,7 +8,7 @@ use crate::internal::evidence::EvidenceFile;
 use crate::internal::git_ops::GitOps;
 use crate::internal::id_alloc;
 use crate::internal::node::{Node, NodeKind, NodeRecord, NodeStatus};
-use crate::internal::policy::Lifecycle;
+use crate::internal::policy;
 use crate::internal::snapshot::history;
 use crate::internal::snapshot::list::{self as snapshot_list, ThreadRow};
 use crate::internal::snapshot::{self, store::write_snapshot, Link, Links, NodeWithBody};
@@ -27,7 +27,8 @@ pub(super) fn open_thread_detail(
     let state = thread::replay_thread(git, thread_id)?;
 
     app.thread_title = state.title.clone();
-    app.thread_lifecycle = Some(state.lifecycle.as_str().to_string());
+    app.thread_lifecycle =
+        Some(policy::lifecycle_label_for(&state.category, &state.tags).to_string());
     // SPEC-2.0 §2.3.3: unmigrated 1.x threads (no facet_set) display the
     // conventional tag derived from kind; migrated threads use replayed tags.
     app.thread_tags = if !state.lifecycle_explicit && state.tags.is_empty() {
@@ -35,7 +36,7 @@ pub(super) fn open_thread_detail(
     } else {
         state.tags.clone()
     };
-    app.thread_status = state.status.to_string();
+    app.thread_status = state.status.clone();
     // Phase 4 Step 1d (RFC `7ymtc4b2`): per-thread timeline panel reads
     // the snapshot ref's git history (SPEC-3.0 §5.4). `read_log` returns
     // `None` on legacy event-chain refs — the renderer falls back to its
@@ -306,8 +307,8 @@ pub(super) fn build_tree_entries(nodes: &[Node]) -> Vec<TreeEntry> {
     entries
 }
 
-pub(super) fn thread_lifecycle_values() -> [Lifecycle; 3] {
-    [Lifecycle::Proposal, Lifecycle::Execution, Lifecycle::Record]
+pub(super) fn thread_lifecycle_values() -> [&'static str; 3] {
+    ["proposal", "execution", "record"]
 }
 
 pub(super) fn thread_lifecycle_labels() -> [&'static str; 3] {
@@ -631,18 +632,18 @@ fn snapshot_create_thread(
     git: &GitOps,
     title: &str,
     body: Option<&str>,
-    lifecycle: Lifecycle,
+    lifecycle_label: &str,
     tags: &[String],
     actor: &str,
     clock: &dyn Clock,
 ) -> ForumResult<String> {
     use crate::internal::commands::thread_new::{
-        augment_tags_for_lifecycle, lifecycle_to_category,
+        augment_tags_for_lifecycle_label, lifecycle_label_to_category,
     };
     let now = clock.now();
     let mut tags = tags.to_vec();
-    augment_tags_for_lifecycle(lifecycle, &mut tags);
-    let category = lifecycle_to_category(lifecycle).to_string();
+    augment_tags_for_lifecycle_label(lifecycle_label, &mut tags);
+    let category = lifecycle_label_to_category(lifecycle_label).to_string();
     let thread_id = id_alloc::alloc_bare_thread_id(actor, title, &now.to_rfc3339());
     let doc = snapshot::ThreadDocument {
         snapshot: ThreadSnapshot {

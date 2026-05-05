@@ -27,7 +27,91 @@
 
 use std::collections::VecDeque;
 
-use super::event::{Lifecycle, ThreadKind};
+use serde::{Deserialize, Serialize};
+
+use super::event::ThreadKind;
+
+// --------------------------------------------------------------------
+// `Lifecycle` (3-variant v2 enum). Relocated here from
+// `internal::policy` in v3.1 step 3m (task `1v400j3l`). The enum is
+// a v2 dispatch axis (proposal/execution/record); the SPEC-3.0
+// successor is the snapshot's `category` string. Read paths derive
+// the user-facing "lifecycle" label from category+tags via
+// `policy::lifecycle_label_for`. The typed enum survives only inside
+// `internal::legacy` where the v2 event-chain transition graph
+// genuinely needs it.
+// --------------------------------------------------------------------
+
+/// SPEC-2.0 §2.3.1 — the sole required facet, gates the unified state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Lifecycle {
+    Proposal,
+    #[default]
+    Execution,
+    Record,
+}
+
+impl Lifecycle {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Proposal => "proposal",
+            Self::Execution => "execution",
+            Self::Record => "record",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "proposal" => Some(Self::Proposal),
+            "execution" => Some(Self::Execution),
+            "record" => Some(Self::Record),
+            _ => None,
+        }
+    }
+
+    /// SPEC-2.0 §3.1.1 — initial state per lifecycle.
+    pub fn initial_state(self) -> &'static str {
+        match self {
+            Self::Proposal => "draft",
+            Self::Execution | Self::Record => "open",
+        }
+    }
+
+    /// SPEC-2.0 §3.1.1 — states reachable for this lifecycle.
+    pub fn allowed_states(self) -> &'static [&'static str] {
+        match self {
+            Self::Proposal => &[
+                "draft",
+                "open",
+                "review",
+                "done",
+                "rejected",
+                "withdrawn",
+                "deprecated",
+            ],
+            Self::Execution => &[
+                "open",
+                "working",
+                "review",
+                "done",
+                "rejected",
+                "deprecated",
+            ],
+            Self::Record => &["open", "done", "rejected", "deprecated"],
+        }
+    }
+
+    pub fn allows_state(self, state: &str) -> bool {
+        self.allowed_states().contains(&state)
+    }
+}
+
+impl std::fmt::Display for Lifecycle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// Per-lifecycle workflow data, owned in one place per SPEC-2.0 §3.1.
 struct LifecycleData {

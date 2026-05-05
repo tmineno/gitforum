@@ -735,13 +735,19 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
             }),
         }
     }
-    super::thread_new::augment_tags_for_lifecycle(state.lifecycle, &mut tags);
+    // v3.1 step 3m: ThreadState carries `category` directly; pull
+    // through, and propagate the lifecycle-derived `decision` tag for
+    // record-flavored task threads (already added by chain_replay
+    // when the chain saw an explicit `facet_set lifecycle=record`,
+    // but legacy chains without one rely on the kind-derived path).
+    let category = state.category.clone();
+    let label = super::super::policy::lifecycle_label_for(&category, &tags);
+    super::thread_new::augment_tags_for_lifecycle_label(label, &mut tags);
     if let Some(canon) = legacy_kind_to_canonical_tag(state.kind) {
         if !tags.iter().any(|t| t == canon) {
             tags.push(canon.into());
         }
     }
-    let category = super::thread_new::lifecycle_to_category(state.lifecycle).to_string();
     // SPEC-3.0 §8.1 step 4: target-category `initial_status`, not
     // the replayed legacy final status. `CategoryRegistry::built_in()`
     // is the right registry here (NOT `policy.effective_registry()`):

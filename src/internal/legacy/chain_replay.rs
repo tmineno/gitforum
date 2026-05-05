@@ -36,6 +36,32 @@ use super::event::{
     LinkPayload, ProjectionError,
 };
 
+/// Map a v2 [`Lifecycle`] back to its SPEC-3.0 category string. Used
+/// inside chain replay to populate `ThreadState.category` from the
+/// typed lifecycle that the v2 state machine still consumes.
+///
+/// Mirrors the `legacy_lifecycle_for_category` inverse. Lives here
+/// (not in `policy`) since v3.1 step 3m removed the `Lifecycle`
+/// enum from the public surface.
+fn lifecycle_to_category(lifecycle: Lifecycle) -> &'static str {
+    match lifecycle {
+        Lifecycle::Proposal => "rfc",
+        Lifecycle::Execution | Lifecycle::Record => "task",
+    }
+}
+
+/// Inverse helper: derive the v2 lifecycle from a SPEC-3.0 category +
+/// tag set. The state-machine transition graph still keys on
+/// `Lifecycle`, so chain replay needs to round-trip when projecting
+/// from a snapshot ancestor (mixed-chain reads).
+fn category_to_lifecycle(category: &str, tags: &[String]) -> Lifecycle {
+    match category {
+        "task" if tags.iter().any(|t| t == "decision") => Lifecycle::Record,
+        "task" => Lifecycle::Execution,
+        _ => Lifecycle::Proposal,
+    }
+}
+
 // --------------------------------------------------------------------
 // `ThreadStatus` (8-variant v2 enum + lenient parser).
 //
@@ -191,6 +217,22 @@ fn replay_with_issues_inner(
     // (`"draft"` / `"open"`); store it directly on the String-typed
     // ThreadState.status field.
     let initial_status = kind.initial_status().to_string();
+    // Initial lifecycle derives from kind per SPEC-2.0 §2.3.3 (Rfc=
+    // Proposal, Issue/Task=Execution, Dec=Record). `current_lifecycle`
+    // is the typed view that drives the v2 state-machine's transition
+    // checks; `state.category` mirrors it via `lifecycle_to_category`.
+    // The first explicit `facet_set lifecycle=...` event below
+    // overrides both and flips `lifecycle_explicit`.
+    let mut current_lifecycle = super::v1::lifecycle_for_legacy_kind(kind);
+    // SPEC-3.0 §8.3: record-lifecycle threads land in the `task`
+    // category and carry the canonical `decision` tag so the
+    // `category + tags` fingerprint round-trips back to Record on
+    // read (otherwise `category_to_lifecycle("task", []) == Execution`).
+    let initial_tags: Vec<String> = if current_lifecycle == Lifecycle::Record {
+        vec!["decision".into()]
+    } else {
+        Vec::new()
+    };
     let mut state = ThreadState {
         id: first.thread_id.clone(),
         kind,
@@ -206,13 +248,9 @@ fn replay_with_issues_inner(
         links: vec![],
         body_revision_count: 0,
         incorporated_node_ids: vec![],
-        // Phase 2c: lifecycle is always populated. Default is the §2.3.3
-        // kind-derived value (a 1.x compat fallback for chains without
-        // an explicit `facet_set`); the first explicit `facet_set` then
-        // overrides it and flips `lifecycle_explicit` below.
-        lifecycle: super::v1::lifecycle_for_legacy_kind(kind),
+        category: lifecycle_to_category(current_lifecycle).to_string(),
         lifecycle_explicit: false,
-        tags: Vec::new(),
+        tags: initial_tags,
     };
 
     let mut issues = Vec::new();
@@ -224,7 +262,7 @@ fn replay_with_issues_inner(
             state.updated_at = ev.created_at;
         }
         match ev.project() {
-            Ok(domain) => apply_event(&mut state, &domain, &mut issues)?,
+            Ok(domain) => apply_event(&mut state, &mut current_lifecycle, &domain, &mut issues)?,
             Err(ProjectionError::MissingRequiredField { field }) => {
                 issues.push(StrictReplayIssue::MissingRequiredField {
                     event_id: ev.event_id.clone(),
@@ -277,7 +315,8 @@ fn suppress_self_healed_invalid_transitions(
         let Some(idx) = events.iter().position(|e| &e.event_id == event_id) else {
             return true;
         };
-        !is_self_healed_after(&events[idx + 1..], state.lifecycle, target)
+        let lifecycle = category_to_lifecycle(&state.category, &state.tags);
+        !is_self_healed_after(&events[idx + 1..], lifecycle, target)
     });
 }
 
@@ -317,6 +356,7 @@ fn is_self_healed_after(tail: &[Event], lifecycle: Lifecycle, target: &str) -> b
 
 fn apply_event(
     state: &mut ThreadState,
+    current_lifecycle: &mut Lifecycle,
     event: &DomainEvent,
     issues: &mut Vec<StrictReplayIssue>,
 ) -> ForumResult<()> {
@@ -337,7 +377,7 @@ fn apply_event(
                     let to_str = parsed.as_str();
                     if from_str != to_str
                         && !super::workflow::SPEC.is_valid_transition(
-                            state.lifecycle,
+                            *current_lifecycle,
                             &from_str,
                             to_str,
                         )
@@ -346,7 +386,7 @@ fn apply_event(
                             event_id: meta.event_id.clone(),
                             from: from_str,
                             to: to_str.to_string(),
-                            lifecycle: state.lifecycle.as_str().to_string(),
+                            lifecycle: current_lifecycle.as_str().to_string(),
                         });
                     }
                     state.status = to_str.to_string();
@@ -540,13 +580,24 @@ fn apply_event(
                 if let Some(parsed_lc) = parsed {
                     if !state.lifecycle_explicit {
                         // First explicit facet_set wins. Override the
-                        // kind-derived default.
-                        state.lifecycle = parsed_lc;
+                        // kind-derived default for both the typed local
+                        // lifecycle and the persisted v3 category. For
+                        // Record, mirror the SPEC-3.0 §8.3 fingerprint
+                        // by adding the canonical `decision` tag (so
+                        // category+tags round-trips back to Record on
+                        // read).
+                        *current_lifecycle = parsed_lc;
+                        state.category = lifecycle_to_category(parsed_lc).to_string();
+                        if parsed_lc == Lifecycle::Record
+                            && !state.tags.iter().any(|t| t == "decision")
+                        {
+                            state.tags.push("decision".into());
+                        }
                         state.lifecycle_explicit = true;
-                    } else if state.lifecycle != parsed_lc {
+                    } else if *current_lifecycle != parsed_lc {
                         issues.push(StrictReplayIssue::LifecycleResetAttempted {
                             event_id: meta.event_id.clone(),
-                            existing: state.lifecycle.as_str().to_string(),
+                            existing: current_lifecycle.as_str().to_string(),
                             attempted: lc.clone(),
                         });
                     }
@@ -639,12 +690,15 @@ pub fn replay_chain_at(git: &GitOps, start_rev: &str) -> ForumResult<ThreadState
 
     if let Some(mut s) = state {
         // Apply any events that landed AFTER the most recent snapshot.
+        // Seed the typed lifecycle from the snapshot's category+tags so
+        // the v2 state-machine guard inside `apply_event` keeps working.
+        let mut current_lifecycle = category_to_lifecycle(&s.category, &s.tags);
         for ev in &tail_events {
             if ev.created_at > s.updated_at {
                 s.updated_at = ev.created_at;
             }
             match ev.project() {
-                Ok(domain) => apply_event(&mut s, &domain, &mut issues)?,
+                Ok(domain) => apply_event(&mut s, &mut current_lifecycle, &domain, &mut issues)?,
                 Err(ProjectionError::MissingRequiredField { .. }) => {
                     // Lenient mode: a malformed event is silently
                     // skipped. Strict callers route through
@@ -698,12 +752,13 @@ pub fn replay_chain_strict_at(
     if let Some(mut s) = state {
         // Snapshot-bottom + event-tail. Apply tail events strictly.
         let mut issues = Vec::new();
+        let mut current_lifecycle = category_to_lifecycle(&s.category, &s.tags);
         for ev in &tail_events {
             if ev.created_at > s.updated_at {
                 s.updated_at = ev.created_at;
             }
             match ev.project() {
-                Ok(domain) => apply_event(&mut s, &domain, &mut issues)?,
+                Ok(domain) => apply_event(&mut s, &mut current_lifecycle, &domain, &mut issues)?,
                 Err(ProjectionError::MissingRequiredField { field }) => {
                     issues.push(StrictReplayIssue::MissingRequiredField {
                         event_id: ev.event_id.clone(),
@@ -842,7 +897,10 @@ mod tests {
             make_facet_set("RFC-0001", 2, Some("execution"), &[], &[]),
         ];
         let state = replay(&events).unwrap();
-        assert_eq!(state.lifecycle, Lifecycle::Proposal);
+        assert_eq!(
+            category_to_lifecycle(&state.category, &state.tags),
+            Lifecycle::Proposal
+        );
         assert!(state.lifecycle_explicit);
     }
 
@@ -853,7 +911,10 @@ mod tests {
             make_facet_set("RFC-0001", 1, None, &[], &[]),
         ];
         let state = replay(&events).unwrap();
-        assert_eq!(state.lifecycle, Lifecycle::Proposal);
+        assert_eq!(
+            category_to_lifecycle(&state.category, &state.tags),
+            Lifecycle::Proposal
+        );
         assert!(!state.lifecycle_explicit);
         assert!(state.tags.is_empty());
     }
@@ -893,15 +954,24 @@ mod tests {
     #[test]
     fn lifecycle_accessor_falls_back_to_kind() {
         let state = replay(&[make_create("RFC-0001", ThreadKind::Rfc, "T")]).unwrap();
-        assert_eq!(state.lifecycle, Lifecycle::Proposal);
+        assert_eq!(
+            category_to_lifecycle(&state.category, &state.tags),
+            Lifecycle::Proposal
+        );
         assert!(!state.lifecycle_explicit);
 
         let state = replay(&[make_create("ASK-0001", ThreadKind::Issue, "T")]).unwrap();
-        assert_eq!(state.lifecycle, Lifecycle::Execution);
+        assert_eq!(
+            category_to_lifecycle(&state.category, &state.tags),
+            Lifecycle::Execution
+        );
         assert!(!state.lifecycle_explicit);
 
         let state = replay(&[make_create("DEC-0001", ThreadKind::Dec, "T")]).unwrap();
-        assert_eq!(state.lifecycle, Lifecycle::Record);
+        assert_eq!(
+            category_to_lifecycle(&state.category, &state.tags),
+            Lifecycle::Record
+        );
         assert!(!state.lifecycle_explicit);
     }
 
@@ -912,7 +982,10 @@ mod tests {
             make_facet_set("ASK-0001", 1, Some("record"), &[], &[]),
         ];
         let state = replay(&events).unwrap();
-        assert_eq!(state.lifecycle, Lifecycle::Record);
+        assert_eq!(
+            category_to_lifecycle(&state.category, &state.tags),
+            Lifecycle::Record
+        );
         assert!(state.lifecycle_explicit);
     }
 
@@ -961,7 +1034,10 @@ mod tests {
         ];
         let (state, issues) = replay_strict(&events).unwrap();
         assert!(issues.is_empty(), "unexpected issues: {issues:?}");
-        assert_eq!(state.lifecycle, Lifecycle::Proposal);
+        assert_eq!(
+            category_to_lifecycle(&state.category, &state.tags),
+            Lifecycle::Proposal
+        );
         assert!(state.lifecycle_explicit);
     }
 
@@ -1000,7 +1076,10 @@ mod tests {
             make_facet_set("RFC-0001", 2, Some("execution"), &[], &[]),
         ];
         let (state, issues) = replay_strict(&events).unwrap();
-        assert_eq!(state.lifecycle, Lifecycle::Proposal);
+        assert_eq!(
+            category_to_lifecycle(&state.category, &state.tags),
+            Lifecycle::Proposal
+        );
         assert!(state.lifecycle_explicit);
         assert!(matches!(
             issues.as_slice(),
@@ -1213,7 +1292,10 @@ mod tests {
             make_facet_set("RFC-0001", 3, Some("execution"), &[], &[]),
         ];
         let state = replay(&events).expect("lenient replay must still succeed");
-        assert_eq!(state.lifecycle, Lifecycle::Proposal);
+        assert_eq!(
+            category_to_lifecycle(&state.category, &state.tags),
+            Lifecycle::Proposal
+        );
         assert!(state.lifecycle_explicit);
     }
 }

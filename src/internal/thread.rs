@@ -5,7 +5,6 @@ use super::error::{ForumError, ForumResult};
 use super::evidence::Evidence;
 use super::git_ops::GitOps;
 use super::node::{Node, NodeKind};
-use super::policy::Lifecycle;
 use super::refs;
 use super::validate::StrictReplayIssue;
 
@@ -32,11 +31,14 @@ pub enum ThreadKind {
 }
 
 impl ThreadKind {
-    /// Initial state for a new thread of this kind, in 2.0 vocabulary.
-    /// Delegates to the lifecycle's initial state per SPEC-2.0 §3.1.1
+    /// Initial state for a new thread of this kind. Mirrors the
+    /// initial_status field on each `policy::CATEGORY_PRESETS` row
     /// (proposal=draft, execution=open, record=open).
     pub fn initial_status(self) -> &'static str {
-        self.lifecycle().initial_state()
+        match self {
+            Self::Rfc => "draft",
+            Self::Issue | Self::Task | Self::Dec => "open",
+        }
     }
 
     /// Display ID prefix (e.g. "ASK", "RFC").
@@ -63,17 +65,15 @@ impl ThreadKind {
         }
     }
 
-    /// SPEC-2.0 §2.3.3: each 1.x kind maps to a canonical lifecycle
-    /// facet. Used to derive `lifecycle` for legacy threads with no
-    /// `facet_set` event in their chain. Mirrors the kind-preset row
-    /// for each variant in `legacy::workflow::KIND_PRESETS`; v3.1
-    /// step 3j inlined the mapping so this method does not reach
-    /// into `internal::legacy::*`.
-    pub fn lifecycle(self) -> Lifecycle {
+    /// SPEC-3.0 §3.1: each v2 kind maps to a 3.0 category +
+    /// (optionally) a tag. Mirrors the kind-preset rows in
+    /// `legacy::workflow::KIND_PRESETS` and `policy::CATEGORY_PRESETS`.
+    /// Used during legacy-chain replay to populate
+    /// [`ThreadState::category`] before the v3 surface takes over.
+    pub fn category(self) -> &'static str {
         match self {
-            Self::Rfc => Lifecycle::Proposal,
-            Self::Issue | Self::Task => Lifecycle::Execution,
-            Self::Dec => Lifecycle::Record,
+            Self::Rfc => "rfc",
+            Self::Issue | Self::Task | Self::Dec => "task",
         }
     }
 }
@@ -190,27 +190,23 @@ pub struct ThreadState {
     pub body_revision_count: usize,
     /// Node IDs that have been incorporated into the body.
     pub incorporated_node_ids: Vec<String>,
-    /// SPEC-2.0 §2.3.4 / §7.3: the thread's effective lifecycle.
-    ///
-    /// Phase 2c (Finding 1 follow-up): typed and always populated. Initial
-    /// value is derived from
-    /// [`super::legacy::v1::lifecycle_for_legacy_kind`] (the §2.3.3
-    /// legacy mapping) at replay start; the first `facet_set` event
-    /// carrying `lifecycle` overrides it and sets
-    /// [`lifecycle_explicit`](Self::lifecycle_explicit).
-    /// Subsequent `facet_set` events carrying a different value are
-    /// silently ignored at replay (write-side rejection with
-    /// `FacetTransitionDisallowed` is Track B's responsibility; strict
-    /// replay surfaces `LifecycleResetAttempted`).
-    pub lifecycle: Lifecycle,
-    /// `true` iff a `facet_set` event in the chain explicitly wrote the
-    /// lifecycle. `false` means the lifecycle is the kind-derived default.
-    /// Used by write-side first-wins guards (`write_ops`) and by display
-    /// surfaces that distinguish "explicitly chosen" from "inferred".
+    /// SPEC-3.0 §3.1: the thread's category (`"rfc"` or `"task"`).
+    /// Snapshot reads copy `ThreadSnapshot.category` directly; legacy
+    /// chain replay derives it from the v2 `ThreadKind` + tags. The
+    /// user-facing "lifecycle" label (proposal/execution/record) is
+    /// computed via `policy::lifecycle_label_for(&category, &tags)` —
+    /// v3.1 step 3m removed the typed `Lifecycle` enum from the
+    /// public surface.
+    pub category: String,
+    /// `true` iff a `facet_set` event in the chain explicitly wrote
+    /// the lifecycle (v2 chain) or the snapshot was authored
+    /// natively (v3 path). `false` means the category was inferred
+    /// from a 1.x `kind` field during chain replay. Used by migrate
+    /// to surface `inferred-metadata` notes in the migration report.
     pub lifecycle_explicit: bool,
-    /// SPEC-2.0 §2.3.5: derived tag set after replaying every `facet_set`
-    /// event in chain order. `tags_add` is applied before `tags_remove`
-    /// within each event.
+    /// SPEC-2.0 §2.3.5 / SPEC-3.0 §2.3.5: tag set after replaying
+    /// every `facet_set` event in chain order (v2 chains) or copied
+    /// from the snapshot (v3 path).
     pub tags: Vec<String>,
 }
 
@@ -219,12 +215,14 @@ pub struct ThreadState {
 pub struct NodeLookup {
     pub thread_id: String,
     pub thread_title: String,
-    /// Phase 2b: kept on the lookup struct for storage compatibility,
-    /// but no longer surfaced as the primary display label by `node show`.
+    /// Kept on the lookup for storage-shape compatibility; not the
+    /// primary display label (`node show` uses the parent thread's
+    /// category + tags directly).
     pub thread_kind: ThreadKind,
-    /// Phase 2b: the canonical 2.0 classification axis. Populated from
-    /// the parent thread's [`ThreadState::lifecycle`].
-    pub thread_lifecycle: Lifecycle,
+    /// SPEC-3.0 §3.1 category — populated from the parent thread's
+    /// [`ThreadState::category`]. Display surfaces compute the
+    /// "lifecycle" label via `policy::lifecycle_label_for`.
+    pub thread_category: String,
     pub thread_tags: Vec<String>,
     pub node: Node,
     pub links: Vec<ThreadLink>,
@@ -322,10 +320,10 @@ pub fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocume
     } = doc;
 
     let kind = category_to_legacy_kind(&snapshot.category, &snapshot.tags);
-    let lifecycle =
-        super::policy::legacy_lifecycle_for_category(&snapshot.category, &snapshot.tags);
-    // Snapshot writes already canonicalised `status`; copy through as-is.
+    // Snapshot writes already canonicalised `status` and `category`;
+    // copy through as-is.
     let status = snapshot.status.clone();
+    let category = snapshot.category.clone();
 
     let nodes: Vec<Node> = nodes
         .into_iter()
@@ -377,7 +375,7 @@ pub fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocume
         links,
         body_revision_count: 0,
         incorporated_node_ids: Vec::new(),
-        lifecycle,
+        category,
         lifecycle_explicit: true,
         tags: snapshot.tags,
     }
@@ -727,7 +725,7 @@ fn build_node_lookup(state: &ThreadState, node: &Node) -> NodeLookup {
         thread_id: state.id.clone(),
         thread_title: state.title.clone(),
         thread_kind: state.kind,
-        thread_lifecycle: state.lifecycle,
+        thread_category: state.category.clone(),
         thread_tags: state.tags.clone(),
         node: node.clone(),
         links: state.links.clone(),

@@ -83,7 +83,7 @@ pub struct LinkCount {
 /// Output shape matches the example in RFC-5wf2v8hv body. Deterministic given
 /// deterministic input.
 pub fn render_plaintext(state: &ThreadState, incoming: &IncomingLinkCounts) -> String {
-    let lifecycle = state.lifecycle.as_str();
+    let lifecycle = super::super::policy::lifecycle_label_for(&state.category, &state.tags);
     let tags_disp = if state.tags.is_empty() {
         "-".to_string()
     } else {
@@ -143,9 +143,10 @@ pub fn build_json(state: &ThreadState, incoming: &IncomingLinkCounts) -> BriefJs
     BriefJson {
         id: state.id.clone(),
         title: state.title.clone(),
-        lifecycle: state.lifecycle.as_str().to_string(),
+        lifecycle: super::super::policy::lifecycle_label_for(&state.category, &state.tags)
+            .to_string(),
         tags: state.tags.clone(),
-        status: state.status.to_string(),
+        status: state.status.clone(),
         created_at: state.created_at.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
         created_by: state.created_by.clone(),
         branch: state.branch.clone(),
@@ -287,21 +288,17 @@ pub fn read_incoming_link_counts(
 mod tests {
     use super::*;
     use crate::internal::node::Node;
-    use crate::internal::policy::Lifecycle;
     use crate::internal::thread::{ThreadKind, ThreadLink};
     use chrono::{TimeZone, Utc};
 
     fn make_state() -> ThreadState {
-        // Phase 2c: lifecycle is now an independent field (no longer derived
-        // from kind on read), so test fixtures must set it explicitly to
-        // match the kind-implied value.
         let t = Utc.with_ymd_and_hms(2026, 4, 30, 12, 0, 0).unwrap();
         ThreadState {
             id: "RFC-x9k2".into(),
             kind: ThreadKind::Rfc,
             title: "Replace LIKE scan with FTS5".into(),
             status: "done".into(),
-            lifecycle: Lifecycle::Proposal,
+            category: "rfc".into(),
             created_at: t,
             created_by: "ai/claude".into(),
             tags: vec!["cross-cutting".into()],
