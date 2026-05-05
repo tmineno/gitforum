@@ -42,104 +42,11 @@ pub struct Approval {
 // loaders that still consume it (deleted in Step 2/3).
 pub use super::thread::ThreadKind;
 
-/// SPEC-2.0 §3.1 — the canonical 2.0 state set across every lifecycle.
-///
-/// Phase 2a (Finding 1 follow-up): the in-memory representation of a
-/// thread's status. Storage (`Event.new_state: Option<String>`) stays
-/// String-typed for compatibility with 1.x event chains and forward
-/// flexibility; this enum is the read-side type after `parse_lenient`
-/// has folded 1.x synonyms (`closed`, `proposed`, …) onto canonical
-/// 2.0 names.
-///
-/// Per-lifecycle reachability is enforced by [`Lifecycle::allows_state`];
-/// this enum is intentionally lifecycle-agnostic so legacy chains whose
-/// state names predate the 2.0 split can still be replayed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum ThreadStatus {
-    Draft,
-    #[default]
-    Open,
-    Working,
-    Review,
-    Done,
-    Rejected,
-    Withdrawn,
-    Deprecated,
-}
-
-impl ThreadStatus {
-    /// Canonical 2.0 names only — does NOT accept 1.x synonyms.
-    /// Use [`parse_lenient`](Self::parse_lenient) for inputs that may
-    /// carry pre-2.0 names (`closed`, `proposed`, etc.).
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "draft" => Some(Self::Draft),
-            "open" => Some(Self::Open),
-            "working" => Some(Self::Working),
-            "review" => Some(Self::Review),
-            "done" => Some(Self::Done),
-            "rejected" => Some(Self::Rejected),
-            "withdrawn" => Some(Self::Withdrawn),
-            "deprecated" => Some(Self::Deprecated),
-            _ => None,
-        }
-    }
-
-    /// Accepts canonical 2.0 names AND 1.x synonyms by routing through
-    /// [`normalize_state_name`]. The lenient `apply_event` path uses this
-    /// so legacy event chains keep replaying.
-    pub fn parse_lenient(s: &str) -> Option<Self> {
-        Self::parse(normalize_state_name(s))
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Draft => "draft",
-            Self::Open => "open",
-            Self::Working => "working",
-            Self::Review => "review",
-            Self::Done => "done",
-            Self::Rejected => "rejected",
-            Self::Withdrawn => "withdrawn",
-            Self::Deprecated => "deprecated",
-        }
-    }
-}
-
-impl std::fmt::Display for ThreadStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Delegate to &str's Display so format-spec padding (`{:<width$}`)
-        // and precision rules behave identically to a plain string.
-        std::fmt::Display::fmt(self.as_str(), f)
-    }
-}
-
-// Ergonomic comparisons against string literals — keeps test assertions
-// like `assert_eq!(state.status, "draft")` readable without forcing every
-// test module to import `ThreadStatus`. The 1.x lenient mapping is
-// intentionally NOT applied here: comparison is exact against the canonical
-// 2.0 name. Callers that want lenient semantics use
-// `ThreadStatus::parse_lenient(s) == Some(state.status)`.
-impl PartialEq<&str> for ThreadStatus {
-    fn eq(&self, other: &&str) -> bool {
-        self.as_str() == *other
-    }
-}
-impl PartialEq<ThreadStatus> for &str {
-    fn eq(&self, other: &ThreadStatus) -> bool {
-        *self == other.as_str()
-    }
-}
-impl PartialEq<str> for ThreadStatus {
-    fn eq(&self, other: &str) -> bool {
-        self.as_str() == other
-    }
-}
-impl PartialEq<ThreadStatus> for str {
-    fn eq(&self, other: &ThreadStatus) -> bool {
-        self == other.as_str()
-    }
-}
+// `ThreadStatus` was relocated to `internal::thread` in Phase 4
+// Step 1h (RFC `7ymtc4b2`, task `913c4s9v`). KEEP files import via
+// the new path; event.rs re-exports for legacy/DELETE-list callers
+// retired in Steps 2/3.
+pub use super::thread::ThreadStatus;
 
 /// SPEC-2.0 §2.3.1 — the sole required facet, gates the unified state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

@@ -8,11 +8,10 @@
 //! state-change body relocation in slot 3.
 
 use super::super::error::{ForumError, ForumResult};
-use super::super::event::{self, normalize_state_name};
+use super::super::event::normalize_state_name;
 use super::super::git_ops::GitOps;
 use super::super::policy::{self, GuardViolation, Policy};
-use super::super::thread;
-use super::super::thread::ThreadKind;
+use super::super::thread::{self, ThreadKind, ThreadStatus};
 use super::context::Context;
 use super::shared::resolve_tid;
 
@@ -115,7 +114,7 @@ fn build_linked_advisories(git: &GitOps, state: &thread::ThreadState) -> Vec<Lin
         let Ok(linked) = thread::replay_thread(git, &canonical) else {
             continue;
         };
-        if linked.status == event::ThreadStatus::Done {
+        if linked.status == ThreadStatus::Done {
             continue;
         }
         out.push(LinkedAdvisory {

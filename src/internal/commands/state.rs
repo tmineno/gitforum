@@ -116,7 +116,7 @@ fn resolve_target_state(new_state: &str, lifecycle: Lifecycle) -> Result<&'stati
             // Try as a canonical state name. The legacy 1.x → 2.0
             // alias fold (`closed` → `done`, `proposed` → `open`,
             // etc.) lives in `event::ThreadStatus::parse_lenient`.
-            crate::internal::event::ThreadStatus::parse_lenient(new_state)
+            crate::internal::thread::ThreadStatus::parse_lenient(new_state)
                 .map(|s| s.as_str())
                 .ok_or_else(|| {
                     ForumError::Config(format!(
@@ -338,7 +338,7 @@ pub fn apply_state_change_snapshot(
     // and explicit `--approve <ACTOR>` cures `one_human_approval`.
     let mut projected = pre_state.clone();
     projected.status =
-        crate::internal::event::ThreadStatus::parse_lenient(target).unwrap_or(projected.status);
+        crate::internal::thread::ThreadStatus::parse_lenient(target).unwrap_or(projected.status);
     if resolve_open_actions {
         for n in projected.nodes.iter_mut() {
             if n.node_type == crate::internal::node::NodeType::Action && n.is_open() {

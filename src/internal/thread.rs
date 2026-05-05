@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::error::{ForumError, ForumResult};
 use super::event::{
     self, DomainEvent, Event, EventMeta, EventType, Lifecycle, LinkPayload, NodeType,
-    ProjectionError, ThreadStatus,
+    ProjectionError,
 };
 use super::evidence::Evidence;
 use super::git_ops::GitOps;
@@ -85,6 +85,115 @@ impl std::fmt::Display for ThreadKind {
             Self::Dec => write!(f, "dec"),
             Self::Task => write!(f, "task"),
         }
+    }
+}
+
+// --------------------------------------------------------------------
+// `ThreadStatus` (8-variant v2 enum + lenient parser) was relocated
+// here from `event.rs` in Phase 4 Step 1h (RFC `7ymtc4b2`, task
+// `913c4s9v`). Co-located with `ThreadKind` and the rest of the
+// thread-shaped types so KEEP files don't need to import
+// `internal::event` for status parsing. The 3.0-native successor is
+// the snapshot's `status` string field; ThreadStatus survives until
+// Phase 4 Step 5 deletes the v2 peer types.
+// --------------------------------------------------------------------
+
+/// SPEC-2.0 §3.1 — the canonical 2.0 state set across every lifecycle.
+///
+/// Phase 2a (Finding 1 follow-up): the in-memory representation of a
+/// thread's status. Storage (`Event.new_state: Option<String>`) stays
+/// String-typed for compatibility with 1.x event chains and forward
+/// flexibility; this enum is the read-side type after `parse_lenient`
+/// has folded 1.x synonyms (`closed`, `proposed`, …) onto canonical
+/// 2.0 names.
+///
+/// Per-lifecycle reachability is enforced by [`Lifecycle::allows_state`];
+/// this enum is intentionally lifecycle-agnostic so legacy chains whose
+/// state names predate the 2.0 split can still be replayed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ThreadStatus {
+    Draft,
+    #[default]
+    Open,
+    Working,
+    Review,
+    Done,
+    Rejected,
+    Withdrawn,
+    Deprecated,
+}
+
+impl ThreadStatus {
+    /// Canonical 2.0 names only — does NOT accept 1.x synonyms.
+    /// Use [`parse_lenient`](Self::parse_lenient) for inputs that may
+    /// carry pre-2.0 names (`closed`, `proposed`, etc.).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "draft" => Some(Self::Draft),
+            "open" => Some(Self::Open),
+            "working" => Some(Self::Working),
+            "review" => Some(Self::Review),
+            "done" => Some(Self::Done),
+            "rejected" => Some(Self::Rejected),
+            "withdrawn" => Some(Self::Withdrawn),
+            "deprecated" => Some(Self::Deprecated),
+            _ => None,
+        }
+    }
+
+    /// Accepts canonical 2.0 names AND 1.x synonyms by routing through
+    /// [`event::normalize_state_name`]. The lenient `apply_event` path
+    /// uses this so legacy event chains keep replaying.
+    pub fn parse_lenient(s: &str) -> Option<Self> {
+        Self::parse(super::event::normalize_state_name(s))
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Open => "open",
+            Self::Working => "working",
+            Self::Review => "review",
+            Self::Done => "done",
+            Self::Rejected => "rejected",
+            Self::Withdrawn => "withdrawn",
+            Self::Deprecated => "deprecated",
+        }
+    }
+}
+
+impl std::fmt::Display for ThreadStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Delegate to &str's Display so format-spec padding (`{:<width$}`)
+        // and precision rules behave identically to a plain string.
+        std::fmt::Display::fmt(self.as_str(), f)
+    }
+}
+
+// Ergonomic comparisons against string literals — keeps test assertions
+// like `assert_eq!(state.status, "draft")` readable without forcing every
+// test module to import `ThreadStatus`. The 1.x lenient mapping is
+// intentionally NOT applied here: comparison is exact against the canonical
+// 2.0 name. Callers that want lenient semantics use
+// `ThreadStatus::parse_lenient(s) == Some(state.status)`.
+impl PartialEq<&str> for ThreadStatus {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+impl PartialEq<ThreadStatus> for &str {
+    fn eq(&self, other: &ThreadStatus) -> bool {
+        *self == other.as_str()
+    }
+}
+impl PartialEq<str> for ThreadStatus {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+impl PartialEq<ThreadStatus> for str {
+    fn eq(&self, other: &ThreadStatus) -> bool {
+        self == other.as_str()
     }
 }
 
