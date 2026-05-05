@@ -8,9 +8,8 @@
 //! state-change body relocation in slot 3.
 
 use super::super::error::{ForumError, ForumResult};
-use super::super::event::normalize_state_name;
 use super::super::git_ops::GitOps;
-use super::super::policy::{self, GuardViolation, Policy};
+use super::super::policy::{self, normalize_state_name, GuardViolation, Policy};
 use super::super::thread::{self, ThreadKind, ThreadStatus};
 use super::context::Context;
 use super::shared::resolve_tid;

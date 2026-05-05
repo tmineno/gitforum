@@ -144,15 +144,11 @@ pub fn unified_transitions() -> &'static [(&'static str, &'static str)] {
     SPEC.unified_transitions()
 }
 
-/// SPEC-2.0 §3.1.2 — pure text-level normalization of 1.x state names to 2.0.
-///
-/// Thin wrapper that re-exports [`super::legacy::v1::normalize_state_name`]
-/// so existing call sites keep their `event::normalize_state_name`
-/// import path. New domain code should call into [`super::legacy::v1`]
-/// directly per RFC 915yuegd P1.
-pub fn normalize_state_name(s: &str) -> &str {
-    super::legacy::v1::normalize_state_name(s)
-}
+// `normalize_state_name` was relocated to `internal::policy` in
+// Phase 4 Step 1i (RFC `7ymtc4b2`, task `913c4s9v`). KEEP files import
+// via the new path; event.rs re-exports for legacy / DELETE-list
+// callers retired in Steps 2/3.
+pub use super::policy::normalize_state_name;
 
 /// SPEC-2.0 §3.1.1 / §3.1.2 — kind-aware migration of a 1.x state name to a
 /// 2.0 state in the lifecycle's allowed set.

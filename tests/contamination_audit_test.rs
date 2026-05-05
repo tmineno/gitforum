@@ -124,7 +124,9 @@ const ALLOW_LIST: &[&str] = &[
     // canonical/legacy_subtype_label impls still call legacy::v1).
     "src/internal/evidence.rs",
     "src/internal/policy.rs",
-    "src/internal/operation_check.rs",
+    // operation_check.rs cleared in Phase 4 Step 1i (RFC 7ymtc4b2,
+    // task 913c4s9v): normalize_state_name and NodeType both moved to
+    // 3.0-native homes (policy.rs and node.rs) — no event:: import.
     "src/internal/validate.rs",
     // id_alloc.rs cleared in Phase 4 Step 1g (RFC 7ymtc4b2,
     // task 913c4s9v): switched event::ThreadKind to thread::ThreadKind.
@@ -133,9 +135,14 @@ const ALLOW_LIST: &[&str] = &[
     // commands/diff.rs cleared in Phase 4 Step 1b (RFC 7ymtc4b2,
     // task 913c4s9v): revisions now derive from snapshot::history
     // commits whose tree changed body.md — no super::event imports.
-    "src/internal/commands/bulk.rs",
+    // commands/bulk.rs cleared in Phase 4 Step 1i: switched
+    // event::normalize_state_name and event::ThreadKind to their
+    // 3.0-native homes (policy.rs, thread.rs).
     "src/internal/commands/brief.rs",
-    "src/internal/commands/verify.rs",
+    // commands/verify.rs cleared in Phase 4 Step 1i: switched
+    // event::normalize_state_name and ThreadStatus / ThreadKind to
+    // their 3.0-native homes; the residual `event::{self}` glob was
+    // unused after the swap and dropped.
     "src/internal/commands/doctor.rs",
     "src/internal/commands/state.rs",
     "src/internal/commands/shortlog.rs",

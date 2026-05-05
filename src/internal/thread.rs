@@ -145,7 +145,7 @@ impl ThreadStatus {
     /// [`event::normalize_state_name`]. The lenient `apply_event` path
     /// uses this so legacy event chains keep replaying.
     pub fn parse_lenient(s: &str) -> Option<Self> {
-        Self::parse(super::event::normalize_state_name(s))
+        Self::parse(super::policy::normalize_state_name(s))
     }
 
     pub fn as_str(self) -> &'static str {

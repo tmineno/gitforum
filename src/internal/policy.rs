@@ -252,6 +252,18 @@ pub fn category_for_state(state: &ThreadState) -> &'static str {
     lifecycle_to_category(state.lifecycle)
 }
 
+/// SPEC-2.0 §3.1.2 — pure text-level normalization of 1.x state names
+/// to 2.0. Phase 4 Step 1i (RFC `7ymtc4b2`, task `913c4s9v`) relocated
+/// this from `event.rs`; `internal::event::normalize_state_name`
+/// remains as a `pub use` re-export for legacy / DELETE-list callers.
+///
+/// Thin wrapper that re-exports [`super::legacy::v1::normalize_state_name`].
+/// New domain code should call into [`super::legacy::v1`] directly per
+/// RFC 915yuegd P1.
+pub fn normalize_state_name(s: &str) -> &str {
+    super::legacy::v1::normalize_state_name(s)
+}
+
 // ---------------------------------------------------------------------
 // SPEC-3.0 §3.2 guard rules
 // ---------------------------------------------------------------------
@@ -737,8 +749,8 @@ pub fn check_guards(
     // Normalize 1.x state names (under-review, accepted, etc.) so legacy
     // policies and migrated chains line up with category-table keys that
     // use SPEC-3.0 canonical statuses.
-    let from = super::event::normalize_state_name(from);
-    let to = super::event::normalize_state_name(to);
+    let from = normalize_state_name(from);
+    let to = normalize_state_name(to);
     let transition = format!("{from}->{to}");
     let Some(rules) = policy.guards_for_transition(category, &transition) else {
         return Vec::new();

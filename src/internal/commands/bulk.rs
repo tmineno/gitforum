@@ -175,8 +175,9 @@ pub fn run_bulk_state_change(
         // Self-loop fast-path: avoid touching the snapshot tip when
         // the thread is already in the target. Normalize both sides
         // so 1.x verbs collapse onto canonical 2.0 names first.
-        let canonical_target = crate::internal::event::normalize_state_name(new_state);
-        if crate::internal::event::normalize_state_name(state.status.as_str()) == canonical_target {
+        let canonical_target = crate::internal::policy::normalize_state_name(new_state);
+        if crate::internal::policy::normalize_state_name(state.status.as_str()) == canonical_target
+        {
             outcomes.push(BulkStateOutcome {
                 thread_id,
                 from_state: state.status.to_string(),
