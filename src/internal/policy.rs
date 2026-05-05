@@ -76,16 +76,38 @@ impl Lifecycle {
 
     /// SPEC-2.0 §3.1.1 — initial state per lifecycle.
     pub fn initial_state(self) -> &'static str {
-        super::legacy::workflow::SPEC.initial_state(self)
+        match self {
+            Self::Proposal => "draft",
+            Self::Execution | Self::Record => "open",
+        }
     }
 
     /// SPEC-2.0 §3.1.1 — states reachable for this lifecycle.
     pub fn allowed_states(self) -> &'static [&'static str] {
-        super::legacy::workflow::SPEC.allowed_states(self)
+        match self {
+            Self::Proposal => &[
+                "draft",
+                "open",
+                "review",
+                "done",
+                "rejected",
+                "withdrawn",
+                "deprecated",
+            ],
+            Self::Execution => &[
+                "open",
+                "working",
+                "review",
+                "done",
+                "rejected",
+                "deprecated",
+            ],
+            Self::Record => &["open", "done", "rejected", "deprecated"],
+        }
     }
 
     pub fn allows_state(self, state: &str) -> bool {
-        super::legacy::workflow::SPEC.allows_state(self, state)
+        self.allowed_states().contains(&state)
     }
 }
 
@@ -316,15 +338,27 @@ pub fn category_for_state(state: &ThreadState) -> &'static str {
 }
 
 /// SPEC-2.0 §3.1.2 — pure text-level normalization of 1.x state names
-/// to 2.0. Phase 4 Step 1i (RFC `7ymtc4b2`, task `913c4s9v`) relocated
-/// this from `event.rs`; `internal::event::normalize_state_name`
-/// remains as a `pub use` re-export for legacy / DELETE-list callers.
+/// to 2.0 canonical form.
 ///
-/// Thin wrapper that re-exports [`super::legacy::v1::normalize_state_name`].
-/// New domain code should call into [`super::legacy::v1`] directly per
-/// RFC 915yuegd P1.
+/// 3.0 snapshots store status in canonical form natively; this fold
+/// stays for compat with policy.toml files written against 1.x state
+/// names (e.g. `"closed"` → `"done"`) and for v2 ThreadState reads
+/// that ride mixed-chain replay.
 pub fn normalize_state_name(s: &str) -> &str {
-    super::legacy::v1::normalize_state_name(s)
+    const STATE_ALIASES: &[(&str, &str)] = &[
+        ("proposed", "open"),
+        ("under-review", "review"),
+        ("reviewing", "review"),
+        ("accepted", "done"),
+        ("closed", "done"),
+        ("pending", "working"),
+        ("designing", "working"),
+        ("implementing", "working"),
+    ];
+    STATE_ALIASES
+        .iter()
+        .find_map(|&(legacy, canonical)| (legacy == s).then_some(canonical))
+        .unwrap_or(s)
 }
 
 // ---------------------------------------------------------------------

@@ -32,10 +32,11 @@ use walkdir::WalkDir;
 //    `commands/migrate.rs` (the legitimate Phase 4 consumer of legacy
 //    chains).
 //
-// 2. 3.0-native modules with v2-delegating impls (policy, thread):
-//    Lifecycle/ThreadKind/ThreadStatus helpers still route through
-//    legacy::workflow::SPEC and legacy::v1::normalize_state_name.
-//    Step 3h closes these.
+// 2. 3.0-native module with v2-delegating impls (thread): the v2
+//    event-chain replay machinery (DomainEvent, EventType, etc.)
+//    still consumed during mixed-chain reads. Step 3j splits
+//    `replay_thread` so non-migrate callers never reach the legacy
+//    branch, fully clearing thread.rs.
 //
 // 3. v2 read-path KEEP files (validate.rs only): residual v2 read-path
 //    code that hasn't been rewired yet. validate.rs uses
@@ -55,6 +56,11 @@ use walkdir::WalkDir;
 //   - node.rs (3g): v2 NodeType (12-variant) moved to legacy::event;
 //     v2 Node.node_type now stores NodeKind; brief/show/tui/operation_check
 //     and friends consume NodeKind directly
+//   - policy.rs (3h, partial): inlined the legacy::workflow::SPEC and
+//     legacy::v1::normalize_state_name delegations (Lifecycle helper
+//     bodies and the alias-fold table now live in policy.rs itself).
+//     Lifecycle/ThreadKind/ThreadStatus enum removal — the deeper
+//     part of step 3h — is deferred; the surface stays for now.
 //
 // Cleared earlier by Phase 4: the DELETE-list source files
 // (state_change, write_ops, create, repair, repair_workflow, prune,
@@ -67,7 +73,6 @@ const ALLOW_LIST: &[&str] = &[
     "src/internal/legacy/v1.rs",
     "src/internal/legacy/event.rs",
     "src/internal/legacy/workflow.rs",
-    "src/internal/policy.rs",
     "src/internal/thread.rs",
     "src/internal/commands/migrate.rs",
     "src/internal/validate.rs",
@@ -217,7 +222,6 @@ const LEGACY_GATE_PERMANENT_EXEMPTIONS: &[&str] = &[
     "src/internal/legacy/workflow.rs",
     "src/internal/commands/migrate.rs",
     // 3.0-native modules with v2-delegating impls.
-    "src/internal/policy.rs",
     "src/internal/thread.rs",
     // v2 read-path KEEP files (cleared in v3.1 step 3i).
     "src/internal/validate.rs",
