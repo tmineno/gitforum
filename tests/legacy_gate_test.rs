@@ -47,7 +47,6 @@ const ALLOW_LIST: &[&str] = &[
     "src/internal/node.rs",
     "src/internal/policy.rs",
     "src/internal/thread.rs",
-    "src/internal/write_ops.rs",
     // The migrate command — the legitimate Phase 4 consumer.
     "src/internal/commands/migrate.rs",
     // Phase 4 Step 2b (RFC 7ymtc4b2, task 913c4s9v): KEEP files with
@@ -66,19 +65,11 @@ const ALLOW_LIST: &[&str] = &[
     "src/internal/commands/show.rs",   // workflow::SPEC + test fixtures
     "src/internal/commands/ls.rs",     // event::* test fixtures
     "src/internal/commands/shortlog.rs", // event::EventType test fixture
-    // DELETE-list files (retired in Step 3). Each has v2-event imports
-    // that are about to disappear with the file; exempt for the
-    // duration of the transition.
-    "src/internal/timeline.rs",
-    "src/internal/create.rs",
-    "src/internal/state_change.rs",
-    "src/internal/prune.rs",
-    "src/internal/purge.rs",
-    "src/internal/repair.rs",
-    "src/internal/repair_workflow.rs",
-    "src/internal/index.rs",
-    "src/internal/github_import.rs",
-    "src/internal/github_export.rs",
+                                       // (Phase 4 Step 3 deleted the DELETE-list source files
+                                       // (state_change, write_ops, create, repair, repair_workflow,
+                                       // prune, purge, timeline, index, reindex, github, github_import,
+                                       // github_export, commands::repair_workflow). Their entries are
+                                       // gone with the files.)
 ];
 
 /// Walks every `syn::Path` and records whether any of them uses

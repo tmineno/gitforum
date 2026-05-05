@@ -22,7 +22,8 @@ pub mod migrate;
 pub mod node;
 pub mod node_bulk;
 pub mod policy;
-pub mod repair_workflow;
+// Phase 4 Step 3 (RFC `7ymtc4b2`, task `913c4s9v`):
+// `commands::repair_workflow` git rm'd alongside the v2 event-runtime.
 pub mod retype;
 pub mod revise;
 pub mod shared;

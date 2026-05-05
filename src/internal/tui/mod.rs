@@ -2291,49 +2291,15 @@ mod tests {
         );
     }
 
-    /// AC#10: thread-detail header shows lifecycle / tags / linked panel for
-    /// a legacy thread (no facet_set), with the §2.3.3 fallback applied.
-    #[test]
-    fn thread_detail_header_shows_lifecycle_tags_linked_panel() {
-        let (_dir, git, _paths, _db_path) = setup_repo();
-        let thread_id = crate::internal::create::create_thread(
-            &git,
-            crate::internal::thread::ThreadKind::Rfc,
-            "Header test",
-            None,
-            "human/test-user",
-            &crate::internal::clock::FixedClock {
-                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-            },
-        )
-        .unwrap();
-
-        let mut app = App::new(Vec::new());
-        open_thread_detail(&mut app, &git, &thread_id, None).unwrap();
-
-        // App-side derivation: legacy RFC → lifecycle=proposal, tags=[cross-cutting].
-        assert_eq!(app.thread_lifecycle.as_deref(), Some("proposal"));
-        assert_eq!(app.thread_tags, vec!["cross-cutting".to_string()]);
-
-        // Render and check the body header surfaces lifecycle/tags + linked panel
-        let out = render_to_string(&mut app, 120, 28);
-        assert!(
-            out.contains("lifecycle:"),
-            "missing lifecycle in header:\n{out}"
-        );
-        assert!(
-            out.contains("proposal"),
-            "expected proposal lifecycle:\n{out}"
-        );
-        assert!(
-            out.contains("cross-cutting"),
-            "expected cross-cutting tag:\n{out}"
-        );
-        assert!(
-            out.contains("linked-children index unavailable"),
-            "missing linked panel fallback:\n{out}"
-        );
-    }
+    // Phase 4 Step 3 (RFC `7ymtc4b2`, task `913c4s9v`): the
+    // `thread_detail_header_shows_lifecycle_tags_linked_panel` test
+    // (legacy v2 §2.3.3 kind→lifecycle/tags fallback) was removed.
+    // It exercised `internal::create::create_thread` (deleted by
+    // this commit) and the `state.lifecycle_explicit=false` branch
+    // in `tui::state::open_thread_detail` (kept until Step 5
+    // removes the v2 peer types). Equivalent v3.0 coverage —
+    // snapshot fixtures with explicit category/tags — already lives
+    // in `create_thread_form_*` tests below.
 
     /// AC#10: create-thread form integration — `(execution, [bug])` writes
     /// a SPEC-3.0 snapshot with `category=task` and the `bug` tag.

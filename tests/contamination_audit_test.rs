@@ -106,24 +106,17 @@ const ALLOW_LIST: &[&str] = &[
     "src/internal/legacy/event.rs",
     "src/internal/legacy/workflow.rs",
     "src/internal/commands/migrate.rs",
-    // (b) DELETE-list targets that still reference forbidden modules
-    //     (removed in Step 3). Phase 4 Step 2b dramatically shrunk this
-    //     list because most former entries (timeline, index, create,
-    //     prune, purge, repair*, github*, state_change, write_ops, etc.)
-    //     now reach the v2 types via `internal::legacy::event` — caught
-    //     by `tests/legacy_gate_test.rs` instead. Only files that still
-    //     have *non-legacy* forbidden imports stay here.
-    "src/internal/reindex.rs",       // imports super::index
-    "src/internal/write_ops.rs",     // imports super::create + others
-    "src/internal/state_change.rs",  // imports super::write_ops
-    "src/internal/repair.rs",        // imports super::create + super::write_ops (test code)
-    "src/internal/github_import.rs", // imports super::create + super::write_ops + super::index
-    "src/internal/github_export.rs", // imports super::github
-    "src/internal/commands/repair_workflow.rs",
-    "src/internal/commands/ls.rs", // imports super::super::index::SearchRow
-    // (c) KEEP files currently contaminated — Phase 4 Step 1 rewires.
-    //     Most former (c) entries cleared via Step 1 and Step 2b.
-    "src/internal/tui/mod.rs",
+    // (b) Phase 4 Step 3 (RFC 7ymtc4b2, task 913c4s9v) deleted the
+    //     entire DELETE-list (state_change, write_ops, create, repair,
+    //     repair_workflow, prune, purge, timeline, index, reindex,
+    //     github, github_import, github_export, commands::repair_workflow)
+    //     so this category is now empty.
+    // (c) Phase 4 Step 3 also cleared the last (c)-category entry
+    //     (`tui/mod.rs`) by deleting its lone v2-fixture call site
+    //     (`crate::internal::create::create_thread` in the
+    //     `thread_detail_header_shows_lifecycle_tags_linked_panel`
+    //     test, which exercised the v2 §2.3.3 kind→lifecycle/tags
+    //     fallback that goes away in Step 5 anyway).
     // tui/state.rs cleared in Phase 4 Step 2a (RFC 7ymtc4b2,
     // task 913c4s9v): switched its lone `event::validate_tag` call to
     // `thread::validate_tag` (the helper relocated to thread.rs as a

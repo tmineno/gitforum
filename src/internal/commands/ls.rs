@@ -11,11 +11,9 @@
 use chrono::{DateTime, Utc};
 
 use super::super::error::ForumError;
-use super::super::index::SearchRow;
 use super::super::policy::Lifecycle;
 use super::super::thread::{self, ThreadKind, ThreadState};
 use super::context::Context;
-use super::show::short_oid;
 
 /// Args for [`run`] — `git forum ls` filters.
 pub struct LsArgs {
@@ -56,43 +54,12 @@ pub fn run(args: LsArgs, ctx: &Context) -> Result<(), ForumError> {
     Ok(())
 }
 
-/// Render search results from the local index.
-///
-/// Phase 3: lifecycle and tags are real index columns; surface them as
-/// the canonical 2.0 axes here too, mirroring `render_ls`.
-pub fn render_search_results(rows: &[SearchRow]) -> String {
-    if rows.is_empty() {
-        return "no threads found\n".into();
-    }
-    let mut lines: Vec<String> = Vec::new();
-    lines.push(format!(
-        "{:<12}  {:<10}  {:<14}  {:<14}  {}",
-        "ID", "LIFECYCLE", "STATUS", "TAGS", "TITLE"
-    ));
-    lines.push("-".repeat(72));
-    for r in rows {
-        let tags = if r.thread.tags.is_empty() {
-            "-".to_string()
-        } else {
-            r.thread.tags.join(",")
-        };
-        lines.push(format!(
-            "{:<12}  {:<10}  {:<14}  {:<14}  {}",
-            r.thread.id, r.thread.lifecycle, r.thread.status, tags, r.thread.title
-        ));
-        for hit in &r.node_hits {
-            lines.push(format!(
-                "  -> node {}  {:<10}  {:<10}  {}",
-                short_oid(&hit.node_id),
-                hit.node_type,
-                hit.status,
-                preview_one_line(&hit.body, 60),
-            ));
-        }
-    }
-    lines.push(String::new());
-    lines.join("\n")
-}
+// Phase 4 Step 3 (RFC `7ymtc4b2`, task `913c4s9v`): the
+// `render_search_results` renderer was deleted alongside the
+// `internal::index::SearchRow` type. Search support relied on the
+// SQLite index (Phase 2 slot 11 dropped the `Search` arm; Step 3
+// removes the index module itself). Re-introducing search is a
+// v3.1 concern — see the RFC Exceptions section.
 
 /// Render `git forum ls` output for a list of threads.
 ///
@@ -257,14 +224,9 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
     format!("{}...", &s[..end])
 }
 
-fn preview_one_line(s: &str, max: usize) -> String {
-    let joined = s.lines().collect::<Vec<_>>().join(" / ");
-    if joined.chars().count() <= max {
-        joined
-    } else {
-        format!("{}...", joined.chars().take(max).collect::<String>())
-    }
-}
+// Phase 4 Step 3 (RFC `7ymtc4b2`, task `913c4s9v`): `preview_one_line`
+// was the body-preview helper consumed solely by the now-deleted
+// `render_search_results` renderer. Removed alongside.
 
 #[cfg(test)]
 mod tests {

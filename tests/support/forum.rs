@@ -1,10 +1,11 @@
 //! Forum-aware fixture helpers shared across integration tests.
 //!
-//! Phase 1 of the milestone-test refactor (TEST-POLICY.md, @am3lp1kk)
-//! split each `m?_test.rs` into per-module files but kept setup
-//! helpers duplicated. Phase 4 lives here: every helper that appears
-//! in 2+ files is consolidated below so adding a new test only
-//! requires `use support::forum::{setup, fixed_clock, ...};`.
+//! Phase 4 Step 3 (RFC `7ymtc4b2`, task `913c4s9v`): rewritten to
+//! construct test threads via the SPEC-3.0 snapshot writer
+//! (`internal::snapshot::store::write_snapshot`) instead of the
+//! deleted v2 `internal::create::create_thread` helper. The legacy
+//! `state_change::change_state`, `reindex`, `index`, and v2-event
+//! sample-event builders are gone with the modules that backed them.
 //!
 //! `#![allow(dead_code)]` is required because each `tests/*_test.rs`
 //! compiles `support` independently — any helper not referenced by a
@@ -12,20 +13,15 @@
 
 #![allow(dead_code)]
 
-use chrono::{TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use git_forum::internal::clock::FixedClock;
 use git_forum::internal::config::RepoPaths;
-use git_forum::internal::create;
-use git_forum::internal::evidence;
 use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::id_alloc;
-use git_forum::internal::index;
 use git_forum::internal::init;
-use git_forum::internal::legacy::event::{self, Event, EventType, ThreadKind};
+use git_forum::internal::node::{NodeKind, NodeRecord, NodeStatus};
 use git_forum::internal::policy::{CategoryPolicy, GuardRule, Policy};
-use git_forum::internal::reindex;
-use git_forum::internal::state_change;
-use git_forum::internal::thread;
+use git_forum::internal::snapshot::{self, write_snapshot, NodeWithBody, ThreadDocument};
+use git_forum::internal::thread::ThreadSnapshot;
 
 use super::repo::TestRepo;
 
@@ -33,8 +29,7 @@ use super::repo::TestRepo;
 
 /// Standard test setup: bare git repo + GitOps + RepoPaths with
 /// `.forum/` initialized via `init::init_forum`. Use this unless the
-/// test is asserting on init's own behavior or works exclusively
-/// with raw events.
+/// test is asserting on init's own behavior.
 pub fn setup() -> (TestRepo, GitOps, RepoPaths) {
     let repo = TestRepo::new();
     let git = GitOps::new(repo.path().to_path_buf());
@@ -43,9 +38,7 @@ pub fn setup() -> (TestRepo, GitOps, RepoPaths) {
     (repo, git, paths)
 }
 
-/// Like `setup()` but skips `init_forum`. Use for `init_test.rs`
-/// (which tests init itself) and for tests that operate on raw event
-/// storage without going through the policy layer.
+/// Like `setup()` but skips `init_forum`. Use for `init_test.rs`.
 pub fn setup_no_init() -> (TestRepo, GitOps, RepoPaths) {
     let repo = TestRepo::new();
     let git = GitOps::new(repo.path().to_path_buf());
@@ -64,145 +57,188 @@ pub fn fixed_clock() -> FixedClock {
     }
 }
 
-// ---- Thread builders ----
+// ---- Snapshot thread builders (Phase 4 Step 3) ----
 
-pub fn make_thread(git: &GitOps, kind: ThreadKind, title: &str) -> String {
-    create::create_thread(git, kind, title, None, "human/alice", &fixed_clock()).unwrap()
+/// Build a deterministic 8-char id from a category + numeric seed.
+/// Test threads use these to keep refs stable across runs.
+pub fn test_thread_id(category: &str, seed: u8) -> String {
+    let prefix = match category {
+        "rfc" => "tstr",
+        "dec" => "tstd",
+        "task" => "tstt",
+        _ => "tsti",
+    };
+    format!("{prefix}{seed:04x}")
+}
+
+fn now() -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+}
+
+/// Initial status conventions matching what the v2 helpers produced
+/// (proposal=draft, execution/record=open). Keeps existing test
+/// assertions on `state.status` working against the new fixtures.
+fn initial_status(category: &str) -> &'static str {
+    match category {
+        "rfc" => "draft",
+        _ => "open",
+    }
+}
+
+/// Construct a snapshot thread of the given category. Returns the
+/// thread ID. Replaces the v2 `create::create_thread` fixture.
+fn make_snapshot_thread(
+    git: &GitOps,
+    category: &str,
+    title: &str,
+    body: Option<&str>,
+    seed: u8,
+) -> String {
+    let id = test_thread_id(category, seed);
+    let doc = ThreadDocument {
+        body: body.map(|s| s.to_string()),
+        ..ThreadDocument::new(ThreadSnapshot {
+            schema_version: ThreadSnapshot::SCHEMA_VERSION,
+            id: id.clone(),
+            title: title.to_string(),
+            category: category.to_string(),
+            status: initial_status(category).to_string(),
+            tags: vec![],
+            created_at: now(),
+            created_by: "human/alice".into(),
+            updated_at: now(),
+            updated_by: "human/alice".into(),
+            branch: None,
+            supersedes: vec![],
+        })
+    };
+    write_snapshot(git, &id, &doc, "create test thread").unwrap();
+    id
+}
+
+/// Generic builder. `kind` is the v2 kind string ("rfc"/"dec"/"task"
+/// /"issue") for callers that prefer the legacy verbiage; mapped to
+/// the SPEC-3.0 category internally.
+pub fn make_thread_with_seed(git: &GitOps, kind: &str, title: &str, seed: u8) -> String {
+    let category = match kind {
+        "rfc" => "rfc",
+        "dec" => "dec",
+        // SPEC-3.0 §8.3: issue/task collapse to category=task.
+        _ => "task",
+    };
+    make_snapshot_thread(git, category, title, None, seed)
+}
+
+/// Convenience: same shape as the legacy `make_thread` (caller picks
+/// kind), seeded with a fresh nonce so callers never collide.
+pub fn make_thread(git: &GitOps, kind: &str, title: &str) -> String {
+    make_thread_with_seed(git, kind, title, fresh_seed())
 }
 
 pub fn make_rfc(git: &GitOps) -> String {
-    make_thread(git, ThreadKind::Rfc, "Test RFC")
+    make_thread_with_seed(git, "rfc", "Test RFC", fresh_seed())
 }
 
 pub fn make_dec(git: &GitOps) -> String {
-    create::create_thread(
-        git,
-        ThreadKind::Dec,
-        "Test DEC",
-        Some(
-            "## Context\nSome context\n## Decision\nUse Redis\n## Rationale\nFast\n## Impact\nNone",
+    // SPEC-3.0 §8.3: DEC collapses to category=task + decision tag. The
+    // helper writes the snapshot directly so the lifecycle/tag panel
+    // surfaces lifecycle=record (per `legacy_lifecycle_for_category`).
+    let seed = fresh_seed();
+    let id = test_thread_id("dec", seed);
+    let n = now();
+    let doc = ThreadDocument {
+        body: Some(
+            "## Context\nSome context\n## Decision\nUse Redis\n## Rationale\nFast\n## Impact\nNone"
+                .into(),
         ),
-        "human/alice",
-        &fixed_clock(),
-    )
-    .unwrap()
+        ..ThreadDocument::new(ThreadSnapshot {
+            schema_version: ThreadSnapshot::SCHEMA_VERSION,
+            id: id.clone(),
+            title: "Test DEC".into(),
+            category: "task".into(),
+            status: "open".into(),
+            tags: vec!["decision".into()],
+            created_at: n,
+            created_by: "human/alice".into(),
+            updated_at: n,
+            updated_by: "human/alice".into(),
+            branch: None,
+            supersedes: vec![],
+        })
+    };
+    write_snapshot(git, &id, &doc, "create test thread").unwrap();
+    id
 }
 
 pub fn make_task(git: &GitOps) -> String {
-    make_thread(git, ThreadKind::Task, "Test TASK")
+    make_thread_with_seed(git, "task", "Test TASK", fresh_seed())
 }
 
-// ---- Raw events (used by tests that bypass create::create_thread) ----
-
-/// Generate a deterministic legacy KIND-XXXXXXXX thread ID. Used by
-/// tests that pre-write raw events to exercise the 1.x-on-disk path.
-pub fn test_thread_id(kind: ThreadKind, seed: u8) -> String {
-    id_alloc::alloc_thread_id_with_nonce(
-        kind,
-        "human/alice",
-        "test",
-        "2026-01-01T00:00:00Z",
-        &[seed, seed, seed, seed, seed, seed, seed, seed],
-    )
-}
-
-pub fn sample_create_event(thread_id: &str, kind: ThreadKind, title: &str) -> Event {
-    Event {
-        event_id: "evt-0001".into(),
-        thread_id: thread_id.into(),
-        event_type: EventType::Create,
-        created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-        actor: "human/alice".into(),
-        title: Some(title.into()),
-        kind: Some(kind),
-        ..Event::default()
+/// Fresh-per-call seed so consecutive `make_*` calls don't collide
+/// on the same id. Process-static counter is fine for test
+/// determinism within a single run.
+fn fresh_seed() -> u8 {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    static COUNTER: AtomicU8 = AtomicU8::new(1);
+    let s = COUNTER.fetch_add(1, Ordering::SeqCst);
+    if s == 0 {
+        // Avoid the 0 sentinel — bump again.
+        COUNTER.fetch_add(1, Ordering::SeqCst)
+    } else {
+        s
     }
 }
 
-pub fn sample_state_event(thread_id: &str, new_state: &str) -> Event {
-    Event {
-        event_id: "evt-0002".into(),
-        thread_id: thread_id.into(),
-        event_type: EventType::State,
-        created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
-        actor: "human/bob".into(),
-        new_state: Some(new_state.into()),
-        ..Event::default()
-    }
+// ---- Snapshot mutators (Phase 4 Step 3 helpers) ----
+
+/// Append a node to an existing snapshot thread. Returns the new node
+/// id. Replaces v2 `write_ops::say_node` for tests that care about
+/// node existence rather than v2 event-shape details.
+pub fn append_snapshot_node(
+    git: &GitOps,
+    thread_id: &str,
+    kind: NodeKind,
+    body: &str,
+    actor: &str,
+) -> String {
+    let mut doc = snapshot::read_snapshot(git, thread_id).unwrap();
+    let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap();
+    let id = git_forum::internal::id_alloc::alloc_bare_thread_id(actor, body, &now.to_rfc3339());
+    doc.nodes.push(NodeWithBody {
+        record: NodeRecord {
+            id: id.clone(),
+            kind,
+            status: NodeStatus::Open,
+            created_at: now,
+            created_by: actor.into(),
+            updated_at: None,
+            updated_by: None,
+            reply_to: None,
+            legacy_label: None,
+        },
+        body: body.into(),
+    });
+    doc.snapshot.updated_at = now;
+    doc.snapshot.updated_by = actor.into();
+    write_snapshot(git, thread_id, &doc, "append test node").unwrap();
+    id
 }
 
-// ---- Links / transitions ----
-
+/// Convenience: link two threads via a `links.toml` write.
 pub fn link_thread(git: &GitOps, from: &str, to: &str, rel: &str) {
-    evidence::add_thread_link(git, from, to, rel, "human/alice", &fixed_clock()).unwrap();
-}
-
-/// Drive an RFC from `draft` through `proposed` to `under-review`
-/// with no policy guards. Used to set up the typical
-/// review→accepted gating tests.
-pub fn move_rfc_to_under_review(git: &GitOps, thread_id: &str) {
-    state_change::change_state(
-        git,
-        thread_id,
-        "proposed",
-        &[],
-        "human/alice",
-        &fixed_clock(),
-        &empty_policy(),
-        state_change::StateChangeOptions::default(),
-    )
-    .unwrap();
-    state_change::change_state(
-        git,
-        thread_id,
-        "under-review",
-        &[],
-        "human/alice",
-        &fixed_clock(),
-        &empty_policy(),
-        state_change::StateChangeOptions::default(),
-    )
-    .unwrap();
-}
-
-/// Walk a thread to its terminal `done` state along the shortest
-/// valid path. Lifecycles vary in how many intermediate states stand
-/// between the initial state and `done`; the state machine guards
-/// reject multi-hop calls, so this helper steps one at a time.
-pub fn drive_to_done(git: &GitOps, policy: &Policy, thread_id: &str) {
-    loop {
-        let state = thread::replay_thread(git, thread_id).unwrap();
-        if state.status == event::ThreadStatus::Done {
-            break;
-        }
-        let lifecycle = state.lifecycle;
-        let path = event::find_path(lifecycle, state.status.as_str(), "done")
-            .unwrap_or_else(|| panic!("no path to done from {} for {:?}", state.status, lifecycle));
-        let next = path.first().expect("path is empty but state != done");
-        state_change::change_state(
-            git,
-            thread_id,
-            next,
-            &[],
-            "human/alice",
-            &fixed_clock(),
-            policy,
-            state_change::StateChangeOptions::default(),
-        )
-        .unwrap();
-    }
-}
-
-// ---- Index ----
-
-pub fn build_index(git: &GitOps, paths: &RepoPaths) {
-    let db_path = paths.git_forum.join("index.db");
-    reindex::run_reindex(git, &db_path).unwrap();
-}
-
-pub fn open_index(paths: &RepoPaths) -> rusqlite::Connection {
-    let db_path = paths.git_forum.join("index.db");
-    index::open_db(&db_path).unwrap()
+    use git_forum::internal::snapshot::{Link, Links};
+    let ts = Utc.with_ymd_and_hms(2026, 1, 1, 0, 2, 0).unwrap();
+    let mut doc = snapshot::read_snapshot(git, from).unwrap();
+    let mut entries = doc.links.entries.clone();
+    entries.push(Link {
+        target: to.into(),
+        rel: rel.into(),
+        created_at: ts,
+        created_by: "human/alice".into(),
+    });
+    doc.links = Links { entries };
+    doc.snapshot.updated_at = ts;
+    write_snapshot(git, from, &doc, "add test link").unwrap();
 }
 
 // ---- Policy builders (SPEC-3.0 §3.2 category-keyed form) ----
@@ -212,8 +248,7 @@ pub fn empty_policy() -> Policy {
 }
 
 /// Build a single-category policy with the given guard rules at the
-/// named transition. Mirrors the §3.2 inline-table form
-/// `[categories.<C>.guards] "from->to" = [rules...]`.
+/// named transition.
 pub fn make_category_guard_policy(
     category: &str,
     transition: &str,
@@ -226,9 +261,8 @@ pub fn make_category_guard_policy(
     policy
 }
 
-/// Default policy used by `state_change_test` / `verify_test` to gate
-/// the rfc category's review→done edge with `one_approval` +
-/// `no_open_objections` (SPEC-3.0 §3.2).
+/// Default policy used by `verify_test` to gate the rfc category's
+/// review→done edge with `one_approval` + `no_open_objections`.
 pub fn policy_with_under_review_guards() -> Policy {
     make_category_guard_policy(
         "rfc",
@@ -237,103 +271,7 @@ pub fn policy_with_under_review_guards() -> Policy {
     )
 }
 
-/// task category gate covering the dec-on-task lifecycle path:
-/// `record`-lifecycle DEC threads fold into category=task per §8.3,
-/// and the legacy `proposed->accepted` transition normalizes to
-/// `open->done` after `event::normalize_state_name`. Both the
-/// `open->done` and `working->done` edges are gated for tests that
-/// drive a DEC through either path.
-pub fn dec_guard_policy() -> Policy {
-    let mut policy = Policy::default();
-    let mut cat = CategoryPolicy::default();
-    cat.guards
-        .insert("open->done".into(), vec![GuardRule::NoOpenObjections]);
-    cat.guards
-        .insert("working->done".into(), vec![GuardRule::NoOpenObjections]);
-    policy.categories.insert("task".into(), cat);
-    policy
-}
-
 /// task category gate: review→done requires no open actions.
 pub fn task_guard_policy() -> Policy {
     make_category_guard_policy("task", "review->done", vec![GuardRule::NoOpenActions])
-}
-
-// ---- Back-compat shims for v2-shaped test helpers ----
-//
-// Several legacy integration tests (`tests/state_change_test.rs`,
-// `tests/verify_test.rs`) assemble policies via `make_policy(vec![GuardEntry
-// { on, requires, .. }])`. Pre-flight P1 deletes those types from
-// `internal::policy`, but rewriting every test verbatim is out of scope
-// for the policy rewrite commit. This shim accepts the legacy shape and
-// rewrites it into the SPEC-3.0 §3.2 category-table form so the same
-// tests keep exercising the runtime against the new parser.
-//
-// The legacy `on` field is parsed as one of:
-//   "from->to"                          → applies to BOTH categories
-//   "lifecycle=proposal : from->to"     → category=rfc
-//   "lifecycle=execution : from->to"    → category=task
-//   "lifecycle=record : from->to"       → category=task
-//   "kind:from->to" (rfc/issue/dec/task)→ §8.3 mapping
-// State names are normalized to SPEC-3.0 canonical via
-// `event::normalize_state_name` so 1.x verbs (under-review, accepted,
-// closed, ...) line up with category transitions.
-
-/// Legacy v2 guard-entry shape, kept as a test-side adapter only.
-#[derive(Debug, Clone, Default)]
-pub struct GuardEntry {
-    pub on: String,
-    pub requires: Vec<GuardRule>,
-}
-
-/// Back-compat wrapper for the v2 `make_policy(Vec<GuardEntry>)` helper
-/// used across legacy state-change / verify tests. Builds the equivalent
-/// SPEC-3.0 §3.2 category-keyed `Policy`.
-pub fn make_policy(entries: Vec<GuardEntry>) -> Policy {
-    let mut policy = Policy::default();
-    for entry in entries {
-        let (categories, transition) = parse_legacy_on(&entry.on);
-        for category in categories {
-            let cat = policy.categories.entry(category.to_string()).or_default();
-            cat.guards
-                .entry(transition.clone())
-                .or_default()
-                .extend(entry.requires.clone());
-        }
-    }
-    policy
-}
-
-fn parse_legacy_on(on: &str) -> (Vec<&'static str>, String) {
-    use git_forum::internal::legacy::event::normalize_state_name;
-    let (scope, transition_part) = match on.split_once(':') {
-        Some((s, t)) => (s.trim(), t.trim()),
-        None => ("", on.trim()),
-    };
-    let categories: Vec<&'static str> = if scope.is_empty() {
-        vec!["rfc", "task"]
-    } else if let Some(rest) = scope.strip_prefix("lifecycle=") {
-        match rest.trim() {
-            "proposal" => vec!["rfc"],
-            "execution" | "record" => vec!["task"],
-            _ => vec!["rfc", "task"],
-        }
-    } else {
-        // `kind:from->to` legacy form.
-        match scope {
-            "rfc" => vec!["rfc"],
-            "issue" | "task" | "dec" => vec!["task"],
-            _ => vec!["rfc", "task"],
-        }
-    };
-    let transition = if let Some((from, to)) = transition_part.split_once("->") {
-        format!(
-            "{}->{}",
-            normalize_state_name(from.trim()),
-            normalize_state_name(to.trim())
-        )
-    } else {
-        transition_part.to_string()
-    };
-    (categories, transition)
 }

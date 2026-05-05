@@ -5,13 +5,44 @@
 
 mod support;
 
+use chrono::{TimeZone, Utc};
 use git_forum::internal::config::CommitIdentity;
 use git_forum::internal::init;
-use git_forum::internal::legacy::event::{self, ThreadKind};
+use git_forum::internal::snapshot::{write_snapshot, ThreadDocument};
+use git_forum::internal::thread::ThreadSnapshot;
 
-use support::forum::{
-    sample_create_event as sample_create, setup_no_init as setup, test_thread_id,
-};
+use support::forum::{setup_no_init as setup, test_thread_id};
+
+/// Phase 4 Step 3 (RFC 7ymtc4b2, task 913c4s9v): the commit-identity
+/// tests in this file used to write a v2 `Event` via the deleted
+/// `internal::event::write_event`; the same commit-identity surface
+/// (`GitOps::commit_tree`) is exercised by `snapshot::write_snapshot`
+/// in 3.0. This helper writes a minimal snapshot and returns the
+/// resulting commit SHA so the tests can inspect the author /
+/// committer fields.
+fn write_test_snapshot(
+    git: &git_forum::internal::git_ops::GitOps,
+    seed: u8,
+    title: &str,
+) -> String {
+    let id = test_thread_id("rfc", seed);
+    let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let doc = ThreadDocument::new(ThreadSnapshot {
+        schema_version: ThreadSnapshot::SCHEMA_VERSION,
+        id: id.clone(),
+        title: title.to_string(),
+        category: "rfc".into(),
+        status: "draft".into(),
+        tags: vec![],
+        created_at: now,
+        created_by: "human/alice".into(),
+        updated_at: now,
+        updated_by: "human/alice".into(),
+        branch: None,
+        supersedes: vec![],
+    });
+    write_snapshot(git, &id, &doc, "init test snapshot").unwrap()
+}
 
 fn commit_author_name(repo_path: &std::path::Path, sha: &str) -> String {
     let output = std::process::Command::new("git")
@@ -103,9 +134,9 @@ fn init_local_only_skips_shared_forum_content() {
 #[test]
 fn commit_uses_git_config_by_default() {
     let (repo, git, _paths) = setup();
-    let tid = test_thread_id(ThreadKind::Rfc, 10);
-    let ev = sample_create(&tid, ThreadKind::Rfc, "Default identity");
-    let sha = event::write_event(&git, &ev).unwrap();
+    // (snapshot fixture below replaces v2 event write)
+    let _title = "Default identity";
+    let sha = write_test_snapshot(&git, 10, _title);
 
     let name = commit_author_name(repo.path(), &sha);
     let email = commit_author_email(repo.path(), &sha);
@@ -120,9 +151,9 @@ fn commit_identity_overrides_author_name_and_email() {
         name: Some("Forum Bot".into()),
         email: Some("bot@forum.local".into()),
     });
-    let tid = test_thread_id(ThreadKind::Rfc, 11);
-    let ev = sample_create(&tid, ThreadKind::Rfc, "Custom identity");
-    let sha = event::write_event(&git, &ev).unwrap();
+    // (snapshot fixture below replaces v2 event write)
+    let _title = "Custom identity";
+    let sha = write_test_snapshot(&git, 10, _title);
 
     assert_eq!(commit_author_name(repo.path(), &sha), "Forum Bot");
     assert_eq!(commit_author_email(repo.path(), &sha), "bot@forum.local");
@@ -135,9 +166,9 @@ fn commit_identity_partial_override_name_only() {
         name: Some("Pseudonym".into()),
         email: None,
     });
-    let tid = test_thread_id(ThreadKind::Rfc, 12);
-    let ev = sample_create(&tid, ThreadKind::Rfc, "Name-only override");
-    let sha = event::write_event(&git, &ev).unwrap();
+    // (snapshot fixture below replaces v2 event write)
+    let _title = "Name-only override";
+    let sha = write_test_snapshot(&git, 10, _title);
 
     assert_eq!(commit_author_name(repo.path(), &sha), "Pseudonym");
     let email = commit_author_email(repo.path(), &sha);
@@ -151,9 +182,9 @@ fn commit_identity_partial_override_email_only() {
         name: None,
         email: Some("private@example.com".into()),
     });
-    let tid = test_thread_id(ThreadKind::Rfc, 13);
-    let ev = sample_create(&tid, ThreadKind::Rfc, "Email-only override");
-    let sha = event::write_event(&git, &ev).unwrap();
+    // (snapshot fixture below replaces v2 event write)
+    let _title = "Email-only override";
+    let sha = write_test_snapshot(&git, 10, _title);
 
     let name = commit_author_name(repo.path(), &sha);
     assert!(!name.is_empty(), "name should fall through to git config");
