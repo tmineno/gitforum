@@ -24,12 +24,16 @@
 //! - [`history`] — git-history view of the snapshot ref per
 //!   SPEC-3.0 §5.4. Replaces the v2 domain-event timeline (Phase 4
 //!   Step 1a, RFC `7ymtc4b2`).
+//! - [`list`] — `for-each-ref` walk + per-ref snapshot read. Replaces
+//!   the SQLite-backed thread listing for the TUI and `commands::ls`
+//!   (Phase 4 Step 1c).
 //!
 //! Phase 1 of RFC `7ymtc4b2`: this subsystem is additive; production
 //! commands do not call into it yet. Phase 2 cuts each command over.
 
 pub mod history;
 pub mod link;
+pub mod list;
 pub mod store;
 
 pub use link::{Link, Links};

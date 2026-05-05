@@ -14,7 +14,6 @@ use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::index;
 use git_forum::internal::init;
 use git_forum::internal::reindex;
-use git_forum::internal::tui;
 use git_forum::internal::write_ops;
 
 use support::forum::{
@@ -243,16 +242,12 @@ fn find_incoming_links_does_not_recurse() {
 }
 
 // ---- TUI startup reindex ----
-
-#[test]
-fn tui_load_threads_reindexes_on_startup() {
-    let (_repo, git, paths) = setup();
-    init::init_forum(&paths).unwrap();
-    make_thread(&git, ThreadKind::Rfc, "TUI Visible RFC");
-
-    let db_path = paths.git_forum.join("index.db");
-    let rows = tui::load_threads(&git, &db_path).unwrap();
-
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].title, "TUI Visible RFC");
-}
+//
+// Phase 4 Step 1c (RFC `7ymtc4b2`): the TUI no longer reads through the
+// SQLite index. `tui::load_threads(git)` walks `refs/forum/threads/*`
+// directly via `snapshot::list::list_threads`. The previous test
+// (`tui_load_threads_reindexes_on_startup`) verified that
+// `make_thread`'s v2 event-chain refs were surfaced after a reindex
+// — that path is gone, and the snapshot walker intentionally skips
+// legacy event chains. End-to-end coverage of the new walker lives
+// in `snapshot_store_test.rs` and the TUI lib tests.

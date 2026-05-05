@@ -366,12 +366,13 @@ markdown_mode = true
         assert!(!state.sort_ascending); // default
     }
 
-    use crate::internal::index::ThreadRow;
+    use crate::internal::snapshot::list::ThreadRow;
 
     fn make_thread_row(id: &str, kind: &str) -> ThreadRow {
-        // Phase 3: ThreadRow gained lifecycle/lifecycle_explicit/tags
-        // columns. Tests inherit a kind-derived lifecycle so the rest
-        // of this fixture stays kind-flavoured.
+        // Phase 4 Step 1c: ThreadRow now lives in `snapshot::list`,
+        // mirroring the v2 field surface minus the index-only counts
+        // (`open_objections`/`open_actions`/`has_summary`/`tip_sha`)
+        // that TUI production code never read.
         let lifecycle = match kind {
             "rfc" => "proposal",
             "dec" => "record",
@@ -389,10 +390,6 @@ markdown_mode = true
             branch: None,
             created_at: "2026-01-01T00:00:00Z".to_string(),
             created_by: "test".to_string(),
-            open_objections: 0,
-            open_actions: 0,
-            has_summary: false,
-            tip_sha: "abc123".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
         }
     }

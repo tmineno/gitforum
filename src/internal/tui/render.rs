@@ -6,8 +6,8 @@ use ratatui::Frame;
 
 use crate::internal::event::ThreadKind;
 use crate::internal::id;
-use crate::internal::index::ThreadRow;
 use crate::internal::node::Node;
+use crate::internal::snapshot::list::ThreadRow;
 
 use super::markdown::markdown_to_text;
 use super::state::{

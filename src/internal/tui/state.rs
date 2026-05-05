@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::time::Instant;
 
 use crate::internal::actor;
@@ -9,10 +8,8 @@ use crate::internal::event::{self, Lifecycle, NodeType};
 use crate::internal::evidence::EvidenceFile;
 use crate::internal::git_ops::GitOps;
 use crate::internal::id_alloc;
-use crate::internal::index::{self, ThreadRow};
 use crate::internal::node::{Node, NodeKind, NodeRecord, NodeStatus};
-use crate::internal::refs;
-use crate::internal::reindex;
+use crate::internal::snapshot::list::{self as snapshot_list, ThreadRow};
 use crate::internal::snapshot::{self, store::write_snapshot, Link, Links, NodeWithBody};
 use crate::internal::thread::{self, ThreadSnapshot};
 
@@ -98,12 +95,7 @@ pub(super) fn apply_node_status_action(
     open_node_detail(app, git, thread_id, &lookup.node.node_id)
 }
 
-pub(super) fn submit_create_thread(
-    app: &mut App,
-    git: &GitOps,
-    conn: &rusqlite::Connection,
-    db_path: &Path,
-) -> ForumResult<()> {
+pub(super) fn submit_create_thread(app: &mut App, git: &GitOps) -> ForumResult<()> {
     let title = app.thread_form.title.trim();
     if title.is_empty() {
         return Ok(());
@@ -133,21 +125,14 @@ pub(super) fn submit_create_thread(
     // fork is gone — slot 10c writes the snapshot directly.
     let thread_id =
         snapshot_create_thread(git, title, body, lifecycle, &parsed_tags, &actor, &clock)?;
-    reindex::run_reindex(git, db_path)?;
-    app.threads = index::list_threads(conn)?;
+    refresh_thread_list(app, git)?;
     if let Some(pos) = app.threads.iter().position(|row| row.id == thread_id) {
         app.table_state.select(Some(pos));
     }
     open_thread_detail(app, git, &thread_id, None)
 }
 
-pub(super) fn submit_create_node(
-    app: &mut App,
-    git: &GitOps,
-    conn: &rusqlite::Connection,
-    db_path: &Path,
-    thread_id: &str,
-) -> ForumResult<()> {
+pub(super) fn submit_create_node(app: &mut App, git: &GitOps, thread_id: &str) -> ForumResult<()> {
     let body = app.node_form.body.trim();
     if body.is_empty() {
         return Ok(());
@@ -157,9 +142,16 @@ pub(super) fn submit_create_node(
     let clock = SystemClock;
     let node_type = node_type_values()[app.node_form.node_type_index];
     let node_id = snapshot_append_node(git, thread_id, node_type, body, &actor, &clock)?;
-    reindex::run_reindex(git, db_path)?;
-    app.threads = index::list_threads(conn)?;
+    refresh_thread_list(app, git)?;
     open_thread_detail(app, git, thread_id, Some(&node_id))
+}
+
+/// Reload the snapshot-derived thread list and re-cache tip SHAs.
+/// Called after any TUI mutation that may have changed a ref.
+fn refresh_thread_list(app: &mut App, git: &GitOps) -> ForumResult<()> {
+    app.threads = snapshot_list::list_threads(git)?;
+    app.list_tip_shas = snapshot_list::thread_tip_shas(git)?;
+    Ok(())
 }
 
 pub(super) fn submit_create_link(
@@ -194,10 +186,17 @@ pub(super) fn return_from_link_form(
 }
 
 #[doc(hidden)]
-pub fn load_threads(git: &GitOps, db_path: &Path) -> ForumResult<Vec<ThreadRow>> {
-    reindex::run_reindex(git, db_path)?;
-    let conn = index::open_db(db_path)?;
-    index::list_threads(&conn)
+pub fn load_threads(git: &GitOps) -> ForumResult<Vec<ThreadRow>> {
+    snapshot_list::list_threads(git)
+}
+
+/// Re-export of `snapshot::list::thread_tip_shas` so `tui::run` can
+/// seed `App.list_tip_shas` without itself depending on the snapshot
+/// listing module.
+pub fn snapshot_list_tip_shas(
+    git: &GitOps,
+) -> ForumResult<std::collections::HashMap<String, String>> {
+    snapshot_list::thread_tip_shas(git)
 }
 
 /// Build tree-ordered entries from a flat list of nodes using reply_to relationships.
@@ -421,58 +420,35 @@ pub(super) fn selected_link_target_label(app: &App, source_thread_id: &str) -> S
     }
 }
 
-/// Incremental list refresh: compare git ref SHAs against the SQLite index and
-/// only replay threads whose SHA has changed. Returns true if any changes were made.
-fn incremental_refresh(git: &GitOps, conn: &rusqlite::Connection) -> ForumResult<bool> {
-    let current_refs = git.list_refs_with_shas(refs::THREADS_PREFIX)?;
-    let stored_shas = index::thread_tip_shas(conn)?;
-
-    // Build map of current thread_id -> ref tip SHA
-    let mut current: std::collections::HashMap<String, String> =
-        std::collections::HashMap::with_capacity(current_refs.len());
-    for (refname, sha) in &current_refs {
-        if let Some(thread_id) = refs::thread_id_from_ref(refname) {
-            current.insert(thread_id.to_string(), sha.clone());
-        }
-    }
-
-    let mut changed = false;
-
-    // Replay new or changed threads
-    for (thread_id, sha) in &current {
-        let needs_update = match stored_shas.get(thread_id) {
-            Some(stored) => stored != sha,
-            None => true,
-        };
-        if needs_update {
-            if let Ok(state) = thread::replay_thread(git, thread_id) {
-                let _ = index::upsert_thread(conn, &state)
-                    .and_then(|_| index::replace_nodes_for_thread(conn, &state))
-                    .and_then(|_| index::replace_evidence_for_thread(conn, &state))
-                    .and_then(|_| index::replace_links_for_thread(conn, &state));
+/// Compare current `refs/forum/threads/*` tip SHAs against the
+/// last-seen snapshot map. Returns `true` when any ref has been
+/// added, removed, or moved since the previous tick.
+///
+/// Phase 4 Step 1c (RFC `7ymtc4b2`, task `913c4s9v`): replaces the
+/// SQLite-backed `incremental_refresh` that compared against
+/// `index::thread_tip_shas`. The TUI tracks the seen SHA set
+/// in-process via `App.list_tip_shas` instead of round-tripping
+/// through SQLite — per RFC Exceptions, no index is reintroduced
+/// for v3.0.0.
+fn list_changed_since(
+    git: &GitOps,
+    seen: &std::collections::HashMap<String, String>,
+) -> ForumResult<(bool, std::collections::HashMap<String, String>)> {
+    let current = snapshot_list::thread_tip_shas(git)?;
+    let mut changed = current.len() != seen.len();
+    if !changed {
+        for (id, sha) in &current {
+            if seen.get(id).map(|s| s.as_str()) != Some(sha.as_str()) {
+                changed = true;
+                break;
             }
-            changed = true;
         }
     }
-
-    // Remove deleted threads
-    for stored_id in stored_shas.keys() {
-        if !current.contains_key(stored_id) {
-            let _ = index::delete_thread(conn, stored_id);
-            changed = true;
-        }
-    }
-
-    Ok(changed)
+    Ok((changed, current))
 }
 
 /// Auto-refresh: check if the currently viewed thread or list has changed, and refresh if so.
-pub(super) fn auto_refresh(
-    app: &mut App,
-    git: &GitOps,
-    conn: &rusqlite::Connection,
-    _db_path: &Path,
-) -> ForumResult<()> {
+pub(super) fn auto_refresh(app: &mut App, git: &GitOps) -> ForumResult<()> {
     match &app.view {
         View::ThreadDetail(thread_id) => {
             let ref_name = format!("refs/forum/threads/{thread_id}");
@@ -504,11 +480,12 @@ pub(super) fn auto_refresh(
             }
         }
         View::List => {
-            let changed = incremental_refresh(git, conn)?;
+            let (changed, current_shas) = list_changed_since(git, &app.list_tip_shas)?;
             if changed {
-                let threads = index::list_threads(conn)?;
+                let threads = snapshot_list::list_threads(git)?;
                 let sel = app.table_state.selected().unwrap_or(0);
                 app.threads = threads;
+                app.list_tip_shas = current_shas;
                 let n = app.visible_threads().len();
                 app.table_state
                     .select(if n > 0 { Some(sel.min(n - 1)) } else { None });

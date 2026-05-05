@@ -20,8 +20,8 @@ use ratatui::Terminal;
 
 use super::error::{ForumError, ForumResult};
 use super::git_ops::GitOps;
-use super::index::{self, ThreadRow};
 use super::node::Node;
+use super::snapshot::list::ThreadRow;
 
 use input::{handle_key, handle_mouse};
 use render::render;
@@ -319,6 +319,11 @@ pub struct App {
     last_refresh: Instant,
     /// Cached tip SHA for the currently viewed thread (for change detection).
     thread_tip_sha: Option<String>,
+    /// Cached `thread_id -> tip SHA` map for the list view's incremental
+    /// refresh (Phase 4 Step 1c, RFC `7ymtc4b2`). Populated by
+    /// `state::refresh_thread_list` and compared in `state::auto_refresh`
+    /// against the current `for-each-ref` snapshot to detect ref churn.
+    pub(crate) list_tip_shas: std::collections::HashMap<String, String>,
     /// Whether to render the main pane body as markdown.
     markdown_mode: bool,
     /// Whether mouse capture is temporarily disabled for text selection.
@@ -399,6 +404,7 @@ impl App {
             dragging_border: false,
             last_refresh: Instant::now(),
             thread_tip_sha: None,
+            list_tip_shas: std::collections::HashMap::new(),
             markdown_mode: false,
             mouse_capture_disabled: false,
             collapsed: HashSet::new(),
@@ -891,15 +897,20 @@ const AUTO_REFRESH_INTERVAL_MS: u128 = 2000;
 
 /// Run the interactive TUI.
 ///
-/// Preconditions: `db_path` is writable so the local index can be refreshed on startup.
+/// Preconditions: `db_path` resolves the `.git/forum/` directory; the
+/// TUI uses its parent only for the persisted UI state file
+/// (`tui-state.toml`) — Phase 4 Step 1c (RFC `7ymtc4b2`) removed the
+/// SQLite index dependency.
 /// Postconditions: terminal is restored on exit.
-/// Failure modes: ForumError::Io on terminal I/O failure; ForumError::Repo on index/replay errors.
+/// Failure modes: ForumError::Io on terminal I/O failure;
+/// ForumError::Repo on snapshot/replay errors.
 /// Side effects: modifies terminal state; restores on exit.
 pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> ForumResult<()> {
-    let threads = load_threads(git, db_path)?;
-    let conn = index::open_db(db_path)?;
+    let threads = load_threads(git)?;
+    let initial_shas = state::snapshot_list_tip_shas(git)?;
 
     let mut app = App::new(threads);
+    app.list_tip_shas = initial_shas;
 
     // Restore persisted state (display settings first, then view navigation)
     let persisted = persist::load_state(db_path);
@@ -952,7 +963,7 @@ pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> For
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_app(&mut terminal, &mut app, git, &conn, db_path);
+    let result = run_app(&mut terminal, &mut app, git, db_path);
 
     disable_raw_mode().ok();
     execute!(
@@ -1030,7 +1041,7 @@ fn handle_external_edit<B: Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
     git: &GitOps,
-    db_path: &Path,
+    _db_path: &Path,
     thread_id: &str,
 ) -> ForumResult<()>
 where
@@ -1039,7 +1050,6 @@ where
     use super::actor;
     use super::clock::SystemClock;
     use super::editor;
-    use super::reindex;
     use super::thread;
 
     // Replay thread to get the current body
@@ -1079,7 +1089,9 @@ where
     let clock = SystemClock;
     state::snapshot_revise_body(git, thread_id, &new_body, &actor_id, &clock)?;
 
-    reindex::run_reindex(git, db_path)?;
+    // Phase 4 Step 1c: snapshot writes update the ref atomically; the
+    // next auto_refresh tick (or open_thread_detail call below) will
+    // observe the new tip. No SQLite reindex step needed.
     let selected = app.selected_node_id();
     state::open_thread_detail(app, git, thread_id, selected.as_deref())?;
     app.info_flash = Some("Body revised".into());
@@ -1114,7 +1126,6 @@ pub(crate) fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
     git: &GitOps,
-    conn: &rusqlite::Connection,
     db_path: &Path,
 ) -> ForumResult<()>
 where
@@ -1127,7 +1138,7 @@ where
 
         // Auto-refresh: check if the viewed thread has changed
         if app.last_refresh.elapsed().as_millis() >= AUTO_REFRESH_INTERVAL_MS {
-            auto_refresh(app, git, conn, db_path)?;
+            auto_refresh(app, git)?;
             app.last_refresh = Instant::now();
         }
 
@@ -1154,7 +1165,7 @@ where
                         app.error_flash = None;
                         continue;
                     }
-                    match handle_key(app, key, git, conn, db_path) {
+                    match handle_key(app, key, git, db_path) {
                         Ok(true) => {
                             persist::save_state(app, db_path);
                             return Ok(());
@@ -1178,7 +1189,7 @@ where
                         app.error_flash = None;
                         continue;
                     }
-                    match handle_mouse(app, mouse, git, conn, db_path) {
+                    match handle_mouse(app, mouse, git, db_path) {
                         Ok(true) => {
                             persist::save_state(app, db_path);
                             return Ok(());
@@ -1202,9 +1213,11 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::internal::id_alloc;
-    use crate::internal::index;
     use crate::internal::node::NodeKind;
-    use crate::internal::reindex;
+    // Phase 4 Step 1c (RFC `7ymtc4b2`): tests construct the thread
+    // listing via the snapshot walker instead of `index::list_threads`
+    // / `reindex::run_reindex`.
+    use crate::internal::snapshot::list as snapshot_list;
 
     use super::input::{
         handle_create_node_key, handle_create_thread_key, handle_edit_node_body_key,
@@ -1234,10 +1247,6 @@ mod tests {
             branch: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             created_by: "human/alice".into(),
-            open_objections: 0,
-            open_actions: 0,
-            has_summary: false,
-            tip_sha: "abc".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
         }
     }
@@ -1272,7 +1281,6 @@ mod tests {
         TempDir,
         GitOps,
         crate::internal::config::RepoPaths,
-        rusqlite::Connection,
         std::path::PathBuf,
     ) {
         let dir = TempDir::new().unwrap();
@@ -1310,8 +1318,8 @@ mod tests {
         let repo_paths = crate::internal::config::RepoPaths::from_repo_root(&path);
         crate::internal::init::init_forum(&repo_paths).unwrap();
         let db_path = repo_paths.git_forum.join("index.db");
-        let conn = index::open_db(&db_path).unwrap();
-        (dir, git, repo_paths, conn, db_path)
+
+        (dir, git, repo_paths, db_path)
     }
 
     /// Snapshot fixture: write a fresh SPEC-3.0 thread snapshot with
@@ -1404,20 +1412,12 @@ mod tests {
 
     #[test]
     fn mouse_single_click_selects_row() {
-        let (_dir, git, _paths, conn, db_path) = setup_repo();
-        crate::internal::create::create_thread(
-            &git,
-            crate::internal::event::ThreadKind::Rfc,
-            "Test RFC",
-            None,
-            "human/test-user",
-            &crate::internal::clock::FixedClock {
-                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-            },
-        )
-        .unwrap();
-        reindex::run_reindex(&git, &db_path).unwrap();
-        let mut app = App::new(index::list_threads(&conn).unwrap());
+        let (_dir, git, _paths, db_path) = setup_repo();
+        // Phase 4 Step 1c: snapshot fixture (v2 event chains return
+        // LegacyEventChain on the snapshot read path so they don't
+        // appear in the listing).
+        make_snapshot_thread(&git, "rfc", "Test RFC", 1);
+        let mut app = App::new(snapshot_list::list_threads(&git).unwrap());
         let _ = render_to_string(&mut app, 80, 20);
         let area = app.ui_rects.list_table.unwrap();
 
@@ -1430,7 +1430,6 @@ mod tests {
                 area.y + 2,
             ),
             &git,
-            &conn,
             &db_path,
         )
         .unwrap();
@@ -1441,20 +1440,9 @@ mod tests {
 
     #[test]
     fn mouse_double_click_opens_thread_detail() {
-        let (_dir, git, _paths, conn, db_path) = setup_repo();
-        let created_id = crate::internal::create::create_thread(
-            &git,
-            crate::internal::event::ThreadKind::Rfc,
-            "Test RFC",
-            None,
-            "human/test-user",
-            &crate::internal::clock::FixedClock {
-                instant: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
-            },
-        )
-        .unwrap();
-        reindex::run_reindex(&git, &db_path).unwrap();
-        let mut app = App::new(index::list_threads(&conn).unwrap());
+        let (_dir, git, _paths, db_path) = setup_repo();
+        let created_id = make_snapshot_thread(&git, "rfc", "Test RFC", 2);
+        let mut app = App::new(snapshot_list::list_threads(&git).unwrap());
         let _ = render_to_string(&mut app, 80, 20);
         let area = app.ui_rects.list_table.unwrap();
 
@@ -1464,10 +1452,10 @@ mod tests {
             area.y + 2,
         );
         // First click selects
-        handle_mouse(&mut app, click, &git, &conn, &db_path).unwrap();
+        handle_mouse(&mut app, click, &git, &db_path).unwrap();
         assert_eq!(app.view, View::List);
         // Second click (same position, quick) opens
-        handle_mouse(&mut app, click, &git, &conn, &db_path).unwrap();
+        handle_mouse(&mut app, click, &git, &db_path).unwrap();
         assert_eq!(app.view, View::ThreadDetail(created_id));
     }
 
@@ -1496,7 +1484,6 @@ mod tests {
             &mut app,
             click,
             &GitOps::new(std::path::PathBuf::from("/")),
-            &rusqlite::Connection::open_in_memory().unwrap(),
             std::path::Path::new("/tmp/test.db"),
         )
         .unwrap();
@@ -1512,7 +1499,6 @@ mod tests {
             &mut app,
             click,
             &GitOps::new(std::path::PathBuf::from("/")),
-            &rusqlite::Connection::open_in_memory().unwrap(),
             std::path::Path::new("/tmp/test.db"),
         )
         .unwrap();
@@ -1562,7 +1548,6 @@ mod tests {
         let mut app = App::new(vec![]);
         let dir = TempDir::new().unwrap();
         let git = GitOps::new(dir.path().to_path_buf());
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
         app.view = View::ThreadDetail("RFC-0001".into());
         // Use enough lines to exceed the viewport height so scroll is not clamped to 0
         app.thread_text = (0..50)
@@ -1576,7 +1561,6 @@ mod tests {
             &mut app,
             mouse_event(MouseEventKind::ScrollDown, area.x + 1, area.y + 1),
             &git,
-            &conn,
             dir.path(),
         )
         .unwrap();
@@ -1762,12 +1746,10 @@ mod tests {
     fn handle_edit_transition_via_create_thread(app: &mut App) {
         let dir = TempDir::new().unwrap();
         let git = GitOps::new(dir.path().to_path_buf());
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
         handle_create_thread_key(
             app,
             crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &git,
-            &conn,
             dir.path(),
         )
         .unwrap();
@@ -1776,12 +1758,10 @@ mod tests {
     fn handle_edit_transition_via_create_node(app: &mut App) {
         let dir = TempDir::new().unwrap();
         let git = GitOps::new(dir.path().to_path_buf());
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
         handle_create_node_key(
             app,
             crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &git,
-            &conn,
             dir.path(),
             "RFC-0001",
         )
@@ -1865,7 +1845,7 @@ mod tests {
 
     #[test]
     fn submit_create_thread_creates_thread_and_opens_detail() {
-        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let (_dir, git, _paths, _db_path) = setup_repo();
         let mut app = App::new(vec![]);
         app.begin_create_thread();
         // Lifecycle index 0 = proposal, with conventional tag → RFC preset.
@@ -1874,7 +1854,7 @@ mod tests {
         app.thread_form.title = "Created in TUI".into();
         app.thread_form.body = "Body from TUI".into();
 
-        submit_create_thread(&mut app, &git, &conn, &db_path).unwrap();
+        submit_create_thread(&mut app, &git).unwrap();
 
         match &app.view {
             View::ThreadDetail(id) => {
@@ -1886,14 +1866,14 @@ mod tests {
             other => panic!("expected ThreadDetail, got: {other:?}"),
         }
         assert!(app.thread_text.contains("Created in TUI"));
-        let rows = index::list_threads(&conn).unwrap();
+        let rows = snapshot_list::list_threads(&git).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].title, "Created in TUI");
     }
 
     #[test]
     fn mouse_click_on_thread_submit_creates_thread() {
-        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let (_dir, git, _paths, db_path) = setup_repo();
         let mut app = App::new(vec![]);
         app.begin_create_thread();
         app.thread_form.title = "Created with mouse".into();
@@ -1905,7 +1885,6 @@ mod tests {
             &mut app,
             mouse_event(MouseEventKind::Down(MouseButton::Left), area.x + 1, area.y),
             &git,
-            &conn,
             &db_path,
         )
         .unwrap();
@@ -1924,11 +1903,10 @@ mod tests {
 
     #[test]
     fn submit_create_node_adds_node_and_keeps_thread_detail() {
-        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let (_dir, git, _paths, db_path) = setup_repo();
         let thread_id = make_snapshot_thread(&git, "rfc", "RFC from setup", 0xa0);
-        reindex::run_reindex(&git, &db_path).unwrap();
 
-        let mut app = App::new(index::list_threads(&conn).unwrap());
+        let mut app = App::new(snapshot_list::list_threads(&git).unwrap());
         open_thread_detail(&mut app, &git, &thread_id, None).unwrap();
         app.begin_create_node(&thread_id);
         app.node_form.node_type_index = 1;
@@ -1938,7 +1916,6 @@ mod tests {
             &mut app,
             crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &git,
-            &conn,
             &db_path,
             &thread_id,
         )
@@ -1953,12 +1930,11 @@ mod tests {
 
     #[test]
     fn submit_create_link_from_thread_adds_link_and_returns_to_thread_detail() {
-        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let (_dir, git, _paths, _db_path) = setup_repo();
         let source_id = make_snapshot_thread(&git, "rfc", "Source RFC", 0xa1);
         make_snapshot_thread(&git, "issue", "Implementation issue", 0xa2);
-        reindex::run_reindex(&git, &db_path).unwrap();
 
-        let mut app = App::new(index::list_threads(&conn).unwrap());
+        let mut app = App::new(snapshot_list::list_threads(&git).unwrap());
         open_thread_detail(&mut app, &git, &source_id, None).unwrap();
         app.begin_create_link_from_thread(&source_id);
         app.link_form.field = LinkFormField::Submit;
@@ -1984,7 +1960,7 @@ mod tests {
 
     #[test]
     fn submit_create_link_from_node_returns_to_node_detail() {
-        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let (_dir, git, _paths, _db_path) = setup_repo();
         let source_id = make_snapshot_thread(&git, "rfc", "Source RFC", 0xa3);
         make_snapshot_thread(&git, "issue", "Implementation issue", 0xa4);
         let node_id = append_snapshot_node(
@@ -1993,9 +1969,8 @@ mod tests {
             NodeKind::Comment,
             "Investigate parser shape",
         );
-        reindex::run_reindex(&git, &db_path).unwrap();
 
-        let mut app = App::new(index::list_threads(&conn).unwrap());
+        let mut app = App::new(snapshot_list::list_threads(&git).unwrap());
         open_node_detail(&mut app, &git, &source_id, &node_id).unwrap();
         app.begin_create_link_from_node(&source_id, &node_id);
         app.link_form.field = LinkFormField::Submit;
@@ -2027,7 +2002,7 @@ mod tests {
 
     #[test]
     fn apply_node_status_action_updates_node_detail() {
-        let (_dir, git, _paths, _conn, _db_path) = setup_repo();
+        let (_dir, git, _paths, _db_path) = setup_repo();
         let thread_id = make_snapshot_thread(&git, "rfc", "RFC from setup", 0xa5);
         let node_id =
             append_snapshot_node(&git, &thread_id, NodeKind::Objection, "Needs more evidence");
@@ -2320,7 +2295,7 @@ mod tests {
     /// a legacy thread (no facet_set), with the §2.3.3 fallback applied.
     #[test]
     fn thread_detail_header_shows_lifecycle_tags_linked_panel() {
-        let (_dir, git, _paths, _conn, db_path) = setup_repo();
+        let (_dir, git, _paths, _db_path) = setup_repo();
         let thread_id = crate::internal::create::create_thread(
             &git,
             crate::internal::event::ThreadKind::Rfc,
@@ -2332,7 +2307,6 @@ mod tests {
             },
         )
         .unwrap();
-        reindex::run_reindex(&git, &db_path).unwrap();
 
         let mut app = App::new(Vec::new());
         open_thread_detail(&mut app, &git, &thread_id, None).unwrap();
@@ -2368,16 +2342,16 @@ mod tests {
     /// rewritten to assert the snapshot shape.
     #[test]
     fn create_thread_form_execution_bug_writes_snapshot() {
-        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let (_dir, git, _paths, _db_path) = setup_repo();
         let mut app = App::new(vec![]);
         app.begin_create_thread();
         // Lifecycle 1 = execution; tag = bug → category=task + tag=bug.
         app.thread_form.lifecycle_index = 1;
         app.thread_form.tags = "bug".into();
         app.thread_form.title = "fix the bug".into();
-        submit_create_thread(&mut app, &git, &conn, &db_path).unwrap();
+        submit_create_thread(&mut app, &git).unwrap();
 
-        let rows = index::list_threads(&conn).unwrap();
+        let rows = snapshot_list::list_threads(&git).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].title, "fix the bug");
 
@@ -2393,15 +2367,15 @@ mod tests {
     /// is gone — tags are written directly into the snapshot.
     #[test]
     fn create_thread_form_non_preset_writes_tags_in_snapshot() {
-        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let (_dir, git, _paths, _db_path) = setup_repo();
         let mut app = App::new(vec![]);
         app.begin_create_thread();
         app.thread_form.lifecycle_index = 1; // execution
         app.thread_form.tags = "bug, urgent".into();
         app.thread_form.title = "two-tag bug".into();
-        submit_create_thread(&mut app, &git, &conn, &db_path).unwrap();
+        submit_create_thread(&mut app, &git).unwrap();
 
-        let rows = index::list_threads(&conn).unwrap();
+        let rows = snapshot_list::list_threads(&git).unwrap();
         assert_eq!(rows.len(), 1);
 
         let doc = crate::internal::snapshot::read_snapshot(&git, &rows[0].id).unwrap();
@@ -2413,16 +2387,16 @@ mod tests {
     /// error (§2.3.5 grammar). No thread is created.
     #[test]
     fn create_thread_form_invalid_tag_blocks_submit() {
-        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let (_dir, git, _paths, _db_path) = setup_repo();
         let mut app = App::new(vec![]);
         app.begin_create_thread();
         app.thread_form.lifecycle_index = 1;
         app.thread_form.tags = "BadTag".into(); // uppercase rejected by §2.3.5
         app.thread_form.title = "should not be created".into();
-        submit_create_thread(&mut app, &git, &conn, &db_path).unwrap();
+        submit_create_thread(&mut app, &git).unwrap();
 
         assert!(app.thread_form.tag_error.is_some());
-        let rows = index::list_threads(&conn).unwrap();
+        let rows = snapshot_list::list_threads(&git).unwrap();
         assert!(rows.is_empty(), "no thread should be written on tag error");
     }
 
@@ -2430,11 +2404,10 @@ mod tests {
     /// (no `legacy_subtype`).
     #[test]
     fn create_node_form_default_writes_comment() {
-        let (_dir, git, _paths, conn, db_path) = setup_repo();
+        let (_dir, git, _paths, db_path) = setup_repo();
         let thread_id = make_snapshot_thread(&git, "rfc", "Comment default", 0xa6);
-        reindex::run_reindex(&git, &db_path).unwrap();
 
-        let mut app = App::new(index::list_threads(&conn).unwrap());
+        let mut app = App::new(snapshot_list::list_threads(&git).unwrap());
         open_thread_detail(&mut app, &git, &thread_id, None).unwrap();
         app.begin_create_node(&thread_id);
         // Default selection is index 0 → Comment.
@@ -2444,7 +2417,6 @@ mod tests {
             &mut app,
             crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &git,
-            &conn,
             &db_path,
             &thread_id,
         )

@@ -141,9 +141,12 @@ const ALLOW_LIST: &[&str] = &[
     "src/internal/commands/shared.rs",
     "src/internal/tui/mod.rs",
     "src/internal/tui/state.rs",
-    "src/internal/tui/input.rs",
+    // tui/input.rs cleared in Phase 4 Step 1c (RFC 7ymtc4b2,
+    // task 913c4s9v): index/reindex imports replaced by
+    // snapshot::list walker.
     "src/internal/tui/render.rs",
-    "src/internal/tui/persist.rs",
+    // tui/persist.rs cleared in Phase 4 Step 1c: ThreadRow now
+    // imported from snapshot::list, no internal::index dependency.
 ];
 
 /// Walks every `syn::Path` and `syn::UseTree` and records which forbidden
@@ -172,6 +175,30 @@ impl ContaminationFinder {
     }
 }
 
+/// A "reaches the internal tree" anchor before the forbidden name —
+/// names like `event` are common in third-party crates (e.g.
+/// `crossterm::event`), so the gate only fires when the path is
+/// rooted at the project's own internal tree. Recognized anchors:
+/// `crate::internal::<forbidden>`, `internal::<forbidden>`,
+/// `super[::super]*::<forbidden>`.
+fn segment_chain_targets_internal(segs: &[String], forbidden_idx: usize) -> bool {
+    if forbidden_idx == 0 {
+        return false;
+    }
+    let prefix = &segs[..forbidden_idx];
+    // `super[::super]*::<forbidden>` — relative path from a sibling
+    // module under `internal::*`.
+    if prefix.iter().all(|s| s == "super") {
+        return true;
+    }
+    // `crate::internal::<forbidden>` or `internal::<forbidden>`.
+    let last = prefix.last().map(|s| s.as_str());
+    if last == Some("internal") {
+        return true;
+    }
+    false
+}
+
 impl<'ast> Visit<'ast> for ContaminationFinder {
     fn visit_path(&mut self, p: &'ast syn::Path) {
         let segs: Vec<String> = p.segments.iter().map(|s| s.ident.to_string()).collect();
@@ -180,35 +207,79 @@ impl<'ast> Visit<'ast> for ContaminationFinder {
                 continue;
             }
             if let Some(hit) = self.matches_forbidden(name) {
-                self.found.insert(hit.to_string());
+                if segment_chain_targets_internal(&segs, i) {
+                    self.found.insert(hit.to_string());
+                }
             }
         }
         syn::visit::visit_path(self, p);
     }
 
     fn visit_use_tree(&mut self, t: &'ast syn::UseTree) {
-        collect_use_tree_hits(t, &self.forbidden, &mut self.found);
+        collect_use_tree_hits(t, &self.forbidden, &mut self.found, &[]);
         syn::visit::visit_use_tree(self, t);
     }
 }
 
-fn collect_use_tree_hits(t: &syn::UseTree, forbidden: &[&'static str], out: &mut BTreeSet<String>) {
+fn collect_use_tree_hits(
+    t: &syn::UseTree,
+    forbidden: &[&'static str],
+    out: &mut BTreeSet<String>,
+    prefix: &[String],
+) {
     match t {
         syn::UseTree::Path(p) => {
             let name = p.ident.to_string();
             if let Some(hit) = forbidden.iter().copied().find(|f| *f == name) {
-                out.insert(hit.to_string());
+                let segs: Vec<String> = prefix
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(name.clone()))
+                    .collect();
+                if segment_chain_targets_internal(&segs, segs.len() - 1) {
+                    out.insert(hit.to_string());
+                }
             }
-            collect_use_tree_hits(&p.tree, forbidden, out);
+            let mut next_prefix = prefix.to_vec();
+            next_prefix.push(name);
+            collect_use_tree_hits(&p.tree, forbidden, out, &next_prefix);
         }
         syn::UseTree::Group(g) => {
             for item in &g.items {
-                collect_use_tree_hits(item, forbidden, out);
+                collect_use_tree_hits(item, forbidden, out, prefix);
             }
         }
-        // A leaf `use foo::event;` is allowed — nothing is dereferenced
-        // through it, so the importer can't reach event-chain symbols.
-        syn::UseTree::Name(_) | syn::UseTree::Rename(_) | syn::UseTree::Glob(_) => {}
+        // `use super::index;` (leaf) brings the forbidden module name
+        // into the file's scope, where unprefixed paths like
+        // `index::open_db()` then resolve. Flag it the same way the
+        // Path arm above flags `use super::index::open_db`.
+        syn::UseTree::Name(name_leaf) => {
+            let name = name_leaf.ident.to_string();
+            if let Some(hit) = forbidden.iter().copied().find(|f| *f == name) {
+                let segs: Vec<String> = prefix
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(name.clone()))
+                    .collect();
+                if segment_chain_targets_internal(&segs, segs.len() - 1) {
+                    out.insert(hit.to_string());
+                }
+            }
+        }
+        syn::UseTree::Rename(rename) => {
+            let name = rename.ident.to_string();
+            if let Some(hit) = forbidden.iter().copied().find(|f| *f == name) {
+                let segs: Vec<String> = prefix
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(name.clone()))
+                    .collect();
+                if segment_chain_targets_internal(&segs, segs.len() - 1) {
+                    out.insert(hit.to_string());
+                }
+            }
+        }
+        syn::UseTree::Glob(_) => {}
     }
 }
 
@@ -389,20 +460,46 @@ fn detector_flags_grouped_use_through_forbidden_module() {
 }
 
 #[test]
-fn detector_ignores_leaf_use_of_forbidden_module_name() {
-    // `use foo::event;` brings the module name into scope but does not
-    // dereference any symbol through it — nothing event-chain-related
-    // can be reached without further `event::*` syntax that the path
-    // visitor would catch.
+fn detector_flags_leaf_use_of_forbidden_module_name_when_anchored_at_internal() {
+    // `use crate::internal::event;` (or `use super::index;`) brings
+    // the forbidden module name into the file's scope; subsequent
+    // unprefixed paths like `event::EventType` or `index::open_db()`
+    // would resolve through it. The detector must flag the leaf
+    // `use` even though no symbol is dereferenced *in the use itself*.
     let synthetic = r#"
         use crate::internal::event;
+        use super::index;
+    "#;
+    let file = syn::parse_file(synthetic).expect("synthetic source must parse");
+    let mut finder = ContaminationFinder::new(FORBIDDEN_MODULES);
+    finder.visit_file(&file);
+    assert!(
+        finder.found.contains("event"),
+        "detector failed to flag `use crate::internal::event` (leaf): {:?}",
+        finder.found
+    );
+    assert!(
+        finder.found.contains("index"),
+        "detector failed to flag `use super::index` (leaf): {:?}",
+        finder.found
+    );
+}
+
+#[test]
+fn detector_ignores_leaf_use_when_not_anchored_at_internal() {
+    // `crossterm::event` is a third-party module that happens to share
+    // a name with our forbidden list. The anchor check (parent segment
+    // `internal` or all-`super`) keeps it from tripping the gate.
+    let synthetic = r#"
+        use crossterm::event;
+        use std::sync::atomic::Ordering;
     "#;
     let file = syn::parse_file(synthetic).expect("synthetic source must parse");
     let mut finder = ContaminationFinder::new(FORBIDDEN_MODULES);
     finder.visit_file(&file);
     assert!(
         finder.found.is_empty(),
-        "detector raised a false positive on leaf `use ...::event;` import: {:?}",
+        "detector flagged a third-party `event` module: {:?}",
         finder.found
     );
 }
