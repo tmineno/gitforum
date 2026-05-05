@@ -15,20 +15,19 @@ Current state is read directly from the snapshot, and history is ordinary
 config:
   theme: "base"
   themeVariables:
-    fontSize: 15px
+    fontSize: 13px
+    primaryColor: "#fff5e6"
+    primaryBorderColor: "#d97706"
+    primaryTextColor: "#1f2937"
+    lineColor: "#6b7280"
 ---
 flowchart LR
-    need([Need a change]) --> rfc[Open RFC<br/>category=rfc]
-    rfc --> discuss{Discuss with<br/>comments, objections, actions}
-    discuss --> evidence[Attach evidence<br/>files, tests, commits, docs]
-    evidence --> decision{Ready?}
-    decision -- no --> discuss
-    decision -- yes --> accept[Accept with approval<br/>and no open blockers]
-    accept --> task[Create linked task<br/>rel=implements]
-    task --> implement[Bind branch,<br/>implement, add evidence]
-    implement --> review{Review done?}
-    review -- changes --> implement
-    review -- yes --> memory[(Git history answers<br/>what, why, and proof)]
+    rfc["<b>Open RFC</b><br/><i>new rfc</i>"] --> review["<b>Review</b><br/><i>comment · objection<br/>action · evidence add<br/>resolve</i>"]
+    review -- "<i>accept</i>" --> task["<b>Link task</b><br/><i>new task --rel implements</i>"]
+    task --> implement["<b>Bind & implement</b><br/><i>branch bind<br/>evidence add</i>"]
+    implement --> done{"<b>Done?</b>"}
+    done -- "changes" --> implement
+    done -- "<i>close</i>" --> memory[("Git history:<br/>what, why, proof")]
 ```
 
 > The highest-value path is: discuss direction in an RFC, accept it, link
