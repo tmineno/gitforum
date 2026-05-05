@@ -472,7 +472,7 @@ fn replay_with_issues_inner(
             Err(ProjectionError::MissingRequiredField { field }) => {
                 issues.push(StrictReplayIssue::MissingRequiredField {
                     event_id: ev.event_id.clone(),
-                    event_type: ev.event_type,
+                    event_type: ev.event_type.to_string(),
                     field,
                 });
             }
@@ -664,7 +664,7 @@ fn apply_event(
             } else {
                 issues.push(StrictReplayIssue::UnknownTargetNode {
                     event_id: meta.event_id.clone(),
-                    event_type: meta.event_type,
+                    event_type: meta.event_type.to_string(),
                     target_node_id: target_node_id.clone(),
                 });
             }
@@ -704,7 +704,7 @@ fn apply_event(
             } else {
                 issues.push(StrictReplayIssue::UnknownTargetNode {
                     event_id: meta.event_id.clone(),
-                    event_type: meta.event_type,
+                    event_type: meta.event_type.to_string(),
                     target_node_id: target_node_id.clone(),
                 });
             }
@@ -725,7 +725,7 @@ fn apply_event(
                 if found.is_none() {
                     issues.push(StrictReplayIssue::UnknownTargetNode {
                         event_id: meta.event_id.clone(),
-                        event_type: meta.event_type,
+                        event_type: meta.event_type.to_string(),
                         target_node_id: node_id.clone(),
                     });
                 }
@@ -759,7 +759,7 @@ fn apply_event(
         DomainEvent::Unknown { meta, .. } => {
             issues.push(StrictReplayIssue::MissingRequiredField {
                 event_id: meta.event_id.clone(),
-                event_type: meta.event_type,
+                event_type: meta.event_type.to_string(),
                 field: "unknown_event_type",
             });
         }
@@ -839,7 +839,7 @@ fn apply_node_flag(
     } else {
         issues.push(StrictReplayIssue::UnknownTargetNode {
             event_id: meta.event_id.clone(),
-            event_type: meta.event_type,
+            event_type: meta.event_type.to_string(),
             target_node_id: target_node_id.to_string(),
         });
     }
@@ -1115,7 +1115,7 @@ pub fn replay_thread_strict_at(
                 Err(super::legacy::event::ProjectionError::MissingRequiredField { field }) => {
                     issues.push(StrictReplayIssue::MissingRequiredField {
                         event_id: ev.event_id.clone(),
-                        event_type: ev.event_type,
+                        event_type: ev.event_type.to_string(),
                         field,
                     });
                 }

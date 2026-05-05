@@ -38,12 +38,6 @@ use walkdir::WalkDir;
 //    `replay_thread` so non-migrate callers never reach the legacy
 //    branch, fully clearing thread.rs.
 //
-// 3. v2 read-path KEEP files (validate.rs only): residual v2 read-path
-//    code that hasn't been rewired yet. validate.rs uses
-//    `legacy::event::EventType` for event-shape validation in
-//    mixed-chain replay; cleared in step 3i when the v2
-//    ThreadState.events field is dropped.
-//
 // Already cleared by task 1v400j3l v3.1 follow-up:
 //   - commands/state.rs (3a): shorthand resolution → policy::resolve_shorthand
 //   - commands/thread_new.rs (3b): kind preset → policy::CategoryPreset
@@ -61,6 +55,12 @@ use walkdir::WalkDir;
 //     bodies and the alias-fold table now live in policy.rs itself).
 //     Lifecycle/ThreadKind/ThreadStatus enum removal — the deeper
 //     part of step 3h — is deferred; the surface stays for now.
+//   - validate.rs (3i, partial): StrictReplayIssue's `event_type`
+//     field changed from the v2 `EventType` enum to a plain `String`
+//     (callers pass `event_type.to_string()`). Dropping the v2
+//     ThreadState fields (Vec<Event>/Vec<Node>/Vec<Evidence>) — the
+//     deeper part of step 3i — is deferred until thread.rs's replay
+//     split (step 3j) makes that surface narrow enough to delete.
 //
 // Cleared earlier by Phase 4: the DELETE-list source files
 // (state_change, write_ops, create, repair, repair_workflow, prune,
@@ -75,7 +75,6 @@ const ALLOW_LIST: &[&str] = &[
     "src/internal/legacy/workflow.rs",
     "src/internal/thread.rs",
     "src/internal/commands/migrate.rs",
-    "src/internal/validate.rs",
 ];
 
 /// Walks every `syn::Path` and records whether any of them uses
@@ -200,20 +199,15 @@ fn allow_list_paths_exist() {
 /// Per ADR-011 Decision 3, the original target was "only
 /// `commands/migrate.rs` reaches `internal::legacy/*`". Phase 4
 /// (task `913c4s9v`) shipped with a documented set of exemptions
-/// instead; v3.1 task `1v400j3l` is closing them down. The remaining
-/// entries are tracked categories of legacy access:
+/// instead; v3.1 task `1v400j3l` is closing them down. After steps
+/// 3a-3i the remaining entries are:
 ///
 /// 1. Structural / migration consumer (legacy/* itself + migrate.rs).
-/// 2. 3.0-native modules with v2-delegating impls (node, policy,
-///    thread): Lifecycle/ThreadKind/ThreadStatus helpers still route
-///    through legacy::workflow::SPEC and legacy::v1::normalize_state_name.
-/// 3. v2 read-path KEEP files (validate, commands/shared): not yet
-///    rewired off the legacy event-shape projection.
-///
-/// The remaining 4 entries close in v3.1 steps 3f-3i + 3j when the
-/// SPEC-3.0 §3 Category surface fully replaces Lifecycle dispatch and
-/// the v2 peer types (ThreadState.events, ThreadState.evidence_items,
-/// the v2 NodeType enum, etc.) are removed.
+/// 2. 3.0-native module with v2 event-chain replay machinery
+///    (thread.rs): the v2 `replay_thread` path still consumes
+///    DomainEvent / EventType / etc. Cleared in step 3j when
+///    `replay_thread` splits into a snapshot-only public API plus a
+///    migrate-internal legacy reader.
 const LEGACY_GATE_PERMANENT_EXEMPTIONS: &[&str] = &[
     // Structural / migration consumer.
     "src/internal/legacy/mod.rs",
@@ -221,10 +215,8 @@ const LEGACY_GATE_PERMANENT_EXEMPTIONS: &[&str] = &[
     "src/internal/legacy/event.rs",
     "src/internal/legacy/workflow.rs",
     "src/internal/commands/migrate.rs",
-    // 3.0-native modules with v2-delegating impls.
+    // 3.0-native module pending step 3j replay split.
     "src/internal/thread.rs",
-    // v2 read-path KEEP files (cleared in v3.1 step 3i).
-    "src/internal/validate.rs",
 ];
 
 #[test]
