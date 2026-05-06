@@ -231,7 +231,11 @@ pub fn snapshot_list_tip_shas(
 
 /// Build tree-ordered entries from a flat list of nodes using reply_to relationships.
 ///
-/// Returns entries in depth-first order with tree connector prefixes.
+/// Returns entries in depth-first order with tree connector prefixes. Siblings
+/// at every depth are ordered by `created_at` (then by id as a stable
+/// tiebreaker) so the timeline reads chronologically — `read_snapshot` loads
+/// nodes id-sorted for determinism, but random node IDs carry no temporal
+/// meaning, so surfacing that order in the TUI looks scrambled to users.
 pub(super) fn build_tree_entries(nodes: &[NodeWithBody]) -> Vec<TreeEntry> {
     use std::collections::HashMap;
 
@@ -241,6 +245,11 @@ pub(super) fn build_tree_entries(nodes: &[NodeWithBody]) -> Vec<TreeEntry> {
         .enumerate()
         .map(|(i, n)| (n.record.id.as_str(), i))
         .collect();
+
+    let sort_key = |idx: &usize| {
+        let r = &nodes[*idx].record;
+        (r.created_at, r.id.clone())
+    };
 
     // Build children map: parent_id -> [child indices]
     let mut children: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -253,9 +262,13 @@ pub(super) fn build_tree_entries(nodes: &[NodeWithBody]) -> Vec<TreeEntry> {
             }
         }
     }
+    for child_indices in children.values_mut() {
+        child_indices.sort_by_key(&sort_key);
+    }
 
     // Roots are nodes without a parent (or whose parent is not in this thread)
-    let roots: Vec<usize> = (0..nodes.len()).filter(|&i| !has_parent[i]).collect();
+    let mut roots: Vec<usize> = (0..nodes.len()).filter(|&i| !has_parent[i]).collect();
+    roots.sort_by_key(&sort_key);
 
     let mut entries = Vec::with_capacity(nodes.len());
 

@@ -2222,6 +2222,58 @@ mod tests {
     }
 
     #[test]
+    fn build_tree_entries_orders_siblings_chronologically() {
+        // `read_snapshot` loads node files id-sorted for determinism, but
+        // bare random IDs (e.g. `fg61bcmp`) carry no temporal meaning, so
+        // the timeline must reorder by `created_at`. Regression for the
+        // "comment node seems not sorted" report.
+        let nodes = vec![
+            // Created second, but id sorts first.
+            NodeWithBody {
+                record: crate::internal::node::NodeRecord {
+                    id: "aaaaaaaa".into(),
+                    kind: crate::internal::node::NodeKind::Comment,
+                    created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 1, 0).unwrap(),
+                    created_by: "human/alice".into(),
+                    ..Default::default()
+                },
+                body: "second".into(),
+            },
+            // Created first, but id sorts last.
+            NodeWithBody {
+                record: crate::internal::node::NodeRecord {
+                    id: "zzzzzzzz".into(),
+                    kind: crate::internal::node::NodeKind::Comment,
+                    created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+                    created_by: "human/alice".into(),
+                    ..Default::default()
+                },
+                body: "first".into(),
+            },
+            // Reply to the first node, created last — should land under
+            // its parent at the bottom.
+            NodeWithBody {
+                record: crate::internal::node::NodeRecord {
+                    id: "mmmmmmmm".into(),
+                    kind: crate::internal::node::NodeKind::Comment,
+                    created_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 2, 0).unwrap(),
+                    created_by: "human/alice".into(),
+                    reply_to: Some("zzzzzzzz".into()),
+                    ..Default::default()
+                },
+                body: "reply".into(),
+            },
+        ];
+        let entries = build_tree_entries(&nodes);
+        let order: Vec<&str> = entries
+            .iter()
+            .map(|e| nodes[e.node_index].record.id.as_str())
+            .collect();
+        // First root by created_at, then its reply, then the later root.
+        assert_eq!(order, vec!["zzzzzzzz", "mmmmmmmm", "aaaaaaaa"]);
+    }
+
+    #[test]
     fn error_flash_renders_overlay() {
         let mut app = App::new(vec![make_row("RFC-0001", "rfc", "draft", "Test RFC")]);
         app.error_flash = Some(ErrorFlash {
