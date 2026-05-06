@@ -23,6 +23,11 @@ use super::hook;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckLevel {
     Ok,
+    /// Informational. Never fails the run; passes a passable() check.
+    /// Used by RFC `fls856j3` §5 advisories like
+    /// `auth-without-published INFO` where the absence of a
+    /// published ref is a legitimate state, not a problem.
+    Info,
     Warn,
     Fail,
 }
@@ -243,6 +248,9 @@ fn run_with_mode(git: &GitOps, paths: &RepoPaths, strict: bool) -> ForumResult<D
             )));
         }
     }
+
+    // 6b. Published-namespace consistency (RFC fls856j3 §5, §7).
+    publish_namespace_checks(git, &mut checks);
 
     // 7. Index blob integrity
     match hook::fix_index_blobs(git) {
@@ -487,6 +495,7 @@ fn print_report(report: &DoctorReport, verbose: bool) {
     for check in &report.checks {
         match check.level {
             CheckLevel::Ok => ok_count += 1,
+            CheckLevel::Info => {} // Informational — not counted toward ok/warn/fail tallies.
             CheckLevel::Warn => warn_count += 1,
             CheckLevel::Fail => fail_count += 1,
         }
@@ -503,6 +512,7 @@ fn print_report(report: &DoctorReport, verbose: bool) {
         if check.level != CheckLevel::Ok || verbose {
             let marker = match check.level {
                 CheckLevel::Ok => " ok ",
+                CheckLevel::Info => "INFO",
                 CheckLevel::Warn => "WARN",
                 CheckLevel::Fail => "FAIL",
             };
@@ -558,6 +568,160 @@ fn check_dir(name: &str, path: &std::path::Path) -> DoctorCheck {
     }
 }
 
+/// Cross-check the `refs/forum/threads/*` and `refs/forum/published/*`
+/// namespaces and append any RFC `fls856j3` §5 / §7 advisories.
+///
+/// Emitted advisories:
+/// - `auth-without-published INFO` — public thread without a
+///   published counterpart (likely "you forgot to push", but
+///   informational since not-publishing is legitimate).
+/// - `visibility-mismatch WARN` — both refs exist but the published
+///   tree disagrees with the authoritative visibility (would only
+///   happen across writer-version skews).
+/// - `stale-published WARN` — published ref exists locally with no
+///   authoritative counterpart, or with an authoritative thread
+///   marked private. Suggests an interrupted withdrawal — re-run
+///   `git forum push` to retry the remote delete (RFC §7).
+fn publish_namespace_checks(git: &GitOps, checks: &mut Vec<DoctorCheck>) {
+    use std::collections::HashSet;
+
+    let auth_ids: Vec<String> = match git.list_refs(refs::THREADS_PREFIX) {
+        Ok(refs) => refs
+            .iter()
+            .filter_map(|r| refs::thread_id_from_ref(r).map(|s| s.to_string()))
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    let pub_ids: HashSet<String> = match git.list_refs(refs::PUBLISHED_PREFIX) {
+        Ok(refs) => refs
+            .iter()
+            .filter_map(|r| refs::thread_id_from_published_ref(r).map(|s| s.to_string()))
+            .collect(),
+        Err(_) => HashSet::new(),
+    };
+
+    // First pass: walk authoritative threads, classify each.
+    let mut auth_set: HashSet<&str> = HashSet::new();
+    for id in &auth_ids {
+        auth_set.insert(id.as_str());
+        let visibility = match snapshot::read_snapshot(git, id) {
+            Ok(doc) => doc.snapshot.visibility,
+            Err(_) => {
+                // Read errors are surfaced by the snapshot-decode
+                // check above; don't double-report here.
+                continue;
+            }
+        };
+        let has_published = pub_ids.contains(id);
+        match (visibility, has_published) {
+            (thread::Visibility::Public, false) => {
+                checks.push(info(
+                    &format!("auth-without-published {id}"),
+                    "thread is public but has no refs/forum/published/<id>; run `git forum push` to publish",
+                ));
+            }
+            (thread::Visibility::Private, true) => {
+                checks.push(warn(
+                    &format!("stale-published {id}"),
+                    "thread is private but a published ref still exists locally; re-run `git forum push` to retry the withdrawal",
+                ));
+            }
+            (thread::Visibility::Public, true) => {
+                // Published tree should mirror the authoritative
+                // visibility ("public"). The visibility-mismatch
+                // case fires when the published tree's thread.toml
+                // disagrees, which would happen across writer-
+                // version skews.
+                if let Ok(doc) = read_published_snapshot(git, id) {
+                    if doc.snapshot.visibility != thread::Visibility::Public {
+                        checks.push(warn(
+                            &format!("visibility-mismatch {id}"),
+                            "published tree's visibility disagrees with authoritative; re-run `git forum push` to refresh",
+                        ));
+                    }
+                }
+            }
+            (thread::Visibility::Private, false) => {
+                // Normal: private thread, no published counterpart.
+            }
+        }
+    }
+
+    // Second pass: published refs without an authoritative
+    // counterpart. On public-consumer clones (RFC §3:
+    // `init --public-only`) this is the steady state — orphans
+    // are normal because the authoritative namespace is never
+    // imported. Detect that case from configured fetch refspecs:
+    // a clone is public-consumer iff at least one remote is
+    // configured for forum refs *and* none of them fetch the
+    // authoritative namespace.
+    if is_public_consumer_clone(git) {
+        return;
+    }
+    for pid in &pub_ids {
+        if !auth_set.contains(pid.as_str()) {
+            checks.push(warn(
+                &format!("stale-published {pid}"),
+                "published ref exists locally but the authoritative thread is absent; re-run `git forum push` to retry the withdrawal",
+            ));
+        }
+    }
+}
+
+/// Detect a public-consumer clone (RFC §3 `init --public-only`).
+/// True iff at least one remote is configured for forum refs and
+/// none of those forum-related refspecs cover the authoritative
+/// namespace.
+///
+/// Repos with no remotes (e.g. local-only publisher checkouts) are
+/// treated as trusted-collaborator: they own the authoritative
+/// namespace, so an orphan published ref is anomalous and worth
+/// surfacing.
+fn is_public_consumer_clone(git: &GitOps) -> bool {
+    let remotes = match git.run(&["remote"]) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let mut saw_published = false;
+    let mut saw_authoritative = false;
+    for remote in remotes.lines() {
+        let remote = remote.trim();
+        if remote.is_empty() {
+            continue;
+        }
+        let key = format!("remote.{remote}.fetch");
+        let values = match git.run(&["config", "--get-all", &key]) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        for v in values.lines() {
+            let v = v.trim();
+            if v == init::FORUM_REFSPEC || v == init::THREADS_REFSPEC {
+                saw_authoritative = true;
+            }
+            if v == init::PUBLISHED_REFSPEC {
+                saw_published = true;
+            }
+        }
+    }
+    saw_published && !saw_authoritative
+}
+
+/// Read a snapshot specifically from the published-namespace ref,
+/// bypassing the §5 fallback (which would resolve through to the
+/// authoritative ref first). Used by the visibility-mismatch check
+/// where we need to inspect the *published* tree.
+fn read_published_snapshot(
+    git: &GitOps,
+    thread_id: &str,
+) -> Result<crate::internal::snapshot::ThreadDocument, ForumError> {
+    let refname = refs::published_ref(thread_id);
+    let tip = git
+        .resolve_ref(&refname)?
+        .ok_or_else(|| ForumError::SnapshotMissing(format!("{refname} does not exist")))?;
+    crate::internal::snapshot::store::read_snapshot_at(git, &tip)
+}
+
 fn ok(name: &str) -> DoctorCheck {
     DoctorCheck {
         name: name.to_string(),
@@ -570,6 +734,14 @@ fn warn(name: &str, detail: &str) -> DoctorCheck {
     DoctorCheck {
         name: name.to_string(),
         level: CheckLevel::Warn,
+        detail: Some(detail.to_string()),
+    }
+}
+
+fn info(name: &str, detail: &str) -> DoctorCheck {
+    DoctorCheck {
+        name: name.to_string(),
+        level: CheckLevel::Info,
         detail: Some(detail.to_string()),
     }
 }
