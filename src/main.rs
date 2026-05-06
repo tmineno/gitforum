@@ -123,6 +123,14 @@ struct Cli {
 enum Commands {
     /// Initialize a git-forum repository
     Init,
+    /// Publish public threads to a remote (RFC fls856j3 §6)
+    Push {
+        /// Remote name (defaults to `origin`)
+        remote: Option<String>,
+        /// Exit non-zero on any pre-publish lint warning
+        #[arg(long)]
+        strict: bool,
+    },
     /// Diagnose repo health (config, refs, snapshot integrity)
     Doctor {
         /// Show all checks including passing ones
@@ -751,6 +759,11 @@ fn main() -> Result<(), ForumError> {
         Commands::Init => {
             let ctx = Context::discover_quiet(Box::new(SystemClock))?;
             commands::init::run(&ctx)?;
+        }
+
+        Commands::Push { remote, strict } => {
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            commands::push::run(commands::push::PushArgs { remote, strict }, &ctx)?;
         }
 
         Commands::Doctor { verbose, strict } => {

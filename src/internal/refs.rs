@@ -10,6 +10,12 @@
 
 pub const THREADS_PREFIX: &str = "refs/forum/threads/";
 pub const ACTORS_PREFIX: &str = "refs/forum/actors/";
+
+/// Derived published-namespace prefix per RFC `fls856j3` §2. Holds
+/// parentless, history-free, force-updated snapshots of `public`
+/// threads materialised by `git forum push`.
+pub const PUBLISHED_PREFIX: &str = "refs/forum/published/";
+
 pub fn thread_ref(thread_id: &str) -> String {
     format!("{THREADS_PREFIX}{thread_id}")
 }
@@ -18,9 +24,19 @@ pub fn actor_ref(actor_id: &str) -> String {
     format!("{ACTORS_PREFIX}{actor_id}")
 }
 
+/// Refname for a thread's published-namespace counterpart.
+pub fn published_ref(thread_id: &str) -> String {
+    format!("{PUBLISHED_PREFIX}{thread_id}")
+}
+
 /// Extract thread ID from a full ref name.
 pub fn thread_id_from_ref(refname: &str) -> Option<&str> {
     refname.strip_prefix(THREADS_PREFIX)
+}
+
+/// Extract thread ID from a published-namespace ref name.
+pub fn thread_id_from_published_ref(refname: &str) -> Option<&str> {
+    refname.strip_prefix(PUBLISHED_PREFIX)
 }
 
 #[cfg(test)]

@@ -8,9 +8,10 @@
 //! - [`lint`] — pre-publish lint per RFC §4.4. Pure scan over body
 //!   and node text, reports tokens that name known-private threads.
 //!   Informational; never rewrites content.
-//!
-//! Forthcoming submodules: `commit` (parentless single-commit
-//! construction per §2), `withdrawal` (RFC §7).
+//! - [`commit`] — parentless single-commit construction and
+//!   tree-equivalence idempotency (RFC §2).
 
+pub mod commit;
 pub mod exclusion;
 pub mod lint;
+pub mod orchestrate;
