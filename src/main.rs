@@ -122,7 +122,14 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Initialize a git-forum repository
-    Init,
+    Init {
+        /// Public-consumer mode: fetch only refs/forum/published/*
+        #[arg(long = "public-only")]
+        public_only: bool,
+        /// Configure remote.<name>.push = +refs/forum/published/*:... on every remote
+        #[arg(long = "auto-push")]
+        auto_push: bool,
+    },
     /// Publish public threads to a remote (RFC fls856j3 §6)
     Push {
         /// Remote name (defaults to `origin`)
@@ -756,9 +763,18 @@ fn main() -> Result<(), ForumError> {
     let clock = SystemClock;
 
     match command {
-        Commands::Init => {
+        Commands::Init {
+            public_only,
+            auto_push,
+        } => {
             let ctx = Context::discover_quiet(Box::new(SystemClock))?;
-            commands::init::run(&ctx)?;
+            commands::init::run(
+                commands::init::InitArgs {
+                    public_only,
+                    auto_push,
+                },
+                &ctx,
+            )?;
         }
 
         Commands::Push { remote, strict } => {

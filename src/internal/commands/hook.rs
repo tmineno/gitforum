@@ -132,7 +132,7 @@ fn run_worktree_init(git: &GitOps) -> Result<(), ForumError> {
         );
         fs::write(&local_toml_path, content)?;
     }
-    let _ = init::ensure_forum_refspecs(git);
+    let _ = init::ensure_forum_refspecs(git, init::InitMode::default());
     install_all_hooks(git, false)?;
     eprintln!(
         "git-forum: initialized worktree at {}",

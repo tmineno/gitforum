@@ -151,25 +151,66 @@ pub fn init_forum_local(paths: &RepoPaths) -> ForumResult<()> {
     Ok(())
 }
 
-/// The fetch refspec that maps remote forum refs into the local namespace.
-///
-/// The `+` prefix allows force-updates (forum refs are amended by design).
+/// Pre-RFC-`fls856j3` wildcard fetch refspec that imported every
+/// `refs/forum/*` ref. Kept as a constant so older clones can still
+/// be detected and migrated; new installs prefer the namespace-
+/// specific refspecs below.
 pub const FORUM_REFSPEC: &str = "+refs/forum/*:refs/forum/*";
 
+/// Authoritative-namespace fetch refspec (RFC `fls856j3` §3
+/// trusted-collaborator mode).
+pub const THREADS_REFSPEC: &str = "+refs/forum/threads/*:refs/forum/threads/*";
+
+/// Published-namespace fetch refspec (RFC §3 — used by both modes).
+pub const PUBLISHED_REFSPEC: &str = "+refs/forum/published/*:refs/forum/published/*";
+
+/// Init transport mode (RFC §3).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum InitMode {
+    /// Default. Fetch both authoritative and published namespaces.
+    /// Reads prefer authoritative (RFC §5).
+    #[default]
+    TrustedCollaborator,
+    /// `git forum init --public-only`. Fetch *only* the published
+    /// namespace. Authoritative refs are never imported, so the
+    /// privacy boundary is structural — see RFC §3 (objection
+    /// `oa7x90aw` resolution).
+    PublicOnly,
+}
+
 /// Check whether a remote already has the forum fetch refspec configured.
+///
+/// Returns true when *any* refspec covering the forum namespace is
+/// present: the legacy wildcard, the threads-namespace refspec, or
+/// the published-namespace refspec. Used by post-clone init to skip
+/// re-adding when an older clone configured the wildcard.
 pub fn has_forum_refspec(git: &GitOps, remote: &str) -> ForumResult<bool> {
     let key = format!("remote.{remote}.fetch");
     match git.run(&["config", "--get-all", &key]) {
-        Ok(output) => Ok(output.lines().any(|line| line.trim() == FORUM_REFSPEC)),
+        Ok(output) => Ok(output.lines().any(|line| {
+            let v = line.trim();
+            v == FORUM_REFSPEC || v == THREADS_REFSPEC || v == PUBLISHED_REFSPEC
+        })),
         Err(_) => Ok(false),
     }
 }
 
-/// For every configured remote, add the forum fetch refspec if not already present.
+/// For every configured remote, ensure the forum fetch refspecs match
+/// `mode`.
 ///
-/// Idempotent: skips remotes that already have the refspec.
-/// Returns the list of remote names that were modified.
-pub fn ensure_forum_refspecs(git: &GitOps) -> ForumResult<Vec<String>> {
+/// - In [`InitMode::TrustedCollaborator`] — installs `THREADS_REFSPEC`
+///   and `PUBLISHED_REFSPEC` if the legacy wildcard is not already in
+///   place. The wildcard remains acceptable; we don't churn config
+///   that older clones already have.
+/// - In [`InitMode::PublicOnly`] — installs `PUBLISHED_REFSPEC` and
+///   *removes* the wildcard or threads refspec if present, because
+///   leaving them would cause the next `git fetch` to silently
+///   import authoritative refs and break the privacy boundary.
+///
+/// Idempotent: re-running with the same mode is a no-op once the
+/// refspecs are in their target shape.
+/// Returns the list of remote names whose configuration changed.
+pub fn ensure_forum_refspecs(git: &GitOps, mode: InitMode) -> ForumResult<Vec<String>> {
     let remotes_output = match git.run(&["remote"]) {
         Ok(o) => o,
         Err(_) => return Ok(vec![]),
@@ -180,17 +221,112 @@ pub fn ensure_forum_refspecs(git: &GitOps) -> ForumResult<Vec<String>> {
         if remote.is_empty() {
             continue;
         }
-        if !has_forum_refspec(git, remote)? {
-            git.run(&[
-                "config",
-                "--add",
-                &format!("remote.{remote}.fetch"),
-                FORUM_REFSPEC,
-            ])?;
+        if reconcile_remote_fetch(git, remote, mode)? {
             modified.push(remote.to_string());
         }
     }
     Ok(modified)
+}
+
+/// Bring one remote's `fetch` refspec list to the shape `mode`
+/// requires. Returns `true` when any change was applied.
+fn reconcile_remote_fetch(git: &GitOps, remote: &str, mode: InitMode) -> ForumResult<bool> {
+    let key = format!("remote.{remote}.fetch");
+    let existing: Vec<String> = git
+        .run(&["config", "--get-all", &key])
+        .ok()
+        .map(|s| s.lines().map(|l| l.trim().to_string()).collect())
+        .unwrap_or_default();
+
+    let mut changed = false;
+    match mode {
+        InitMode::TrustedCollaborator => {
+            // If the legacy wildcard is present, both namespaces are
+            // already covered — no change.
+            if existing.iter().any(|v| v == FORUM_REFSPEC) {
+                return Ok(false);
+            }
+            for want in [THREADS_REFSPEC, PUBLISHED_REFSPEC] {
+                if !existing.iter().any(|v| v == want) {
+                    git.run(&["config", "--add", &key, want])?;
+                    changed = true;
+                }
+            }
+        }
+        InitMode::PublicOnly => {
+            // Remove anything that imports the authoritative namespace.
+            for unwanted in [FORUM_REFSPEC, THREADS_REFSPEC] {
+                if existing.iter().any(|v| v == unwanted) {
+                    unset_fetch_refspec(git, &key, unwanted)?;
+                    changed = true;
+                }
+            }
+            if !existing.iter().any(|v| v == PUBLISHED_REFSPEC) {
+                git.run(&["config", "--add", &key, PUBLISHED_REFSPEC])?;
+                changed = true;
+            }
+        }
+    }
+    Ok(changed)
+}
+
+/// Configure `remote.<name>.push` to the published-namespace push
+/// refspec on every remote. Used by `git forum init --auto-push`.
+///
+/// Refuses to install a push refspec that targets the authoritative
+/// namespace (the publisher writes only to `refs/forum/published/*`
+/// per RFC §3).
+pub fn ensure_forum_push_refspec(git: &GitOps) -> ForumResult<Vec<String>> {
+    let remotes_output = match git.run(&["remote"]) {
+        Ok(o) => o,
+        Err(_) => return Ok(vec![]),
+    };
+    let push_value = PUBLISHED_REFSPEC;
+    let mut modified = Vec::new();
+    for remote in remotes_output.lines() {
+        let remote = remote.trim();
+        if remote.is_empty() {
+            continue;
+        }
+        let key = format!("remote.{remote}.push");
+        let existing: Vec<String> = git
+            .run(&["config", "--get-all", &key])
+            .ok()
+            .map(|s| s.lines().map(|l| l.trim().to_string()).collect())
+            .unwrap_or_default();
+        if existing.iter().any(|v| v == push_value) {
+            continue;
+        }
+        git.run(&["config", "--add", &key, push_value])?;
+        modified.push(remote.to_string());
+    }
+    Ok(modified)
+}
+
+/// Remove a single value from a multivalued git-config key. The
+/// caller has already verified it is present.
+fn unset_fetch_refspec(git: &GitOps, key: &str, value: &str) -> ForumResult<()> {
+    // `git config --unset <key> <value-regex>` removes one matching
+    // entry. Escape regex specials in `value` before passing.
+    let regex = regex_escape_anchored(value);
+    git.run(&["config", "--unset", key, &regex])?;
+    Ok(())
+}
+
+fn regex_escape_anchored(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('^');
+    for c in value.chars() {
+        match c {
+            '+' | '*' | '.' | '\\' | '^' | '$' | '|' | '?' | '(' | ')' | '[' | ']' | '{' | '}' => {
+                out.push('\\');
+                out.push(c);
+            }
+            other => out.push(other),
+        }
+    }
+    out.push('$');
+    out
 }
 
 fn write_if_missing(path: &std::path::Path, content: &str) -> ForumResult<()> {
