@@ -13,6 +13,8 @@ use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::snapshot::{write_snapshot, write_snapshot_with_archive, ThreadDocument};
 use git_forum::internal::thread::ThreadSnapshot;
 
+use support::git::{list_tree_paths, read_blob};
+
 fn fresh_repo() -> support::repo::TestRepo {
     support::repo::TestRepo::new()
 }
@@ -32,20 +34,6 @@ fn sample_thread(id: &str) -> ThreadSnapshot {
         branch: None,
         supersedes: vec![],
     }
-}
-
-fn list_tree_paths(git: &GitOps, refname: &str) -> Vec<String> {
-    let tip = git.run(&["rev-parse", refname]).unwrap();
-    let out = git
-        .run(&["ls-tree", "-r", "--name-only", tip.trim()])
-        .unwrap();
-    out.lines().map(|s| s.to_string()).collect()
-}
-
-fn read_blob(git: &GitOps, refname: &str, path: &str) -> String {
-    let tip = git.run(&["rev-parse", refname]).unwrap();
-    git.run(&["cat-file", "-p", &format!("{}:{}", tip.trim(), path)])
-        .unwrap()
 }
 
 #[test]

@@ -10,55 +10,10 @@
 
 mod support;
 
-use std::process::{Command, Output};
-
-use git_forum::internal::config::RepoPaths;
-use git_forum::internal::init;
-
-fn bin() -> String {
-    env!("CARGO_BIN_EXE_git-forum").to_string()
-}
-
-fn run(repo: &support::repo::TestRepo, args: &[&str]) -> Output {
-    Command::new(bin())
-        .current_dir(repo.path())
-        .args(args)
-        .output()
-        .expect("git-forum invocation failed")
-}
-
-fn run_ok(repo: &support::repo::TestRepo, args: &[&str]) -> Output {
-    let out = run(repo, args);
-    assert!(
-        out.status.success(),
-        "git-forum {:?} failed:\nstdout: {}\nstderr: {}",
-        args,
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-    );
-    out
-}
-
-fn extract_created_id(out: &Output) -> String {
-    let s = String::from_utf8_lossy(&out.stdout);
-    s.trim()
-        .strip_prefix("Created ")
-        .unwrap_or(s.trim())
-        .split_whitespace()
-        .next()
-        .expect("no thread id in `Created …` line")
-        .to_string()
-}
-
-fn fresh_repo() -> support::repo::TestRepo {
-    let repo = support::repo::TestRepo::new();
-    let paths = RepoPaths::from_repo_root(repo.path());
-    init::init_forum(&paths).unwrap();
-    repo
-}
+use support::cli::{extract_created_id, fresh_repo, run, run_ok};
 
 fn show_stdout(repo: &support::repo::TestRepo, thread_id: &str) -> String {
-    let out = run_ok(repo, &["show", thread_id]);
+    let out = run_ok(repo.path(), &["show", thread_id]);
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
@@ -67,7 +22,10 @@ fn show_stdout(repo: &support::repo::TestRepo, thread_id: &str) -> String {
 #[test]
 fn thread_new_visible_in_show() {
     let repo = fresh_repo();
-    let out = run_ok(&repo, &["new", "issue", "Parser fails on empty input"]);
+    let out = run_ok(
+        repo.path(),
+        &["new", "issue", "Parser fails on empty input"],
+    );
     let id = extract_created_id(&out);
 
     let show = show_stdout(&repo, &id);
@@ -82,9 +40,9 @@ fn thread_new_visible_in_show() {
 #[test]
 fn comment_visible_in_show() {
     let repo = fresh_repo();
-    let id = extract_created_id(&run_ok(&repo, &["new", "issue", "Topic"]));
+    let id = extract_created_id(&run_ok(repo.path(), &["new", "issue", "Topic"]));
 
-    run_ok(&repo, &["comment", &id, "I have a thought."]);
+    run_ok(repo.path(), &["comment", &id, "I have a thought."]);
 
     let show = show_stdout(&repo, &id);
     assert!(
@@ -98,11 +56,11 @@ fn comment_visible_in_show() {
 #[test]
 fn close_visible_in_show() {
     let repo = fresh_repo();
-    let id = extract_created_id(&run_ok(&repo, &["new", "issue", "To be closed"]));
+    let id = extract_created_id(&run_ok(repo.path(), &["new", "issue", "To be closed"]));
 
     // `close` for an execution-lifecycle issue maps to `done`
     // (SPEC-2.0 §9.3 lifecycle-aware shorthand).
-    let close = run_ok(&repo, &["close", &id]);
+    let close = run_ok(repo.path(), &["close", &id]);
     let close_stdout = String::from_utf8_lossy(&close.stdout);
     assert!(
         close_stdout.contains(&id) && close_stdout.contains("done"),
@@ -121,11 +79,11 @@ fn close_visible_in_show() {
 #[test]
 fn state_bulk_summary_visible() {
     let repo = fresh_repo();
-    let a = extract_created_id(&run_ok(&repo, &["new", "issue", "Bulk A"]));
-    let b = extract_created_id(&run_ok(&repo, &["new", "issue", "Bulk B"]));
+    let a = extract_created_id(&run_ok(repo.path(), &["new", "issue", "Bulk A"]));
+    let b = extract_created_id(&run_ok(repo.path(), &["new", "issue", "Bulk B"]));
 
     // `state bulk` takes thread ids positionally after `--to <state>`.
-    let bulk = run_ok(&repo, &["state", "bulk", "--to", "closed", &a, &b]);
+    let bulk = run_ok(repo.path(), &["state", "bulk", "--to", "closed", &a, &b]);
     let stdout = String::from_utf8_lossy(&bulk.stdout);
     assert!(
         stdout.contains(&a) && stdout.contains(&b),
@@ -138,10 +96,10 @@ fn state_bulk_summary_visible() {
 #[test]
 fn node_bulk_resolve_visible_in_show() {
     let repo = fresh_repo();
-    let id = extract_created_id(&run_ok(&repo, &["new", "issue", "With actions"]));
+    let id = extract_created_id(&run_ok(repo.path(), &["new", "issue", "With actions"]));
 
     // `action` stdout: first line is `Added action <node_id>`.
-    let action_out = run_ok(&repo, &["action", &id, "Implement parser"]);
+    let action_out = run_ok(repo.path(), &["action", &id, "Implement parser"]);
     let action_stdout = String::from_utf8_lossy(&action_out.stdout);
     let node_id = action_stdout
         .lines()
@@ -150,7 +108,7 @@ fn node_bulk_resolve_visible_in_show() {
         .map(|s| s.trim().to_string())
         .expect("action stdout missing `Added action <id>` first line");
 
-    run_ok(&repo, &["resolve", &id, &node_id]);
+    run_ok(repo.path(), &["resolve", &id, &node_id]);
 
     let show = show_stdout(&repo, &id);
     assert!(
@@ -171,11 +129,11 @@ fn node_bulk_resolve_visible_in_show() {
 fn revise_body_visible_in_show() {
     let repo = fresh_repo();
     let id = extract_created_id(&run_ok(
-        &repo,
+        repo.path(),
         &["new", "issue", "Revise me", "--body", "first body"],
     ));
 
-    run_ok(&repo, &["revise", &id, "--body", "second body"]);
+    run_ok(repo.path(), &["revise", &id, "--body", "second body"]);
 
     let show = show_stdout(&repo, &id);
     assert!(
@@ -201,7 +159,7 @@ fn migrate_to_3_0_is_accepted_by_cli() {
     let repo = fresh_repo();
     // No legacy refs: the run is a no-op, but the CLI must accept the
     // invocation (exit 0, no clap error).
-    let out = run(&repo, &["migrate", "--to", "3.0"]);
+    let out = run(repo.path(), &["migrate", "--to", "3.0"]);
     assert!(
         out.status.success(),
         "git-forum migrate --to 3.0 should succeed on a fresh repo:\nstdout: {}\nstderr: {}",
@@ -213,7 +171,7 @@ fn migrate_to_3_0_is_accepted_by_cli() {
 #[test]
 fn migrate_rejects_unsupported_to_value() {
     let repo = fresh_repo();
-    let out = run(&repo, &["migrate", "--to", "99.0"]);
+    let out = run(repo.path(), &["migrate", "--to", "99.0"]);
     assert!(
         !out.status.success(),
         "git-forum migrate --to 99.0 must be rejected"
@@ -228,7 +186,7 @@ fn migrate_rejects_unsupported_to_value() {
 #[test]
 fn migrate_without_to_is_rejected() {
     let repo = fresh_repo();
-    let out = run(&repo, &["migrate"]);
+    let out = run(repo.path(), &["migrate"]);
     assert!(
         !out.status.success(),
         "bare `git forum migrate` must be rejected; --to is required"

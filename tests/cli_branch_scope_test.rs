@@ -1,51 +1,21 @@
 mod support;
 
-use std::process::{Command, Output};
+use std::process::Command;
 
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::thread;
 
-fn extract_created_id(output: &Output) -> String {
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
-        .trim()
-        .strip_prefix("Created ")
-        .unwrap_or(stdout.trim())
-        .split_whitespace()
-        .next()
-        .unwrap()
-        .to_string()
-}
-
-fn git(repo: &support::repo::TestRepo, args: &[&str]) {
-    let output = Command::new("git")
-        .current_dir(repo.path())
-        .args(args)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .output()
-        .expect("failed to run git");
-    assert!(
-        output.status.success(),
-        "git command failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn create_real_branch(repo: &support::repo::TestRepo, branch: &str) {
-    git(repo, &["commit", "--allow-empty", "-m", "init"]);
-    git(repo, &["branch", branch]);
-}
+use support::cli::extract_created_id;
+use support::git::create_real_branch;
 
 #[test]
 fn thread_new_can_bind_branch_scope() {
     let repo = support::repo::TestRepo::new();
     let paths = RepoPaths::from_repo_root(repo.path());
     init::init_forum(&paths).unwrap();
-    create_real_branch(&repo, "feat/parser-rewrite");
+    create_real_branch(repo.path(), "feat/parser-rewrite");
 
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
@@ -71,7 +41,7 @@ fn branch_bind_and_clear_update_thread_scope() {
     let repo = support::repo::TestRepo::new();
     let paths = RepoPaths::from_repo_root(repo.path());
     init::init_forum(&paths).unwrap();
-    create_real_branch(&repo, "feat/solver");
+    create_real_branch(repo.path(), "feat/solver");
 
     let create = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())
@@ -115,7 +85,7 @@ fn issue_ls_can_filter_by_branch() {
     let repo = support::repo::TestRepo::new();
     let paths = RepoPaths::from_repo_root(repo.path());
     init::init_forum(&paths).unwrap();
-    create_real_branch(&repo, "v0.1.0");
+    create_real_branch(repo.path(), "v0.1.0");
 
     let issue_a = Command::new(env!("CARGO_BIN_EXE_git-forum"))
         .current_dir(repo.path())

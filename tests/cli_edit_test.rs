@@ -2,50 +2,15 @@ mod support;
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::process::{Command, Output};
+use std::process::Command;
 
-use git_forum::internal::config::RepoPaths;
-use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::init;
 use git_forum::internal::thread;
 
-fn extract_created_id(output: &Output) -> String {
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
-        .trim()
-        .strip_prefix("Created ")
-        .unwrap_or(stdout.trim())
-        .split_whitespace()
-        .next()
-        .unwrap()
-        .to_string()
-}
+use support::cli::{extract_created_id, make_thread_via_cli};
+use support::forum::setup;
 
-fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
-    let repo = support::repo::TestRepo::new();
-    let git = GitOps::new(repo.path().to_path_buf());
-    let paths = RepoPaths::from_repo_root(repo.path());
-    init::init_forum(&paths).unwrap();
-    (repo, git, paths)
-}
-
-/// Snapshot fixture: invoke `git forum new` to write a fresh SPEC-3.0
-/// thread. Replaces the legacy `create::create_thread` fixture path
-/// now that ADR-011 Decision 3 forbids non-migrate code paths from
-/// consuming legacy event chains.
-fn make_thread_via_cli(repo_path: &std::path::Path, kind: &str, title: &str, body: &str) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
-        .current_dir(repo_path)
-        .args(["new", kind, title, "--body", body])
-        .output()
-        .expect("failed to run");
-    assert!(
-        output.status.success(),
-        "make_thread_via_cli failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    extract_created_id(&output)
-}
+// Mock editor scripts are unique to this test file (the `--edit` UX
+// surface), so they stay local rather than moving to support::cli.
 
 /// Create a mock editor script that writes known content to the file.
 fn create_mock_editor(dir: &std::path::Path, content: &str) -> std::path::PathBuf {
