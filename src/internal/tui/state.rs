@@ -42,13 +42,22 @@ pub(super) fn open_thread_detail(
     // "_(timeline unavailable)_" placeholder, matching the same shape
     // CLI `git forum show` produces on those refs.
     let timeline_entries = history::read_log(git, &ref_name).ok();
-    app.thread_text = show::render_show(
-        &state,
-        &show::ShowOptions {
-            timeline_entries,
-            ..show::ShowOptions::default()
-        },
-    );
+    // task `px3ss55s`: TUI body pane consumes the typed section list
+    // directly so the three structured-section variants
+    // (`OpenObjections` / `OpenActions` / `Conversations`) can be
+    // styled with the node-kind palette. `thread_text` mirrors the
+    // joined CLI text for tests + as a debug fallback.
+    let options = show::ShowOptions {
+        timeline_entries,
+        ..show::ShowOptions::default()
+    };
+    let sections = show::render_full_sections(&state, &options);
+    let mut text_lines: Vec<String> = Vec::new();
+    for section in &sections {
+        text_lines.extend(section.to_text_lines());
+    }
+    app.thread_text = text_lines.join("\n");
+    app.thread_sections = sections;
     app.thread_scroll = 0;
     app.thread_nodes = state.nodes;
     app.tree_entries = build_tree_entries(&app.thread_nodes);

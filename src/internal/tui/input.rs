@@ -93,6 +93,7 @@ pub(super) fn handle_key(
                 persist::save_state(app, db_path);
                 app.view = View::List;
                 app.thread_text.clear();
+                app.thread_sections.clear();
                 app.thread_scroll = 0;
                 app.thread_nodes.clear();
                 app.tree_entries.clear();
@@ -373,6 +374,7 @@ pub(super) fn handle_mouse(
                     persist::save_state(app, db_path);
                     app.view = View::List;
                     app.thread_text.clear();
+                    app.thread_sections.clear();
                     app.thread_scroll = 0;
                     app.thread_nodes.clear();
                     app.tree_entries.clear();

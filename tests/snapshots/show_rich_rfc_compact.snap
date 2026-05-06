@@ -10,15 +10,17 @@
 
 Initial thread body.
 
-**open objections:** 1
-  - node-0001 Benchmarks are missing.
+## Open objections (1)
+
+  node-0001  ai/reviewer  Benchmarks are missing.
     resolve: git forum resolve RFC-a1b2c3d4 node-0001
     reply:   git forum claim RFC-a1b2c3d4 --reply-to node-0001 --body "..."
 
 **latest summary:**
   Direction is sound; migration evidence needed.
 
-conversations: 2
+## Conversations (2)
+
   node-0001 objection [open] ai/reviewer — Benchmarks are missing.
   node-0002 summary [open] human/alice — Direction is sound; migration evidence needed.
 

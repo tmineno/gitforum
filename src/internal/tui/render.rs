@@ -624,7 +624,10 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
             .and_then(|&ti| app.tree_entries.get(ti))
             .map(|entry| &app.thread_nodes[entry.node_index]);
 
-        let (body_title, body_content) = if let Some(node) = selected_node {
+        let inner_w = main[0].width.saturating_sub(2) as usize;
+        let (body_title, body_text): (String, ratatui::text::Text<'static>) = if let Some(node) =
+            selected_node
+        {
             let title = format!(" {} {} ", short_id(&node.record.id), node.record.kind);
             let mut content = String::new();
             content.push_str(&format!("**type:**     {}\n", node.record.kind));
@@ -648,52 +651,51 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
             if node.body.is_empty() {
                 content.push('\n');
             }
-            (title, content)
+            let text = string_to_body_text(&content, app.markdown_mode, inner_w);
+            (title, text)
         } else {
             // SPEC-2.0 §11: thread-detail header surfaces lifecycle + tags
             // (replacing 1.x kind), plus a one-line "linked" advisory panel
             // (incoming `implements` children, advisory only).
+            //
+            // task `px3ss55s`: structured sections (`OpenObjections` /
+            // `OpenActions` / `Conversations`) are rendered with the
+            // node-kind palette and bold headers; every other block
+            // (thread body, body revisions, incorporated, latest
+            // summary, evidence, links, timeline) flows through as
+            // plain text so its content is preserved.
             let lifecycle = app.thread_lifecycle.as_deref().unwrap_or("execution");
             let tags_line = if app.thread_tags.is_empty() {
                 "(none)".to_string()
             } else {
                 app.thread_tags.join(", ")
             };
-            let mut content = String::new();
-            content.push_str(&format!("**lifecycle:** {lifecycle}\n"));
-            content.push_str(&format!("**tags:**      {tags_line}\n"));
-            content.push_str(&format!("**status:**    {}\n", app.thread_status));
-            content.push_str("\n---\n\n");
-            content.push_str(&app.thread_text);
-            // Linked advisory panel — pure display, no enforcement.
-            // CORE-VALUE.md "Advisories": informational only.
-            content.push_str("\n\n---\n");
-            content.push_str(linked_panel_text());
-            content.push('\n');
-            (format!(" {thread_id_display} "), content)
+            let header_md = format!(
+                    "**lifecycle:** {lifecycle}\n**tags:**      {tags_line}\n**status:**    {}\n\n---\n",
+                    app.thread_status
+                );
+            let mut lines: Vec<Line<'static>> = Vec::new();
+            lines.extend(string_to_body_text(&header_md, app.markdown_mode, inner_w).lines);
+            lines.push(Line::from(""));
+            for section in &app.thread_sections {
+                extend_with_section(&mut lines, section, app.markdown_mode, inner_w);
+            }
+            let footer_md = format!("\n---\n{}\n", linked_panel_text());
+            lines.extend(string_to_body_text(&footer_md, app.markdown_mode, inner_w).lines);
+            (
+                format!(" {thread_id_display} "),
+                ratatui::text::Text::from(lines),
+            )
         };
 
         let body_block = Block::default().borders(Borders::ALL).title(body_title);
-        if app.markdown_mode {
-            // Inner width = area - 2 (left/right border)
-            let inner_w = main[0].width.saturating_sub(2) as usize;
-            let md_text = markdown_to_text(&body_content, Some(inner_w));
-            f.render_widget(
-                Paragraph::new(md_text)
-                    .block(body_block)
-                    .wrap(Wrap { trim: false })
-                    .scroll((app.thread_scroll, 0)),
-                main[0],
-            );
-        } else {
-            f.render_widget(
-                Paragraph::new(body_content)
-                    .block(body_block)
-                    .wrap(Wrap { trim: false })
-                    .scroll((app.thread_scroll, 0)),
-                main[0],
-            );
-        }
+        f.render_widget(
+            Paragraph::new(body_text)
+                .block(body_block)
+                .wrap(Wrap { trim: false })
+                .scroll((app.thread_scroll, 0)),
+            main[0],
+        );
     }
 
     // Thread root row: shows the thread itself as the first entry. SPEC-2.0
@@ -1339,4 +1341,139 @@ fn render_confirm_discard(f: &mut Frame, area: Rect) {
         .block(block)
         .wrap(Wrap { trim: false });
     f.render_widget(paragraph, popup_area);
+}
+
+// ============================================================
+//  Styled section rendering for the thread-detail body pane
+//  (task `px3ss55s`)
+// ============================================================
+//
+// The CLI builds `show::Section`s and joins their text. The TUI
+// body pane consumes the same sections but applies the node-kind
+// palette and bold headers to the three structured variants. Every
+// other variant (`Section::Text(_)`) flows through unchanged so
+// thread body, evidence, links, timeline, etc. stay visible.
+
+fn string_to_body_text(
+    s: &str,
+    markdown_mode: bool,
+    inner_w: usize,
+) -> ratatui::text::Text<'static> {
+    if markdown_mode {
+        markdown_to_text(s, Some(inner_w))
+    } else {
+        let lines: Vec<Line<'static>> = s.lines().map(|l| Line::from(l.to_string())).collect();
+        ratatui::text::Text::from(lines)
+    }
+}
+
+fn extend_with_section(
+    lines: &mut Vec<Line<'static>>,
+    section: &crate::internal::commands::show::Section,
+    markdown_mode: bool,
+    inner_w: usize,
+) {
+    // task `px3ss55s`: every section emits markdown text and is parsed
+    // by `markdown_to_text` so `##` / `###` / `>` / `-` render as
+    // styled headers, blockquotes, and bullets. The CLI cheat-sheet
+    // lines (`resolve:`, `reply:`) are stripped from the TUI text
+    // (per node `2ihwv7ge`) — the TUI uses keybindings on the focused
+    // row instead.
+    use crate::internal::commands::show::Section;
+    let text = match section {
+        Section::Text(plain) => {
+            if plain.is_empty() {
+                return;
+            }
+            plain.join("\n")
+        }
+        Section::OpenObjections(s) => open_items_markdown(s, "Open objections"),
+        Section::OpenActions(s) => open_items_markdown(s, "Open actions"),
+        Section::Conversations(s) => conversations_markdown(s),
+    };
+    if text.is_empty() {
+        return;
+    }
+    lines.extend(string_to_body_text(&text, markdown_mode, inner_w).lines);
+}
+
+fn open_items_markdown(
+    section: &crate::internal::commands::show::OpenItemsSection,
+    header: &str,
+) -> String {
+    if section.items.is_empty() {
+        return String::new();
+    }
+    let mut out: Vec<String> = Vec::new();
+    out.push(format!("## {} ({})", header, section.items.len()));
+    out.push(String::new());
+    for item in &section.items {
+        let preview = first_line_preview(&item.body, 80);
+        out.push(format!("- {} {} — {}", item.id_short, item.author, preview));
+    }
+    out.push(String::new());
+    out.join("\n")
+}
+
+fn conversations_markdown(
+    section: &crate::internal::commands::show::ConversationsSection,
+) -> String {
+    if section.chains.is_empty() {
+        return String::new();
+    }
+    let mut out: Vec<String> = Vec::new();
+    let header_text = if section.compact && section.incorporated_count > 0 {
+        format!(
+            "## Conversations ({}) ({} incorporated)",
+            section.chains.len(),
+            section.incorporated_count
+        )
+    } else {
+        format!("## Conversations ({})", section.chains.len())
+    };
+    out.push(header_text);
+    out.push(String::new());
+    for (i, chain) in section.chains.iter().enumerate() {
+        let root = &chain.nodes[0];
+        if section.compact {
+            out.push(format!(
+                "- {} {} [{}] {} — {}",
+                root.id_short,
+                root.label,
+                root.status_label,
+                root.author,
+                first_line_preview(&root.body, 60)
+            ));
+        } else {
+            out.push(format!(
+                "### {} {} [{}] {}",
+                root.id_short, root.label, root.status_label, root.author
+            ));
+            out.push(format!("> {}", first_line_preview(&root.body, 100)));
+            for reply in &chain.nodes[1..] {
+                out.push(format!(
+                    "- {} {} {} — {}",
+                    reply.id_short,
+                    reply.label,
+                    reply.author,
+                    first_line_preview(&reply.body, 80)
+                ));
+            }
+            if i + 1 < section.chains.len() {
+                out.push(String::new());
+            }
+        }
+    }
+    out.push(String::new());
+    out.join("\n")
+}
+
+fn first_line_preview(body: &str, max: usize) -> String {
+    let first = body.lines().next().unwrap_or("");
+    if first.chars().count() <= max {
+        first.to_string()
+    } else {
+        let truncated: String = first.chars().take(max).collect();
+        format!("{truncated}…")
+    }
 }

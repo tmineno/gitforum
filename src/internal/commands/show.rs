@@ -175,13 +175,235 @@ fn node_history_lines(node_id: &str, options: &ShowOptions) -> Vec<String> {
 }
 
 // ============================================================
-//  Mode: Full
+//  Mode: Full — section model
 // ============================================================
+//
+// task `px3ss55s`: `render_full` builds a `Vec<Section>` of typed
+// blocks, then joins them into the CLI string. The TUI calls
+// `render_full_sections` directly so it can render the three
+// structured-section variants (`OpenObjections`, `OpenActions`,
+// `Conversations`) with the node-kind palette while keeping every
+// other block (header, body, evidence, links, timeline, …) as
+// pre-formatted text. The CLI and TUI surfaces share the section
+// data, so counts and grouping cannot drift between them.
+
+/// One block of `git forum show --mode full` output. Each variant
+/// is independently elidable: a section that produces no rows
+/// emits no text on the CLI and no rendered region in the TUI.
+#[derive(Debug, Clone)]
+pub enum Section {
+    /// Pre-formatted CLI lines for any block other than the three
+    /// structured variants. Trailing blanks are part of the
+    /// section so the joined output preserves spacing.
+    Text(Vec<String>),
+    /// `Open objections (N)` — open `objection` nodes (gates
+    /// forward transitions via `no_open_objections`).
+    OpenObjections(OpenItemsSection),
+    /// `Open actions (N)` — open `action` nodes (gates forward
+    /// transitions via `no_open_actions`).
+    OpenActions(OpenItemsSection),
+    /// `Conversations (N)` — root nodes plus their transitive
+    /// replies, grouped via `build_conversations`.
+    Conversations(ConversationsSection),
+}
+
+/// Source data for `Open objections` / `Open actions` sections.
+#[derive(Debug, Clone)]
+pub struct OpenItemsSection {
+    pub thread_id: String,
+    pub items: Vec<OpenItem>,
+    /// `true` for objections (CLI emits the per-row `reply:`
+    /// cheat-sheet), `false` for actions (resolve only).
+    pub with_reply: bool,
+    /// Compact mode controls how the body preview is computed
+    /// (truncated to 60 chars vs first-line only).
+    pub compact: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct OpenItem {
+    pub id_short: String,
+    pub author: String,
+    pub body: String,
+    pub kind: super::super::node::NodeKind,
+}
+
+/// Source data for the `Conversations` section.
+#[derive(Debug, Clone)]
+pub struct ConversationsSection {
+    pub thread_id: String,
+    pub chains: Vec<ConversationChain>,
+    pub compact: bool,
+    /// Number of `Incorporated` nodes in the thread; surfaced as
+    /// the compact-mode `(N incorporated)` hint after the count.
+    pub incorporated_count: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConversationChain {
+    /// `nodes[0]` = root; subsequent entries are replies in BFS
+    /// order produced by `build_conversations`.
+    pub nodes: Vec<ConversationNode>,
+    /// Whether `nodes.last()` is `Open`. Drives the chain-trailing
+    /// `reply:` cheat-sheet line — matches today's
+    /// `push_conversations` `convo.last()` behaviour.
+    pub last_is_open: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConversationNode {
+    pub id_short: String,
+    pub kind: super::super::node::NodeKind,
+    /// Display label (legacy_subtype if set, else kind name).
+    pub label: String,
+    /// `node_status` string (`open`, `resolved`, …).
+    pub status_label: String,
+    pub author: String,
+    pub body: String,
+}
+
+impl Section {
+    /// Render this section as the CLI plain-text lines that today
+    /// live in `render_full`. Empty sections produce no lines so
+    /// callers can join the sections directly.
+    pub fn to_text_lines(&self) -> Vec<String> {
+        match self {
+            Section::Text(lines) => lines.clone(),
+            Section::OpenObjections(s) => render_open_items_text(s, "Open objections"),
+            Section::OpenActions(s) => render_open_items_text(s, "Open actions"),
+            Section::Conversations(s) => render_conversations_text(s),
+        }
+    }
+}
+
+/// Build the typed section list for `ShowMode::Full`. Both the CLI
+/// (via `render_full`) and the TUI body pane consume the same list.
+pub fn render_full_sections(state: &ThreadState, options: &ShowOptions) -> Vec<Section> {
+    let compact = options.compact;
+    let mut sections: Vec<Section> = Vec::new();
+
+    sections.push(Section::Text(build_header_lines(state, options)));
+
+    if !compact && state.body_revision_count > 0 {
+        sections.push(Section::Text(vec![format!(
+            "**body revisions:** {}",
+            state.body_revision_count
+        )]));
+    }
+
+    if !compact {
+        let mut buf: Vec<String> = Vec::new();
+        let incorporated: Vec<&super::super::snapshot::store::NodeWithBody> = state
+            .nodes
+            .iter()
+            .filter(|n| n.record.status == super::super::node::NodeStatus::Incorporated)
+            .collect();
+        render_item_list(&mut buf, "incorporated nodes", &incorporated, |node| {
+            format!(
+                "  - {} {} {}",
+                short_oid(&node.record.id),
+                node_display_label(node),
+                body_or_truncated(&node.body, 60, false)
+            )
+        });
+        if !buf.is_empty() {
+            sections.push(Section::Text(buf));
+        }
+    }
+
+    sections.push(Section::OpenObjections(collect_open_items_section(
+        &state.id,
+        &state.open_objections(),
+        compact,
+        true,
+    )));
+    sections.push(Section::OpenActions(collect_open_items_section(
+        &state.id,
+        &state.open_actions(),
+        compact,
+        false,
+    )));
+
+    if let Some(summary) = state.latest_summary() {
+        sections.push(Section::Text(vec![
+            "**latest summary:**".to_string(),
+            format!("  {}", summary.body),
+            String::new(),
+        ]));
+    }
+
+    if !compact {
+        let mut buf: Vec<String> = Vec::new();
+        render_item_list(&mut buf, "evidence", &state.evidence_items, |ev| {
+            let id_short = &ev.id[..ev.id.len().min(8)];
+            format!("  - {}  {}  {}", id_short, ev.kind, ev.ref_target)
+        });
+        if !buf.is_empty() {
+            sections.push(Section::Text(buf));
+        }
+    }
+
+    {
+        let mut buf: Vec<String> = Vec::new();
+        render_item_list(&mut buf, "links", &state.links, |link| {
+            format!("  - {}  {}", link.target_thread_id, link.rel)
+        });
+        if !buf.is_empty() {
+            sections.push(Section::Text(buf));
+        }
+    }
+
+    sections.push(Section::Conversations(collect_conversations_section(
+        &state.id, state, compact,
+    )));
+
+    if !options.no_timeline {
+        let mut buf: Vec<String> = Vec::new();
+        buf.push("---".into());
+        buf.push(String::new());
+        if compact {
+            let count = options
+                .timeline_entries
+                .as_ref()
+                .map(|e| e.len())
+                .unwrap_or(0);
+            buf.push(format!(
+                "**timeline:** {} commits (use 'log {}' for full view)",
+                count, state.id
+            ));
+        } else {
+            buf.push("### timeline".into());
+            buf.push(String::new());
+            buf.extend(thread_history_lines(options));
+        }
+        buf.push(String::new());
+        sections.push(Section::Text(buf));
+    }
+
+    if !compact && (!state.open_objections().is_empty() || !state.open_actions().is_empty()) {
+        sections.push(Section::Text(vec![
+            format!(
+                "tip: run `git forum show {} --what-next` for action guidance",
+                state.id
+            ),
+            String::new(),
+        ]));
+    }
+
+    sections
+}
 
 fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for section in render_full_sections(state, options) {
+        lines.extend(section.to_text_lines());
+    }
+    lines.join("\n")
+}
+
+fn build_header_lines(state: &ThreadState, options: &ShowOptions) -> Vec<String> {
     let compact = options.compact;
     let mut lines: Vec<String> = Vec::new();
-
     lines.push(format!("## {} {}", state.id, state.title));
     lines.push(String::new());
     // SPEC-2.0 classification (Finding 1): lifecycle + tags are the canonical 2.0
@@ -222,94 +444,178 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
         push_thread_body(&mut lines, state, body, compact);
     }
     lines.push(String::new());
+    lines
+}
 
-    if !compact && state.body_revision_count > 0 {
-        lines.push(format!("**body revisions:** {}", state.body_revision_count));
+fn collect_open_items_section(
+    thread_id: &str,
+    items: &[&super::super::snapshot::store::NodeWithBody],
+    compact: bool,
+    with_reply: bool,
+) -> OpenItemsSection {
+    OpenItemsSection {
+        thread_id: thread_id.to_string(),
+        with_reply,
+        compact,
+        items: items
+            .iter()
+            .map(|n| OpenItem {
+                id_short: short_oid(&n.record.id).to_string(),
+                author: n.record.created_by.clone(),
+                body: n.body.clone(),
+                kind: n.record.kind,
+            })
+            .collect(),
     }
+}
 
-    if !compact {
-        use super::super::node::NodeStatus;
-        let incorporated: Vec<&super::super::snapshot::store::NodeWithBody> = state
+fn collect_conversations_section(
+    thread_id: &str,
+    state: &ThreadState,
+    compact: bool,
+) -> ConversationsSection {
+    let incorporated_count = if compact {
+        state
             .nodes
             .iter()
-            .filter(|n| n.record.status == NodeStatus::Incorporated)
-            .collect();
-        render_item_list(&mut lines, "incorporated nodes", &incorporated, |node| {
-            format!(
-                "  - {} {} {}",
-                short_oid(&node.record.id),
-                node_display_label(node),
-                body_or_truncated(&node.body, 60, false)
-            )
-        });
-    }
-
-    push_open_items(
-        &mut lines,
-        &state.id,
-        "open objections",
-        &state.open_objections(),
+            .filter(|n| n.record.status == super::super::node::NodeStatus::Incorporated)
+            .count()
+    } else {
+        0
+    };
+    let chains: Vec<ConversationChain> = build_conversations(&state.nodes)
+        .into_iter()
+        .map(|chain| {
+            let last_is_open = chain
+                .last()
+                .map(|n| n.record.status == super::super::node::NodeStatus::Open)
+                .unwrap_or(false);
+            let nodes = chain
+                .iter()
+                .map(|n| ConversationNode {
+                    id_short: short_oid(&n.record.id).to_string(),
+                    kind: n.record.kind,
+                    label: node_display_label(n),
+                    status_label: node_status(n).to_string(),
+                    author: n.record.created_by.clone(),
+                    body: n.body.clone(),
+                })
+                .collect();
+            ConversationChain {
+                nodes,
+                last_is_open,
+            }
+        })
+        .collect();
+    ConversationsSection {
+        thread_id: thread_id.to_string(),
+        chains,
         compact,
-        true,
-    );
-    push_open_items(
-        &mut lines,
-        &state.id,
-        "open actions",
-        &state.open_actions(),
-        compact,
-        false,
-    );
-
-    if let Some(summary) = state.latest_summary() {
-        lines.push("**latest summary:**".into());
-        lines.push(format!("  {}", summary.body));
-        lines.push(String::new());
+        incorporated_count,
     }
+}
 
-    if !compact {
-        render_item_list(&mut lines, "evidence", &state.evidence_items, |ev| {
-            let id_short = &ev.id[..ev.id.len().min(8)];
-            format!("  - {}  {}  {}", id_short, ev.kind, ev.ref_target)
-        });
+fn render_open_items_text(section: &OpenItemsSection, header: &str) -> Vec<String> {
+    if section.items.is_empty() {
+        return Vec::new();
     }
-
-    render_item_list(&mut lines, "links", &state.links, |link| {
-        format!("  - {}  {}", link.target_thread_id, link.rel)
-    });
-
-    push_conversations(&mut lines, state, compact);
-
-    if !options.no_timeline {
-        lines.push("---".into());
-        lines.push(String::new());
-        if compact {
-            let count = options
-                .timeline_entries
-                .as_ref()
-                .map(|e| e.len())
-                .unwrap_or(0);
-            lines.push(format!(
-                "**timeline:** {} commits (use 'log {}' for full view)",
-                count, state.id
-            ));
-        } else {
-            lines.push("### timeline".into());
-            lines.push(String::new());
-            lines.extend(thread_history_lines(options));
-        }
-        lines.push(String::new());
-    }
-
-    if !compact && (!state.open_objections().is_empty() || !state.open_actions().is_empty()) {
-        lines.push(format!(
-            "tip: run `git forum show {} --what-next` for action guidance",
-            state.id
+    let mut out = Vec::new();
+    out.push(format!("## {} ({})", header, section.items.len()));
+    out.push(String::new());
+    for item in &section.items {
+        let preview = body_or_truncated(&item.body, 60, section.compact);
+        out.push(format!("  {}  {}  {}", item.id_short, item.author, preview));
+        out.push(format!(
+            "    resolve: git forum resolve {} {}",
+            section.thread_id, item.id_short
         ));
-        lines.push(String::new());
+        if section.with_reply {
+            out.push(format!(
+                "    reply:   git forum claim {} --reply-to {} --body \"...\"",
+                section.thread_id, item.id_short
+            ));
+        }
     }
+    out.push(String::new());
+    out
+}
 
-    lines.join("\n")
+fn render_conversations_text(section: &ConversationsSection) -> Vec<String> {
+    if section.chains.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    if section.compact {
+        let inc_hint = if section.incorporated_count > 0 {
+            format!(" ({} incorporated)", section.incorporated_count)
+        } else {
+            String::new()
+        };
+        out.push(format!(
+            "## Conversations ({}){}",
+            section.chains.len(),
+            inc_hint
+        ));
+        out.push(String::new());
+        for chain in &section.chains {
+            let root = &chain.nodes[0];
+            out.push(format!(
+                "  {} {} [{}] {} — {}",
+                root.id_short,
+                root.label,
+                root.status_label,
+                root.author,
+                single_line_preview(&root.body, 60)
+            ));
+        }
+    } else {
+        // task `px3ss55s`: non-compact mode renders each chain as a
+        // markdown h3 root, blockquote root preview, bullet list of
+        // replies, and the `reply:` cheat-sheet on the last open node.
+        // Full bodies live in `git forum node show <id>`.
+        out.push(format!("## Conversations ({})", section.chains.len()));
+        out.push(String::new());
+        for (i, chain) in section.chains.iter().enumerate() {
+            let root = &chain.nodes[0];
+            out.push(format!(
+                "### {} {} [{}] {}",
+                root.id_short, root.label, root.status_label, root.author
+            ));
+            out.push(format!("> {}", first_line_preview(&root.body, 100)));
+            for reply in &chain.nodes[1..] {
+                out.push(format!(
+                    "- {} {} {} — {}",
+                    reply.id_short,
+                    reply.label,
+                    reply.author,
+                    first_line_preview(&reply.body, 80)
+                ));
+            }
+            if chain.last_is_open {
+                out.push(String::new());
+                out.push(format!(
+                    "    reply: git forum claim {} --reply-to {} --body \"...\"",
+                    section.thread_id,
+                    chain.nodes.last().unwrap().id_short
+                ));
+            }
+            if i + 1 < section.chains.len() {
+                out.push(String::new());
+            }
+        }
+    }
+    out.push(String::new());
+    out
+}
+
+fn first_line_preview(body: &str, max: usize) -> String {
+    let first = body.lines().next().unwrap_or("");
+    if first.chars().count() <= max {
+        first.to_string()
+    } else {
+        let truncated: String = first.chars().take(max).collect();
+        format!("{truncated}…")
+    }
 }
 
 fn push_thread_body(lines: &mut Vec<String>, state: &ThreadState, body: &str, compact: bool) {
@@ -349,102 +655,6 @@ fn push_body_lines(lines: &mut Vec<String>, body: &str) {
     if body.is_empty() {
         lines.push(String::new());
     }
-}
-
-fn push_open_items(
-    lines: &mut Vec<String>,
-    thread_id: &str,
-    label: &str,
-    items: &[&super::super::snapshot::store::NodeWithBody],
-    compact: bool,
-    with_reply: bool,
-) {
-    if items.is_empty() {
-        return;
-    }
-    lines.push(format!("**{label}:** {}", items.len()));
-    for node in items {
-        let nid = short_oid(&node.record.id);
-        lines.push(format!(
-            "  - {nid} {}",
-            body_or_truncated(&node.body, 60, compact)
-        ));
-        lines.push(format!("    resolve: git forum resolve {thread_id} {nid}"));
-        if with_reply {
-            lines.push(format!(
-                "    reply:   git forum claim {thread_id} --reply-to {nid} --body \"...\""
-            ));
-        }
-    }
-    lines.push(String::new());
-}
-
-fn push_conversations(lines: &mut Vec<String>, state: &ThreadState, compact: bool) {
-    let conversations = build_conversations(&state.nodes);
-    if conversations.is_empty() {
-        return;
-    }
-    if compact {
-        use super::super::node::NodeStatus;
-        let inc_count = state
-            .nodes
-            .iter()
-            .filter(|n| n.record.status == NodeStatus::Incorporated)
-            .count();
-        let inc_hint = if inc_count > 0 {
-            format!(" ({inc_count} incorporated)")
-        } else {
-            String::new()
-        };
-        lines.push(format!(
-            "conversations: {}{}",
-            conversations.len(),
-            inc_hint
-        ));
-        for convo in &conversations {
-            let root = convo[0];
-            lines.push(format!(
-                "  {} {} [{}] {} — {}",
-                short_oid(&root.record.id),
-                node_display_label(root),
-                node_status(root),
-                root.record.created_by,
-                single_line_preview(&root.body, 60)
-            ));
-        }
-    } else {
-        lines.push(format!("conversations: {}", conversations.len()));
-        for convo in &conversations {
-            let root = convo[0];
-            lines.push(format!(
-                "  {} {} [{}] {}",
-                short_oid(&root.record.id),
-                node_display_label(root),
-                node_status(root),
-                body_or_truncated(&root.body, 50, false)
-            ));
-            render_indented_body(lines, &root.body, "      ");
-            for reply in &convo[1..] {
-                lines.push(format!(
-                    "    -> {} {} {} {}",
-                    short_oid(&reply.record.id),
-                    node_display_label(reply),
-                    reply.record.created_by,
-                    body_or_truncated(&reply.body, 50, false)
-                ));
-                render_indented_body(lines, &reply.body, "        ");
-            }
-            let last = convo.last().unwrap();
-            if last.record.status == super::super::node::NodeStatus::Open {
-                lines.push(format!(
-                    "    reply: git forum claim {} --reply-to {} --body \"...\"",
-                    state.id,
-                    short_oid(&last.record.id)
-                ));
-            }
-        }
-    }
-    lines.push(String::new());
 }
 
 /// SPEC-3.0 §3.1: derive the per-thread category-driven transition list.
@@ -835,9 +1045,12 @@ fn spine_indent(spine: &[&str], src: &str, current: &str) -> String {
 // ============================================================
 
 /// A conversation is a root node (no in-thread parent) plus all transitive
-/// replies, in chronological order. Only nodes participating in a reply
-/// chain appear; standalone nodes are shown elsewhere.
-fn build_conversations(
+/// replies, in chronological order. Standalone leaf nodes appear as a
+/// one-element chain (matches CLI / TUI shared semantics, task `px3ss55s`).
+///
+/// `pub(crate)` so the TUI body-pane composer (`internal::tui::render`)
+/// can reuse the grouping without duplicating logic.
+pub(crate) fn build_conversations(
     nodes: &[super::super::snapshot::store::NodeWithBody],
 ) -> Vec<Vec<&super::super::snapshot::store::NodeWithBody>> {
     use std::collections::{HashMap, HashSet, VecDeque};
@@ -901,15 +1114,6 @@ fn body_or_truncated(s: &str, max: usize, compact: bool) -> String {
         truncate_body(s, max)
     } else {
         s.lines().next().unwrap_or("").to_string()
-    }
-}
-
-fn render_indented_body(lines: &mut Vec<String>, body: &str, indent: &str) {
-    let body_lines: Vec<&str> = body.lines().collect();
-    if body_lines.len() > 1 {
-        for line in &body_lines[1..] {
-            lines.push(format!("{indent}{line}"));
-        }
     }
 }
 
