@@ -1360,6 +1360,7 @@ mod tests {
             updated_by: "human/test-user".into(),
             branch: None,
             supersedes: vec![],
+            visibility: Default::default(),
         });
         write_snapshot(git, &id, &doc, "create test thread").unwrap();
         id

@@ -40,6 +40,7 @@ fn write_test_snapshot(
         updated_by: "human/alice".into(),
         branch: None,
         supersedes: vec![],
+        visibility: Default::default(),
     });
     write_snapshot(git, &id, &doc, "init test snapshot").unwrap()
 }

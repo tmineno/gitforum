@@ -686,6 +686,7 @@ fn snapshot_create_thread(
             updated_by: actor.to_string(),
             branch: None,
             supersedes: Vec::new(),
+            visibility: Default::default(),
         },
         body: body.map(|b| b.to_string()),
         nodes: Vec::new(),

@@ -77,6 +77,7 @@ Optional fields:
 |---|---|---|
 | `branch` | string | Branch scope advisory. |
 | `supersedes` | array | Convenience summary of outgoing `supersedes` links, if implementations choose to denormalize. |
+| `visibility` | string | `"public"` or `"private"`. Controls whether the thread is materialized into the published namespace by `git forum push`. **Absent means `private`.** Older writers that drop unknown keys under-publish (recoverable) instead of leaking (unrecoverable); the asymmetry of failure modes locks the absent-is-private rule in. No `schema_version` bump is required. |
 
 The thread body is stored separately as `body.md` so ordinary Git diffs are useful.
 

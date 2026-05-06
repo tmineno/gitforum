@@ -376,6 +376,7 @@ pub fn run_canonical_thread_new(
                 .as_ref()
                 .map(|(sid, _)| vec![sid.clone()])
                 .unwrap_or_default(),
+            visibility: Default::default(),
         },
         body: effective_body,
         nodes,

@@ -748,10 +748,30 @@ fn format_thread_ambiguity(thread_id: &str, node_ref: &str, matches: &[&NodeWith
 // body.
 // --------------------------------------------------------------------
 
+/// SPEC-3.0 §2.1 visibility for the publish pipeline.
+///
+/// Absent on disk means [`Visibility::Private`]: an older writer
+/// that drops unknown keys under-publishes (recoverable) instead
+/// of leaking (unrecoverable). The asymmetry of failure modes
+/// locks the absent-is-private rule in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Visibility {
+    #[default]
+    Private,
+    Public,
+}
+
+impl Visibility {
+    pub fn is_default(&self) -> bool {
+        matches!(self, Visibility::Private)
+    }
+}
+
 /// SPEC-3.0 §2.1 / §4.2 thread metadata.
 ///
-/// Required fields per the SPEC-3.0 §2.1 table; `branch` and
-/// `supersedes` are optional convenience fields per the same section.
+/// Required fields per the SPEC-3.0 §2.1 table; `branch`,
+/// `supersedes`, and `visibility` are optional per the same section.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ThreadSnapshot {
     pub schema_version: u32,
@@ -770,6 +790,8 @@ pub struct ThreadSnapshot {
     pub branch: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub supersedes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Visibility::is_default")]
+    pub visibility: Visibility,
 }
 
 impl ThreadSnapshot {
@@ -825,6 +847,7 @@ mod thread_snapshot_tests {
             updated_by: "ai/codex".into(),
             branch: None,
             supersedes: Vec::new(),
+            visibility: Visibility::default(),
         }
     }
 
@@ -889,6 +912,74 @@ mod thread_snapshot_tests {
         assert!(
             !s.contains("supersedes"),
             "empty supersedes should be omitted: {s}"
+        );
+        assert!(
+            !s.contains("visibility"),
+            "default (private) visibility should be omitted: {s}"
+        );
+    }
+
+    #[test]
+    fn visibility_absent_means_private() {
+        // SPEC-3.0 §2.1: absent `visibility` deserializes to private.
+        // This is the non-negotiable rule that protects against older
+        // writers that drop unknown keys (under-publish, recoverable;
+        // not leak, unrecoverable).
+        let s = r#"
+            schema_version = 3
+            id = "fg61bcmp"
+            title = "T"
+            category = "rfc"
+            status = "draft"
+            tags = []
+            created_at = "2026-05-02T23:31:40Z"
+            created_by = "ai/codex"
+            updated_at = "2026-05-02T23:31:40Z"
+            updated_by = "ai/codex"
+        "#;
+        let parsed = ThreadSnapshot::from_toml(s).unwrap();
+        assert_eq!(parsed.visibility, Visibility::Private);
+    }
+
+    #[test]
+    fn visibility_round_trip_public() {
+        let original = ThreadSnapshot {
+            visibility: Visibility::Public,
+            ..sample_snapshot()
+        };
+        let s = original.to_toml().unwrap();
+        assert!(
+            s.contains("visibility = \"public\""),
+            "public visibility should serialize: {s}"
+        );
+        let parsed = ThreadSnapshot::from_toml(&s).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn visibility_round_trip_private_explicit() {
+        // Even an explicitly-private snapshot round-trips: parse
+        // accepts the explicit form, write omits it (idempotent on
+        // re-serialize since absent == private).
+        let s = r#"
+            schema_version = 3
+            id = "fg61bcmp"
+            title = "T"
+            category = "rfc"
+            status = "draft"
+            tags = []
+            created_at = "2026-05-02T23:31:40Z"
+            created_by = "ai/codex"
+            updated_at = "2026-05-02T23:31:40Z"
+            updated_by = "ai/codex"
+            visibility = "private"
+        "#;
+        let parsed = ThreadSnapshot::from_toml(s).unwrap();
+        assert_eq!(parsed.visibility, Visibility::Private);
+        let reserialized = parsed.to_toml().unwrap();
+        assert!(
+            !reserialized.contains("visibility"),
+            "round-tripped private should be omitted: {reserialized}"
         );
     }
 }
