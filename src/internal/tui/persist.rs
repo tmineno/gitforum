@@ -228,7 +228,6 @@ pub(super) fn load_state(db_path: &Path) -> Option<TuiState> {
 fn sort_column_to_str(col: SortColumn) -> &'static str {
     match col {
         SortColumn::Id => "id",
-        SortColumn::Lifecycle => "lifecycle",
         SortColumn::Status => "status",
         SortColumn::Created => "created",
         SortColumn::Updated => "updated",
@@ -239,11 +238,12 @@ fn sort_column_to_str(col: SortColumn) -> &'static str {
 fn sort_column_from_str(s: &str) -> SortColumn {
     match s {
         "id" => SortColumn::Id,
-        // v1 used "kind"; v2 reads it as "lifecycle".
-        "lifecycle" | "kind" => SortColumn::Lifecycle,
         "status" => SortColumn::Status,
         "created" => SortColumn::Created,
         "title" => SortColumn::Title,
+        // v1 used "kind"; v2 used "lifecycle". Both columns were
+        // removed in v3.1; old persisted state falls back to the
+        // default Updated sort.
         _ => SortColumn::Updated,
     }
 }
@@ -336,7 +336,6 @@ mod tests {
     fn sort_column_roundtrip() {
         for col in &[
             SortColumn::Id,
-            SortColumn::Lifecycle,
             SortColumn::Status,
             SortColumn::Created,
             SortColumn::Updated,
@@ -345,6 +344,14 @@ mod tests {
             let s = sort_column_to_str(*col);
             assert_eq!(sort_column_from_str(s), *col);
         }
+    }
+
+    /// Persisted "lifecycle"/"kind" from v1/v2 schema falls back to the
+    /// default Updated sort after the column was removed in v3.1.
+    #[test]
+    fn sort_column_legacy_lifecycle_falls_back_to_updated() {
+        assert_eq!(sort_column_from_str("lifecycle"), SortColumn::Updated);
+        assert_eq!(sort_column_from_str("kind"), SortColumn::Updated);
     }
 
     #[test]
@@ -448,7 +455,7 @@ markdown_mode = true
             detail_split: 35,
             split_horizontal: true,
             markdown_mode: true,
-            sort_column: "lifecycle".to_string(),
+            sort_column: "status".to_string(),
             sort_ascending: true,
             filter_lifecycles: vec!["proposal".to_string()],
             filter_statuses: vec!["open".to_string()],
@@ -460,7 +467,7 @@ markdown_mode = true
         assert_eq!(app.detail_split, 35);
         assert!(app.split_horizontal);
         assert!(app.markdown_mode);
-        assert_eq!(app.sort_column, SortColumn::Lifecycle);
+        assert_eq!(app.sort_column, SortColumn::Status);
         assert!(app.sort_ascending);
         assert!(app.filter.lifecycles.contains("proposal"));
         assert!(app.filter.statuses.contains("open"));
@@ -513,7 +520,9 @@ sort_column = "kind"
         assert!(app.filter.lifecycles.contains("execution"));
         assert!(app.filter.tags.contains("bug"));
         assert!(app.filter.tags.contains("task"));
-        assert_eq!(app.sort_column, SortColumn::Lifecycle);
+        // "kind" was a v1 alias for the removed Lifecycle sort column;
+        // it now falls back to the Updated default.
+        assert_eq!(app.sort_column, SortColumn::Updated);
     }
 
     #[test]

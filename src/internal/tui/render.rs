@@ -328,7 +328,6 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
         let rows: Vec<Row> = visible
             .iter()
             .map(|t| {
-                let lifecycle = row_lifecycle(t);
                 let tags = row_tags(t);
                 let title_cell = if tags.is_empty() {
                     t.title.clone()
@@ -337,8 +336,6 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
                 };
                 Row::new(vec![
                     Cell::from(display_thread_id(&t.id)),
-                    Cell::from(lifecycle.clone())
-                        .style(Style::default().fg(lifecycle_color(&lifecycle))),
                     Cell::from(t.status.clone())
                         .style(Style::default().fg(status_color(&t.status))),
                     Cell::from(short_datetime(&t.created_at)),
@@ -353,12 +350,11 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
     let widths = [
         Constraint::Length(13),
         Constraint::Length(11),
-        Constraint::Length(11),
         Constraint::Length(12),
         Constraint::Length(12),
         Constraint::Min(20),
     ];
-    let labels = ["ID", "LIFECYCLE", "STATUS", "CREATED", "UPDATED", "TITLE"];
+    let labels = ["ID", "STATUS", "CREATED", "UPDATED", "TITLE"];
     let indicator = if app.sort_ascending {
         " \u{25b2}"
     } else {

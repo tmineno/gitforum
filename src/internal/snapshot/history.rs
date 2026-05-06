@@ -162,6 +162,12 @@ fn op_detail(entry: &SnapshotLogEntry) -> String {
 ///
 /// Uses `git log --name-only` so each entry carries its changed-paths
 /// list — required by [`entries_touching`] for per-node filtering.
+///
+/// The `author` field is resolved to the SPEC-3.0 forum actor by reading
+/// `thread.toml.updated_by` at each commit's tree (the snapshot writers
+/// in `tui::state` and the CLI commands always bump `updated_by` to the
+/// active actor before committing). Falls back to the git `%an` value
+/// for legacy commits whose tree lacks a parseable `thread.toml`.
 pub fn read_log(git: &GitOps, refname: &str) -> ForumResult<Vec<SnapshotLogEntry>> {
     // Custom format with a unique record separator (`\x1e`, RS) and
     // field separator (`\x1f`, US) so we can parse without splitting
@@ -177,7 +183,7 @@ pub fn read_log(git: &GitOps, refname: &str) -> ForumResult<Vec<SnapshotLogEntry
         let mut fields = header.splitn(4, '\x1f');
         let sha = fields.next().unwrap_or("").to_string();
         let iso = fields.next().unwrap_or("");
-        let author = fields.next().unwrap_or("").to_string();
+        let git_author = fields.next().unwrap_or("").to_string();
         let subject = fields.next().unwrap_or("").to_string();
         if sha.is_empty() {
             continue;
@@ -185,13 +191,14 @@ pub fn read_log(git: &GitOps, refname: &str) -> ForumResult<Vec<SnapshotLogEntry
         let timestamp = DateTime::parse_from_rfc3339(iso)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
-        let changed_paths = paths_block
+        let changed_paths: Vec<String> = paths_block
             .lines()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
             .collect();
         let op = parse_subject(&subject);
+        let author = forum_actor_at(git, &sha, &op).unwrap_or(git_author);
         entries.push(SnapshotLogEntry {
             sha,
             timestamp,
@@ -202,6 +209,24 @@ pub fn read_log(git: &GitOps, refname: &str) -> ForumResult<Vec<SnapshotLogEntry
         });
     }
     Ok(entries)
+}
+
+/// Read the forum actor recorded in `thread.toml` at a given commit.
+///
+/// For most operations we use `updated_by` (which is bumped on every
+/// snapshot write per SPEC-3.0 §5.3). For the initial `thread-create`
+/// commit `created_by` is equivalent and we keep `updated_by` for
+/// uniformity. Returns `None` when the commit lacks a parseable
+/// `thread.toml` (legacy event-chain commits, or pre-3.0 trees).
+fn forum_actor_at(git: &GitOps, sha: &str, _op: &SnapshotOp) -> Option<String> {
+    let toml_text = git.show_file(sha, "thread.toml").ok()?;
+    #[derive(serde::Deserialize)]
+    struct ActorProbe {
+        updated_by: Option<String>,
+        created_by: Option<String>,
+    }
+    let probe: ActorProbe = toml::from_str(&toml_text).ok()?;
+    probe.updated_by.or(probe.created_by)
 }
 
 /// Subset of `entries` whose `changed_paths` touched any of `path_prefixes`.

@@ -199,16 +199,14 @@ pub(super) const FILTER_STATUS_LABELS: [&str; 8] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SortColumn {
     Id,
-    Lifecycle,
     Status,
     Created,
     Updated,
     Title,
 }
 
-pub(super) const SORT_COLUMNS: [SortColumn; 6] = [
+pub(super) const SORT_COLUMNS: [SortColumn; 5] = [
     SortColumn::Id,
-    SortColumn::Lifecycle,
     SortColumn::Status,
     SortColumn::Created,
     SortColumn::Updated,
@@ -253,7 +251,7 @@ struct UiRects {
     /// Dropdown area in form views (right pane).
     dropdown: Option<Rect>,
     /// Column header rects for click-to-sort in list view.
-    column_headers: [Option<Rect>; 6],
+    column_headers: [Option<Rect>; 5],
     /// Filter label area in list view help line.
     filter_label: Option<Rect>,
     /// Filter popup area (when open).
@@ -447,7 +445,6 @@ impl App {
         rows.sort_by(|a, b| {
             let ord = match self.sort_column {
                 SortColumn::Id => a.id.cmp(&b.id),
-                SortColumn::Lifecycle => render::row_lifecycle(a).cmp(&render::row_lifecycle(b)),
                 SortColumn::Status => a.status.cmp(&b.status),
                 SortColumn::Created => a.created_at.cmp(&b.created_at),
                 SortColumn::Updated => a.updated_at.cmp(&b.updated_at),
@@ -1476,8 +1473,8 @@ mod tests {
 
         let _ = render_to_string(&mut app, 100, 20);
 
-        // Click on the "CREATED" column header (4th column)
-        let header_rect = app.ui_rects.column_headers[3].unwrap();
+        // Click on the "CREATED" column header (3rd column after LIFECYCLE removal)
+        let header_rect = app.ui_rects.column_headers[2].unwrap();
         let click = mouse_event(
             MouseEventKind::Down(MouseButton::Left),
             header_rect.x + 1,
@@ -2271,10 +2268,12 @@ mod tests {
     // JOB-d4cdyi5b AC#10 — Track H acceptance tests
     // ------------------------------------------------------------------
 
-    /// AC#10: list-view row renders the lifecycle column, tag chip prefix,
-    /// and `@`-marker on bare-token IDs (legacy IDs unchanged).
+    /// AC#10: list-view row renders the tag chip prefix and `@`-marker
+    /// on bare-token IDs (legacy IDs unchanged). The LIFECYCLE column
+    /// was removed in v3.1.x — lifecycle is still surfaced on the
+    /// thread-detail header and via the filter popup.
     #[test]
-    fn list_row_shows_lifecycle_and_tag_chip_with_at_marker() {
+    fn list_row_shows_tag_chip_with_at_marker() {
         let rows = vec![
             // Bare 8-char token → @-marker
             make_row("a7f3b2x1", "issue", "open", "fix the bug"),
@@ -2289,8 +2288,8 @@ mod tests {
             "legacy ID should render unchanged:\n{out}"
         );
         assert!(
-            out.contains("LIFECYCLE"),
-            "expected LIFECYCLE column header:\n{out}"
+            !out.contains("LIFECYCLE"),
+            "LIFECYCLE column was removed but header is still rendered:\n{out}"
         );
         // Tag chip prefix on the title cell
         assert!(
