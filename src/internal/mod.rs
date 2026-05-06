@@ -28,5 +28,4 @@ pub mod validate;
 // - `state_change`, `write_ops`, `create`, `repair`, `repair_workflow`,
 //   `prune`, `purge`, `timeline`, `index`, `reindex`, `github`,
 //   `github_import`, `github_export`, and `commands::repair_workflow`
-//   were `git rm`'d by task `913c4s9v` per the DELETE list in
-//   `doc/internal/3.0-removal-plan.md`.
+//   were `git rm`'d by task `913c4s9v`.

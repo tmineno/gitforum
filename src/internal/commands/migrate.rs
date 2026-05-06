@@ -550,7 +550,7 @@ fn build_archive_ndjson(events: &[event::Event]) -> ForumResult<Vec<u8>> {
 /// reader and project the resulting state back into a SPEC-3.0
 /// [`ThreadDocument`].
 ///
-/// Per SPEC-3.0 §8.1 step 4 (and task `9635buy0` item 5), the
+/// Per SPEC-3.0 §8.1 status projection and task `9635buy0`, the
 /// projected snapshot's `status` is the legacy final status when it
 /// is valid in the target category's `statuses` list (e.g. a `done`
 /// v1 RFC stays `done`); otherwise it falls back to the target
@@ -727,7 +727,7 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
     let category = state.category.clone();
     let label = super::super::policy::lifecycle_label_for(&category, &tags);
     super::thread_new::augment_tags_for_lifecycle_label(label, &mut tags);
-    // SPEC-3.0 §8.1 step 4: preserve the replayed legacy final
+    // SPEC-3.0 §8.1 status projection: preserve the replayed legacy final
     // status when it is valid in the target category's `statuses`
     // list; otherwise fall back to the category's `initial_status`
     // and surface a `state` omission so the report explains the

@@ -263,7 +263,7 @@ fn state_event(thread_id: &str, new_state: &str, ts_offset_min: i64) -> Event {
 fn migrate_preserves_legacy_done_status_end_to_end() {
     // Regression: prior migrator hard-reset every thread to its
     // category's `initial_status`, so a `done` v1 task became `open`
-    // post-migrate. SPEC-3.0 §8.1 step 4 (revised): preserve the
+    // post-migrate. SPEC-3.0 §8.1 status projection: preserve the
     // legacy final status when it is valid in the target category.
     let (repo, git, _paths) = setup();
     let id = id_alloc::alloc_thread_id_with_nonce(

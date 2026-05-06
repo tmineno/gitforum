@@ -38,12 +38,12 @@ The following capabilities are implemented and tested in the 2.0 surface (or car
 - Case-insensitive thread lookup and repair command
 - Advisory one-hop `--rel implements` view via `git forum show <ID> --tree` (SPEC-2.0 §2.1)
 - Read-only single-thread digest for AI agents and scripts: `git forum brief <ID> [--json]`
-  with a stable v1 schema (RFC-5wf2v8hv)
+  with a stable v1 schema (RFC `5wf2v8hv`)
 
 ### Discussion nodes
 
 - Four canonical typed nodes — `comment`, `approval`, `objection`, `action` — chosen by
-  protocol effect (SPEC-2.0 §2.5 / ADR-006)
+  protocol effect (SPEC-2.0 §2.5)
 - Shorthand CLI commands for `comment`, `objection`, `action`; `approval` is appended via the
   `--approve <ACTOR>` flag on state-change commands
 - Legacy 1.x types (`claim`, `question`, `summary`, `risk`, `review`, `alternative`,
@@ -171,17 +171,17 @@ Active issues awaiting implementation:
 
 ### CLI improvements
 
-- `@<issue>` (1.x ID `ISSUE-0106`) — Add `--json` output mode to `show` command
+- thread `g0nh5fjf` — Add `--json` output mode to `show` command
 
 ## Draft RFCs
 
 Design proposals not yet open / done:
 
-- `@<rfc>` (1.x ID `RFC-0001`) — Auto-propagate commit evidence to linked threads (open)
-- `@<rfc>` (1.x ID `RFC-0019`) — Web UI: embedded HTTP server via `git forum serve`
-- `@<rfc>` (1.x ID `RFC-0022`) — Advisory workflow features: brief, scope tracking,
+- thread `sb7fmsjj` — Auto-propagate commit evidence to linked threads (open)
+- thread `fq5xcnr8` — Web UI: embedded HTTP server via `git forum serve`
+- thread `bg7tojsh` — Advisory workflow features: brief, scope tracking,
   spec-delta warnings, escalation hints
-- `@6m4kap23` (`RFC-6m4kap23`) — Spawn Claude Code to fix selected issue (`git forum fix`)
+- thread `6m4kap23` — Spawn Claude Code to fix selected issue (`git forum fix`)
 
 ## Future considerations
 

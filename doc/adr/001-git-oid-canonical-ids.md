@@ -1,4 +1,4 @@
-# ADR-001: Git OID Canonical IDs
+# SPEC-3.0 §6: Git OID Canonical IDs
 
 ## Context
 

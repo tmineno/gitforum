@@ -32,9 +32,8 @@ use syn::visit::Visit;
 use walkdir::WalkDir;
 
 /// Modules whose existence in non-migrate code paths is what task `913c4s9v`
-/// removes. The list combines the DELETE table (lines 152-168 of
-/// `doc/internal/3.0-removal-plan.md`) with the MOVE-TO-LEGACY targets
-/// `event` and `workflow` (lines 145-146).
+/// removes. The list combines the task `913c4s9v` DELETE modules with
+/// the MOVE-TO-LEGACY targets `event` and `workflow`.
 const FORBIDDEN_MODULES: &[&str] = &[
     // MOVE-TO-LEGACY (relocate into internal::legacy/ during task `913c4s9v`)
     "event",

@@ -7,9 +7,7 @@
 //! its `tests/storage_v3_test.rs` counterpart that asserts the
 //! snapshot-tree shape.
 //!
-//! See `doc/internal/cli-coverage-audit.md` and
-//! `doc/internal/main-rs-audit.md` for the task `1hg98odf`
-//! cutover map.
+//! The task `1hg98odf` cutover map is tracked by task `1hg98odf`.
 //!
 //! Slot 1 (`thread_new`) was the only originally-locked entry; it was
 //! removed at task `1hg98odf`. The matching v3

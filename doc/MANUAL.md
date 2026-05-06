@@ -5,7 +5,7 @@
 > (`rfc`, `dec`, `task`, `issue`/`bug`) live on as top-level shortcuts
 > that map to a (category, tag) pair (SPEC-3.0 §2.4 / §8.3). Discussion
 > uses four canonical node kinds — `comment`, `approval`, `objection`,
-> `action` — chosen by protocol effect (SPEC-3.0 §2.2 / ADR-006).
+> `action` — chosen by protocol effect (SPEC-3.0 §2.2).
 > Thread states are unified across categories: `draft`, `open`,
 > `working`, `review`, `done`, `rejected`, `withdrawn`, `deprecated`
 > (SPEC-3.0 §3.1). Thread IDs display as `@XXXXXXXX` and store as the
@@ -125,7 +125,7 @@ branches `rejected`, `withdrawn`, `deprecated`. The shorthand commands
 `comment` (informational), `approval` (advances policy guards),
 `objection` (blocks forward transitions while open), `action`
 (blocks forward transitions while open if the policy
-`NoOpenActions` guard is in effect). Per SPEC-3.0 §2.2 and ADR-006
+`NoOpenActions` guard is in effect). Per SPEC-3.0 §2.2
 the rhetorical 1.x shorthands (`claim`, `question`, `summary`,
 `risk`, `review`) are no longer node kinds in 3.0; they survive in
 migrated threads as a `legacy_label` on `comment` nodes.
@@ -376,7 +376,7 @@ sets `thread.toml.status` back to `open` from a closed state.
 ### Reply to a node
 
 ```text
-git forum comment @1hg98odf "Agreed, see RFC-2.5" --reply-to <NODE>
+git forum comment @1hg98odf "Agreed, see SPEC-3.0 §2.5" --reply-to <NODE>
 ```
 
 The new node's `reply_to` field points at the parent. The TUI
@@ -1007,7 +1007,7 @@ After migration, every `refs/forum/threads/<id>` carries a
 in Git history (the ref's `git log` shows them), but the
 authoritative read state is the snapshot at HEAD.
 
-Per ADR-011 Decision 3, only the migrate command may consume
+Per task `1v400j3l`, only the migrate command may consume
 legacy event chains. Any other command that encounters an
 unmigrated ref bails with `LegacyEventChain` and asks the
 operator to migrate first.

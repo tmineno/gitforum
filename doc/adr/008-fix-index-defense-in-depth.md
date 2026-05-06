@@ -1,4 +1,4 @@
-# ADR-008: fix-index Is Defense-in-Depth, Not a Fix for a Known Cause
+# thread `0edk3jdm`: fix-index Is Defense-in-Depth, Not a Fix for a Known Cause
 
 ## Context
 
@@ -7,11 +7,11 @@
 1. Index entries that reference blobs missing from the local object store (re-hashes the working-tree copy).
 2. HEAD-tree entries that reference blobs missing from the local object store (re-stages the working-tree copy so the next commit lands a fresh tree).
 
-Earlier text in `doc/spec/SPEC.md:760` and `doc/MANUAL.md:1102-1105` claimed the cause was "GC in worktrees" and that the recovery exists to "prevent pre-commit framework crashes during the stash/restore cycle." Both claims were investigated under issue `@0edk3jdm` (Phase 1) and found to be unsupported.
+Earlier text in `doc/spec/SPEC.md:760` and `doc/MANUAL.md:1102-1105` claimed the cause was "GC in worktrees" and that the recovery exists to "prevent pre-commit framework crashes during the stash/restore cycle." Both claims were investigated under thread `0edk3jdm` and found to be unsupported.
 
 ## Decision
 
-Document `fix-index` as defense-in-depth recovery, **not** as a known-cause fix. Drop the GC-causation language from the spec and manual. Refer readers to the `@0edk3jdm` Phase 1 investigation for the negative-result evidence rather than re-asserting the discarded explanation.
+Document `fix-index` as defense-in-depth recovery, **not** as a known-cause fix. Drop the GC-causation language from the spec and manual. Refer readers to thread `0edk3jdm` for the negative-result evidence rather than re-asserting the discarded explanation.
 
 ## Consequences
 
@@ -21,9 +21,9 @@ Document `fix-index` as defense-in-depth recovery, **not** as a known-cause fix.
 
 ## Alternatives
 
-- **Speculate a cause and ship a redesign.** Rejected — that is what `@0edk3jdm` originally proposed (templates redesign to "prevent" the recovery). Phase 1 showed templates were correlation, not cause; pre-commit's "stash" is a patch file (no git refs); standard cross-worktree GC does not prune HEAD-reachable blobs. Any redesign without a reproducible mechanism would be a fix-by-coincidence.
+- **Speculate a cause and ship a redesign.** Rejected — that is what thread `0edk3jdm` originally proposed (templates redesign to "prevent" the recovery). The investigation showed templates were correlation, not cause; pre-commit's "stash" is a patch file (no git refs); standard cross-worktree GC does not prune HEAD-reachable blobs. Any redesign without a reproducible mechanism would be a fix-by-coincidence.
 - **Delete `fix-index` outright.** Rejected — the wild incidents during v2.0.0 work were real (commits `b732222`, `293c0e6`, `fa24c13` all needed `--no-verify`). The recovery code earned its keep even if the cause is unidentified.
-- **Re-derive the explanation from probes.** Rejected — Phase 1 already ran 12 scenarios across three probe scripts (cross-worktree GC, bare-flip topology, working-tree clobber, real pre-commit framework with stash dance, concurrent gc during commit, SIGINT mid-flow). All passed. Adding more speculative scenarios is unlikely to find the cause.
+- **Re-derive the explanation from probes.** Rejected — thread `0edk3jdm` already ran 12 scenarios across three probe scripts (cross-worktree GC, bare-flip topology, working-tree clobber, real pre-commit framework with stash dance, concurrent gc during commit, SIGINT mid-flow). All passed. Adding more speculative scenarios is unlikely to find the cause.
 
 ## Exit criteria
 
@@ -33,7 +33,7 @@ Document `fix-index` as defense-in-depth recovery, **not** as a known-cause fix.
 
 ## References
 
-- `@0edk3jdm` — original "permanent fix-index resolution" issue (rejected after Phase 1).
-- `@980mt8qp` — the docs-correction issue this ADR closes.
+- thread `0edk3jdm` — original "permanent fix-index resolution" issue.
+- thread `980mt8qp` — the docs-correction issue this ADR closes.
 - `src/internal/hook.rs::fix_index_blobs` — the recovery code.
 - `src/internal/hook.rs::tests::fix_index_repairs_missing_head_tree_blob` — recovery test against artificial corruption.

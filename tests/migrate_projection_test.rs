@@ -1,9 +1,9 @@
 //! Unit-level coverage for the `migrate_legacy_to_snapshot`
-//! projection (task `9635buy0` / items 5 + 6).
+//! projection (task `9635buy0`).
 //!
 //! Two SPEC-3.0 §8 invariants under test:
 //!
-//! - Item 5 / §8.1 step 4: the projected snapshot's `status` is the
+//! - SPEC-3.0 §8.1 status projection: the projected snapshot's `status` is the
 //!   replayed legacy final status when it is valid in the target
 //!   category's `statuses` list (every v3 category includes `done`,
 //!   `rejected`, etc., so terminal states survive); otherwise the
@@ -14,8 +14,8 @@
 //!   land on the projected `tags` even when the source chain has no
 //!   `facet_set`.
 //!
-//! The walk + write side (`commands::migrate::run`) is wired in a
-//! later step; this test calls the projection helper directly.
+//! The walk + write side (`commands::migrate::run`) is separate from
+//! this projection helper coverage.
 
 mod support;
 
@@ -80,7 +80,7 @@ fn build_chain(git: &GitOps, kind: ThreadKind, title: &str, tail: Vec<Event>) ->
 
 #[test]
 fn projection_preserves_legacy_done_for_rfc() {
-    // SPEC-3.0 §8.1 step 4 (post-fix): a v1 RFC whose final state is
+    // SPEC-3.0 §8.1 status projection: a v1 RFC whose final state is
     // `accepted` (a 1.x synonym for canonical `done`) must project to
     // `done`, because the v3 `rfc` category's `statuses` list includes
     // `done`. The legacy final status is NOT silently reset.

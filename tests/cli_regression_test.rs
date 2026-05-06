@@ -6,7 +6,7 @@
 //! must stay green across each task `1hg98odf` cutover; storage-shape coverage
 //! is versioned by storage schema under `tests/storage_v{2,3}_test.rs`.
 //!
-//! Coverage map: see `doc/internal/cli-coverage-audit.md`.
+//! Coverage map is tracked by task `4w8hm98j` and task `1hg98odf`.
 
 mod support;
 

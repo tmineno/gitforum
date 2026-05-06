@@ -1,4 +1,4 @@
-# ADR-006: Node Type Reduction
+# SPEC-3.0 §2.2: Node Type Reduction
 
 ## Context
 

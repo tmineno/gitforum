@@ -1,5 +1,5 @@
 //! Comprehensive `git forum migrate --to 3.0` validity test
-//! (task `9635buy0` / item 14).
+//! (task `9635buy0`).
 //!
 //! Two fixtures, four legacy kinds each:
 //!
@@ -16,7 +16,7 @@
 //!
 //! - `read_snapshot` succeeds (round-trip).
 //! - `status` equals the target category's `initial_status` from
-//!   `CategoryRegistry::built_in()` (§8.1 step 4).
+//!   `CategoryRegistry::built_in()` (SPEC-3.0 §8.1 status projection).
 //! - `tags` include the canonical augmentation per §8.3
 //!   (`bug` for `Issue`, `decision` for `Dec`).
 //! - The legacy chain commits remain reachable as ancestors of

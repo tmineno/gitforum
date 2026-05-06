@@ -13,9 +13,8 @@
 //!    matches the v3 invariant. They are `#[ignore]`-gated until each
 //!    task `1hg98odf` cutover lands; the matching cutover commit removes the
 //!    `#[ignore]` and the corresponding entry in
-//!    `tests/storage_v2_test.rs`. See `doc/internal/main-rs-audit.md`
-//!    for slot order and `doc/internal/cli-coverage-audit.md` for
-//!    cutover discipline.
+//!    `tests/storage_v2_test.rs`. Slot order and cutover discipline are
+//!    tracked by task `1hg98odf`.
 
 mod support;
 
