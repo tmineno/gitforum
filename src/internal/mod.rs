@@ -15,6 +15,7 @@ pub mod lint_emit;
 pub mod node;
 pub mod operation_check;
 pub mod policy;
+pub mod publish;
 pub mod refs;
 pub mod snapshot;
 pub mod thread;
