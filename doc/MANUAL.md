@@ -859,13 +859,44 @@ git forum --version
 
 ### Repository setup
 
+`git forum init` covers two distinct entry points:
+
+**First-time setup in a new repo.** Run from the repo root.
+
 ```text
 git forum init
 ```
 
-`init` creates `./.forum/` with the default `policy.toml`,
-configures the `refs/forum/*` refspec for fetch/push, and
-prints next-step hints. Run from the repo root.
+Init creates `./.forum/` with the default `policy.toml`, the
+templates directory, the per-clone `.git/forum/` state and a
+`local.toml` with your default actor, configures the
+`+refs/forum/*:refs/forum/*` refspec on every git remote, and
+installs the `commit-msg` / `post-checkout` hooks.
+
+**After cloning a repo that already uses git-forum.** A plain
+`git clone` does not bring `refs/forum/*` along — Git's default
+clone refspec only covers `refs/heads/*` and `refs/tags/*`. The
+worktree will contain `.forum/policy.toml` (because it was
+tracked upstream), but `git forum ls` will show no threads until
+init has run.
+
+```text
+git clone <url> some-repo
+cd some-repo
+git forum init
+git forum ls
+```
+
+In this mode init detects the existing `.forum/policy.toml`,
+skips re-seeding shared config, registers the fetch refspec on
+each remote, fetches forum refs (reporting how many thread refs
+were pulled), and creates `.git/forum/` and `local.toml`.
+
+`git forum doctor` recognises the post-clone state explicitly: a
+repo with `.forum/` content but no `.git/forum/` and no
+`refs/forum/*` refs locally is reported as
+"fresh clone detected — run `git forum init`" rather than as a
+hard failure.
 
 ### Hooks
 

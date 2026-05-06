@@ -82,6 +82,25 @@ pub fn run_doctor_strict(git: &GitOps, paths: &RepoPaths) -> ForumResult<DoctorR
 fn run_with_mode(git: &GitOps, paths: &RepoPaths, strict: bool) -> ForumResult<DoctorReport> {
     let mut checks = Vec::new();
 
+    // 0. Fresh-clone detection. A repo that was just cloned from a
+    //    git-forum-using upstream looks like this: `.forum/policy.toml`
+    //    is tracked (so it's present in the worktree), but `.git/forum/`
+    //    has never been created locally and `refs/forum/*` haven't been
+    //    fetched yet (refspec defaults don't include them — see
+    //    SPEC-3.0 §10). Without this check the user sees a noisy FAIL
+    //    on `.git/forum/ directory` and a separate WARN on missing
+    //    refspec, with no obvious path forward. Surface a single clear
+    //    "run `git forum init`" message and downgrade the .git/forum/
+    //    FAIL to WARN so doctor doesn't exit non-zero on a benign
+    //    post-clone state.
+    let fresh_clone = is_fresh_clone(git, paths);
+    if fresh_clone {
+        checks.push(warn(
+            "fresh clone detected",
+            "this repo has .forum/ config but no local forum state yet; run `git forum init` to register the fetch refspec, fetch refs/forum/*, and create .git/forum/",
+        ));
+    }
+
     // 1. .forum/ directory
     checks.push(check_dir(".forum/ directory", &paths.dot_forum));
 
@@ -126,8 +145,19 @@ fn run_with_mode(git: &GitOps, paths: &RepoPaths, strict: bool) -> ForumResult<D
         }
     }
 
-    // 4. .git/forum/ directory
-    checks.push(check_dir(".git/forum/ directory", &paths.git_forum));
+    // 4. .git/forum/ directory. Missing is normally a FAIL, but on a
+    //    fresh clone it's the expected state — covered by the top-level
+    //    "fresh clone detected" WARN, so don't double-fail here.
+    if paths.git_forum.is_dir() {
+        checks.push(ok(".git/forum/ directory"));
+    } else if fresh_clone {
+        checks.push(warn(
+            ".git/forum/ directory",
+            "not yet created; will be created by `git forum init`",
+        ));
+    } else {
+        checks.push(fail(".git/forum/ directory", "directory not found"));
+    }
 
     // 5. Forum fetch refspec for each remote
     match git.run(&["remote"]) {
@@ -285,6 +315,39 @@ fn run_with_mode(git: &GitOps, paths: &RepoPaths, strict: bool) -> ForumResult<D
     let advisories = build_cross_thread_advisories(&replayed_states);
 
     Ok(DoctorReport { checks, advisories })
+}
+
+/// `true` when this looks like a freshly cloned repo whose upstream
+/// uses git-forum but where `git forum init` hasn't been run yet.
+///
+/// Signature:
+///   - `.forum/policy.toml` is present (came from clone)
+///   - `.git/forum/logs/` is missing (no per-clone state yet)
+///   - no `refs/forum/threads/*` refs locally
+///   - at least one git remote is configured
+///
+/// All four must hold; otherwise this is some other state (e.g. mid-
+/// migration, partially-initialised repo, brand-new project) and
+/// doctor's normal per-check output is the right diagnosis.
+fn is_fresh_clone(git: &GitOps, paths: &RepoPaths) -> bool {
+    if !paths.dot_forum.join("policy.toml").is_file() {
+        return false;
+    }
+    if paths.git_forum.join("logs").is_dir() {
+        return false;
+    }
+    let has_thread_refs = git
+        .list_refs("refs/forum/threads/")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    if has_thread_refs {
+        return false;
+    }
+    let has_remotes = git
+        .run(&["remote"])
+        .map(|s| s.lines().any(|l| !l.trim().is_empty()))
+        .unwrap_or(false);
+    has_remotes
 }
 
 /// `true` when the ref's bottom (oldest) commit's tree carries no

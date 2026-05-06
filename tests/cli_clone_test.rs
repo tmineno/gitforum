@@ -227,3 +227,118 @@ fn doctor_ok_when_no_remotes() {
         "doctor should report ok for no remotes:\n{combined}"
     );
 }
+
+#[test]
+fn doctor_detects_fresh_clone_signature() {
+    // Build an upstream repo that has been initialized and seeded with
+    // a forum thread ref, then clone it. The clone has `.forum/`
+    // tracked in the worktree, no `.git/forum/` yet, and no
+    // `refs/forum/*` refs (default clone refspec doesn't fetch them).
+    // doctor must now surface this as a single "fresh clone detected"
+    // WARN with an init hint, not as a hard FAIL on missing
+    // `.git/forum/`.
+    let upstream = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(upstream.path());
+    init::init_forum(&paths).unwrap();
+    git(upstream.path(), &["add", ".forum"]);
+    git(upstream.path(), &["commit", "-m", "seed"]);
+    let tree = git(upstream.path(), &["hash-object", "-t", "tree", "/dev/null"]);
+    let commit = git(
+        upstream.path(),
+        &["commit-tree", &tree, "-m", "forum event"],
+    );
+    git(
+        upstream.path(),
+        &["update-ref", "refs/forum/threads/ASK-0001", &commit],
+    );
+
+    let clone_dir = tempfile::TempDir::new().unwrap();
+    let clone_path = clone_dir.path().join("cloned");
+    let status = Command::new("git")
+        .args([
+            "clone",
+            "--no-hardlinks",
+            &upstream.path().to_string_lossy(),
+            &clone_path.to_string_lossy(),
+        ])
+        .current_dir(clone_dir.path())
+        .envs(isolation_env())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+        .expect("git clone failed");
+    assert!(status.status.success(), "clone failed");
+
+    // Run doctor (NOT init) on the fresh clone.
+    let output = git_forum_cmd(&clone_path, &["doctor"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let combined = format!("{stdout}{stderr}");
+
+    assert!(
+        combined.contains("fresh clone detected") && combined.contains("git forum init"),
+        "doctor should surface fresh-clone hint:\n{combined}"
+    );
+    // Doctor must not exit non-zero on a benign post-clone state — the
+    // .git/forum/ FAIL is downgraded to WARN when the fresh-clone
+    // signature matches.
+    assert!(
+        output.status.success(),
+        "doctor should not fail on a fresh clone; got status {:?}\n{combined}",
+        output.status
+    );
+}
+
+#[test]
+fn init_reports_fetched_thread_count() {
+    let upstream = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(upstream.path());
+    init::init_forum(&paths).unwrap();
+    git(upstream.path(), &["add", ".forum"]);
+    git(upstream.path(), &["commit", "-m", "seed"]);
+    let tree = git(upstream.path(), &["hash-object", "-t", "tree", "/dev/null"]);
+    for id in ["ASK-0001", "ASK-0002", "ASK-0003"] {
+        let commit = git(
+            upstream.path(),
+            &["commit-tree", &tree, "-m", "forum event"],
+        );
+        git(
+            upstream.path(),
+            &["update-ref", &format!("refs/forum/threads/{id}"), &commit],
+        );
+    }
+
+    let clone_dir = tempfile::TempDir::new().unwrap();
+    let clone_path = clone_dir.path().join("cloned");
+    let status = Command::new("git")
+        .args([
+            "clone",
+            "--no-hardlinks",
+            &upstream.path().to_string_lossy(),
+            &clone_path.to_string_lossy(),
+        ])
+        .current_dir(clone_dir.path())
+        .envs(isolation_env())
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+        .expect("git clone failed");
+    assert!(status.status.success(), "clone failed");
+
+    let output = git_forum_cmd(&clone_path, &["init"]);
+    assert!(output.status.success(), "init failed");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let combined = format!("{stdout}{stderr}");
+
+    assert!(
+        combined.contains("Fetched 3 forum thread refs from 'origin'"),
+        "init should report fetched thread count:\n{combined}"
+    );
+    assert!(
+        combined.contains("Detected existing forum config"),
+        "init should announce existing forum config on a fresh clone:\n{combined}"
+    );
+}

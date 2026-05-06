@@ -17,7 +17,22 @@ use super::context::Context;
 use super::hook;
 
 /// Uniform entry point for the `init` subcommand. Takes no args.
+///
+/// Doubles as the post-clone bootstrap: when `.forum/policy.toml` is
+/// already tracked, init skips re-seeding the shared config and instead
+/// announces that it discovered an existing forum, then proceeds to
+/// register the fetch refspec, fetch `refs/forum/*`, and create the
+/// per-clone `.git/forum/` state. See README "Cloning a repo that
+/// already uses git-forum".
 pub fn run(ctx: &Context) -> Result<(), ForumError> {
+    // Detect "fresh clone" before init_forum runs — `.forum/policy.toml`
+    // tracked in the cloned tree is the signal that this repo already
+    // uses git-forum and we just need to wire up local state + fetch.
+    let policy_existed = ctx.paths.dot_forum.join("policy.toml").is_file();
+    if policy_existed {
+        println!("Detected existing forum config (.forum/policy.toml).");
+    }
+
     init::init_forum(&ctx.paths)?;
 
     // Generate local.toml with default_actor if it doesn't exist.
@@ -54,16 +69,38 @@ pub fn run(ctx: &Context) -> Result<(), ForumError> {
         }
     }
 
-    // Fetch forum refs from all remotes.
+    // Fetch forum refs from all remotes. We diff the local ref set
+    // before/after each fetch so users see how many threads they just
+    // pulled — important UX cue for the post-clone path where the
+    // generic "Fetched forum refs" line gives no signal that anything
+    // actually arrived.
     if let Ok(remotes_output) = ctx.git.run(&["remote"]) {
         for remote in remotes_output.lines() {
             let remote = remote.trim();
             if remote.is_empty() {
                 continue;
             }
+            let before = ctx
+                .git
+                .list_refs("refs/forum/threads/")
+                .map(|v| v.len())
+                .unwrap_or(0);
             match ctx.git.run(&["fetch", remote, init::FORUM_REFSPEC]) {
                 Ok(_) => {
-                    eprintln!("Fetched forum refs from '{remote}'");
+                    let after = ctx
+                        .git
+                        .list_refs("refs/forum/threads/")
+                        .map(|v| v.len())
+                        .unwrap_or(0);
+                    let new = after.saturating_sub(before);
+                    if new > 0 {
+                        let s = if new == 1 { "" } else { "s" };
+                        eprintln!("Fetched {new} forum thread ref{s} from '{remote}'");
+                    } else if after > 0 {
+                        eprintln!("Fetched forum refs from '{remote}' (no new threads)");
+                    } else {
+                        eprintln!("Fetched forum refs from '{remote}' (remote has no threads)");
+                    }
                 }
                 Err(e) => {
                     eprintln!("warning: could not fetch forum refs from '{remote}': {e}");
@@ -78,7 +115,11 @@ pub fn run(ctx: &Context) -> Result<(), ForumError> {
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| ".".to_string());
-    println!("Initialized git-forum in {dir_name}");
+    if policy_existed {
+        println!("Forum ready in {dir_name}.");
+    } else {
+        println!("Initialized git-forum in {dir_name}");
+    }
     eprintln!("note: actor IDs (--as) are claimed identities, not authenticated. Approvals are recorded, not cryptographically verified.");
     hook::install_all_hooks(&ctx.git, false)?;
     Ok(())

@@ -36,6 +36,10 @@ flowchart LR
 
 ## Quick Start
 
+Run `git forum init` once per clone — both for new repos and after
+`git clone` of a repo that already uses git-forum (a plain clone does
+not fetch `refs/forum/*`).
+
 ```bash
 git forum init
 
@@ -94,7 +98,10 @@ legacy/events.ndjson      # migration archive, when present
 ```
 
 Tracked repository configuration lives in `.forum/`; clone-local state lives in
-`.git/forum/`. Forum refs are transported with normal Git fetch and push.
+`.git/forum/`. Forum refs are transported with normal Git fetch and push, but
+`git clone` does not fetch them by default — run `git forum init` once after
+cloning to wire up the refspec and fetch existing forum data. After that,
+ordinary `git fetch` keeps forum refs in sync.
 
 ## Install
 
