@@ -24,7 +24,9 @@ pub(super) fn markdown_to_text(input: &str, width: Option<usize>) -> ratatui::te
     let mut style_stack: Vec<Style> = vec![Style::default()];
     let mut in_heading = false;
     let mut in_code_block = false;
-    let mut list_depth: usize = 0;
+    // Stack of list states: `Some(next_number)` for ordered, `None` for unordered.
+    // Depth = stack length; the top entry's counter advances on each item.
+    let mut list_stack: Vec<Option<u64>> = Vec::new();
 
     // Table state
     let mut in_table = false;
@@ -89,19 +91,27 @@ pub(super) fn markdown_to_text(input: &str, width: Option<usize>) -> ratatui::te
                 in_code_block = false;
                 style_stack.pop();
             }
-            MdEvent::Start(Tag::List(_)) => {
+            MdEvent::Start(Tag::List(start)) => {
                 flush_line(&mut lines, &mut current_spans);
-                list_depth += 1;
+                list_stack.push(start);
             }
             MdEvent::End(TagEnd::List(_)) => {
                 flush_line(&mut lines, &mut current_spans);
-                list_depth = list_depth.saturating_sub(1);
+                list_stack.pop();
             }
             MdEvent::Start(Tag::Item) => {
                 flush_line(&mut lines, &mut current_spans);
-                let indent = "  ".repeat(list_depth.saturating_sub(1));
+                let indent = "  ".repeat(list_stack.len().saturating_sub(1));
+                let marker = match list_stack.last_mut() {
+                    Some(Some(n)) => {
+                        let m = format!("{n}. ");
+                        *n += 1;
+                        m
+                    }
+                    _ => "• ".to_string(),
+                };
                 current_spans.push(Span::styled(
-                    format!("{indent}• "),
+                    format!("{indent}{marker}"),
                     current_style(&style_stack),
                 ));
             }
@@ -117,13 +127,16 @@ pub(super) fn markdown_to_text(input: &str, width: Option<usize>) -> ratatui::te
                 style_stack.pop();
             }
             MdEvent::Start(Tag::Paragraph) => {
-                if !in_heading {
+                // Inside a list item (loose list), don't flush — the list-item
+                // marker has been pushed and the paragraph text must continue
+                // on the same line.
+                if !in_heading && list_stack.is_empty() {
                     flush_line(&mut lines, &mut current_spans);
                 }
             }
             MdEvent::End(TagEnd::Paragraph) => {
                 flush_line(&mut lines, &mut current_spans);
-                if !in_heading && !in_table {
+                if !in_heading && !in_table && list_stack.is_empty() {
                     lines.push(RLine::default());
                 }
             }
@@ -653,6 +666,69 @@ mod tests {
         let text = plain_text(&result);
         assert!(text.contains('•'), "should have bullet: {text}");
         assert!(text.contains("item one"), "should have item: {text}");
+    }
+
+    // --- Ordered list tests (regression: a70nzfgq) ---
+
+    #[test]
+    fn ordered_list_preserves_numeric_markers() {
+        let input = "1. **Links.** Drop entries.\n2. **Evidence.** Drop entries.\n3. Third item.\n";
+        let result = markdown_to_text(input, None);
+        let text = plain_text(&result);
+        assert!(text.contains("1. "), "marker `1.` missing: {text:?}");
+        assert!(text.contains("2. "), "marker `2.` missing: {text:?}");
+        assert!(text.contains("3. "), "marker `3.` missing: {text:?}");
+        assert!(
+            !text.contains('•'),
+            "ordered list should not use bullet: {text:?}"
+        );
+        // Marker and item text live on the same line.
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("1.") && l.contains("Links")),
+            "marker and text should share a line: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn ordered_list_with_custom_start() {
+        let input = "5. fifth\n6. sixth\n";
+        let result = markdown_to_text(input, None);
+        let text = plain_text(&result);
+        assert!(text.contains("5. "), "should start at 5: {text:?}");
+        assert!(text.contains("6. "), "should continue to 6: {text:?}");
+    }
+
+    #[test]
+    fn loose_ordered_list_keeps_marker_with_text() {
+        // Blank lines between items make the list "loose" — pulldown_cmark wraps
+        // each item's content in a Paragraph. The marker must still share a
+        // line with the item text.
+        let input = "1. First.\n\n2. Second.\n\n3. Third.\n";
+        let result = markdown_to_text(input, None);
+        let text = plain_text(&result);
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        for (n, expected) in [(1u32, "First"), (2, "Second"), (3, "Third")] {
+            let needle = format!("{n}. ");
+            assert!(
+                lines
+                    .iter()
+                    .any(|l| l.starts_with(needle.as_str()) && l.contains(expected)),
+                "line `{needle}{expected}` missing — marker likely split from text: {lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn nested_ordered_inside_unordered() {
+        let input = "- outer\n  1. inner one\n  2. inner two\n- outer two\n";
+        let result = markdown_to_text(input, None);
+        let text = plain_text(&result);
+        assert!(text.contains('•'), "outer should be bullet: {text:?}");
+        assert!(text.contains("1. inner"), "inner numbered: {text:?}");
+        assert!(text.contains("2. inner"), "inner numbered: {text:?}");
     }
 
     #[test]
