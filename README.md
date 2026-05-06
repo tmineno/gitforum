@@ -46,7 +46,7 @@ git forum propose @a7f3b2x1
 git forum comment @a7f3b2x1 "Need compatibility evidence before acceptance."
 git forum objection @a7f3b2x1 "Migration dry-run output is not specified."
 git forum action @a7f3b2x1 "Document migration dry-run output."
-git forum evidence add @a7f3b2x1 --kind doc --ref doc/spec/SPEC-3.0-draft.md
+git forum evidence add @a7f3b2x1 --kind doc --ref doc/spec/SPEC-3.0.md
 git forum resolve @a7f3b2x1 n4k9v2mx
 git forum accept @a7f3b2x1 --approve human/alice
 
@@ -145,7 +145,7 @@ not put secrets or private data in forum bodies.
 ## Docs
 
 - [Manual](./doc/MANUAL.md)
-- [3.0 spec draft](./doc/spec/SPEC-3.0-draft.md)
+- [3.0 spec](./doc/spec/SPEC-3.0.md)
 - [Core value](./doc/spec/CORE-VALUE.md)
 
 ## License

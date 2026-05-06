@@ -1,7 +1,7 @@
-# git-forum Product Specification - 3.0 Draft
+# git-forum Product Specification - 3.0
 
-Version 3.0-draft - 2026-05-03 (JST)
-Status: **Draft**. This document is intended to be self-contained: every
+Version 3.0 - 2026-05-06
+Status: **Authoritative**. This document is self-contained: every
 normative 3.0 rule is written here directly rather than inherited by reference
 from an earlier specification.
 Discussion thread: `fg61bcmp`.
