@@ -12,6 +12,7 @@
 
 use super::super::error::ForumError;
 use super::super::git_ops::GitOps;
+use super::super::id::strip_thread_marker;
 use super::super::policy::{self, CategoryRegistry, Policy};
 use super::super::refs::thread_ref;
 use super::super::snapshot::history::{self, SnapshotLogEntry};
@@ -1012,7 +1013,27 @@ pub struct ShowArgs {
 /// `--what-next`: switches the renderer to the WhatNext mode with policy
 /// guards; otherwise renders the canonical Full view.
 pub fn run(args: ShowArgs, ctx: &Context) -> Result<(), ForumError> {
-    let thread_id = resolve_tid(&ctx.git, &args.thread_id)?;
+    let thread_id = match resolve_tid(&ctx.git, &args.thread_id) {
+        Ok(id) => id,
+        Err(thread_err) => {
+            // Bug `k4p0ya0b`: thread IDs and node IDs share the same
+            // 8-char base36 shape, so operators routinely paste a
+            // node id from a timeline into `show` and hit a dead-end
+            // "thread not found" error. If the input is in fact a
+            // known node, redirect to `node show` instead — the
+            // canonical surface — and name the parent thread so the
+            // user can still reach the surrounding discussion.
+            if let Some(parent) = node_redirect_target(ctx, &args.thread_id) {
+                return Err(ForumError::Repo(format!(
+                    "'{input}' is a node, not a thread\n  \
+                     hint: run `git forum node show {input}` to view the node\n  \
+                     hint: it lives in thread @{parent}",
+                    input = args.thread_id,
+                )));
+            }
+            return Err(thread_err);
+        }
+    };
     let policy = Policy::load(&ctx.paths.dot_forum.join("policy.toml"))?;
     let state = thread::replay_thread(&ctx.git, &thread_id)?;
     if args.tree {
@@ -1045,6 +1066,19 @@ pub fn run(args: ShowArgs, ctx: &Context) -> Result<(), ForumError> {
         );
     }
     Ok(())
+}
+
+/// Bug `k4p0ya0b`: if `user_input` names a known full node id,
+/// return its owning thread. Used by [`run`] to turn the
+/// thread-not-found dead end into a friendly redirect to
+/// `git forum node show`. Strict exact-match only — we don't fall
+/// through on prefixes, because an ambiguous prefix that only
+/// happens to extend to a node id should still surface as the
+/// thread-resolver's original error.
+fn node_redirect_target(ctx: &Context, user_input: &str) -> Option<String> {
+    let candidate = strip_thread_marker(user_input);
+    let index = ctx.node_index().ok()?;
+    index.lookup_exact(candidate).map(str::to_string)
 }
 
 /// Collect direct incoming `--rel implements` children of a thread for

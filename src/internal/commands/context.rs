@@ -16,10 +16,13 @@
 //! sub-commands deliberately skip the warning — they construct the
 //! `Context` via [`Context::discover_quiet`].
 
+use std::cell::OnceCell;
+
 use crate::internal::clock::Clock;
 use crate::internal::config::{self, RepoPaths};
 use crate::internal::error::ForumError;
 use crate::internal::git_ops::GitOps;
+use crate::internal::thread::NodeIdIndex;
 
 /// The dependency bundle every `commands::*::run` receives.
 ///
@@ -30,6 +33,12 @@ pub struct Context {
     pub git: GitOps,
     pub paths: RepoPaths,
     pub clock: Box<dyn Clock>,
+    /// Bug `bvdk2w48`: lazily-built node-id → thread-id reverse
+    /// index, populated on first call to [`Context::node_index`].
+    /// Single-process callers (TUI, future bulk commands) that
+    /// resolve multiple node ids amortise the ref sweep across
+    /// every lookup after the first.
+    node_index: OnceCell<NodeIdIndex>,
 }
 
 impl Context {
@@ -46,7 +55,12 @@ impl Context {
             );
         }
         load_local_into_git(&mut git, &paths);
-        Ok(Self { git, paths, clock })
+        Ok(Self {
+            git,
+            paths,
+            clock,
+            node_index: OnceCell::new(),
+        })
     }
 
     /// Build a `Context` without the init-warning probe. Used by the
@@ -58,7 +72,24 @@ impl Context {
         let git_dir = git.git_dir()?;
         let paths = RepoPaths::from_repo_root_and_git_dir(git.root(), &git_dir);
         load_local_into_git(&mut git, &paths);
-        Ok(Self { git, paths, clock })
+        Ok(Self {
+            git,
+            paths,
+            clock,
+            node_index: OnceCell::new(),
+        })
+    }
+
+    /// Lazy accessor for the per-process node-id reverse index.
+    /// First call sweeps `refs/forum/threads/*` with
+    /// `ls-tree --name-only nodes/`; subsequent calls hand back the
+    /// cached value.
+    pub fn node_index(&self) -> Result<&NodeIdIndex, ForumError> {
+        if let Some(index) = self.node_index.get() {
+            return Ok(index);
+        }
+        let index = NodeIdIndex::build(&self.git)?;
+        Ok(self.node_index.get_or_init(|| index))
     }
 }
 

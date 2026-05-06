@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 
 use super::error::{ForumError, ForumResult};
@@ -293,8 +295,111 @@ pub fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocume
 /// Exact matches are preferred. If there is no exact match, a unique prefix
 /// of at least [`MIN_NODE_ID_PREFIX_LEN`] characters is accepted.
 pub fn resolve_node_id_global(git: &GitOps, node_ref: &str) -> ForumResult<String> {
-    let lookups = all_node_lookups(git)?;
-    resolve_node_id_global_from_lookups(&lookups, node_ref)
+    let index = NodeIdIndex::build(git)?;
+    Ok(index.resolve(node_ref)?.0)
+}
+
+/// Reverse index from node id to owning thread id, populated by a
+/// cheap `for-each-ref` + `ls-tree --name-only nodes/` sweep that
+/// reads no node bodies. Bug `bvdk2w48` — used by `find_node` and
+/// `resolve_node_id_global` so they don't have to replay every
+/// thread's full snapshot just to locate a single node.
+///
+/// `Vec<String>` per id preserves duplicate-detection: if the same
+/// full node id were ever to appear under two threads (collisions
+/// are unlikely given the id alphabet, but the resolver historically
+/// reported them as ambiguous, so we keep that behavior).
+#[derive(Debug, Clone, Default)]
+pub struct NodeIdIndex {
+    by_id: HashMap<String, Vec<String>>,
+}
+
+impl NodeIdIndex {
+    /// Walk every `refs/forum/threads/<id>` and record which node ids
+    /// live in its `nodes/` subtree. The per-thread cost is a single
+    /// `ls-tree --name-only` — no `cat-file` and no snapshot parse.
+    pub fn build(git: &GitOps) -> ForumResult<Self> {
+        let mut by_id: HashMap<String, Vec<String>> = HashMap::new();
+        for (refname, tip) in git.list_refs_with_shas(refs::THREADS_PREFIX)? {
+            let Some(thread_id) = refs::thread_id_from_ref(&refname) else {
+                continue;
+            };
+            // `nodes/` is optional in the SPEC-3.0 §4.2 layout; an
+            // empty thread has no subtree. `ls-tree` on an absent
+            // path either prints nothing or fails — both mean "no
+            // nodes here", so swallow errors and treat as empty.
+            let listing = git
+                .run(&["ls-tree", "--full-tree", "--name-only", &tip, "nodes/"])
+                .unwrap_or_default();
+            for line in listing.lines() {
+                if let Some(rest) = line.strip_prefix("nodes/") {
+                    if let Some(node_id) = rest.strip_suffix(".toml") {
+                        by_id
+                            .entry(node_id.to_string())
+                            .or_default()
+                            .push(thread_id.to_string());
+                    }
+                }
+            }
+        }
+        Ok(Self { by_id })
+    }
+
+    /// Look up an exact full node id without any prefix matching.
+    /// Returns the owning thread id, or `None` if `node_id` is not a
+    /// known node anywhere in the forum. Bug `k4p0ya0b`: lets
+    /// `show <id>` distinguish "this is a node, not a thread" from
+    /// "this id is unknown" without triggering prefix ambiguity
+    /// errors that would mask the friendly hint.
+    pub fn lookup_exact(&self, node_id: &str) -> Option<&str> {
+        match self.by_id.get(node_id)?.as_slice() {
+            [thread_id] => Some(thread_id.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Resolve `node_ref` (full id or unique prefix) to
+    /// `(node_id, thread_id)`. Exact match wins, prefix shorter than
+    /// [`MIN_NODE_ID_PREFIX_LEN`] is rejected, ambiguous prefix is
+    /// reported with candidates.
+    pub fn resolve(&self, node_ref: &str) -> ForumResult<(String, String)> {
+        if let Some(threads) = self.by_id.get(node_ref) {
+            return match threads.as_slice() {
+                [thread_id] => Ok((node_ref.to_string(), thread_id.clone())),
+                _ => Err(ForumError::Repo(format!(
+                    "node '{node_ref}' is ambiguous across multiple threads"
+                ))),
+            };
+        }
+
+        if node_ref.len() < MIN_NODE_ID_PREFIX_LEN {
+            return Err(ForumError::Repo(format!(
+                "node id prefix '{node_ref}' is too short; use at least {MIN_NODE_ID_PREFIX_LEN} characters"
+            )));
+        }
+
+        let mut matches: Vec<(&String, &String)> = self
+            .by_id
+            .iter()
+            .filter(|(node_id, _)| node_id.starts_with(node_ref))
+            .flat_map(|(node_id, threads)| threads.iter().map(move |t| (node_id, t)))
+            .collect();
+        matches.sort();
+        match matches.len() {
+            0 => Err(ForumError::Repo(format!("node '{node_ref}' not found"))),
+            1 => Ok((matches[0].0.clone(), matches[0].1.clone())),
+            _ => Err(ForumError::Repo(format_index_ambiguity(node_ref, &matches))),
+        }
+    }
+}
+
+fn format_index_ambiguity(node_ref: &str, matches: &[(&String, &String)]) -> String {
+    let mut message = format!("node id prefix '{node_ref}' is ambiguous");
+    message.push_str("\n  candidates:");
+    for (node_id, thread_id) in matches {
+        message.push_str(&format!("\n  - {node_id}  {thread_id}"));
+    }
+    message
 }
 
 /// Resolve a node reference inside a single thread.
@@ -346,13 +451,38 @@ pub fn resolve_node_id_in_thread(
 }
 
 /// Find a node by ID across all threads.
+///
+/// Bug `bvdk2w48`: builds the cheap [`NodeIdIndex`] (one
+/// `ls-tree --name-only nodes/` per thread, no body reads) and then
+/// replays only the owning thread, instead of replaying every
+/// thread twice.
 pub fn find_node(git: &GitOps, node_ref: &str) -> ForumResult<NodeLookup> {
-    let resolved = resolve_node_id_global(git, node_ref)?;
-    let lookups = all_node_lookups(git)?;
-    lookups
-        .into_iter()
-        .find(|lookup| lookup.node.record.id == resolved)
-        .ok_or_else(|| ForumError::Repo(format!("node '{resolved}' not found")))
+    let index = NodeIdIndex::build(git)?;
+    find_node_with_index(git, node_ref, &index)
+}
+
+/// Like [`find_node`] but reuses a pre-built [`NodeIdIndex`]. Lets
+/// callers that resolve multiple node ids in one process (TUI,
+/// future bulk commands) skip the per-call ref sweep.
+pub fn find_node_with_index(
+    git: &GitOps,
+    node_ref: &str,
+    index: &NodeIdIndex,
+) -> ForumResult<NodeLookup> {
+    let (resolved_id, thread_id) = index.resolve(node_ref)?;
+    let state = replay_thread(git, &thread_id)?;
+    state
+        .nodes
+        .iter()
+        .find(|node| node.record.id == resolved_id)
+        .map(|node| build_node_lookup(&state, node))
+        .ok_or_else(|| {
+            // The index said this thread owns the node; if replay
+            // disagrees the snapshot tree drifted from the index in
+            // the same process — surface the resolved id so the user
+            // can re-run.
+            ForumError::Repo(format!("node '{resolved_id}' not found"))
+        })
 }
 
 /// Find a node by ID inside a single thread.
@@ -588,17 +718,6 @@ fn resolve_from_list(all_ids: &[String], user_input: &str) -> ForumResult<String
     )))
 }
 
-fn all_node_lookups(git: &GitOps) -> ForumResult<Vec<NodeLookup>> {
-    let mut lookups = Vec::new();
-    for thread_id in list_thread_ids(git)? {
-        let state = replay_thread(git, &thread_id)?;
-        for node in &state.nodes {
-            lookups.push(build_node_lookup(&state, node));
-        }
-    }
-    Ok(lookups)
-}
-
 fn build_node_lookup(state: &ThreadState, node: &NodeWithBody) -> NodeLookup {
     NodeLookup {
         thread_id: state.id.clone(),
@@ -610,60 +729,11 @@ fn build_node_lookup(state: &ThreadState, node: &NodeWithBody) -> NodeLookup {
     }
 }
 
-fn resolve_node_id_global_from_lookups(
-    lookups: &[NodeLookup],
-    node_ref: &str,
-) -> ForumResult<String> {
-    let exact_matches: Vec<&NodeLookup> = lookups
-        .iter()
-        .filter(|lookup| lookup.node.record.id == node_ref)
-        .collect();
-    match exact_matches.len() {
-        1 => return Ok(exact_matches[0].node.record.id.clone()),
-        2.. => {
-            return Err(ForumError::Repo(format!(
-                "node '{node_ref}' is ambiguous across multiple threads"
-            )));
-        }
-        0 => {}
-    }
-
-    if node_ref.len() < MIN_NODE_ID_PREFIX_LEN {
-        return Err(ForumError::Repo(format!(
-            "node id prefix '{node_ref}' is too short; use at least {MIN_NODE_ID_PREFIX_LEN} characters"
-        )));
-    }
-
-    let matches: Vec<&NodeLookup> = lookups
-        .iter()
-        .filter(|lookup| lookup.node.record.id.starts_with(node_ref))
-        .collect();
-    match matches.len() {
-        0 => Err(ForumError::Repo(format!("node '{node_ref}' not found"))),
-        1 => Ok(matches[0].node.record.id.clone()),
-        _ => Err(ForumError::Repo(format_global_ambiguity(
-            node_ref, &matches,
-        ))),
-    }
-}
-
 fn format_thread_ambiguity(thread_id: &str, node_ref: &str, matches: &[&NodeWithBody]) -> String {
     let mut message = format!("node id prefix '{node_ref}' is ambiguous in thread '{thread_id}'");
     message.push_str("\n  candidates:");
     for node in matches {
         message.push_str(&format!("\n  - {}  {}", node.record.id, node.record.kind));
-    }
-    message
-}
-
-fn format_global_ambiguity(node_ref: &str, matches: &[&NodeLookup]) -> String {
-    let mut message = format!("node id prefix '{node_ref}' is ambiguous");
-    message.push_str("\n  candidates:");
-    for lookup in matches {
-        message.push_str(&format!(
-            "\n  - {}  {} {}",
-            lookup.node.record.id, lookup.thread_id, lookup.node.record.kind
-        ));
     }
     message
 }
