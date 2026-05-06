@@ -1,7 +1,7 @@
 //! `git forum verify <THREAD_ID>` orchestration + the `VerifyReport`
 //! data model.
 //!
-//! Phase 2 slot 7i (RFC `7ymtc4b2`): the `Verify` arm body relocates
+//! task `1hg98odf`: the `Verify` arm body relocates
 //! from `main.rs` to [`run`] in this module. The
 //! [`remediation_hint`] formatter moves out of `internal::state_change`
 //! into this module — `verify` is its only remaining caller after the
@@ -249,11 +249,11 @@ pub fn run(args: VerifyArgs, ctx: &Context) -> Result<(), ForumError> {
 
 /// Format a remediation hint for a guard rule violation.
 ///
-/// Phase 2 slot 7i (RFC `7ymtc4b2`): relocated from
+/// task `1hg98odf`: relocated from
 /// `internal::state_change`. `verify` is the only remaining caller
 /// after slot 3 (`state` rewire) — the legacy state-change pre-walk
 /// in `state_change.rs` was the other consumer, and it now imports
-/// this back-pointer until Phase 4 deletes that module.
+/// this back-pointer until task `913c4s9v` deletes that module.
 pub fn remediation_hint(rule: &str, state: &thread::ThreadState, thread_id: &str) -> String {
     match rule {
         "no_open_actions" => {
@@ -284,7 +284,7 @@ pub fn remediation_hint(rule: &str, state: &thread::ThreadState, thread_id: &str
                 ids.join(", ")
             )
         }
-        // `at_least_one_summary` was removed in 2.0 (ADR-006); the rule
+        // `at_least_one_summary` was removed in 2.0 (SPEC-3.0 §2.2); the rule
         // never fires after Policy::load strips it. Hint left empty.
         "one_human_approval" => "supply --approve human/<name>".to_string(),
         _ => String::new(),

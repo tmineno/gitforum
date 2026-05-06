@@ -1,15 +1,15 @@
 //! Module integration tests for `src/internal/commands/show.rs`
 //! rendering (test-policy.md category 1).
 //!
-//! Phase 4 Step 3 (RFC `7ymtc4b2`, task `913c4s9v`): rewritten to use
+//! task `913c4s9v`: rewritten to use
 //! the snapshot fixtures from `support::forum`. The v2 test paths
 //! (write_ops::say_node, evidence::add_thread_link, reindex+index for
 //! the `--tree` advisory) targeted modules that this commit deletes;
 //! tests for those features either move to per-feature snapshot tests
 //! (snapshot_store_test, snapshot_test) or, for v2-only behaviors
 //! (objection / summary / claim node rendering, `--tree` via index),
-//! are removed pending Step 5 + the v3.1 search/index reintroduction
-//! decision.
+//! are removed pending the v3.1 search/index reintroduction decision
+//! tracked from RFC `7ymtc4b2` / task `913c4s9v`.
 
 mod support;
 
@@ -23,7 +23,7 @@ fn show_contains_all_required_fields() {
     let (_repo, git, _paths) = setup();
     let id = make_rfc(&git);
     let state = thread::replay_thread(&git, &id).unwrap();
-    // Phase 4 Step 1a: timeline is now the snapshot ref's git log
+    // task `913c4s9v`: timeline is now the snapshot ref's git log
     // (SPEC-3.0 §5.4). Load entries so the renderer fills the table
     // instead of emitting the "no snapshot ref loaded" placeholder.
     let timeline_entries =

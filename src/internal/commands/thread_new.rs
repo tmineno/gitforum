@@ -3,10 +3,10 @@
 //!
 //! Owns the clap subcommand enum `ThreadCmd` (moved from `main.rs` by
 //! task `t8o3vnt6`), the kind-preset / lifecycle helpers (relocated
-//! from `main.rs` and `commands/shared.rs` by RFC `7ymtc4b2` Phase 2
+//! from `main.rs` and `commands/shared.rs` by RFC `7ymtc4b2`, task `1hg98odf`
 //! slot 1), and the snapshot-write entry point.
 //!
-//! Phase 2 slot 1: write path emits a SPEC-3.0 snapshot tree
+//! task `1hg98odf`: write path emits a SPEC-3.0 snapshot tree
 //! (`thread.toml` + optional `body.md` / `nodes/` / `links.toml` /
 //! `evidence.toml`) at `refs/forum/threads/<id>` directly, via
 //! [`crate::internal::snapshot::store::write_snapshot`]. The legacy
@@ -153,7 +153,7 @@ pub fn run(args: ThreadNewArgs, ctx: &Context) -> Result<(), ForumError> {
 /// the `git forum new <preset>` everyday surface and the canonical
 /// `git forum thread new --lifecycle ... --tag ...` power-user form.
 ///
-/// Phase 2 slot 1 (RFC `7ymtc4b2`): writes a SPEC-3.0 snapshot tree
+/// task `1hg98odf`: writes a SPEC-3.0 snapshot tree
 /// directly via [`write_snapshot`]. The lifecycle/tag CLI surface
 /// stays in place and is mapped to a 3.0 `category` (`rfc`/`task`)
 /// internally; the kind-preset surface (`git forum new rfc`) maps the
@@ -196,13 +196,13 @@ pub fn run_canonical_thread_new(
         from_thread
     {
         let source_id = &resolve_tid(&git, source_id)?;
-        // ADR-011 Decision 3: non-migrate paths must NOT consume legacy
+        // task `1v400j3l`: non-migrate paths must NOT consume legacy
         // event chains. Use the snapshot reader so a legacy source
         // surfaces `LegacyEventChain` *before* any write happens — no
         // partial-state risk if the source needs migration.
         let source = snapshot::read_snapshot(&git, source_id)?;
         // SPEC-2.0 §9.3 lifecycle-keyed restatement of 1.x §9.2: an
-        // execution thread cannot supersede a proposal. v3.1 step 3m:
+        // execution thread cannot supersede a proposal. task `1v400j3l`:
         // restated in category vocabulary — `task` (without
         // `decision`) cannot supersede `rfc`. Use
         // `link --rel implements` instead.
@@ -500,7 +500,7 @@ fn short_evidence_id(sha: &str) -> String {
 }
 
 /// SPEC-3.0 §8.3: map a CLI-supplied lifecycle label to its 3.0
-/// category string. v3.1 step 3m replaced the v2 `Lifecycle` enum
+/// category string. task `1v400j3l` replaced the v2 `Lifecycle` enum
 /// with a label-string surface.
 ///
 /// - `"proposal"` → `"rfc"`
@@ -547,7 +547,7 @@ pub fn valid_preset_names() -> String {
 }
 
 /// Validate a CLI lifecycle label (`proposal` / `execution` /
-/// `record`). v3.1 step 3m replaced the v2 `Lifecycle` enum with a
+/// `record`). task `1v400j3l` replaced the v2 `Lifecycle` enum with a
 /// label-string surface; the parser now just gates known values.
 pub fn parse_lifecycle_label(s: &str) -> Result<&'static str, ForumError> {
     match s {

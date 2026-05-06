@@ -4,7 +4,7 @@
 //! by every `run_*` function: repo discovery with the init warning,
 //! operation-check application, actor/thread-id resolution, plus the CLI
 //! parsing helpers relocated by task `t8o3vnt6`. Kept here (not
-//! re-introduced as a Service / DTO layer per #yjelk0s0 Out-of-scope) so
+//! re-introduced as a Service / DTO layer per thread `yjelk0s0` Out-of-scope) so
 //! command modules don't need a back-reference to `main.rs`.
 
 use crate::internal::actor;
@@ -92,7 +92,7 @@ pub fn resolve_tid(git: &GitOps, user_input: &str) -> Result<String, ForumError>
 ///
 /// Routes through the 3.0-native `policy::preset_lookup` (returns a
 /// `CategoryPreset`); the canonical name is the row's `name` field.
-/// v3.1 step 3n (task `1v400j3l`) replaced the typed `ThreadKind`
+/// task `1v400j3l` replaced the typed `ThreadKind`
 /// return shape with the canonical preset name string.
 pub fn parse_thread_kind(kind: &str) -> Result<&'static str, ForumError> {
     let preset = policy::preset_lookup(kind).ok_or_else(|| {
@@ -128,7 +128,7 @@ pub fn parse_since_date(
 }
 
 // `terminal_state_date` relocated to `commands::shortlog::terminal_state_date`
-// at Phase 2 slot 7b (RFC `7ymtc4b2`).
+// at task `1hg98odf`.
 
 // =============================================================================
 // Clap-error hint helpers — relocated from main.rs by task `t8o3vnt6`.

@@ -1,6 +1,6 @@
-//! v1/v2 event-chain replay machinery (relocated here in v3.1 step 3j).
+//! v1/v2 event-chain replay machinery (relocated here in task `1v400j3l`).
 //!
-//! Until v3.1 step 3j the `replay`/`replay_strict`/`replay_thread_at`
+//! Until task `1v400j3l` the `replay`/`replay_strict`/`replay_thread_at`
 //! family lived in `internal::thread`. They are 2.0-era machinery —
 //! every helper consumes [`super::event::Event`] /
 //! [`super::event::DomainEvent`] and routes through
@@ -43,7 +43,7 @@ use super::event::{
 /// typed lifecycle that the v2 state machine still consumes.
 ///
 /// Mirrors the `legacy_lifecycle_for_category` inverse. Lives here
-/// (not in `policy`) since v3.1 step 3m removed the `Lifecycle`
+/// (not in `policy`) since task `1v400j3l` removed the `Lifecycle`
 /// enum from the public surface.
 fn lifecycle_to_category(lifecycle: Lifecycle) -> &'static str {
     match lifecycle {
@@ -67,7 +67,7 @@ fn category_to_lifecycle(category: &str, tags: &[String]) -> Lifecycle {
 // --------------------------------------------------------------------
 // `ThreadStatus` (8-variant v2 enum + lenient parser).
 //
-// Relocated here from `internal::thread` in v3.1 step 3l (task
+// Relocated here from `internal::thread` in task `1v400j3l` (task
 // `1v400j3l`). The 3.0-native ThreadState carries the status as a
 // plain String; this typed enum is needed only inside the legacy
 // event-chain replay state machine, so it now lives next to the
@@ -166,7 +166,7 @@ pub fn replay_strict(events: &[Event]) -> ForumResult<(ThreadState, Vec<StrictRe
 /// Like [`replay_strict`] but skips the post-pass that suppresses
 /// `InvalidTransition` issues whose chain tail has self-healed.
 ///
-/// Used by the workflow-repair tool (#uu9wxn1d) to recover the offending
+/// Used by the workflow-repair tool (thread `uu9wxn1d`) to recover the offending
 /// event id even on chains that the public `replay_strict` would have
 /// reported as clean. Read-side callers (doctor, search, display) want
 /// the suppressed view; only the repair tool needs the raw stream.
@@ -238,7 +238,7 @@ fn replay_with_issues_inner(
     // Track the legacy v2 kind locally so post-replay tag augmentation
     // (SPEC-3.0 §8.3 — push canonical `bug`/`decision`) can recover
     // the source kind even after a `facet_set` event replaces tags.
-    // ThreadState no longer carries `kind` post v3.1 step 3n.
+    // ThreadState no longer carries `kind` post task `1v400j3l`.
     let source_kind = kind;
     let mut state = ThreadState {
         id: first.thread_id.clone(),
@@ -288,7 +288,7 @@ fn replay_with_issues_inner(
 /// SPEC-3.0 §8.3: push the canonical category-augmenting tag (`bug`
 /// for legacy `Issue`, `decision` for legacy `Dec`) onto `state.tags`
 /// if it isn't already present. Migration projection used to do this
-/// from `state.kind` directly; v3.1 step 3n moved the augmentation
+/// from `state.kind` directly; task `1v400j3l` moved the augmentation
 /// upstream into chain replay so `ThreadState` no longer needs to
 /// carry the typed v2 kind. Idempotent — a `facet_set` event that
 /// already set the tag is preserved unchanged.
@@ -305,7 +305,7 @@ fn augment_canonical_kind_tag(state: &mut ThreadState, source_kind: super::event
     }
 }
 
-/// SPEC-2.0 §3.1 / #uu9wxn1d: drop `InvalidTransition` issues whose offending
+/// SPEC-2.0 §3.1 / thread `uu9wxn1d`: drop `InvalidTransition` issues whose offending
 /// event has been "self-healed" by a subsequent legal corrective sequence.
 ///
 /// A self-heal is recognised when:
@@ -395,7 +395,7 @@ fn apply_event(
         } => {
             match ThreadStatus::parse_lenient(new_state) {
                 Some(parsed) => {
-                    // SPEC-2.0 §3.1 (P0 #34ith16h): strict mode flags
+                    // SPEC-2.0 §3.1 (thread `34ith16h`): strict mode flags
                     // an illegal `from -> to` for the thread's
                     // lifecycle on the per-lifecycle filtered graph.
                     // Lenient mode applies the new status regardless
@@ -582,8 +582,8 @@ fn apply_event(
         // No-ops during replay:
         DomainEvent::Create { .. } => {} // handled in replay() seed before apply_event loop
         DomainEvent::Verify { .. } | DomainEvent::Merge { .. } => {}
-        // ADR-010 option (a): unknown variants no-op + emit a strict
-        // issue. Unreachable in Phase A; Phase B wires the
+        // task `wlqhi8xh`: unknown variants no-op + emit a strict
+        // issue. Unreachable before task `wlqhi8xh`; task `wlqhi8xh` wires the
         // `EventType::Other(String)` deserialiser to this arm.
         DomainEvent::Unknown { meta, .. } => {
             issues.push(StrictReplayIssue::MissingRequiredField {
@@ -693,7 +693,7 @@ fn apply_node_flag(
 /// [`ThreadState`].
 ///
 /// Mirror of the v3.0 `thread::replay_thread_at` reader, relocated
-/// here in v3.1 step 3j. Used by `commands::migrate` to project a
+/// here in task `1v400j3l`. Used by `commands::migrate` to project a
 /// pinned legacy chain. The 3.0-native [`super::super::thread::replay_thread`]
 /// no longer dispatches through this — it consumes the snapshot at
 /// the thread ref tip directly.
@@ -876,7 +876,7 @@ mod tests {
 
     #[test]
     fn replay_create_then_state() {
-        // Phase 2a: 1.x "proposed" is normalized by parse_lenient into the
+        // SPEC-2.0 status-model: 1.x "proposed" is normalized by parse_lenient into the
         // canonical 2.0 status `Open`.
         let events = vec![
             make_create("RFC-0001", ThreadKind::Rfc, "Test RFC"),

@@ -1,8 +1,8 @@
-# ADR-009: Stale-Reference Cleanup Is a Separate Operation From Content Purge
+# task `1a7qhbz3`: Stale-Reference Cleanup Is a Separate Operation From Content Purge
 
 ## Context
 
-Phase 1 (commit `6ac6bf4`) split event replay into a lenient default and a
+Commit `6ac6bf4` split event replay into a lenient default and a
 strict mode (`thread::replay_strict` / `git forum doctor --strict`). Running
 strict mode against this repo's own forum data immediately surfaced 164
 `StrictReplayIssue::UnknownTargetNode` findings across 43 threads:
@@ -30,7 +30,7 @@ Investigation traced the orphans to two upstream causes:
    graph.
 
 Both paths produce the same artefact: events that lenient replay silently
-no-ops and strict replay flags. The Phase 1.5 cleanup (commit `47ad593`,
+no-ops and strict replay flags. Commit `47ad593` (the cleanup that added
 the `git forum prune-stale-events` subcommand) drops 120 such events from
 43 threads on this repo and brings strict replay to a clean state.
 
@@ -69,7 +69,7 @@ side-effect of `purge`.
 - The 156 originally-purged commits this repo recovered from are gone for
   good. The information they once carried lives only in summary nodes the
   operator wrote at migration time. That is the explicit cost of the
-  Phase 1.5 cleanup decision (Option A in the review thread).
+  commit `47ad593` cleanup decision (Option A in the review thread).
 - Any future `purge`-class operation that wants atomicity (redact +
   reference-cascade in one step) MUST be a new subcommand or an opt-in
   flag (`purge --cascade`). Silently changing `purge`'s blast radius is
@@ -93,7 +93,7 @@ side-effect of `purge`.
   Useful as a UX nudge, but should not gate this ADR. Tracked as
   documentation work.
 - **Lenient replay continues to no-op stale references; do not introduce
-  strict mode.** Already rejected by Phase 1's design — the silent
+  strict mode.** Already rejected by commit `6ac6bf4`'s design — the silent
   swallowing is exactly the integrity gap that motivated `replay_strict`.
 
 ## Exit criteria
@@ -110,13 +110,13 @@ side-effect of `purge`.
 
 ## References
 
-- Commit `6ac6bf4` — Phase 1: strict replay validator, `doctor --strict`
+- Commit `6ac6bf4` — strict replay validator, `doctor --strict`
   opt-in, `prune-orphans`.
-- Commit `47ad593` — Phase 1.5: `prune-stale-events` plus the cleanup
+- Commit `47ad593` — `prune-stale-events` plus the cleanup
   applied to this repo (120 events dropped from 43 threads).
 - `src/internal/purge.rs::purge_event` / `rewrite_chain` — current
   content-only redaction implementation.
 - `src/internal/prune.rs::scan_stale_events` /
-  `apply_stale_event_plans` — the post-rewrite cleanup added in Phase 1.5.
+  `apply_stale_event_plans` — the post-rewrite cleanup added in commit `47ad593`.
 - `src/internal/validate.rs::StrictReplayIssue::UnknownTargetNode` — the
   strict-mode detector.

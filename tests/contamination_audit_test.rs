@@ -1,8 +1,8 @@
-//! Contamination audit gate per RFC 7ymtc4b2 Phase 4 (task 913c4s9v Step 0)
-//! and ADR-011 Decision 3.
+//! Contamination audit gate per RFC `7ymtc4b2`, task `913c4s9v`,
+//! and task `1v400j3l`.
 //!
 //! Modules that disappear (DELETE) or relocate into `internal::legacy/`
-//! (MOVE-TO-LEGACY) at Phase 4 completion are forbidden from being
+//! (MOVE-TO-LEGACY) at task `913c4s9v` completion are forbidden from being
 //! imported outside `internal::legacy/` and `internal::commands::migrate`.
 //! This is a stricter sibling of `tests/legacy_gate_test.rs`:
 //!
@@ -14,14 +14,14 @@
 //!                              outside legacy/ and commands/migrate
 //!
 //! `ALLOW_LIST` grandfathers the current contamination so the test
-//! passes day one. Every Phase 4 commit that rewires / relocates / deletes
+//! passes day one. Every task `913c4s9v` commit that rewires / relocates / deletes
 //! a contaminated file removes its `ALLOW_LIST` entry in the same commit.
 //! The final commit asserts `ALLOW_LIST` is empty (see
 //! `final_audit_pass_allow_list_must_be_empty`, ignored until then).
 //!
-//! Rationale for two separate gates: legacy_gate enforces "post-Phase-2,
-//! 2.0-native modules don't lean on legacy::v1 anymore"; contamination_audit
-//! enforces "post-Phase-4, the entire event-chain runtime is gone from the
+//! Rationale for two separate gates: legacy_gate enforces "task `1hg98odf`
+//! left 2.0-native modules independent from legacy::v1"; contamination_audit
+//! enforces "task `913c4s9v` removes the event-chain runtime from the
 //! 3.0 binary except via the migrate command". Different invariants,
 //! different lifecycles for their allow-lists.
 
@@ -31,15 +31,14 @@ use std::path::PathBuf;
 use syn::visit::Visit;
 use walkdir::WalkDir;
 
-/// Modules whose existence in non-migrate code paths is what Phase 4
-/// removes. The list combines the DELETE table (lines 152-168 of
-/// `doc/internal/3.0-removal-plan.md`) with the MOVE-TO-LEGACY targets
-/// `event` and `workflow` (lines 145-146).
+/// Modules whose existence in non-migrate code paths is what task `913c4s9v`
+/// removes. The list combines the task `913c4s9v` DELETE modules with
+/// the MOVE-TO-LEGACY targets `event` and `workflow`.
 const FORBIDDEN_MODULES: &[&str] = &[
-    // MOVE-TO-LEGACY (relocate into internal::legacy/ during Phase 4 Step 2)
+    // MOVE-TO-LEGACY (relocate into internal::legacy/ during task `913c4s9v`)
     "event",
     "workflow",
-    // DELETE (removed wholesale during Phase 4 Step 3)
+    // DELETE (removed wholesale during task `913c4s9v`)
     "timeline",
     "index",
     "reindex",
@@ -55,25 +54,24 @@ const FORBIDDEN_MODULES: &[&str] = &[
     "github_export",
 ];
 
-/// Permanent exemptions that survive Phase 4 completion.
+/// Permanent exemptions that survive task `913c4s9v` completion.
 ///
 /// `legacy/*` is structurally allowed — it is the relocation target.
 /// `commands/migrate.rs` is the single sanctioned consumer of legacy
-/// event-chain code post-Phase-4 (ADR-011 Decision 1). These three
+/// event-chain code task `913c4s9v`. These three
 /// stay in `ALLOW_LIST` forever; everything else must drop out as
-/// Phase 4 commits land.
+/// task `913c4s9v` commits land.
 const PERMANENT_EXEMPTIONS: &[&str] = &[
     "src/internal/legacy/mod.rs",
     "src/internal/legacy/v1.rs",
-    // Phase 4 Step 5 (RFC 7ymtc4b2, task 913c4s9v) — codex objection
+    // task `913c4s9v` — codex objection
     // 2ab3b2a4 issue 2: PERMANENT_EXEMPTIONS must include the relocated
     // event/workflow modules (now permanently inside legacy/) so the
     // `final_audit_pass_*` test passes once `#[ignore]` is dropped.
-    // Both files structurally belong to the legacy/ tree from Step 2b
-    // forward.
+    // Both files structurally belong to the legacy/ tree.
     "src/internal/legacy/event.rs",
     "src/internal/legacy/workflow.rs",
-    // v3.1 step 3j (task 1v400j3l): event-chain replay relocated
+    // task `1v400j3l`: event-chain replay relocated
     // here from `internal::thread`. Structurally inside legacy/.
     "src/internal/legacy/chain_replay.rs",
     "src/internal/commands/migrate.rs",
@@ -87,8 +85,8 @@ const PERMANENT_EXEMPTIONS: &[&str] = &[
 ///
 /// (b) **DELETE-list / MOVE-TO-LEGACY files themselves.** A file that
 ///     is going away (or moving into legacy/) is allowed to reference
-///     any other file in the same set. Removed in Step 2 (move) or
-///     Step 3 (delete).
+///     any other file in the same set. Removal/relocation is tracked by
+///     task `913c4s9v`.
 ///
 /// (c) **Currently contaminated KEEP files.** These need real rewiring
 ///     before the file can drop out of ALLOW. Most of the contamination
@@ -108,7 +106,7 @@ const ALLOW_LIST: &[&str] = &[
     // (a) Permanent exemptions.
     "src/internal/legacy/mod.rs",
     "src/internal/legacy/v1.rs",
-    // Phase 4 Step 2b (RFC 7ymtc4b2, task 913c4s9v): event.rs and
+    // task `913c4s9v`: event.rs and
     // workflow.rs relocated from `internal::` to `internal::legacy::`.
     // They sibling-import each other via `super::event` / `super::workflow`,
     // which the contamination detector flags as "anchored at internal".
@@ -116,33 +114,33 @@ const ALLOW_LIST: &[&str] = &[
     // non-legacy importer is caught by `tests/legacy_gate_test.rs`.
     "src/internal/legacy/event.rs",
     "src/internal/legacy/workflow.rs",
-    // v3.1 step 3j (task 1v400j3l): event-chain replay machinery
+    // task `1v400j3l`: event-chain replay machinery
     // relocated here from `internal::thread`. Sibling-imports
     // `super::event` and `super::workflow`; non-legacy importers
     // are caught by `tests/legacy_gate_test.rs`.
     "src/internal/legacy/chain_replay.rs",
     "src/internal/commands/migrate.rs",
-    // (b) Phase 4 Step 3 (RFC 7ymtc4b2, task 913c4s9v) deleted the
+    // (b) task `913c4s9v` deleted the
     //     entire DELETE-list (state_change, write_ops, create, repair,
     //     repair_workflow, prune, purge, timeline, index, reindex,
     //     github, github_import, github_export, commands::repair_workflow)
     //     so this category is now empty.
-    // (c) Phase 4 Step 3 also cleared the last (c)-category entry
+    // (c) task `913c4s9v` also cleared the last (c)-category entry
     //     (`tui/mod.rs`) by deleting its lone v2-fixture call site
     //     (`crate::internal::create::create_thread` in the
     //     `thread_detail_header_shows_lifecycle_tags_linked_panel`
     //     test, which exercised the v2 §2.3.3 kind→lifecycle/tags
-    //     fallback that goes away in Step 5 anyway).
-    // tui/state.rs cleared in Phase 4 Step 2a (RFC 7ymtc4b2,
-    // task 913c4s9v): switched its lone `event::validate_tag` call to
+    //     fallback removed by task `913c4s9v`).
+    // tui/state.rs cleared in task `913c4s9v` (RFC 7ymtc4b2,
+    // task `913c4s9v`): switched its lone `event::validate_tag` call to
     // `thread::validate_tag` (the helper relocated to thread.rs as a
     // SPEC-3.0 §2.3.5 grammar concern, not v2 event surface).
-    // tui/input.rs cleared in Phase 4 Step 1c (RFC 7ymtc4b2,
-    // task 913c4s9v): index/reindex imports replaced by
+    // tui/input.rs cleared in task `913c4s9v` (RFC 7ymtc4b2,
+    // task `913c4s9v`): index/reindex imports replaced by
     // snapshot::list walker.
-    // tui/render.rs cleared in Phase 4 Step 1g: switched
+    // tui/render.rs cleared in task `913c4s9v`: switched
     // event::ThreadKind to thread::ThreadKind.
-    // tui/persist.rs cleared in Phase 4 Step 1c: ThreadRow now
+    // tui/persist.rs cleared in task `913c4s9v`: ThreadRow now
     // imported from snapshot::list, no internal::index dependency.
 ];
 
@@ -317,10 +315,10 @@ fn no_forbidden_imports_outside_allow_list() {
 
     assert!(
         violations.is_empty(),
-        "Modules outside the contamination ALLOW_LIST import forbidden Phase-4 modules:\n  - {}\n\n\
+        "Modules outside the contamination ALLOW_LIST import forbidden task `913c4s9v` modules:\n  - {}\n\n\
          If this is an intentional new dependency on a transitional module, add it to ALLOW_LIST\n\
          in tests/contamination_audit_test.rs and explain in the commit message — but note that\n\
-         the ALLOW_LIST is supposed to shrink to empty across Phase 4, not grow.\n\
+         the ALLOW_LIST is supposed to shrink to empty across task `913c4s9v`, not grow.\n\
          If this is a regression, replace the import with the snapshot-native equivalent\n\
          (NodeType / ThreadKind / ThreadStatus etc. relocate to node.rs / thread.rs;\n\
          event-replay loops replace with snapshot-commit walks per SPEC-3.0 §5.4).",
@@ -350,10 +348,9 @@ fn allow_list_has_no_duplicates() {
     }
 }
 
-/// The post-Phase-4 invariant: `ALLOW_LIST` contains only the
-/// permanent exemptions. Phase 4 Step 6 (RFC `7ymtc4b2`, task
-/// `913c4s9v`) flipped this off `#[ignore]` — from this commit
-/// forward, adding any new transitional ALLOW entry fails CI.
+/// The task `913c4s9v` invariant: `ALLOW_LIST` contains only the
+/// permanent exemptions. From task `913c4s9v` forward, adding any
+/// new transitional ALLOW entry fails CI.
 #[test]
 fn final_audit_pass_allow_list_must_be_empty_except_permanent_exemptions() {
     let extras: Vec<&&str> = ALLOW_LIST
@@ -362,7 +359,7 @@ fn final_audit_pass_allow_list_must_be_empty_except_permanent_exemptions() {
         .collect();
     assert!(
         extras.is_empty(),
-        "Phase 4 final pass: ALLOW_LIST must contain only the permanent exemptions \
+        "task `913c4s9v` final pass: ALLOW_LIST must contain only the permanent exemptions \
          (legacy/, commands/migrate.rs); still grandfathered: {:?}",
         extras
     );

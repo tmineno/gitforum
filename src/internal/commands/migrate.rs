@@ -14,7 +14,7 @@
 //!   [`crate::internal::snapshot::store::write_snapshot`]'s
 //!   parent-tree preservation rule.
 //!
-//! ADR-011 Decision 3: this command is the only sanctioned consumer
+//! task `1v400j3l`: this command is the only sanctioned consumer
 //! of `internal::legacy::*` and the only caller of
 //! [`migrate_legacy_to_snapshot`]. The build-time gate in
 //! `tests/legacy_gate_test.rs` enforces the import boundary.
@@ -60,7 +60,7 @@ pub fn alias_ref(legacy_id: &str) -> String {
 
 /// Compute the deterministic bare-token form for a legacy thread ID.
 ///
-/// Survives Phase 3 because v→2 alias resolution still needs it:
+/// Survives task `9635buy0` because v→2 alias resolution still needs it:
 /// `internal::thread::resolve_thread_id` and a few doctor/index call
 /// sites canonicalize a user-supplied prefixed ID (`RFC-0001`,
 /// `ASK-q3kfj49v`) to the bare token a prior v→2 run would have
@@ -379,7 +379,7 @@ fn process_one(git: &GitOps, thread_id: &str, dry_run: bool) -> ThreadReport {
         }
     };
 
-    // Phase-2 cutover ref shape: tip is event, ancestor may be a
+    // task `1hg98odf` cutover ref shape: tip is event, ancestor may be a
     // snapshot. Walk only the event tail; surface the snapshot
     // ancestor (if any) as an `archive` omission so the report
     // explains why the new `legacy/events.ndjson` carries only the
@@ -550,7 +550,7 @@ fn build_archive_ndjson(events: &[event::Event]) -> ForumResult<Vec<u8>> {
 /// reader and project the resulting state back into a SPEC-3.0
 /// [`ThreadDocument`].
 ///
-/// Per SPEC-3.0 §8.1 step 4 (and task `9635buy0` item 5), the
+/// Per SPEC-3.0 §8.1 status projection and task `9635buy0`, the
 /// projected snapshot's `status` is the legacy final status when it
 /// is valid in the target category's `statuses` list (e.g. a `done`
 /// v1 RFC stays `done`); otherwise it falls back to the target
@@ -599,7 +599,7 @@ pub fn migrate_legacy_to_snapshot_at(
 /// Output of [`migrate_legacy_to_snapshot_strict_at`].
 ///
 /// Carries the projected document plus enough side-channel data to
-/// feed the structured migration report (task `9635buy0` step 6 /
+/// feed the structured migration report (task `9635buy0` /
 /// items 9-10):
 ///
 /// - `issues` — every [`StrictReplayIssue`] surfaced by strict
@@ -713,13 +713,13 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
             }),
         }
     }
-    // v3.1 step 3m: ThreadState carries `category` directly; pull
+    // task `1v400j3l`: ThreadState carries `category` directly; pull
     // through, and propagate the lifecycle-derived `decision` tag for
     // record-flavored task threads (already added by chain_replay
     // when the chain saw an explicit `facet_set lifecycle=record`,
     // but legacy chains without one rely on the kind-derived path).
     //
-    // v3.1 step 3n: the canonical SPEC-3.0 §8.3 tag (`bug` for legacy
+    // task `1v400j3l`: the canonical SPEC-3.0 §8.3 tag (`bug` for legacy
     // Issue, `decision` for legacy Dec) is augmented inside
     // `chain_replay::augment_canonical_kind_tag` at the end of replay,
     // so `state.tags` already encodes the source kind. Migrate just
@@ -727,7 +727,7 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
     let category = state.category.clone();
     let label = super::super::policy::lifecycle_label_for(&category, &tags);
     super::thread_new::augment_tags_for_lifecycle_label(label, &mut tags);
-    // SPEC-3.0 §8.1 step 4: preserve the replayed legacy final
+    // SPEC-3.0 §8.1 status projection: preserve the replayed legacy final
     // status when it is valid in the target category's `statuses`
     // list; otherwise fall back to the category's `initial_status`
     // and surface a `state` omission so the report explains the
@@ -768,7 +768,7 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
         .nodes
         .iter()
         .map(|n| {
-            // v3.1 step 3o: ThreadState.nodes is already
+            // task `1v400j3l`: ThreadState.nodes is already
             // `Vec<NodeWithBody>` (snapshot-native shape). The migrate
             // projection still has to apply `tree_safe_node_id` to the
             // id + reply_to, since legacy chains can carry actor-
@@ -805,7 +805,7 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
     };
 
     let evidence = EvidenceFile {
-        // v3.1 step 3o: ThreadState.evidence_items is already
+        // task `1v400j3l`: ThreadState.evidence_items is already
         // `Vec<EvidenceRecord>`; migrate just clones it through.
         entries: state.evidence_items.clone(),
     };
@@ -840,9 +840,9 @@ mod tests {
     use super::*;
 
     // SPEC-3.0 §8.3 canonical-tag augmentation moved to
-    // `legacy::chain_replay::augment_canonical_kind_tag` in v3.1
-    // step 3n; the migrate-side `legacy_kind_to_canonical_tag` was
-    // dropped along with the public `ThreadKind` enum.
+    // `legacy::chain_replay::augment_canonical_kind_tag` by task
+    // `1v400j3l`; the migrate-side `legacy_kind_to_canonical_tag`
+    // was dropped along with the public `ThreadKind` enum.
 
     #[test]
     fn tree_safe_node_id_strips_actor_namespace_slash() {

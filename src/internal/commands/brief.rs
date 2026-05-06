@@ -13,10 +13,10 @@
 //! - No flag suggests cross-thread analysis (no `--tree`, no
 //!   `--with-parent`, no `--show-blockers`).
 //!
-//! Phase 2 slot 7h (RFC `7ymtc4b2`): the `Brief` arm body relocates
+//! task `1hg98odf`: the `Brief` arm body relocates
 //! from `main.rs` to [`run`] in this module, and
-//! [`read_incoming_link_counts`] moves here. Per ADR-011 Decision 6
-//! the SQLite reverse-link index is on the Phase 4 DELETE list, so
+//! [`read_incoming_link_counts`] moves here. Per task `913c4s9v`
+//! the SQLite reverse-link index is on the task `913c4s9v` DELETE list, so
 //! `read_incoming_link_counts` returns the zero-counts default until
 //! a future slot adds a tree-scan fallback.
 
@@ -275,7 +275,7 @@ pub fn run(args: BriefArgs, ctx: &Context) -> Result<(), ForumError> {
 
 /// Read incoming-link counts grouped by relation for `brief`.
 ///
-/// Phase 2 slot 11: the SQLite index is on the Phase 4 DELETE list,
+/// task `1hg98odf`: the SQLite index is on the task `913c4s9v` DELETE list,
 /// so this returns the zero-counts default. SPEC-3.0 §9.2: the
 /// index is optional acceleration; the reverse-link query stays
 /// available as a tree scan if a future slot needs it.

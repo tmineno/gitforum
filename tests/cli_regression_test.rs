@@ -3,10 +3,10 @@
 //! One CLI-output-only regression test per `internal::commands::*` module.
 //! Assertions read stdout/stderr/exit code or `git forum show` output —
 //! never the storage shape at `refs/forum/threads/<id>`. These tests
-//! must stay green across each Phase 2 cutover; storage-shape coverage
-//! is versioned per phase under `tests/storage_v{2,3}_test.rs`.
+//! must stay green across each task `1hg98odf` cutover; storage-shape coverage
+//! is versioned by storage schema under `tests/storage_v{2,3}_test.rs`.
 //!
-//! Coverage map: see `doc/internal/cli-coverage-audit.md`.
+//! Coverage map is tracked by task `4w8hm98j` and task `1hg98odf`.
 
 mod support;
 
@@ -152,7 +152,7 @@ fn revise_body_visible_in_show() {
 // invocation in v3.0.0. Bare `git forum migrate` (no `--to`) and
 // unsupported targets (`--to 99.0`) MUST be rejected at the CLI layer
 // with an actionable message. Body coverage (the actual walk + report)
-// lives in `tests/migrate_validity_test.rs` (task `9635buy0` step 7).
+// lives in `tests/migrate_validity_test.rs` (task `9635buy0`).
 
 #[test]
 fn migrate_to_3_0_is_accepted_by_cli() {

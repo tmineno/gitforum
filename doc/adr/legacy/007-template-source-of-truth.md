@@ -1,4 +1,4 @@
-# ADR-007: Template Source of Truth
+# task `96u6zxmc`: Template Source of Truth
 
 ## Context
 
@@ -9,7 +9,7 @@ git-forum's body templates (`issue.md`, `rfc.md`, `dec.md`, `task.md`) lived in 
 
 `init_forum` ran `write_if_missing(.forum/templates/<name>.md, TEMPLATE_<KIND>)` from both `git forum init` and the `worktree-init` post-checkout hook. There was no enforcement keeping the two sources in sync, and they had drifted in HEAD: the committed `rfc.md` was a 1-line `# {title}` stub while the constant carried a multi-section `Goal / Non-goals / Context / Proposal` scaffold. Users who looked at the committed file to learn what an RFC body should look like got the misleading stub.
 
-The drift was discovered during the investigation of @0edk3jdm and tracked as a focused follow-up in @96u6zxmc.
+The drift was discovered during the investigation of thread `0edk3jdm` and tracked as a focused follow-up in thread `96u6zxmc`.
 
 ## Decision
 
@@ -43,4 +43,4 @@ The drifted `rfc.md` is regenerated to match the multi-section scaffold and comm
 - Source code contains no inline template body constants.
 - `cargo test` passes including the new `init_creates_non_trivial_rfc_template` test.
 - `.forum/templates/rfc.md` matches the embedded content by virtue of `include_str!`.
-- @96u6zxmc closed.
+- thread `96u6zxmc` closed.

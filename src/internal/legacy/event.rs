@@ -37,7 +37,7 @@ pub struct Approval {
 }
 
 // `ThreadKind` (v2 4-variant enum) is no longer on the public surface.
-// v3.1 step 3n (task `1v400j3l`) relocated it from `internal::thread`
+// task `1v400j3l` relocated it from `internal::thread`
 // to `super::workflow`, alongside the other v2 dispatch axes
 // (`Lifecycle`, `ThreadStatus`). The 3.0-native ThreadState carries
 // `category: String` + `tags`; the v2 kind label is derived via
@@ -47,7 +47,7 @@ pub struct Approval {
 // legacy chain reader and integration-test consumers.
 pub use super::workflow::ThreadKind;
 
-// v3.1 step 3l (task `1v400j3l`): `ThreadStatus` (the v2 8-variant
+// task `1v400j3l`: `ThreadStatus` (the v2 8-variant
 // enum) moved out of `internal::thread` into
 // `internal::legacy::chain_replay`. The 3.0-native ThreadState
 // carries `status: String`; the typed enum survives only inside
@@ -55,7 +55,7 @@ pub use super::workflow::ThreadKind;
 // tests of `parse_lenient` consume it via this re-export.
 pub use super::chain_replay::ThreadStatus;
 
-// v3.1 step 3m (task `1v400j3l`): `Lifecycle` enum is no longer in
+// task `1v400j3l`: `Lifecycle` enum is no longer in
 // `internal::policy`. The 3.0-native ThreadState carries
 // `category: String` + `tags`; the lifecycle "label" is derived
 // via `policy::lifecycle_label_for`. The typed enum lives only
@@ -65,16 +65,16 @@ pub use super::chain_replay::ThreadStatus;
 //
 pub use super::workflow::Lifecycle;
 
-// `validate_tag` was relocated to `internal::thread` in Phase 4
-// Step 2a (RFC `7ymtc4b2`, task `913c4s9v`). It's a SPEC-2.0 §2.3.5
+// `validate_tag` was relocated to `internal::thread` by task `913c4s9v`.
+// It's a SPEC-2.0 §2.3.5
 // (carried into SPEC-3.0 §2.3.5) tag-grammar check, naturally a
 // thread-shaped concern. event.rs back-imports for legacy callers
-// retired in Steps 2/3.
+// retired by task `913c4s9v`.
 pub use super::super::thread::validate_tag;
 
 // `impl Lifecycle { ... }` and `impl Display for Lifecycle` were
 // relocated alongside the enum definition to `internal::policy` in
-// Phase 4 Step 1j.
+// task `913c4s9v`.
 
 /// SPEC-2.0 §3.1 — single unified transition graph.
 ///
@@ -89,7 +89,7 @@ pub fn unified_transitions() -> &'static [(&'static str, &'static str)] {
 }
 
 // `normalize_state_name` was relocated out of `internal::policy` and
-// back into `internal::legacy::v1` in v3.1 step 3p (task `1v400j3l`).
+// back into `internal::legacy::v1` in task `1v400j3l`.
 // 3.0 stores canonical status names natively; the alias fold survives
 // only here, where the v2 chain reader and migrate projection still
 // need it. event.rs re-exports for legacy callers and the in-module
@@ -169,8 +169,8 @@ impl std::fmt::Display for EventType {
 }
 
 // --------------------------------------------------------------------
-// `NodeType` (12-variant v2 enum) lives here as of task `1v400j3l`
-// step 3g: it is the legacy event-codec's own type, no longer
+// `NodeType` (12-variant v2 enum) lives here as of task `1v400j3l`:
+// it is the legacy event-codec's own type, no longer
 // re-exported from `internal::node`. The 4 canonical 2.0 variants
 // remain (Comment / Approval / Objection / Action) alongside the 8
 // legacy 1.x rhetorical labels (Claim / Question / Evidence /
@@ -543,7 +543,7 @@ impl Event {
 }
 
 // ============================================================================
-// Stored / Domain split (P2 #wlqhi8xh, ADR-010)
+// Stored / Domain split (task `wlqhi8xh`)
 //
 // `Event` is the storage bag (~17 Optional fields shaped for serde
 // round-trips and forward compat). `DomainEvent` is the typed sum
@@ -561,7 +561,7 @@ pub struct EventMeta {
     pub thread_id: String,
     /// Stored event_type. Useful for issue reporting (`MissingRequiredField`
     /// includes the offending event_type) and for the
-    /// [`DomainEvent::Unknown`] case once Phase B (ADR-010) lands.
+    /// [`DomainEvent::Unknown`] case once task `wlqhi8xh` follow-up lands.
     pub event_type: EventType,
     pub created_at: DateTime<Utc>,
     pub actor: String,
@@ -592,9 +592,9 @@ pub enum LinkPayload {
 /// the `apply_event` arm in `internal::thread`. No optional fields
 /// cascade across the codebase.
 ///
-/// The [`Self::Unknown`] variant is reserved per ADR-010 option (a):
+/// The [`Self::Unknown`] variant is reserved by task `wlqhi8xh`:
 /// today every `EventType` has an explicit projection arm so it is
-/// never constructed; Phase B (ADR-010) will add
+/// never constructed; task `wlqhi8xh` follow-up will add
 /// `EventType::Other(String)` and route it here.
 #[derive(Debug, Clone)]
 pub enum DomainEvent {
@@ -676,7 +676,7 @@ pub enum DomainEvent {
         tags_add: Vec<String>,
         tags_remove: Vec<String>,
     },
-    /// Reserved per ADR-010 option (a). Unreachable today; Phase B
+    /// Reserved by task `wlqhi8xh`. Unreachable today; task `wlqhi8xh`
     /// will route `EventType::Other(String)` to this variant.
     #[allow(dead_code)]
     Unknown {
@@ -959,7 +959,7 @@ pub fn load_thread_events_at(git: &GitOps, start_rev: &str) -> ForumResult<Vec<E
 /// chronological order plus the OID of the snapshot ancestor when
 /// one is present.
 ///
-/// Used by migrate so a Phase-2 cutover ref (snapshot bottom +
+/// Used by migrate so a task `1hg98odf` cutover ref (snapshot bottom +
 /// event tail at tip) does not error trying to parse the snapshot
 /// commit as `event.json`. `read_snapshot` only inspects the tip
 /// tree, so an event-tip + snapshot-ancestor ref still routes to
@@ -1344,7 +1344,7 @@ mod tests {
         assert_eq!(Lifecycle::Record.initial_state(), "open");
     }
 
-    // ---- ThreadStatus (Phase 2a: typed status) ----
+    // ---- ThreadStatus (SPEC-2.0 status-model: typed status) ----
 
     #[test]
     fn thread_status_parse_canonical_round_trip() {
@@ -1547,7 +1547,7 @@ mod tests {
         assert_eq!(normalize_state_name("deprecated"), "deprecated");
     }
 
-    // ---- P2 #wlqhi8xh: Stored / Domain projection ----
+    // ---- task `wlqhi8xh`: Stored / Domain projection ----
 
     #[test]
     fn project_create_carries_payload_and_meta() {

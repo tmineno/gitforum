@@ -406,7 +406,7 @@ fn canonical_thread_new_rejects_unknown_lifecycle() {
 /// This test guards the alias data against silent divergence — adding,
 /// renaming, or re-keying an alias without updating the data table will fail
 /// here. It is intentionally placed before the `WorkflowSpec` consolidation
-/// (P0 §34ith16h) so the structural change cannot regress the contract.
+/// (thread `34ith16h`) so the structural change cannot regress the contract.
 #[test]
 fn preset_aliases_resolve_to_canonical_axes() {
     let repo = support::repo::TestRepo::new();
@@ -414,7 +414,7 @@ fn preset_aliases_resolve_to_canonical_axes() {
     init::init_forum(&paths).unwrap();
 
     // (alias, expected category, expected tags)
-    // v3.1 step 3m: lifecycle was a typed enum; now the canonical
+    // task `1v400j3l`: lifecycle was a typed enum; now the canonical
     // SPEC-3.0 fingerprint is `category + tags` (the lifecycle label
     // is derived for display via `policy::lifecycle_label_for`).
     let cases: &[(&str, &str, &[&str])] = &[

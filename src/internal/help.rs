@@ -1,10 +1,10 @@
 use super::policy::CategoryRegistry;
 
-/// Node type taxonomy for `--help-llm` (SPEC-3.0 §2.2 / ADR-006).
+/// Node type taxonomy for `--help-llm` (SPEC-3.0 §2.2).
 pub fn node_type_taxonomy() -> String {
     r#"# Node Type Taxonomy
 
-SPEC-3.0 §2.2 / ADR-006: discussion uses four canonical node kinds,
+SPEC-3.0 §2.2: discussion uses four canonical node kinds,
 chosen by protocol effect.
 
 | Kind | Purpose | Resolvable |

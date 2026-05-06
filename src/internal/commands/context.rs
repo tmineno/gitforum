@@ -1,12 +1,12 @@
 //! Application `Context` — the dependency bundle every CLI command receives.
 //!
-//! Per task `t8o3vnt6` (RFC `7ymtc4b2` Phase 0): main.rs builds a `Context`
+//! Per RFC `7ymtc4b2`, task `t8o3vnt6`: main.rs builds a `Context`
 //! once from the surrounding repo + clock + config, then dispatches to
 //! `internal::commands::<cmd>::run(args, &ctx)`. This eliminates the
 //! per-arm `discover_repo_with_init_warning` + `resolve_actor` duplication
 //! and gives every command the same dependency surface.
 //!
-//! Phase 1 (snapshot writer) extends this struct with a `SnapshotStore`
+//! task `qa8u71j9` snapshot writer extends this struct with a `SnapshotStore`
 //! field; the change is additive and does not affect existing callers.
 //!
 //! ## Init warning

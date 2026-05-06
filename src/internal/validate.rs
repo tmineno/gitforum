@@ -21,7 +21,7 @@
 //! - `facet_set` carrying a `lifecycle` value outside `proposal | execution |
 //!   record`.
 //! - `state` events whose `from -> to` edge is not legal for the thread's
-//!   lifecycle (P0 #34ith16h). Lenient replay still applies any
+//!   lifecycle (thread `34ith16h`). Lenient replay still applies any
 //!   `parse_lenient`-able state, so legacy chains keep replaying.
 
 /// A semantic issue detected by strict replay.
@@ -65,7 +65,7 @@ pub enum StrictReplayIssue {
     /// Lenient replay leaves the prior status untouched; strict mode flags it.
     InvalidStateValue { event_id: String, value: String },
     /// SPEC-2.0 §3.1 — a `state` event's `from -> to` edge is not legal
-    /// for the thread's lifecycle (P0 #34ith16h). The endpoints parse
+    /// for the thread's lifecycle (thread `34ith16h`). The endpoints parse
     /// (and so do not surface as [`Self::InvalidStateValue`]) but the
     /// edge is missing from the per-lifecycle filtered transition graph.
     /// Lenient replay applies the new state regardless; strict mode

@@ -1,6 +1,6 @@
 //! `git forum evidence add <ID> --kind <KIND> --ref <REF>` orchestration.
 //!
-//! Phase 2 slot 7j (RFC `7ymtc4b2`): appends rows to `evidence.toml`
+//! task `1hg98odf`: appends rows to `evidence.toml`
 //! directly via `snapshot::store::write_snapshot`. The legacy
 //! `internal::evidence::add_evidence` event-write path is no longer
 //! invoked here.

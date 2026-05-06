@@ -1,21 +1,21 @@
-# ADR-004: Migration Strategy from 1.x to 2.0
+# SPEC-3.0 §8: Migration Strategy from 1.x to 2.0
 
 ## Context
 
 git-forum 2.0 makes structural changes that cannot be expressed as soft additions to 1.x:
 
-- Thread `kind` field is removed; replaced by `facets.lifecycle` and `tags` (ADR-002).
+- Thread `kind` field is removed; replaced by `facets.lifecycle` and `tags` (SPEC-3.0 §8.3).
 - Thread ID prefix changes from per-kind (`RFC-`, `ASK-`, etc.) to unified type-marker (`@` for
 display; bare token for storage).
 - Four state machines collapse to one (lifecycle-filtered).
 - Ten node types collapse to four (`comment` / `approval` / `objection` / `action`,
-  ADR-006).
+  SPEC-3.0 §2.2).
 - Policy key vocabulary changes from kind-named to lifecycle/tag-keyed.
 
 Existing repositories using git-forum 1.x must be able to upgrade without losing data or
 discussion history, and without forcing every team to coordinate the cutover.
 
-Earlier 2.0 drafts also introduced a topic entity (ADR-003); that mechanism was removed
+Earlier 2.0 drafts also introduced a topic entity (thread `1ooguji1`); that mechanism was removed
 during CORE-VALUE alignment and is not part of the migration surface.
 
 ## Decision
@@ -31,14 +31,14 @@ Performs in place:
    `@<thread-id>`). The old name is preserved as a read-only alias entry so external links
    (`RFC-0001`, `ASK-XXXXXXXX`, etc.) keep resolving.
 2. **Append `facet_set` event** to every existing thread populating `lifecycle` and conventional
-   tags per the kind mapping (ADR-002).
+   tags per the kind mapping (SPEC-3.0 §8.3).
 3. **Remap states** per spec §3.1.2 (lossless mapping table).
-4. **Rewrite node events** per ADR-006 / spec §2.5: 1.x types `claim` / `question` /
+4. **Rewrite node events** per SPEC-3.0 §2.2 / spec §2.5: 1.x types `claim` / `question` /
    `summary` / `risk` / `review` / `alternative` / `assumption` migrate to `comment` (with
    `legacy_subtype` preserved); standalone Approval events migrate to `approval` nodes.
 5. **Auto-rewrite policy keys** in `.forum/policy.toml` from kind-named (`creation_rules.rfc`)
    to lifecycle-named (`creation_rules.proposal`), warning on each rewrite. Emit a warning
-   for any line referencing the now-removed `at_least_one_summary` predicate (ADR-006).
+   for any line referencing the now-removed `at_least_one_summary` predicate (SPEC-3.0 §2.2).
 
 `git forum migrate --dry-run` reports the planned rewrite without modifying refs.
 
@@ -49,7 +49,7 @@ The kind-named **top-level** commands and shorthands are **not** part of the dep
 - `git forum new rfc` / `new dec` / `new task` / `new issue` / `new bug`
 - State-change shorthands: `accept`, `close`, `pend`, `propose`, `reject`, `deprecate`
 
-These are the stable everyday surface (ADR-002). Users keep typing them indefinitely; only the
+These are the stable everyday surface (SPEC-3.0 §8.3). Users keep typing them indefinitely; only the
 underlying schema changes.
 
 ### Compatibility aliases (deprecated, scoped to 2.0)
@@ -79,7 +79,7 @@ remain supported indefinitely.
 #### Why pull subcommand-group removal forward from 3.0 to 2.0
 
 Previous drafts staged the kind-prefixed subcommand removal as silent-alias (2.0) → warn
-(2.1) → remove (3.0). RFC-nm3d31yk's review of the v1.2.0 source tree showed that the
+(2.1) → remove (3.0). RFC `nm3d31yk`'s review of the v1.2.0 source tree showed that the
 six `Ask` / `Issue` / `Rfc` / `Dec` / `Job` / `Task` clap variants in `main.rs` (which
 all delegate to the same `ThreadCmd`) account for ≈ 500 LOC of dead duplication that
 blocks the kind-reduction cleanup pass. Carrying them through 2.x defeats the
@@ -109,7 +109,7 @@ Removing them in 2.0 directly is acceptable because:
 - Custom user policy that mentions kinds in user-defined predicates (rare) requires manual
   update. The compat layer covers structured keys, not free-form expressions.
 - Pulling kind-prefixed subcommand removal forward to 2.0 (rather than 3.0) shortens the
-  staged-deprecation window but unlocks the LOC reduction targeted by RFC-nm3d31yk.
+  staged-deprecation window but unlocks the LOC reduction targeted by RFC `nm3d31yk`.
   Scripts that used `git forum rfc new` style invocations need updating to the top-level
   form before upgrading; the migration log emits a one-time warning naming any such
   occurrences detected in shipped helper scripts under `.forum/`.

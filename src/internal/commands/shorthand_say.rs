@@ -1,13 +1,13 @@
 //! `git forum comment | objection | action` orchestration.
 //!
-//! SPEC-3.0 §2.2 / ADR-006 keeps four canonical NodeKinds: Comment,
+//! SPEC-3.0 §2.2 keeps four canonical NodeKinds: Comment,
 //! Approval, Objection, Action. The v1.x rhetorical shorthands
 //! (`claim`/`question`/`summary`/`risk`/`review`) were removed at
-//! Phase 2 slot 2 (RFC `7ymtc4b2`); their CLI arms, the `Commands::*`
+//! task `1hg98odf`; their CLI arms, the `Commands::*`
 //! enum variants, and the `warn_legacy_node_shorthand` helper are no
 //! longer in tree.
 //!
-//! Phase 2 slot 2: `run_shorthand_say` writes a `NodeRecord` + body
+//! task `1hg98odf`: `run_shorthand_say` writes a `NodeRecord` + body
 //! through `internal::snapshot::store::write_snapshot`. The legacy
 //! `internal::write_ops::say_node` event-write path is no longer
 //! invoked here.
@@ -140,7 +140,7 @@ pub fn run_shorthand_say(
 }
 
 /// Append `node` to the thread's snapshot and write a new snapshot
-/// commit. ADR-011 Decision 3: non-migrate paths must NOT consume
+/// commit. task `1v400j3l`: non-migrate paths must NOT consume
 /// legacy event chains. If the source is still on the legacy chain,
 /// bail with `LegacyEventChain` so the user runs `git forum migrate`
 /// before mutating.

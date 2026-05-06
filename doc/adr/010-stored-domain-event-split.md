@@ -1,4 +1,4 @@
-# ADR-010: Stored / Domain Event Two-Layer Split
+# task `wlqhi8xh`: Stored / Domain Event Two-Layer Split
 
 ## Context
 
@@ -25,8 +25,8 @@ canonical example — every `EventType` arm starts with a
 => issue, ... }` to recover what should already be the variant's
 guaranteed payload.
 
-The parent v2.x design RFC (#915yuegd) carved out a P2 phase
-(#wlqhi8xh) to split the bag in two:
+The parent v2.x design RFC (thread `915yuegd`) carved out thread `wlqhi8xh`
+to split the bag in two:
 
 - **`StoredEvent`** — the existing serde-friendly bag, kept as-is for
   on-disk shape and forward-compatible reads.
@@ -81,24 +81,24 @@ separate PRs. This ADR documents the chosen direction; the actual
 forward-compat hook (a serde fallback variant on `EventType`) is
 broken out as follows:
 
-- **Phase A (this PR)** — introduce `EventMeta` + `DomainEvent`,
+- **task `wlqhi8xh` EventMeta/DomainEvent slice** — introduce `EventMeta` + `DomainEvent`,
   `Event::project()`, and convert `apply_event` to consume
   `&DomainEvent`. Reserve `DomainEvent::Unknown { meta, raw: Box<Event> }`
   in the enum but leave it unreachable today: every current
-  `EventType` variant has an explicit `project` arm. This phase is
+  `EventType` variant has an explicit `project` arm. This task slice is
   purely a refactor — no on-disk shape change.
-- **Phase B (follow-up PR)** — add `EventType::Other(String)` with
+- **task `wlqhi8xh` unknown-event fallback slice** — add `EventType::Other(String)` with
   `#[serde(other)]` so a future writer's unknown event_type
   deserialises into the fallback variant; wire `project` so
-  `EventType::Other` produces `DomainEvent::Unknown`. This phase
+  `EventType::Other` produces `DomainEvent::Unknown`. This task slice
   changes deserialiser behaviour and rolls through the ~80 existing
   `match event.event_type` sites; it is tractable but not worth
   bundling into the projection-introduction PR.
-- **Phase C (follow-up PR)** — rename `Event` → `StoredEvent`. Pure
+- **task `wlqhi8xh` StoredEvent rename slice** — rename `Event` → `StoredEvent`. Pure
   identifier shuffle; deferred per the ticket's exception clause to
-  keep Phase A reviewable.
+  keep task `wlqhi8xh` EventMeta/DomainEvent slice reviewable.
 
-The decision recorded here applies once Phase B lands. Until then,
+The decision recorded here applies once task `wlqhi8xh` unknown-event fallback slice lands. Until then,
 the practical behaviour for a corrupt or future-shape event is the
 existing one: serde rejects deserialisation up-front. That is
 strictly tighter than option (a) and does not violate it.
@@ -113,11 +113,11 @@ strictly tighter than option (a) and does not violate it.
   arm, preserving the property that no replay path silently drops a
   stored event.
 - A future binary that introduces a new `EventType` variant gains
-  forward compat *for older readers* the day Phase B lands. Until
+  forward compat *for older readers* the day task `wlqhi8xh` unknown-event fallback slice lands. Until
   then, older readers fail to deserialise — the same as today.
 - The "cascading edit" shield documented on the existing `Event`
   struct moves up a layer: adding an optional storage field still
-  costs zero edits across the codebase (Phase A preserves
+  costs zero edits across the codebase (task `wlqhi8xh` EventMeta/DomainEvent slice preserves
   `Event::Default`), but adding a new **domain-meaningful** event
   variant now costs four edits — `EventType`, `DomainEvent`, the
   `project` arm, and the `apply_event` arm — and the compiler
@@ -146,7 +146,7 @@ operational surface is much larger than option (a); the migration
 tool grows a "rewrite unknown variants" branch for which there is
 no current use case.
 
-### Defer the unknown-variant question until Phase B
+### Defer the unknown-variant question until task `wlqhi8xh` unknown-event fallback slice
 
 Pros: smaller blast radius for the projection-introduction PR.
 
@@ -161,13 +161,13 @@ scope.
 
 ## Exit criteria
 
-- Phase A landed: `DomainEvent` enum exists with an `Unknown`
+- task `wlqhi8xh` EventMeta/DomainEvent slice landed: `DomainEvent` enum exists with an `Unknown`
   variant, `Event::project()` returns either a known variant or a
   projection error tied to a specific missing/invalid field, and
   `apply_event(state, &DomainEvent, issues)` is the replay
   signature.
-- Phase B landed: `EventType::Other(String)` is serde-fallback;
+- task `wlqhi8xh` unknown-event fallback slice landed: `EventType::Other(String)` is serde-fallback;
   `project` maps it to `DomainEvent::Unknown`; `apply_event` no-ops
   on `Unknown` and emits `StrictReplayIssue::UnknownEventType`.
 - This ADR is referenced from the SPEC-2.0 §10 forward-compat
-  section once Phase B ships.
+  section once task `wlqhi8xh` unknown-event fallback slice ships.

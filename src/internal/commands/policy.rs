@@ -1,7 +1,7 @@
 //! `git forum policy {show, lint, check}` orchestration.
 //!
-//! Phase 2 slot 10d (RFC `7ymtc4b2`): NEW module. Phase 1 already
-//! rewrote `internal::policy` to the SPEC-3.0 category registry
+//! task `1hg98odf`: NEW module. task `qa8u71j9` already rewrote
+//! `internal::policy` to the SPEC-3.0 category registry
 //! (`CategoryRegistry`); this slot exposes the rewritten library at
 //! the CLI surface. The arm body relocates from `main.rs` to
 //! [`run_arm`] here.

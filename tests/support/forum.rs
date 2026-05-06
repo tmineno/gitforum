@@ -1,6 +1,6 @@
 //! Forum-aware fixture helpers shared across integration tests.
 //!
-//! Phase 4 Step 3 (RFC `7ymtc4b2`, task `913c4s9v`): rewritten to
+//! task `913c4s9v`: rewritten to
 //! construct test threads via the SPEC-3.0 snapshot writer
 //! (`internal::snapshot::store::write_snapshot`) instead of the
 //! deleted v2 `internal::create::create_thread` helper. The legacy
@@ -57,7 +57,7 @@ pub fn fixed_clock() -> FixedClock {
     }
 }
 
-// ---- Snapshot thread builders (Phase 4 Step 3) ----
+// ---- Snapshot thread builders (task `913c4s9v`) ----
 
 /// Build a deterministic 8-char id from a category + numeric seed.
 /// Test threads use these to keep refs stable across runs.
@@ -189,7 +189,7 @@ fn fresh_seed() -> u8 {
     }
 }
 
-// ---- Snapshot mutators (Phase 4 Step 3 helpers) ----
+// ---- Snapshot mutators (task `913c4s9v` helpers) ----
 
 /// Append a node to an existing snapshot thread. Returns the new node
 /// id. Replaces v2 `write_ops::say_node` for tests that care about

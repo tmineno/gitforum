@@ -1,6 +1,6 @@
 //! Git-history view of a snapshot ref (SPEC-3.0 §5.4).
 //!
-//! Phase 4 Step 1a (RFC `7ymtc4b2`, task `913c4s9v`): replaces the v2
+//! task `913c4s9v`: replaces the v2
 //! domain-event timeline with a Git-log walk over `refs/forum/threads/<id>`.
 //! Each commit's subject is parsed against the operation-shaped messages
 //! from SPEC-3.0 §5.3 (`thread-create`, `node-add`, `node-resolve`,
@@ -9,7 +9,7 @@
 //! still be shown as Git commits").
 //!
 //! Consumers: `commands::show::render_full` / `render_node_show`
-//! (this commit), and `tui::render` per-thread timeline (Phase 4 Step 1d).
+//! (this commit), and `tui::render` per-thread timeline (task `913c4s9v`).
 //! Per-node history (`render_node_show`) filters the same entry list to
 //! commits whose tree changed `nodes/<id>.{toml,md}`.
 

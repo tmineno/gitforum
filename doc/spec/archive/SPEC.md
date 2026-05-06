@@ -22,7 +22,7 @@ transitions as append-only events inside a Git repository.
    standard Git `push` / `fetch` on `refs/forum/*`. There is no git-forum-specific
    distribution protocol (CORE-VALUE.md non-goal §3).
 4. **Structured discussion.** Contributions are typed nodes (claim, objection, summary, etc.)
-   rather than opaque comments. (The 1.x ten-type set is frozen; ADR-006 reduces it to four
+   rather than opaque comments. (The 1.x ten-type set is frozen; SPEC-3.0 §2.2 reduces it to four
    in 2.0.)
 5. **Human-agent parity.** Humans and AI agents use the same CLI surface and identity model.
    No AI-only command set (CORE-VALUE.md non-goal §5).
@@ -48,17 +48,17 @@ Four thread kinds:
   `rejected`.
 - **dec** — local design decisions worth recording. Lifecycle: `proposed` through `accepted` or
   `rejected`.
-- **task** — implementable work units with phase discipline. Lifecycle: `open` through `closed` or
-  `rejected`, with `designing`, `implementing`, and `reviewing` phases.
+- **task** — implementable work units with workflow-state discipline. Lifecycle: `open` through `closed` or
+  `rejected`, with `designing`, `implementing`, and `reviewing` active states.
 - **issue** — bug reports and feature requests. Lifecycle: `open` through `closed` or `rejected`.
 
 #### Status of the four-kind taxonomy
 
-The four-kind set is **frozen** in 1.x and slated for collapse in 2.0 (ADR-002). Empirical
+The four-kind set is **frozen** in 1.x and slated for collapse in 2.0 (SPEC-3.0 §8.3). Empirical
 usage across ~250 threads in this project's own forum is heavily skewed: `issue` 197,
 `rfc` 43, `task` 16, `dec` **0**. The `dec` kind in particular has never been used in
 practice — decision records are produced as `summary` nodes inside whatever thread reached
-the decision. ADR-002 collapses the four kinds into a single `thread` entity carrying a
+the decision. SPEC-3.0 §8.3 collapses the four kinds into a single `thread` entity carrying a
 `lifecycle` facet plus tags; the four kind-named CLI presets (`new rfc/dec/task/issue/bug`)
 are kept indefinitely as the everyday surface.
 
@@ -66,7 +66,7 @@ are kept indefinitely as the everyday surface.
 
 - Cross-cutting design decisions start as an RFC.
 - Local design decisions that need to survive beyond a PR are recorded as DECs.
-- Implementable work is tracked as TASKs with phase discipline.
+- Implementable work is tracked as TASKs with workflow-state discipline.
 - Bugs and feature requests are tracked as ISSUEs.
 - Agents are participants, not a separate control plane.
 
@@ -79,12 +79,12 @@ below).
 
 An event is an immutable change recorded in a thread's commit history. Each event is stored as a
 single Git commit containing an `event.json` blob. The canonical event ID is the Git commit OID
-(see ADR-001).
+(see SPEC-3.0 §6).
 
 ### 2.4 Node
 
 A node is a typed contribution inside a thread. The canonical node ID is the Git commit OID of the
-`say` event that introduced the node (see ADR-001).
+`say` event that introduced the node (see SPEC-3.0 §6).
 
 ### 2.5 Evidence
 
@@ -184,10 +184,10 @@ rejected -> open
 
 Initial state: `open`.
 
-`designing`, `implementing`, and `reviewing` are phase states that track progress. `open -> closed`
-is a fast-track for trivial tasks that need no design/review phase. Back-transitions skip at most
-one phase (e.g., `reviewing -> implementing` is valid but `reviewing -> designing` is not).
-`rejected` can be reached from any active phase. Reopen always returns to `open`.
+`designing`, `implementing`, and `reviewing` are active states that track progress. `open -> closed`
+is a fast-track for trivial tasks that need no design/review state. Back-transitions skip at most
+one workflow state (e.g., `reviewing -> implementing` is valid but `reviewing -> designing` is not).
+`rejected` can be reached from any active state. Reopen always returns to `open`.
 
 ### 3.5 State derivation
 
@@ -268,7 +268,7 @@ thread body revision.
 
 #### Status of the ten-type set
 
-This ten-type set is **frozen** in 1.x. ADR-006 reduces it to four in 2.0 (`comment`,
+This ten-type set is **frozen** in 1.x. SPEC-3.0 §2.2 reduces it to four in 2.0 (`comment`,
 `approval`, `objection`, `action`), cut by *protocol effect* rather than rhetorical move.
 The seven types collapsing into `comment` (`claim`, `question`, `summary`, `risk`, `review`,
 `alternative`, `assumption`) carry no policy or state-machine consequence in 1.x either —
@@ -378,7 +378,7 @@ Unambiguous prefixes are accepted when referencing threads (e.g. `RFC-a7f3` reso
 `RFC-a7f3b2x1` if unique). Token-only references (e.g. `a7f3b2x1`) are also accepted.
 Ambiguous prefixes produce an error listing candidates.
 
-### 6.2 Canonical IDs (ADR-001)
+### 6.2 Canonical IDs (SPEC-3.0 §6)
 
 - The canonical ID of an event is the Git commit OID that stores it.
 - The canonical ID of a node is the Git commit OID of the `say` event that introduced it.
@@ -761,8 +761,8 @@ digits). Comment lines (respecting `core.commentChar`) and scissors sections are
 re-stages paths whose committed blob is no longer present in the local object store, so the
 next commit lands a fresh tree. The mechanism by which a HEAD-tree blob goes missing under
 normal use is not characterized — `fix-index` exists as defense-in-depth, not because a specific
-git operation is known to produce the corruption (see ADR-007 referenced from the
-`@0edk3jdm` Phase 1 investigation).
+git operation is known to produce the corruption (see task `96u6zxmc` referenced from the
+thread `0edk3jdm` investigation).
 
 Hook paths are resolved via `git rev-parse --git-path hooks/<name>` (worktree and
 `core.hooksPath` safe). `--force` overwrites without backup.
@@ -1017,7 +1017,7 @@ proposal regardless of release.
 
 In addition to those five, the following 1.x-specific exclusions are retained:
 
-- A separate heavyweight decision workflow (DEC is lightweight by design; ADR-002 collapses
+- A separate heavyweight decision workflow (DEC is lightweight by design; SPEC-3.0 §8.3 collapses
   it entirely in 2.0).
 - Mandatory AI provenance tracking.
 - A central server.

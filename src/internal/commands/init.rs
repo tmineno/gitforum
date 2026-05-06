@@ -1,12 +1,12 @@
 //! `git forum init` orchestration.
 //!
-//! Phase 2 slot 10a (RFC `7ymtc4b2`): NEW module owning the `Init`
+//! task `1hg98odf`: NEW module owning the `Init`
 //! arm. Library code (`internal::init::*`) stays peer-level — it is
 //! reused by the post-checkout hook (`hook worktree-init`) and by
 //! tests. This module is the CLI-only handler.
 //!
-//! Phase 2 slot 11 already removed the SQLite reindex bootstrap; init
-//! now stops after refspec setup + fetch + hook install (ADR-011
+//! task `1hg98odf` already removed the SQLite reindex bootstrap; init
+//! now stops after refspec setup + fetch + hook install (task `913c4s9v`
 //! Decision 6: no index in v3.0.0).
 
 use crate::internal::actor;

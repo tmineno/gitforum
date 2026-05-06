@@ -1,6 +1,6 @@
 //! `git forum retype <ID> <NODE_ID> <NEW_TYPE>` orchestration.
 //!
-//! Phase 2 slot 7g (RFC `7ymtc4b2`): rewrites `nodes/<id>.toml`'s
+//! task `1hg98odf`: rewrites `nodes/<id>.toml`'s
 //! `type` field directly via `snapshot::store::write_snapshot`. The
 //! legacy `internal::write_ops::retype_node` event-write path is no
 //! longer invoked here.
@@ -70,7 +70,7 @@ pub fn run_retype(
 /// Parse a CLI `--type` value into a SPEC-3.0 [`NodeKind`]. The
 /// legacy rhetorical labels (`claim`/`question`/`summary`/`risk`/
 /// `review`/`alternative`/`assumption`/`evidence`) are rejected with
-/// a redirect to the canonical four kinds — Phase 2 slot 2
+/// a redirect to the canonical four kinds — task `1hg98odf`
 /// already removed the inbound CLI surfaces for them.
 fn parse_new_kind(raw: &str) -> Result<NodeKind, ForumError> {
     match raw {

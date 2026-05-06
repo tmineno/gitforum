@@ -61,7 +61,7 @@ pub(super) fn handle_key(
                     KeyCode::Char('f') => app.open_filter_bar(),
                     KeyCode::Char('c') => app.begin_create_thread(),
                     KeyCode::Char('r') => {
-                        // Phase 4 Step 1c: snapshot-walk refresh; no SQLite index.
+                        // task `913c4s9v`: snapshot-walk refresh; no SQLite index.
                         let threads = snapshot_list::list_threads(git)?;
                         app.list_tip_shas = snapshot_list::thread_tip_shas(git)?;
                         let sel = app.table_state.selected().unwrap_or(0);
@@ -128,7 +128,7 @@ pub(super) fn handle_key(
             }
             KeyCode::Char('r') => {
                 let selected = app.selected_node_id();
-                // Phase 4 Step 1c: open_thread_detail re-reads the snapshot;
+                // task `913c4s9v`: open_thread_detail re-reads the snapshot;
                 // no SQLite reindex needed.
                 open_thread_detail(app, git, &thread_id, selected.as_deref())?;
             }
@@ -211,7 +211,7 @@ pub(super) fn handle_key(
                 app.clamp_node_detail_scroll();
             }
             KeyCode::Char('r') => {
-                // Phase 4 Step 1c: snapshot-walk re-read; no SQLite reindex.
+                // task `913c4s9v`: snapshot-walk re-read; no SQLite reindex.
                 open_node_detail(app, git, &thread_id, &node_id)?;
             }
             _ => {}

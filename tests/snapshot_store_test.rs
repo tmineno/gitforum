@@ -1,9 +1,9 @@
 //! `internal::snapshot::store::write_snapshot` integration tests
-//! (RFC `7ymtc4b2` Phase 1).
+//! (RFC `7ymtc4b2`, task `qa8u71j9`).
 //!
 //! These tests exercise the snapshot writer directly against a real
 //! Git repo. They are unrelated to the CLI cutover gates in
-//! `tests/storage_v3_test.rs`; the writer is additive Phase 1
+//! `tests/storage_v3_test.rs`; the writer is additive task `qa8u71j9`
 //! infrastructure that no CLI command calls yet.
 
 mod support;

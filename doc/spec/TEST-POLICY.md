@@ -45,7 +45,7 @@ Every file directly under `tests/` belongs to exactly one of:
    intentionally couple to the on-disk shape at
    `refs/forum/threads/<id>` and therefore CANNOT stay green across a
    storage-shape cutover. Added by task `4w8hm98j` for the v2.x → v3.0
-   migration. Per-command rows turn over in their Phase 2 cutover
+   migration. Per-command rows turn over in their task `1hg98odf` cutover
    commit: the `v2_*` assertion is removed and the `v3_*` counterpart
    is unblocked (`#[ignore]` removed) in the same commit. CLI-output
    regression tests remain in category 2 — they assert the

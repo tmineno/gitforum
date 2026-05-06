@@ -29,8 +29,8 @@ core value statement, this document is wrong and must be revised.
 > git-forum does not introduce its own push/fetch protocol or cross-clone conflict
 > resolution. This is mandated by `CORE-VALUE.md`.
 >
-> The motivating analysis is recorded separately in ADR-002 (kind reduction), ADR-004
-> (migration), and ADR-006 (node type reduction). This document specifies the resulting
+> The motivating analysis is recorded separately in SPEC-3.0 §8.3 (kind reduction), SPEC-3.0 §8
+> (migration), and SPEC-3.0 §2.2 (node type reduction). This document specifies the resulting
 > model.
 
 ## 1. Overview
@@ -42,7 +42,7 @@ core value statement, this document is wrong and must be revised.
 | Primary unit of work | Thread (`RFC-...`, `JOB-...`) | **Thread** (unchanged). |
 | Thread classification | `kind` enum: `rfc` / `dec` / `task` / `issue` | **Single required facet** (`lifecycle`) + free-form `tags` |
 | State machines | 4 kind-specific machines | 1 unified machine, allowed states gated by `lifecycle` facet |
-| Node types | 10 types (claim, question, ...) | 4 types: `comment`, `approval`, `objection`, `action` (ADR-006) |
+| Node types | 10 types (claim, question, ...) | 4 types: `comment`, `approval`, `objection`, `action` (SPEC-3.0 §2.2) |
 | Top-level CLI | `git forum new rfc ...` etc. | `git forum new rfc/task/bug/dec ...` remain as the **stable everyday surface**; `git forum thread new --lifecycle ...` is the canonical/scriptable form |
 | Thread grouping | Links between threads (`--link-to ... --rel ...`) | Unchanged. The "group" surfaced by `show --tree` is a parent thread + its direct incoming `--rel implements` children (one hop), an advisory display only. No separate topic entity. |
 
@@ -190,7 +190,7 @@ These four combinations are exposed as **kind presets** (compatibility shorthand
 `intent` (5 values) was rejected for these reasons:
 
 - `decision` — **zero** usage in 1.x dogfood (DEC kind unused). Recording a decision belongs at
-  the node level (a `comment` whose body states the decision; see §2.5 / ADR-006) inside
+  the node level (a `comment` whose body states the decision; see §2.5 / SPEC-3.0 §2.2) inside
   whatever thread reached that decision.
 - `question` — questions are predominantly node-level inside other threads (also conveyed
   in `comment` body prose post-reduction).
@@ -275,7 +275,7 @@ along with the topic mechanism (§2.1).
 ### 2.5 Node
 
 **Overrides SPEC.md §4.3.** The 1.x ten-type set is reduced to four types,
-cut by *protocol effect* rather than rhetorical move. See ADR-006 for
+cut by *protocol effect* rather than rhetorical move. See SPEC-3.0 §2.2 for
 the rationale.
 
 | Node type | Protocol effect |
@@ -641,7 +641,7 @@ git forum new bug   <TITLE>    → --lifecycle execution --tag bug    (alias of 
 `--help` for both forms shows the other as a cross-reference. Presets remain supported across
 all 2.x and 3.x releases — they are not on the removal schedule.
 
-Per ADR-004 (and pulled forward from the original 3.0 schedule by RFC-nm3d31yk Q1):
+Per SPEC-3.0 §8 (and pulled forward from the original 3.0 schedule by RFC `nm3d31yk` Q1):
 
 - **Removed in 2.0**: kind-prefixed *subcommand* groupings (`git forum rfc new`,
   `git forum issue close`, etc.) — invoking them prints a hard error pointing at the
@@ -663,7 +663,7 @@ git forum show <THREAD>                            # show one thread (with --tre
 `git forum ls` is a flat list. Earlier 2.0 drafts split the default view into "Topics" and
 "Inbox" sections; with topics removed, the default is the simple flat list.
 
-#### 9.2.1 `brief` (read-only single-thread digest, RFC-5wf2v8hv)
+#### 9.2.1 `brief` (read-only single-thread digest, RFC `5wf2v8hv`)
 
 ```text
 git forum brief <THREAD> [--json]
@@ -692,14 +692,14 @@ relation only — `brief` never reads a linked thread's body, title, or state.
 ```
 
 Field set is fixed; new fields may be added (additive evolution only). Per
-RFC-5wf2v8hv non-goals, `brief` has no flag for cross-thread analysis (no
+RFC `5wf2v8hv` non-goals, `brief` has no flag for cross-thread analysis (no
 `--tree`, no `--with-parent`, no `--show-blockers`). Cross-thread context is
 the job of `show --tree` (§9.1) and `verify` / `doctor` advisories (§9.4).
 
 ### 9.3 Discussion, lifecycle, evidence, links, hooks
 
 Inherits SPEC.md §9.4 / §9.5 / §9.6 / §9.7 / §9.10 with the **node-shorthand reduction** from
-ADR-006 / §2.5:
+SPEC-2.0 §2.5:
 
 | Canonical command | Shorthand | Status in 2.0 |
 |---|---|---|
@@ -765,7 +765,7 @@ After migration:
   conventional `tags` (`cross-cutting` for `rfc`; `bug` for `issue`; `task` for `task`) per the
   §2.3.3 mapping.
 - States are remapped per §3.1.2.
-- **Node events are rewritten** per ADR-006 / §2.5: 1.x types `claim` / `question` /
+- **Node events are rewritten** per SPEC-2.0 §2.5: 1.x types `claim` / `question` /
   `summary` / `risk` / `review` / `alternative` / `assumption` become `comment` (with
   `legacy_subtype` preserved); standalone Approval events become `approval` nodes.
   `objection`, `action`, and `evidence` are unchanged.
@@ -785,8 +785,8 @@ After migration:
 - Kind-prefixed *subcommand* forms — `git forum rfc new`, `git forum issue close`, etc. —
   are **removed** in 2.0. Invoking them prints a hard error pointing at the top-level form.
   These were 1.x hidden aliases and were already documented as deprecated in SPEC.md
-  §9.2 / §9.3 / §9.6. ADR-004 records the rationale for pulling this forward from 3.0
-  (the duplication blocks the kind-reduction LOC cleanup; see RFC-nm3d31yk).
+  §9.2 / §9.3 / §9.6. SPEC-3.0 §8 records the rationale for pulling this forward from 3.0
+  (the duplication blocks the kind-reduction LOC cleanup; see RFC `nm3d31yk`).
 
 **Deprecated (removal scheduled per §10.4):**
 
@@ -872,7 +872,7 @@ Unchanged from SPEC.md §14, plus:
   `all`/`untagged`) with `InvalidTagSyntax`. The error message names the specific
   violation and proposes a sanitized form.
 
-### Node type reduction (ADR-006, §2.5)
+### Node type reduction (SPEC-3.0 §2.2, §2.5)
 
 - 1.x node events of types `claim` / `question` / `summary` / `risk` / `review` /
   `alternative` / `assumption` migrate to `comment` with the legacy type label preserved
@@ -881,7 +881,7 @@ Unchanged from SPEC.md §14, plus:
 - Policy guards predicated on the old types resolve via the same legacy-subtype
   preservation; `at_least_one_summary` is no longer shipped as a guard predicate (§7.1).
   Migration MUST emit a warning naming any `policy.toml` line that still references it
-  (per ADR-006 Consequences).
+  (per SPEC-3.0 §2.2 Consequences).
 
 ### Type-marker omission (§6.1.1)
 
@@ -921,7 +921,7 @@ In addition to SPEC.md §15 and the five non-goals in `doc/spec/CORE-VALUE.md`:
 |---|---|---|
 | O-2 | Are 5 intent values enough? | **Dropped entirely**, and `scope` was dropped too. Sole required facet is `lifecycle`; everything else (bug/task/cross-cutting) is a tag. (§2.3) |
 | O-4 | Should free-form tags have any constraint, given the language-drift risk (`bug` vs `defect` vs `issue`)? | **Grammar only.** Hard tag grammar (`[a-z][a-z0-9-]{1,31}`); no registry, no conventional-tag list, no unknown-tag diagnostic, no policy lint over tag vocabulary. Drift remediation is deferred per F-T1 (Appendix A.3) until dogfood evidence shows the grammar is insufficient. (§2.3.5) |
-| O-5 | Should the ten 1.x node types be preserved, or reduced? | **Reduced to four** by protocol effect: `comment`, `approval`, `objection`, `action`. The standalone Approval concept folds into the `approval` node. See ADR-006 / §2.5. |
+| O-5 | Should the ten 1.x node types be preserved, or reduced? | **Reduced to four** by protocol effect: `comment`, `approval`, `objection`, `action`. The standalone Approval concept folds into the `approval` node. See SPEC-2.0 §2.5. |
 | O-6 | Should 2.0 ship a `git forum push` / `git forum fetch` and cross-clone conflict-resolution protocol? | **No.** Distribution is delegated to plain Git on `refs/forum/*`. CORE-VALUE.md non-goal §3 forbids reinventing the protocol. (§8.2) |
 | O-7 | Should 2.0 introduce a topic entity (named groupings of related threads)? | **No.** Earlier drafts introduced topic + handle + alias + attach. The grouping need is empirically "an RFC plus its `--rel implements` children", which existing thread-link relations already cover. The visualization need is met by an advisory `thread show --tree` (§9.1), not by a new entity. (§2.1) |
 
@@ -964,17 +964,17 @@ Speculative implementation of F-T1 without this trigger is explicitly discourage
 
 - `doc/spec/CORE-VALUE.md` — upstream constraint document; bounds this specification.
 - SPEC.md v1.2 — inherited specification (unchanged sections noted by reference).
-- ADR-001 — Git OID as canonical event/node ID (unchanged).
-- ADR-002 — Kind reduction rationale.
-- ADR-004 — Migration strategy.
-- ADR-006 — Node type reduction (collapses 10 types to 4 by protocol effect).
-- (ADR-003 — topic handle scheme — was removed when topic was dropped in favor of
+- SPEC-3.0 §6 — Git OID as canonical event/node ID (unchanged).
+- SPEC-3.0 §8.3 — Kind reduction rationale.
+- SPEC-3.0 §8 — Migration strategy.
+- SPEC-3.0 §2.2 — Node type reduction (collapses 10 types to 4 by protocol effect).
+- (thread `1ooguji1` — topic handle scheme — was removed when topic was dropped in favor of
   link-based grouping; see §2.1 and CORE-VALUE.md litmus.)
-- (ADR-005 — cross-clone conflict resolution — was removed when distribution was
+- (thread `1ooguji1` cross-clone conflict resolution option was removed when distribution was
   delegated to plain Git; see §8.2 and CORE-VALUE.md non-goal §3.)
-- RFC-0027 — Topic meta-thread (rejected by this draft; the cross-thread workflow
-  enforcement that motivated RFC-0027 is a CORE-VALUE non-goal, and the grouping
+- thread `zms8cn7v` — Topic meta-thread (rejected by this draft; the cross-thread workflow
+  enforcement that motivated thread `zms8cn7v` is a CORE-VALUE non-goal, and the grouping
   affordance is met by existing link relations rather than a topic entity).
-- RFC-0030 — Thread ID scheme (extended: kind-named prefixes drop entirely; the `@` type
+- thread `bzo11er9` — Thread ID scheme (extended: kind-named prefixes drop entirely; the `@` type
   marker becomes the display form per §6.1 and §6.2; storage is the bare 8-char token).
-- RFC-0031 — 3-letter kind prefixes (deprecated by this draft).
+- thread `vo4uau1f` — 3-letter kind prefixes (deprecated by this draft).

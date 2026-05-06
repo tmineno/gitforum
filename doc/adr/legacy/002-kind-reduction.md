@@ -1,4 +1,4 @@
-# ADR-002: Thread Kind Reduction
+# SPEC-3.0 §8.3: Thread Kind Reduction
 
 ## Context
 
@@ -12,7 +12,7 @@ Dogfood evidence in this repository (~250 threads) shows:
 - **`dec` was used 0 times.** The "lightweight design decision" use case did not surface in
   practice — decisions were either captured as `summary` nodes inside other threads or recorded
   in `rfc`s.
-- **`task` saw 10 uses** after introduction (RFC-0021), all small. The boundary against `issue`
+- **`task` saw 10 uses** after introduction (thread `emszy3a5`), all small. The boundary against `issue`
   was inconsistent.
 - **`issue` (`ASK`) absorbed 197 of 250 threads**, indistinguishably mixing bug reports, small
   feature requests, and ad-hoc questions.
@@ -50,7 +50,7 @@ shorthand on a deprecation timeline:
 `thread new --lifecycle ...` canonical form is the power-user / scripting interface; everyday
 capture stays at the kind-named surface to keep friction near zero. Only kind-prefixed
 *subcommand* groupings (`git forum rfc new`, `git forum issue close`) are deprecated for
-removal in 3.0 (see ADR-004).
+removal in 3.0 (see SPEC-3.0 §8).
 
 Thread IDs lose the kind prefix: 1.x `RFC-XXXXXXXX` becomes 2.0 `@XXXXXXXX` (the `@` is the
 type marker; storage uses the bare 8-char token). Legacy IDs continue
@@ -99,7 +99,7 @@ through advisory display (`show --tree`, `verify` linked-thread advisory), per C
   `thread new --lifecycle ...` or writes facet-scoped policy.
 - `dec` users (none observed) lose a dedicated kind but gain `lifecycle=record` threads with no
   required tag — strictly more flexible.
-- Migration must inject `facet_set` events into existing thread histories (see ADR-004).
+- Migration must inject `facet_set` events into existing thread histories (see SPEC-3.0 §8).
 - Adding a new sub-category in the future is a tag, not a code change. Adding a new lifecycle is
   a state-machine change — deliberately higher friction.
 
@@ -140,7 +140,7 @@ guards become harder to reason about.
 - Spec §2.3 defines `lifecycle` as the sole required facet.
 - Spec §3.2 defines the unified state machine and per-lifecycle allowed states.
 - Spec §7 defines facet-scoped guards and tag-keyed operation checks.
-- Migration tool (ADR-004) writes `facet_set` events for all existing threads.
+- Migration tool (SPEC-3.0 §8) writes `facet_set` events for all existing threads.
 - Kind preset commands (`git forum new rfc`, `new task`, `new bug`, `new dec`) are implemented
   as first-class CLI surface that internally delegates to the canonical
   `thread new --lifecycle ...` path.

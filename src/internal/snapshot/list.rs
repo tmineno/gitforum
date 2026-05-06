@@ -1,6 +1,6 @@
 //! Snapshot-derived thread listing for the TUI and `git forum ls`.
 //!
-//! Phase 4 Step 1c (RFC `7ymtc4b2`, task `913c4s9v`): replaces the
+//! task `913c4s9v`: replaces the
 //! SQLite-backed `internal::index::list_threads` + `internal::reindex`
 //! refresh loop with on-demand `for-each-ref` + `snapshot::store::
 //! read_snapshot`. Per RFC Exceptions, no index is reintroduced for

@@ -2,12 +2,12 @@
 //! `shortlog`, and search results. Per RFC-lmr3wfcm Track E, the thread-detail
 //! renderers all collapse to a single [`render_show`] driven by [`ShowOptions`].
 //!
-//! Phase 2 slot 7c (RFC `7ymtc4b2`): the `Show` arm body relocates from
+//! task `1hg98odf`: the `Show` arm body relocates from
 //! `main.rs` to [`run`] in this module. The `--tree` advisory's
 //! [`collect_implements_children`] / [`fallback_scan_implements`]
 //! helpers also move here — they are now exclusively a `show --tree`
-//! concern, and per ADR-011 Decision 6 the SQLite reverse-link index
-//! is on the Phase 4 DELETE list, so the tree-scan fallback is the
+//! concern, and per task `913c4s9v` the SQLite reverse-link index
+//! is on the task `913c4s9v` DELETE list, so the tree-scan fallback is the
 //! only path.
 
 use super::super::error::ForumError;
@@ -42,9 +42,9 @@ pub struct ShowOptions {
     /// `None` means the renderer skips the timeline section with a
     /// placeholder hint — callers that want the table populated must
     /// load entries via `snapshot::history::read_log` before rendering.
-    /// (Phase 4 Step 1a, RFC `7ymtc4b2`: replaces `state.events`-driven
-    /// timeline rendering. Subsequent step 1d wires the TUI per-thread
-    /// timeline panel through the same surface.)
+    /// (task `913c4s9v`, RFC `7ymtc4b2`: replaces `state.events`-driven
+    /// timeline rendering. The TUI per-thread timeline panel uses the
+    /// same surface.)
     pub timeline_entries: Option<Vec<SnapshotLogEntry>>,
 }
 
@@ -100,7 +100,7 @@ pub fn render_node_show(lookup: &NodeLookup, options: &ShowOptions) -> String {
         "**thread:**    {} {}",
         lookup.thread_id, lookup.thread_title
     ));
-    // Phase 2b: lifecycle + tags, not kind.
+    // SPEC-2.0 classification: lifecycle + tags, not kind.
     lines.push(format!(
         "**lifecycle:** {}",
         super::super::policy::lifecycle_label_for(&lookup.thread_category, &lookup.thread_tags)
@@ -183,9 +183,9 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
 
     lines.push(format!("## {} {}", state.id, state.title));
     lines.push(String::new());
-    // Phase 2b (Finding 1): lifecycle + tags are the canonical 2.0
+    // SPEC-2.0 classification (Finding 1): lifecycle + tags are the canonical 2.0
     // classification axis. The legacy `kind` field stays in storage for
-    // backward compatibility (per ADR-002) but is no longer surfaced as
+    // backward compatibility (per SPEC-3.0 §8.3) but is no longer surfaced as
     // a primary display label.
     lines.push(format!(
         "**lifecycle:** {}",
@@ -742,8 +742,7 @@ fn category_spine(category: &str) -> &'static [&'static str] {
 ///
 /// Replaces the legacy lifecycle-keyed renderer (which read
 /// `WorkflowSpec::unified_transitions()` filtered by
-/// `Lifecycle::allows_state`) per RFC `7ymtc4b2` v3.1 follow-up task
-/// `1v400j3l` step 3c.
+/// `Lifecycle::allows_state`) per RFC `7ymtc4b2`, task `1v400j3l`.
 pub fn render_state_diagram(category: &str, current: &str) -> Vec<String> {
     let registry = CategoryRegistry::built_in();
     let cat_def = match registry.get(category) {
@@ -865,7 +864,7 @@ fn build_conversations(
         // comment with no replies could be elided from the
         // conversations section without losing visibility. Snapshot
         // threads have no event timeline, so leaf nodes must surface
-        // here too. The pre-Phase-2 leaf-only filter is removed.
+        // here too. The legacy event-chain leaf-only filter is removed.
         let mut chain = vec![node];
         let mut queue: VecDeque<&str> = VecDeque::new();
         queue.push_back(node.record.id.as_str());
@@ -1051,8 +1050,8 @@ pub fn run(args: ShowArgs, ctx: &Context) -> Result<(), ForumError> {
 /// Collect direct incoming `--rel implements` children of a thread for
 /// the `show --tree` advisory.
 ///
-/// Phase 2 slot 7c (RFC `7ymtc4b2`): relocated from `main.rs`. Per ADR-011
-/// Decision 6 the SQLite reverse-link index is on the Phase 4 DELETE list,
+/// task `1hg98odf`: relocated from `main.rs`. Per task `913c4s9v`
+/// Decision 6 the SQLite reverse-link index is on the task `913c4s9v` DELETE list,
 /// so this always falls back to the O(N-thread-refs) tree scan.
 pub fn collect_implements_children(
     git: &GitOps,
@@ -1140,7 +1139,7 @@ mod tests {
         assert!(preview.ends_with("..."));
     }
 
-    // Phase 4 Step 1a: the v2 timeline body-preview / revise-body
+    // task `913c4s9v`: the v2 timeline body-preview / revise-body
     // size-summary tests (`timeline_summarizes_long_bodies_to_one_line`,
     // `revise_body_timeline_shows_size_summary`) used to live here.
     // They exercised `state.events` flowing through the legacy

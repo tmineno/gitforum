@@ -70,7 +70,7 @@ pub fn fresh_repo() -> TestRepo {
 
 /// Create a thread via `git-forum new <kind> <title> --body <body>`
 /// and return the new thread id. Replaces the legacy
-/// `create::create_thread` fixture path now that ADR-011 Decision 3
+/// `create::create_thread` fixture path now that task `1v400j3l`
 /// forbids non-migrate code paths from consuming legacy event chains.
 pub fn make_thread_via_cli(repo_path: &Path, kind: &str, title: &str, body: &str) -> String {
     let output = Command::new(bin())

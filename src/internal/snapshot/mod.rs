@@ -22,14 +22,15 @@
 //! - [`store`] — read tip → `ThreadDocument`; write `ThreadDocument`
 //!   → tree → commit → CAS. Owns the SPEC-3.0 §4 schema boundary.
 //! - [`history`] — git-history view of the snapshot ref per
-//!   SPEC-3.0 §5.4. Replaces the v2 domain-event timeline (Phase 4
-//!   Step 1a, RFC `7ymtc4b2`).
+//!   SPEC-3.0 §5.4. Replaces the v2 domain-event timeline
+//!   (RFC `7ymtc4b2`, task `913c4s9v`).
 //! - [`list`] — `for-each-ref` walk + per-ref snapshot read. Replaces
 //!   the SQLite-backed thread listing for the TUI and `commands::ls`
-//!   (Phase 4 Step 1c).
+//!   (task `913c4s9v`).
 //!
-//! Phase 1 of RFC `7ymtc4b2`: this subsystem is additive; production
-//! commands do not call into it yet. Phase 2 cuts each command over.
+//! RFC `7ymtc4b2`, task `qa8u71j9`: this subsystem is additive;
+//! production commands do not call into it yet. task `1hg98odf` cuts
+//! each command over.
 
 pub mod history;
 pub mod link;

@@ -1,6 +1,6 @@
 //! `git forum link <ID> <TARGET_ID> --rel <REL>` orchestration.
 //!
-//! Phase 2 slot 7k (RFC `7ymtc4b2`): appends rows to `links.toml`
+//! task `1hg98odf`: appends rows to `links.toml`
 //! directly via `snapshot::store::write_snapshot`. The legacy
 //! `internal::evidence::add_thread_link` event-write path is no
 //! longer invoked here.

@@ -7,8 +7,8 @@
 //! [`crate::internal::evidence::EvidenceFile`], and
 //! [`super::link::Links`] only handle their own files.
 //!
-//! Phase 1: only `write_snapshot` lands here. `read_snapshot` is
-//! Phase 1 step 7.
+//! task `qa8u71j9`: only `write_snapshot` lands here. `read_snapshot` is
+//! task `qa8u71j9`.
 
 use crate::internal::error::ForumError;
 use crate::internal::evidence::EvidenceFile;
@@ -41,7 +41,7 @@ pub struct ThreadDocument {
 /// One node's metadata + body, paired so the writer can emit the two
 /// files atomically inside `nodes/`.
 ///
-/// `Default` is derived (v3.1 step 3o, task `1v400j3l`) so v2-flavored
+/// `Default` is derived (task `1v400j3l`) so v2-flavored
 /// constructors can elide unset fields with struct-update syntax —
 /// keeping chain-replay / TUI fixtures terse.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -323,7 +323,7 @@ pub fn read_snapshot(git: &GitOps, thread_id: &str) -> Result<ThreadDocument, Fo
 }
 
 /// Like [`read_snapshot`] but parses the tree at a specific commit
-/// SHA. Used by the Phase 2 mixed-chain replay
+/// SHA. Used by task `1hg98odf` mixed-chain replay
 /// (`thread::replay_thread`) to seed `ThreadState` from a snapshot
 /// commit that is no longer the tip.
 pub fn read_snapshot_at(git: &GitOps, tip: &str) -> Result<ThreadDocument, ForumError> {

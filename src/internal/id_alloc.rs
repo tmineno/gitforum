@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 use super::id::rand_bytes;
 
 /// Known v2 thread ID prefixes (current + legacy). Was derived from
-/// `ThreadKind::from_id_prefix` until v3.1 step 3n (task `1v400j3l`)
+/// `ThreadKind::from_id_prefix` until task `1v400j3l`
 /// dropped that enum from the public surface; the table is now owned
 /// by id_alloc directly so it has no `legacy::` import.
 const KNOWN_THREAD_PREFIXES: &[&str] = &["ASK", "ISSUE", "RFC", "DEC", "JOB", "TASK"];
