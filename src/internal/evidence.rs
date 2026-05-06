@@ -52,14 +52,14 @@ impl std::str::FromStr for EvidenceKind {
     }
 }
 
-// Phase 4 Step 5 (RFC `7ymtc4b2`, task `913c4s9v`):
+// task `913c4s9v`:
 // - `Locator` (Evidence's optional inner field) is removed — every
 //   call site set it to `None` and no read site existed.
 // - `add_evidence` and `add_thread_link` are removed — both wrote v2
 //   `Event::Link` records via `legacy::event::write_event`. The 3.0
 //   write path is `internal::snapshot::store::write_snapshot` (with
 //   `EvidenceFile` / `links.toml` mutations); no caller reached the
-//   v2 helpers after Phase 2's command cutover.
+//   v2 helpers after task `1hg98odf`.
 //
 // `Evidence` (the v2 in-memory record) survives because
 // `internal::thread::ThreadState.evidence_items: Vec<Evidence>` and
@@ -87,7 +87,7 @@ pub struct Evidence {
 // The 3.0 record carries the snapshot-time metadata the SPEC requires
 // (`id`, `kind`, `ref`, `created_at`, `created_by`). It lives alongside
 // the legacy `Evidence` struct above; the legacy struct exists for the
-// 2.x event-time write/read path until Phase 4 deletes it.
+// 2.x event-time write/read path until task `913c4s9v` deletes it.
 // --------------------------------------------------------------------
 
 /// One `[[evidence]]` entry in `evidence.toml`.

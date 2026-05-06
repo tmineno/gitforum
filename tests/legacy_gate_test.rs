@@ -1,4 +1,4 @@
-//! Build-time gate per task `3dx6szoh` and ADR-011 Decision 2:
+//! Build-time gate per task `3dx6szoh`:
 //! 3.0 modules must not import `internal::legacy::*`.
 //!
 //! Direction is asymmetric:
@@ -10,11 +10,11 @@
 //! `src/` with `syn`, finds every path that uses `legacy` as a non-leaf
 //! module segment, and asserts the importer is on the allow-list.
 //!
-//! Allow-list (Phase 0 baseline) captures the current 2.0-native domain
+//! Allow-list baseline from task `3dx6szoh` captures the current 2.0-native domain
 //! modules that legitimately consume `internal::legacy::v1` per RFC
-//! 915yuegd P1 (state-name folding, lifecycle auto-derive, kind-keyed
+//! RFC `915yuegd`, task `khhyaqt5` (state-name folding, lifecycle auto-derive, kind-keyed
 //! policy rewrites, NodeType canonical projection, legacy_subtype
-//! preservation). The list shrinks as Phase 2 cutover commits move
+//! preservation). The list shrinks as task `1hg98odf` cutover commits move
 //! domain code onto the snapshot path.
 
 use std::path::PathBuf;
@@ -26,16 +26,16 @@ use walkdir::WalkDir;
 // ALLOW_LIST contents (notes kept outside the array literal — rustfmt
 // re-indents trailing comments).
 //
-// As of v3.1 step 3k (task `1v400j3l`) the ALLOW set has shrunk to its
+// As of task `1v400j3l` the ALLOW set has shrunk to its
 // permanent structural shape — six entries:
 //
 // 1. The legacy/* tree itself (mod, v1, event, workflow, chain_replay
 //    — five entries). Files inside legacy/ structurally belong there;
 //    the gate's job is keeping non-legacy code from importing them.
 // 2. commands/migrate.rs — the single sanctioned non-legacy consumer
-//    of legacy chains, per ADR-011 Decision 1.
+//    of legacy chains, per task `913c4s9v`.
 //
-// Cleared by task 1v400j3l v3.1 follow-up steps:
+// Cleared by task `1v400j3l`:
 //   - commands/state.rs (3a): shorthand resolution → policy::resolve_shorthand
 //   - commands/thread_new.rs (3b): kind preset → policy::CategoryPreset
 //   - commands/show.rs (3c): state-diagram → CategoryRegistry built_in
@@ -51,20 +51,20 @@ use walkdir::WalkDir;
 //     legacy::v1::normalize_state_name delegations (Lifecycle helper
 //     bodies and the alias-fold table now live in policy.rs itself).
 //     Lifecycle/ThreadKind/ThreadStatus enum removal — the deeper
-//     part of step 3h — is deferred; the surface stays for now.
+//     type-removal work — is deferred; the surface stays for now.
 //   - validate.rs (3i, partial): StrictReplayIssue's `event_type`
 //     field changed from the v2 `EventType` enum to a plain `String`.
 //   - thread.rs (3j): event-chain replay machinery moved to
 //     `internal::legacy::chain_replay` (a new entry in this list);
 //     `replay_thread` and `replay_thread_strict` are now snapshot-only.
 //     The v2 `events: Vec<Event>` field is gone from `ThreadState`
-//     (the deferred deeper part of step 3i landed alongside 3j).
+//     (the deferred type-removal work landed in the same task).
 //
-// Cleared earlier by Phase 4: the DELETE-list source files
+// Cleared earlier by task `913c4s9v`: the DELETE-list source files
 // (state_change, write_ops, create, repair, repair_workflow, prune,
 // purge, timeline, index, reindex, github, github_import, github_export,
 // commands::repair_workflow) — entries gone with the files.
-// evidence.rs cleared by Phase 4 Step 5.
+// evidence.rs cleared by task `913c4s9v`.
 // ---------------------------------------------------------------------
 const ALLOW_LIST: &[&str] = &[
     "src/internal/legacy/mod.rs",
@@ -192,11 +192,11 @@ fn allow_list_paths_exist() {
 // Permanent-exemption contract for v3.0.0
 // ---------------------------------------------------------------------
 
-/// The v3.1 permanent ALLOW set, locked at step 3k.
+/// The v3.1 permanent ALLOW set, locked by task `1v400j3l`.
 ///
-/// Per ADR-011 Decision 3, the original target was "only
-/// `commands/migrate.rs` reaches `internal::legacy/*`". Phase 4
-/// (task `913c4s9v`) shipped with a documented set of exemptions;
+/// Per task `1v400j3l`, the original target was "only
+/// `commands/migrate.rs` reaches `internal::legacy/*`". task `913c4s9v`
+/// shipped with a documented set of exemptions;
 /// v3.1 task `1v400j3l` closed them down to the structural minimum:
 ///
 /// 1. The legacy/* tree itself (mod, v1, event, workflow, chain_replay)
@@ -230,10 +230,10 @@ fn allow_list_matches_permanent_set() {
         "ALLOW_LIST must equal LEGACY_GATE_PERMANENT_EXEMPTIONS.\n\
          Extras (in ALLOW but not permanent): {:?}\n\
          Missing (permanent but not in ALLOW): {:?}\n\n\
-         If a transitional KEEP file needs legacy access for a Phase 4\n\
+         If a transitional KEEP file needs legacy access for a task `913c4s9v`\n\
          step, that file should be cleared (rewire) before merging — not\n\
          grandfathered through. The Lifecycle/ThreadKind/etc. delegations\n\
-         are tracked for the v3.1 Category rewire (task 1v400j3l).",
+         are tracked for the v3.1 Category rewire (task `1v400j3l`).",
         extras,
         missing
     );

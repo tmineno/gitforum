@@ -73,13 +73,13 @@ pub(super) fn display_thread_id(thread_id: &str) -> String {
 }
 
 // `conventional_tags_for_kind` was the kind→tag fallback for
-// unmigrated 1.x threads in the TUI thread-detail panel. v3.1 step 3n
-// (task `1v400j3l`) removed it: `materialize_thread_state_from_snapshot`
+// unmigrated 1.x threads in the TUI thread-detail panel. task `1v400j3l`
+// removed it: `materialize_thread_state_from_snapshot`
 // always sets `lifecycle_explicit = true`, and the public
-// `thread::replay_thread` is snapshot-only since step 3j — so the
+// `thread::replay_thread` is snapshot-only by task `1v400j3l`, so the
 // fallback path was unreachable for any thread the TUI could open.
 
-/// Lifecycle string for a `ThreadRow`. Phase 3: reads the real `lifecycle`
+/// Lifecycle string for a `ThreadRow`. task `9635buy0`: reads the real `lifecycle`
 /// column (no longer kind-derived). Falls back to a kind-based guess when
 /// the column is empty (defensive — schema NOT NULL DEFAULT 'execution'
 /// makes this branch unreachable for v2 indexes).
@@ -94,7 +94,7 @@ pub(super) fn row_lifecycle(row: &ThreadRow) -> String {
     }
 }
 
-/// Display tags for a `ThreadRow`. Phase 3: reads the real `thread_tags`
+/// Display tags for a `ThreadRow`. task `9635buy0`: reads the real `thread_tags`
 /// rows (joined into `ThreadRow.tags`). For rows with no replayed tags
 /// AND no explicit `facet_set`, falls back to the kind-conventional set
 /// so unmigrated 1.x threads still display familiar labels.
@@ -177,7 +177,7 @@ fn status_color(status: &str) -> Color {
 }
 
 fn node_type_color(node_type: &str) -> Color {
-    // SPEC-2.0 §2.5 + ADR-006: palette reduced to the four canonical types;
+    // SPEC-2.0 §2.5: palette reduced to the four canonical types;
     // legacy prose-only types collapse to Reset.
     match node_type {
         "objection" => Color::Red,

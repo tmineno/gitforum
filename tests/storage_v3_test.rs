@@ -2,7 +2,7 @@
 //!
 //! Two test classes live in this file; do not conflate them:
 //!
-//! 1. **Direct snapshot-store shape tests** (RFC `7ymtc4b2` Phase 1).
+//! 1. **Direct snapshot-store shape tests** (RFC `7ymtc4b2`, task `qa8u71j9`).
 //!    These run `internal::snapshot::store::write_snapshot` directly
 //!    and assert the SPEC-3.0 §4.2 tree layout. They are unrelated to
 //!    the CLI cutover and run NOW. They guard against regressions in
@@ -11,7 +11,7 @@
 //! 2. **CLI-cutover storage-shape gates** (task `4w8hm98j`).
 //!    These run `git forum <subcommand>` and assert the resulting tree
 //!    matches the v3 invariant. They are `#[ignore]`-gated until each
-//!    Phase 2 slot lands; the matching cutover commit removes the
+//!    task `1hg98odf` cutover lands; the matching cutover commit removes the
 //!    `#[ignore]` and the corresponding entry in
 //!    `tests/storage_v2_test.rs`. See `doc/internal/main-rs-audit.md`
 //!    for slot order and `doc/internal/cli-coverage-audit.md` for
@@ -29,7 +29,7 @@ use support::cli::{extract_created_id, fresh_repo as fresh_cli_repo, run_ok};
 use support::git::{list_tree_paths, ls_thread_tip, read_thread_file};
 
 // --------------------------------------------------------------------
-// (1) Direct snapshot-store shape tests — Phase 1, run NOW.
+// (1) Direct snapshot-store shape tests — task `qa8u71j9`, run NOW.
 // --------------------------------------------------------------------
 
 fn sample_thread(id: &str) -> ThreadSnapshot {
@@ -130,12 +130,12 @@ fn v3_empty_snapshot_omits_all_optional_files() {
 }
 
 // --------------------------------------------------------------------
-// (2) CLI-cutover storage-shape gates — `#[ignore]` until Phase 2.
+// (2) CLI-cutover storage-shape gates — task `1hg98odf`.
 // --------------------------------------------------------------------
 
 /// v3 invariant (SPEC-3.0 §4): `git forum new` writes a snapshot tree
 /// containing `thread.toml` (and `links.toml` if links were specified)
-/// at `refs/forum/threads/<id>`. Unblocked at Phase 2 slot 1
+/// at `refs/forum/threads/<id>`. Unblocked at task `1hg98odf`
 /// (`thread_new` cutover, RFC `7ymtc4b2`); the v2 counterpart in
 /// `tests/storage_v2_test.rs` is removed in the same commit.
 #[test]

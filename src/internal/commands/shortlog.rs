@@ -1,6 +1,6 @@
 //! `git forum shortlog --since <DATE>` orchestration.
 //!
-//! Phase 2 slot 7b (RFC `7ymtc4b2`): NEW module. The arm body
+//! task `1hg98odf`: NEW module. The arm body
 //! relocates from `main.rs` to [`run`] here, and `terminal_state_date`
 //! moves out of `commands::shared` into [`terminal_state_date`] below
 //! and grows a snapshot-tip code path: for snapshot-only threads
@@ -57,7 +57,7 @@ pub fn run(args: ShortlogArgs, ctx: &Context) -> Result<(), ForumError> {
 /// without preserving operation-shaped subjects).
 ///
 /// Replaces the legacy `state.events` + `EventType::State` scan per
-/// RFC `7ymtc4b2` v3.1 follow-up task `1v400j3l` step 3e.
+/// RFC `7ymtc4b2` v3.1 follow-up task `1v400j3l`.
 pub fn terminal_state_date(git: &GitOps, state: &ThreadState) -> Option<DateTime<Utc>> {
     if !TERMINAL_STATES.contains(&state.status.as_str()) {
         return None;

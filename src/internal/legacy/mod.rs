@@ -26,15 +26,15 @@
 
 pub mod v1;
 
-// Phase 4 Step 2b (RFC `7ymtc4b2`, task `913c4s9v`): the v2 event +
-// workflow modules relocated into this tree per ADR-011 Decision 1
+// task `913c4s9v`: the v2 event +
+// workflow modules relocated into this tree per task `913c4s9v`
 // ("v1/v2-format-aware Rust code that survives v3.0.0 lives under
 // src/internal/legacy/"). Non-migrate callers MUST NOT reach here
 // — `tests/legacy_gate_test.rs` enforces the import-graph invariant.
 pub mod event;
 pub mod workflow;
 
-// Phase 4 v3.1 follow-up step 3j (task `1v400j3l`): the v1/v2
+// task `1v400j3l`: the v1/v2
 // event-chain replay machinery (formerly in `internal::thread`)
 // relocated here. The 3.0-native `thread::replay_thread` reads
 // snapshot tips only; the legacy reader lives here and is reachable

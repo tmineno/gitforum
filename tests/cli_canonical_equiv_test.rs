@@ -43,9 +43,9 @@ fn replay(
 //
 // `claim_shorthand_equals_node_add_claim` and
 // `question_shorthand_equals_node_add_question` were removed at
-// Phase 2 slot 2 (RFC `7ymtc4b2`). The deprecated rhetorical
+// task `1hg98odf`. The deprecated rhetorical
 // shorthands (`claim`, `question`, `summary`, `risk`, `review`) are
-// no longer in the CLI surface; SPEC-3.0 §2.2 / ADR-006 keeps only
+// no longer in the CLI surface; SPEC-3.0 §2.2 keeps only
 // the four canonical NodeKinds (Comment, Approval, Objection, Action).
 
 #[test]
@@ -184,7 +184,7 @@ fn accept_shorthand_equals_state_accepted() {
     assert!(out.status.success());
     let out = run(repo_a.path(), &["state", &id_a, "under-review"]);
     assert!(out.status.success());
-    // SPEC-3.0 §2.2 / ADR-006: the rhetorical `summary` shorthand
+    // SPEC-3.0 §2.2: the rhetorical `summary` shorthand
     // collapsed onto `comment`. The acceptance guard keys off the
     // canonical node, not the rhetorical label.
     let out = run(repo_a.path(), &["comment", &id_a, "Looks good"]);

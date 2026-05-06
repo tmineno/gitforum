@@ -4,7 +4,7 @@
 //! task `t8o3vnt6`) so the command's full surface — args, dispatch,
 //! orchestration — lives in one module.
 //!
-//! Phase 2 slot 5 (RFC `7ymtc4b2`): body and node revisions overwrite
+//! task `1hg98odf`: body and node revisions overwrite
 //! `body.md` / `nodes/<id>.md` directly via
 //! `snapshot::store::write_snapshot`. SPEC-3.0 §4.2 has no
 //! `body_revision_count` field — revision history is `git log` over

@@ -1,13 +1,13 @@
 //! `git forum doctor` orchestration + report data model.
 //!
-//! Phase 2 slot 8 (RFC `7ymtc4b2`): SPEC-3.0 §11/§12 snapshot
+//! task `1hg98odf`: SPEC-3.0 §11/§12 snapshot
 //! integrity checks replace the SQLite-index health block. The
 //! strict-replay pass is retained because `replay_thread_strict`
 //! is mixed-chain aware and surfaces tail-event corruption on
 //! event-chain threads still in the repo. A new check decodes the
 //! snapshot tip via `internal::snapshot::read_snapshot` for each
 //! thread ref; `LegacyEventChain` results emit a `migrate-required`
-//! WARN so the operator knows a Phase 3 `git forum migrate` is
+//! WARN so the operator knows a task `9635buy0` `git forum migrate` is
 //! pending.
 
 use super::super::config::RepoPaths;
@@ -211,7 +211,7 @@ fn run_with_mode(git: &GitOps, paths: &RepoPaths, strict: bool) -> ForumResult<D
     //    thread ref, decode `thread.toml` via `snapshot::read_snapshot`.
     //    Threads still on the legacy event chain (no `thread.toml` at
     //    the tip tree) emit a `migrate-required` WARN — they continue
-    //    to read correctly via the mixed-chain replay path, but Phase 3
+    //    to read correctly via the mixed-chain replay path, but task `9635buy0`
     //    `git forum migrate` will fold them into the snapshot layout.
     //    Orphan refs (no usable thread history at all) are handled
     //    by the replay block below as `orphan ref` WARNs.
@@ -229,7 +229,7 @@ fn run_with_mode(git: &GitOps, paths: &RepoPaths, strict: bool) -> ForumResult<D
                 Err(ForumError::LegacyEventChain) => {
                     checks.push(warn(
                         &format!("migrate-required {ref_name}"),
-                        "thread is on the legacy event chain; run `git forum migrate` (Phase 3)",
+                        "thread is on the legacy event chain; run `git forum migrate` (task `9635buy0`)",
                     ));
                 }
                 Err(e) => {

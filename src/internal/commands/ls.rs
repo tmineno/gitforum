@@ -2,7 +2,7 @@
 //! Separated from `show.rs` because they don't share the thread-detail
 //! view's data model — they format thread/index rows, not replayed state.
 //!
-//! Phase 2 slot 7a (RFC `7ymtc4b2`): the `Ls` arm body relocates from
+//! task `1hg98odf`: the `Ls` arm body relocates from
 //! `main.rs` to [`run`] in this module. `render_ls` and the lower-level
 //! `list_thread_states` (in `commands::bulk`) are unchanged — the slot
 //! is a pure handler relocation since `replay_thread` already reads
@@ -54,16 +54,16 @@ pub fn run(args: LsArgs, ctx: &Context) -> Result<(), ForumError> {
     Ok(())
 }
 
-// Phase 4 Step 3 (RFC `7ymtc4b2`, task `913c4s9v`): the
+// task `913c4s9v`: the
 // `render_search_results` renderer was deleted alongside the
 // `internal::index::SearchRow` type. Search support relied on the
-// SQLite index (Phase 2 slot 11 dropped the `Search` arm; Step 3
-// removes the index module itself). Re-introducing search is a
+// SQLite index (task `1hg98odf` dropped the `Search` arm; task
+// `913c4s9v` removes the index module itself). Re-introducing search is a
 // v3.1 concern — see the RFC Exceptions section.
 
 /// Render `git forum ls` output for a list of threads.
 ///
-/// Phase 2b: classification axes are LIFECYCLE + TAGS, not KIND. Output
+/// SPEC-2.0 classification: classification axes are LIFECYCLE + TAGS, not KIND. Output
 /// columns: ID, LIFECYCLE, STATUS, TAGS, BRANCH, CREATED, UPDATED, TITLE.
 /// Deterministic when thread IDs, statuses, and tag insertion order are
 /// deterministic.
@@ -146,7 +146,7 @@ pub fn render_shortlog(entries: &[(&ThreadState, DateTime<Utc>)]) -> String {
         return "no threads reached terminal state in the given period\n".into();
     }
     // Group by lifecycle label (proposal/execution/record), not by category.
-    // v3.1 step 3m: lifecycle is now a derived display label rather than
+    // task `1v400j3l`: lifecycle is now a derived display label rather than
     // a typed enum, computed from category+tags via `policy::lifecycle_label_for`.
     let lifecycle_order = ["proposal", "execution", "record"];
     let mut lines: Vec<String> = Vec::new();
@@ -221,7 +221,7 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
     format!("{}...", &s[..end])
 }
 
-// Phase 4 Step 3 (RFC `7ymtc4b2`, task `913c4s9v`): `preview_one_line`
+// task `913c4s9v`: `preview_one_line`
 // was the body-preview helper consumed solely by the now-deleted
 // `render_search_results` renderer. Removed alongside.
 

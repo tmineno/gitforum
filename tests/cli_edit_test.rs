@@ -62,7 +62,7 @@ fn edit_flag_creates_node() {
     let (repo, git, _paths) = setup();
     let thread_id = make_thread_via_cli(repo.path(), "issue", "Test issue", "body");
 
-    // Phase 2 slot 2 (RFC `7ymtc4b2`): the deprecated `claim` arm
+    // task `1hg98odf`: the deprecated `claim` arm
     // is removed; `comment` is the canonical surface.
     let editor = create_mock_editor(repo.path(), "Comment from editor");
     let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))

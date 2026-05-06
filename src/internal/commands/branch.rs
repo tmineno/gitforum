@@ -1,6 +1,6 @@
 //! `git forum branch {bind|clear}` orchestration.
 //!
-//! Phase 2 slot 6 (RFC `7ymtc4b2`): writes the `branch` field on
+//! task `1hg98odf`: writes the `branch` field on
 //! `thread.toml` directly via `snapshot::store::write_snapshot` per
 //! SPEC-3.0 §3.1. The legacy `Scope` event-write path is no longer
 //! invoked here.

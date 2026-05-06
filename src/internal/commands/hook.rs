@@ -5,7 +5,7 @@
 //! - A post-checkout hook that repairs missing blob references in the index.
 //! - A `fix-index` subcommand that detects and re-hashes missing blobs.
 //!
-//! Phase 2 slot 10b (RFC `7ymtc4b2`): the `Hook::*` arm body relocates
+//! task `1hg98odf`: the `Hook::*` arm body relocates
 //! from `main.rs` to [`run_arm`] in this module. The lower-level
 //! installer / scanner functions stay here as the hook subsystem
 //! library; the new entry-point dispatches across the four sub-arms.
@@ -111,7 +111,7 @@ fn run_worktree_init(git: &GitOps) -> Result<(), ForumError> {
     if paths.git_forum.join("logs").is_dir() {
         return Ok(());
     }
-    // Per ADR-007: worktree-init writes only .git/forum/ local state.
+    // Per task `96u6zxmc`: worktree-init writes only .git/forum/ local state.
     // Tracked .forum/ content arrives via checkout, never via this hook.
     init::init_forum_local(&paths)?;
     let local_toml_path = paths.git_forum.join("local.toml");

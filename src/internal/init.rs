@@ -98,7 +98,7 @@ const DEFAULT_ACTORS: &str = r#"# git-forum actors
 "#;
 
 // Template bodies are embedded from the tracked .forum/templates/*.md
-// files (single source of truth, ADR-007). The same physical file backs
+// files (single source of truth, task `96u6zxmc`). The same physical file backs
 // both git-forum's own forum and the seed written to user repos by
 // `git forum init`.
 const TEMPLATE_ISSUE: &str = include_str!("../../.forum/templates/issue.md");
@@ -114,7 +114,7 @@ const TEMPLATE_TASK: &str = include_str!("../../.forum/templates/task.md");
 ///
 /// For per-worktree first-touch (e.g. the post-checkout hook on a new
 /// worktree), use [`init_forum_local`] instead — `worktree-init` must not
-/// re-seed shared `.forum/` content (ADR-007).
+/// re-seed shared `.forum/` content (task `96u6zxmc`).
 pub fn init_forum(paths: &RepoPaths) -> ForumResult<()> {
     let templates_dir = paths.dot_forum.join("templates");
     fs::create_dir_all(&templates_dir)?;
@@ -134,7 +134,7 @@ pub fn init_forum(paths: &RepoPaths) -> ForumResult<()> {
 ///
 /// Used by the `worktree-init` post-checkout hook so a fresh worktree
 /// gets its per-clone state without overwriting or seeding any tracked
-/// shared content (ADR-007).
+/// shared content (task `96u6zxmc`).
 pub fn init_forum_local(paths: &RepoPaths) -> ForumResult<()> {
     fs::create_dir_all(paths.git_forum.join("logs"))?;
 

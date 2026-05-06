@@ -1,6 +1,6 @@
 //! `git forum status <THREAD_ID>` orchestration.
 //!
-//! Phase 2 slot 7e (RFC `7ymtc4b2`): NEW module. The arm body in
+//! task `1hg98odf`: NEW module. The arm body in
 //! `main.rs` becomes a thin dispatcher that hands `StatusArgs` to
 //! [`run`] here. Internally this is a thin wrapper over
 //! `commands::show::render_show(_, ShowMode::Status)` — the cutover

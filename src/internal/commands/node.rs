@@ -1,6 +1,6 @@
 //! `git forum node show <NODE_ID>` and `git forum node add` orchestration.
 //!
-//! Phase 2 slot 7f (RFC `7ymtc4b2`): NEW module. The two `Node::*` arms
+//! task `1hg98odf`: NEW module. The two `Node::*` arms
 //! relocate from `main.rs` to [`run_show`] and [`run_add`] here.
 //! `Node::Add` continues to share its body with the typed shorthands
 //! (`comment` / `objection` / `action`) via [`super::shorthand_say`];

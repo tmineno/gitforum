@@ -21,7 +21,7 @@ fn setup() -> (support::repo::TestRepo, GitOps, RepoPaths) {
 
 /// Snapshot fixture: write a fresh SPEC-3.0 thread with the given
 /// kind shorthand and title. Replaces the legacy `create::create_thread`
-/// fixture path now that ADR-011 Decision 3 forbids non-migrate code
+/// fixture path now that task `1v400j3l` forbids non-migrate code
 /// paths from consuming legacy event chains.
 ///
 /// `kind` accepts the v2 vocabulary (`rfc`/`issue`/`task`/`dec`) and

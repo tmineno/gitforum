@@ -1,7 +1,7 @@
 //! SPEC-2.0 §3.1 / §9.1 — single source of truth for 2.0 workflow
 //! metadata.
 //!
-//! Before #34ith16h, lifecycle/state metadata lived across five
+//! Before thread `34ith16h`, lifecycle/state metadata lived across five
 //! data-holding sites (`Lifecycle::allowed_states`, `UNIFIED_TRANSITIONS`,
 //! `normalize_state_name` / `migrate_legacy_state` alias maps,
 //! `KIND_PRESETS` and `shorthand_target_for_lifecycle` in `main.rs`)
@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 
 // --------------------------------------------------------------------
 // `ThreadKind` (4-variant v2 enum). Relocated here from
-// `internal::thread` in v3.1 step 3n (task `1v400j3l`). The enum is
+// `internal::thread` in task `1v400j3l`. The enum is
 // a v2 dispatch axis (rfc/issue/task/dec); the SPEC-3.0 successor
 // is the snapshot's `category` string + canonical §8.3 tags. Read
 // paths derive the user-facing "kind" label via
@@ -110,7 +110,7 @@ impl std::fmt::Display for ThreadKind {
 
 // --------------------------------------------------------------------
 // `Lifecycle` (3-variant v2 enum). Relocated here from
-// `internal::policy` in v3.1 step 3m (task `1v400j3l`). The enum is
+// `internal::policy` in task `1v400j3l`. The enum is
 // a v2 dispatch axis (proposal/execution/record); the SPEC-3.0
 // successor is the snapshot's `category` string. Read paths derive
 // the user-facing "lifecycle" label from category+tags via

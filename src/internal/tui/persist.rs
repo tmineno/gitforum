@@ -376,7 +376,7 @@ markdown_mode = true
     use crate::internal::snapshot::list::ThreadRow;
 
     fn make_thread_row(id: &str, kind: &str) -> ThreadRow {
-        // Phase 4 Step 1c: ThreadRow now lives in `snapshot::list`,
+        // task `913c4s9v`: ThreadRow now lives in `snapshot::list`,
         // mirroring the v2 field surface minus the index-only counts
         // (`open_objections`/`open_actions`/`has_summary`/`tip_sha`)
         // that TUI production code never read.

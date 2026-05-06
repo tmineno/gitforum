@@ -318,7 +318,7 @@ pub struct App {
     /// Cached tip SHA for the currently viewed thread (for change detection).
     thread_tip_sha: Option<String>,
     /// Cached `thread_id -> tip SHA` map for the list view's incremental
-    /// refresh (Phase 4 Step 1c, RFC `7ymtc4b2`). Populated by
+    /// refresh (task `913c4s9v`, RFC `7ymtc4b2`). Populated by
     /// `state::refresh_thread_list` and compared in `state::auto_refresh`
     /// against the current `for-each-ref` snapshot to detect ref churn.
     pub(crate) list_tip_shas: std::collections::HashMap<String, String>,
@@ -899,7 +899,7 @@ const AUTO_REFRESH_INTERVAL_MS: u128 = 2000;
 ///
 /// Preconditions: `db_path` resolves the `.git/forum/` directory; the
 /// TUI uses its parent only for the persisted UI state file
-/// (`tui-state.toml`) — Phase 4 Step 1c (RFC `7ymtc4b2`) removed the
+/// (`tui-state.toml`) — task `913c4s9v` (RFC `7ymtc4b2`) removed the
 /// SQLite index dependency.
 /// Postconditions: terminal is restored on exit.
 /// Failure modes: ForumError::Io on terminal I/O failure;
@@ -1089,7 +1089,7 @@ where
     let clock = SystemClock;
     state::snapshot_revise_body(git, thread_id, &new_body, &actor_id, &clock)?;
 
-    // Phase 4 Step 1c: snapshot writes update the ref atomically; the
+    // task `913c4s9v`: snapshot writes update the ref atomically; the
     // next auto_refresh tick (or open_thread_detail call below) will
     // observe the new tip. No SQLite reindex step needed.
     let selected = app.selected_node_id();
@@ -1214,7 +1214,7 @@ mod tests {
 
     use crate::internal::id_alloc;
     use crate::internal::node::NodeKind;
-    // Phase 4 Step 1c (RFC `7ymtc4b2`): tests construct the thread
+    // task `913c4s9v` (RFC `7ymtc4b2`): tests construct the thread
     // listing via the snapshot walker instead of `index::list_threads`
     // / `reindex::run_reindex`.
     use crate::internal::snapshot::list as snapshot_list;
@@ -1324,7 +1324,7 @@ mod tests {
 
     /// Snapshot fixture: write a fresh SPEC-3.0 thread snapshot with
     /// the given category/title. Replaces `create::create_thread`
-    /// callers in TUI tests after ADR-011 Decision 3 made the bridge
+    /// callers in TUI tests after task `1v400j3l` made the bridge
     /// in non-migrate paths bail on legacy chains.
     fn make_snapshot_thread(git: &GitOps, category: &str, title: &str, seed: u8) -> String {
         use crate::internal::snapshot::{write_snapshot, ThreadDocument};
@@ -1413,7 +1413,7 @@ mod tests {
     #[test]
     fn mouse_single_click_selects_row() {
         let (_dir, git, _paths, db_path) = setup_repo();
-        // Phase 4 Step 1c: snapshot fixture (v2 event chains return
+        // task `913c4s9v`: snapshot fixture (v2 event chains return
         // LegacyEventChain on the snapshot read path so they don't
         // appear in the listing).
         make_snapshot_thread(&git, "rfc", "Test RFC", 1);
@@ -2354,19 +2354,19 @@ mod tests {
         );
     }
 
-    // Phase 4 Step 3 (RFC `7ymtc4b2`, task `913c4s9v`): the
+    // task `913c4s9v`: the
     // `thread_detail_header_shows_lifecycle_tags_linked_panel` test
     // (legacy v2 §2.3.3 kind→lifecycle/tags fallback) was removed.
     // It exercised `internal::create::create_thread` (deleted by
-    // this commit) and the `state.lifecycle_explicit=false` branch
-    // in `tui::state::open_thread_detail` (kept until Step 5
-    // removes the v2 peer types). Equivalent v3.0 coverage —
+    // task `913c4s9v`) and the `state.lifecycle_explicit=false` branch
+    // in `tui::state::open_thread_detail` (v2 peer-type removal tracked
+    // by task `1v400j3l`). Equivalent v3.0 coverage —
     // snapshot fixtures with explicit category/tags — already lives
     // in `create_thread_form_*` tests below.
 
     /// AC#10: create-thread form integration — `(execution, [bug])` writes
     /// a SPEC-3.0 snapshot with `category=task` and the `bug` tag.
-    /// Phase 2 slot 10c (RFC `7ymtc4b2`): the legacy preset / facet_set
+    /// task `1hg98odf`: the legacy preset / facet_set
     /// fork is gone; tests that pinned the v2.x event count are
     /// rewritten to assert the snapshot shape.
     #[test]
@@ -2392,7 +2392,7 @@ mod tests {
     }
 
     /// AC#10: multi-tag form input lands all tags in `thread.toml.tags`.
-    /// Phase 2 slot 10c (RFC `7ymtc4b2`): the previous facet_set event
+    /// task `1hg98odf`: the previous facet_set event
     /// is gone — tags are written directly into the snapshot.
     #[test]
     fn create_thread_form_non_preset_writes_tags_in_snapshot() {

@@ -3,8 +3,8 @@
 //! Each submodule owns the orchestration glue for one cluster of related
 //! `Commands::*` arms. `main.rs` keeps clap parsing + dispatch only;
 //! everything else (replay, policy load, write events, render output) lives
-//! here. Per #yjelk0s0 (P1 main.rs function extraction) and the
-//! Phase 0 relocation of peer-file CLI handlers (task `9tof5nre`).
+//! here. Per task `yjelk0s0` (main.rs function extraction) and the
+//! peer-file CLI handler relocation tracked by task `9tof5nre`.
 
 pub mod branch;
 pub mod brief;
@@ -22,7 +22,7 @@ pub mod migrate;
 pub mod node;
 pub mod node_bulk;
 pub mod policy;
-// Phase 4 Step 3 (RFC `7ymtc4b2`, task `913c4s9v`):
+// task `913c4s9v`:
 // `commands::repair_workflow` git rm'd alongside the v2 event-runtime.
 pub mod retype;
 pub mod revise;

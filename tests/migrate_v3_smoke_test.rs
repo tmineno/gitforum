@@ -1,11 +1,11 @@
-//! Smoke test for the new `migrate --to 3.0` walk (task `9635buy0`
-//! step 3b). End-to-end: build a v1 legacy chain at a real ref, run
+//! Smoke test for the new `migrate --to 3.0` walk (task `9635buy0`).
+//! End-to-end: build a v1 legacy chain at a real ref, run
 //! migrate, assert the ref tip is now a 3.0 snapshot tree with
 //! `legacy/events.ndjson` written.
 //!
 //! Comprehensive validity coverage (all four §8.3 source kinds, 1.x
 //! and 2.0 fixtures, dry-run, idempotence, error reporting) is
-//! task step 7 / item 14 in `tests/migrate_validity_test.rs`.
+//! task `9635buy0` / item 14 in `tests/migrate_validity_test.rs`.
 
 mod support;
 
@@ -228,7 +228,7 @@ fn migrate_pinned_write_rejects_concurrent_event() {
 }
 
 // ---------------------------------------------------------------
-// Strict / reporting replay (task `9635buy0` step 4 / item 7).
+// Strict / reporting replay (task `9635buy0` / item 7).
 // Migration uses strict replay so malformed legacy events surface
 // instead of being silently dropped, but missing facet_set on 1.x
 // chains is NOT an error.
@@ -397,7 +397,7 @@ fn migrate_with_missing_facet_set_succeeds_for_1x_chain() {
 }
 
 // ---------------------------------------------------------------
-// --dry-run (task `9635buy0` step 5 / item 15).
+// --dry-run (task `9635buy0` / item 15).
 // ---------------------------------------------------------------
 
 #[test]
@@ -503,7 +503,7 @@ fn migrate_dry_run_followed_by_real_run_writes_snapshot() {
 }
 
 // ---------------------------------------------------------------
-// Structured migration report (task `9635buy0` step 6, items 9-10,
+// Structured migration report (task `9635buy0`, items 9-10,
 // 10a, 16, 17, 20).
 // ---------------------------------------------------------------
 
@@ -830,7 +830,7 @@ fn migrate_handles_legacy_approval_node_ids_with_slashes() {
 
 #[test]
 fn migrate_drops_invalid_tags_and_records_them_in_report() {
-    // Task `9635buy0` objection `e285682f`: migration MUST validate
+    // task `9635buy0` objection `e285682f`: migration MUST validate
     // every projected tag against SPEC-3.0 §2.4 grammar. Invalid
     // tags are dropped from the snapshot and recorded as
     // `kind: "tag"` omissions in the per-thread report. Without
@@ -922,7 +922,7 @@ fn migrate_drops_invalid_tags_and_records_them_in_report() {
 
 #[test]
 fn migrate_handles_mixed_chain_with_snapshot_bottom_and_event_tail() {
-    // Task `9635buy0` objection `bf678561`: a Phase-2 cutover
+    // task `9635buy0` objection `bf678561`: a task `1hg98odf` cutover
     // produced refs whose tip is an event commit but whose ancestor
     // is a SPEC-3.0 snapshot commit. `read_snapshot` checks only the
     // tip tree, so it routes such refs to migration as
@@ -1028,7 +1028,7 @@ fn migrate_handles_mixed_chain_with_snapshot_bottom_and_event_tail() {
 
 #[test]
 fn migrate_cli_handles_mixed_chain_through_full_handler() {
-    // Task `9635buy0` follow-up to objection `bf678561`
+    // task `9635buy0` follow-up to objection `bf678561`
     // (codex re-check `a985cc17`): the prior fix only exercised
     // `migrate_legacy_to_snapshot_strict_at` directly. The full CLI
     // path (`commands::migrate::run` → `process_one`) used to call

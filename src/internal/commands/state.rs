@@ -5,7 +5,7 @@
 //! Owns the clap subcommand enum `StateCmd` (moved from `main.rs` by
 //! task `t8o3vnt6`).
 //!
-//! Phase 2 slot 3 (RFC `7ymtc4b2`): the write path updates
+//! task `1hg98odf`: the write path updates
 //! `thread.toml`'s `status` field directly via
 //! `snapshot::store::write_snapshot` per SPEC-3.0 §3.1 and adds any
 //! companion side-effects (comment node, approval nodes, link

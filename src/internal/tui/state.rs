@@ -31,12 +31,12 @@ pub(super) fn open_thread_detail(
         Some(policy::lifecycle_label_for(&state.category, &state.tags).to_string());
     // 3.0 snapshots always carry `lifecycle_explicit = true` (set by
     // `materialize_thread_state_from_snapshot`) and a populated tag
-    // set; the v3.1 step 3n removal of the typed `state.kind` made
+    // set; the task `1v400j3l` removal of the typed `state.kind` made
     // the previous "kind-derived conventional tags" fallback dead
     // code.
     app.thread_tags = state.tags.clone();
     app.thread_status = state.status.clone();
-    // Phase 4 Step 1d (RFC `7ymtc4b2`): per-thread timeline panel reads
+    // task `913c4s9v` (RFC `7ymtc4b2`): per-thread timeline panel reads
     // the snapshot ref's git history (SPEC-3.0 §5.4). `read_log` returns
     // `None` on legacy event-chain refs — the renderer falls back to its
     // "_(timeline unavailable)_" placeholder, matching the same shape
@@ -69,7 +69,7 @@ pub(super) fn open_node_detail(
     node_id: &str,
 ) -> ForumResult<()> {
     let lookup = thread::find_node_in_thread(git, thread_id, node_id)?;
-    // Phase 4 Step 1d (RFC `7ymtc4b2`): per-node history panel uses the
+    // task `913c4s9v` (RFC `7ymtc4b2`): per-node history panel uses the
     // same snapshot ref log as the thread view. `render_node_show` does
     // the path-filter to commits that touched `nodes/<id>.{toml,md}`.
     let ref_name = format!("refs/forum/threads/{thread_id}");
@@ -467,7 +467,7 @@ pub(super) fn selected_link_target_label(app: &App, source_thread_id: &str) -> S
 /// last-seen snapshot map. Returns `true` when any ref has been
 /// added, removed, or moved since the previous tick.
 ///
-/// Phase 4 Step 1c (RFC `7ymtc4b2`, task `913c4s9v`): replaces the
+/// task `913c4s9v`: replaces the
 /// SQLite-backed `incremental_refresh` that compared against
 /// `index::thread_tip_shas`. The TUI tracks the seen SHA set
 /// in-process via `App.list_tip_shas` instead of round-tripping
@@ -546,7 +546,7 @@ pub(super) fn auto_refresh(app: &mut App, git: &GitOps) -> ForumResult<()> {
 // The CLI orchestration layer's run() helpers print to stdout and
 // `std::process::exit` on failure, both of which collide with
 // ratatui's terminal session. Slot 10c keeps the TUI shape and
-// inlines the snapshot-tip mutations here. ADR-011 Decision 3:
+// inlines the snapshot-tip mutations here. task `1v400j3l`:
 // the TUI is a non-migrate consumer, so reads of legacy event
 // chains bail with LegacyEventChain — the user runs
 // `git forum migrate` from the CLI before reopening the TUI.

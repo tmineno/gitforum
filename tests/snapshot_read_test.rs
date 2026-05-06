@@ -1,5 +1,5 @@
 //! `internal::snapshot::store::read_snapshot` integration tests
-//! (RFC `7ymtc4b2` Phase 1).
+//! (RFC `7ymtc4b2`, task `qa8u71j9`).
 //!
 //! Covers the round-trip with `write_snapshot`, the `LegacyEventChain`
 //! pre-flight, the `SnapshotMissing` cases (no ref, no thread.toml),

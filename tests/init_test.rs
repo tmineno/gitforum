@@ -13,7 +13,7 @@ use git_forum::internal::thread::ThreadSnapshot;
 
 use support::forum::{setup_no_init as setup, test_thread_id};
 
-/// Phase 4 Step 3 (RFC 7ymtc4b2, task 913c4s9v): the commit-identity
+/// task `913c4s9v`: the commit-identity
 /// tests in this file used to write a v2 `Event` via the deleted
 /// `internal::event::write_event`; the same commit-identity surface
 /// (`GitOps::commit_tree`) is exercised by `snapshot::write_snapshot`
@@ -101,7 +101,7 @@ fn init_is_idempotent() {
     assert!(paths.dot_forum.join("policy.toml").exists());
 }
 
-// Regression test for @96u6zxmc / ADR-007. The committed rfc.md had
+// Regression test for @96u6zxmc / task `96u6zxmc`. The committed rfc.md had
 // drifted to the 1-line `# {title}` stub while the (now-removed) inline
 // constant carried the multi-section scaffold. This test pins the seed
 // content so the drift cannot silently return.

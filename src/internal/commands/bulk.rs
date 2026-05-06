@@ -1,7 +1,7 @@
 //! `git forum state bulk` orchestration: bulk state-change with selectors
 //! (`--branch` / `--kind` / `--status`) and per-thread report.
 //!
-//! Phase 2 slot 3 (RFC `7ymtc4b2`): state changes go through
+//! task `1hg98odf`: state changes go through
 //! `commands::state::apply_state_change_snapshot`, which writes
 //! `thread.toml.status` directly. The legacy
 //! `state_change::change_state` event-write path is no longer
@@ -21,7 +21,7 @@ pub struct BulkArgs {
     pub thread_ids: Vec<String>,
     pub branch: Option<String>,
     /// Canonical preset name (`"rfc"` / `"dec"` / `"task"` /
-    /// `"issue"`) per `policy::kind_label_for`. v3.1 step 3n
+    /// `"issue"`) per `policy::kind_label_for`. task `1v400j3l`
     /// (task `1v400j3l`) replaced the typed `ThreadKind` filter.
     pub kind: Option<&'static str>,
     pub status: Option<String>,
@@ -113,7 +113,7 @@ pub fn list_thread_states(
 /// Predicate for kind AND branch AND status filters. Each filter is
 /// `None` to skip; non-`None` matches the field. Kind is matched by
 /// computing `policy::kind_label_for(category, tags)` (the canonical
-/// preset name) since v3.1 step 3n removed `state.kind`.
+/// preset name) since task `1v400j3l` removed `state.kind`.
 pub fn thread_matches_filters(
     state: &thread::ThreadState,
     kind: Option<&'static str>,

@@ -1,4 +1,4 @@
-//! Throttled emission of policy / migration lint warnings (#6k7hq482).
+//! Throttled emission of policy / migration lint warnings (thread `6k7hq482`).
 //!
 //! ## Why this exists
 //!

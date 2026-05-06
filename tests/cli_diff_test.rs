@@ -1,6 +1,6 @@
 //! `git forum diff` CLI tests.
 //!
-//! Phase 4 Step 1b (RFC `7ymtc4b2`, task `913c4s9v`): switched from v2
+//! task `913c4s9v`: switched from v2
 //! `create::create_thread` + `write_ops::revise_body` setup to direct
 //! snapshot writes via `internal::snapshot::write_snapshot`. The new
 //! diff implementation derives revisions from snapshot commits whose

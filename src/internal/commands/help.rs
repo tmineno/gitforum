@@ -1,6 +1,6 @@
 //! `git forum --help-llm` orchestration.
 //!
-//! Phase 2 slot 10e (RFC `7ymtc4b2`): the `--help-llm` dispatcher.
+//! task `1hg98odf`: the `--help-llm` dispatcher.
 //! Library code (`internal::help::*` — `node_type_taxonomy`,
 //! `state_transition_map`, `evidence_kinds_reference`) stays
 //! peer-level since several callers consume it; this module owns the
@@ -8,7 +8,7 @@
 //! `doc/MANUAL.md` payload. The routing map only references 3.0
 //! subcommands — the 1.x rhetorical shorthands (`claim`, `question`,
 //! `summary`, `risk`, `review`, `alternative`, `assumption`) are
-//! removed in 3.0 (SPEC-3.0 §2.2 / ADR-006), so they no longer have
+//! removed in 3.0 (SPEC-3.0 §2.2), so they no longer have
 //! a focused-help target.
 
 use crate::internal::help;

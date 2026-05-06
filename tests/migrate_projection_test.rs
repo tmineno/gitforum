@@ -1,5 +1,5 @@
 //! Unit-level coverage for the `migrate_legacy_to_snapshot`
-//! projection (task `9635buy0` step 3 / items 5 + 6).
+//! projection (task `9635buy0` / items 5 + 6).
 //!
 //! Two SPEC-3.0 §8 invariants under test:
 //!

@@ -65,7 +65,7 @@ fn branch_bind_and_clear_update_thread_scope() {
         .expect("failed to show issue");
     assert!(show.status.success());
     let stdout = String::from_utf8(show.stdout).unwrap();
-    // Phase 2b: header labels gained 1 char of padding to align with `**lifecycle:**`.
+    // SPEC-2.0 classification: header labels gained 1 char of padding to align with `**lifecycle:**`.
     assert!(stdout.contains("**branch:**    feat/solver"));
 
     let clear = Command::new(env!("CARGO_BIN_EXE_git-forum"))

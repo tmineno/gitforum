@@ -5,8 +5,8 @@ use super::error::ForumError;
 
 // --------------------------------------------------------------------
 // v2 `NodeType` (the 12-variant enum carrying 1.x rhetorical labels)
-// was relocated to `internal::legacy::event` in task `1v400j3l` step
-// 3g. Only the migration consumer needs the legacy variants; runtime
+// was relocated to `internal::legacy::event` by task `1v400j3l`.
+// Only the migration consumer needs the legacy variants; runtime
 // node code uses `NodeKind` (4 variants) below.
 //
 // The v2 `Node` struct below now stores `NodeKind` directly, with
@@ -70,7 +70,8 @@ impl Node {
 // Strict 4-variant `NodeKind` (no claim/question/summary/risk/review/
 // alternative/assumption) and a `NodeStatus` enum replace the v2
 // `NodeType` carrying legacy variants and the three boolean status
-// flags. The legacy `Node` struct above is untouched until Phase 4.
+// flags. The legacy `Node` struct above is retained for v2 compatibility;
+// removal is tracked by task `913c4s9v`.
 // --------------------------------------------------------------------
 
 /// SPEC-3.0 §2.2 node type (strict canonical four).
@@ -132,7 +133,7 @@ pub enum NodeStatus {
 /// table or array). The paired `nodes/<id>.md` body file is owned by
 /// `snapshot::store`, not by this type.
 ///
-/// `Default` is derived (v3.1 step 3o, task `1v400j3l`) so test
+/// `Default` is derived (task `1v400j3l`) so test
 /// fixtures and migrate-projection helpers can elide unset optional
 /// fields with struct-update syntax (`NodeRecord { id: …, kind: …,
 /// ..Default::default() }`).

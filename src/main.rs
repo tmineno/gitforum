@@ -366,7 +366,7 @@ enum Commands {
     /// Reads only the named thread's snapshot. Outgoing-link summary is
     /// grouped by relation; incoming counts are not computed in v3.0.0
     /// (the SQLite reverse-link index that backed them was deleted in
-    /// Phase 4 Step 3 — see RFC Exceptions: index reintroduction is
+    /// task `913c4s9v` — see RFC Exceptions: index reintroduction is
     /// a v3.1 concern). Never reads linked threads' bodies, titles, or
     /// states.
     Brief {
@@ -664,7 +664,7 @@ enum NodeCmd {
 }
 
 // `BranchCmd` lives in `internal::commands::branch::BranchCmd` per
-// the post-Phase-4 unified entry-point shape (RFC `7ymtc4b2`
+// the task `913c4s9v` unified entry-point shape (RFC `7ymtc4b2`
 // criterion 3 — every command exposes `commands::<cmd>::run`).
 use git_forum::internal::commands::branch::BranchCmd;
 
@@ -737,7 +737,7 @@ fn main() -> Result<(), ForumError> {
     // first Policy::load anywhere downstream renders paths repo-relative
     // and honours the on-disk suppression cache. Failure to discover a
     // repo (e.g. running `git forum --help` outside a repo) is fine —
-    // we fall back to the in-memory default emitter (#6k7hq482).
+    // we fall back to the in-memory default emitter (thread `6k7hq482`).
     if let Ok(git) = GitOps::discover() {
         if let Ok(git_dir) = git.git_dir() {
             let paths = RepoPaths::from_repo_root_and_git_dir(git.root(), &git_dir);
@@ -759,8 +759,8 @@ fn main() -> Result<(), ForumError> {
         }
 
         // Reindex / PruneOrphans / PruneStaleEvents arms were removed
-        // at Phase 2 slot 11; the underlying modules deleted at Phase 4
-        // Step 3 (ADR-011 Decision 6: no index in v3.0.0).
+        // at task `1hg98odf`; the underlying modules were deleted by
+        // task `913c4s9v` (SPEC-3.0 §9.2: no required index in v3.0.0).
         Commands::Migrate {
             to,
             dry_run,
@@ -777,9 +777,9 @@ fn main() -> Result<(), ForumError> {
             )?;
         }
 
-        // Repair / Purge / Search arms were removed at Phase 2 slot 11;
+        // Repair / Purge / Search arms were removed at task `1hg98odf`;
         // the underlying repair / repair_workflow / purge modules and the
-        // search-via-index path were deleted at Phase 4 Step 3 (ADR-011).
+        // search-via-index path were deleted at task `913c4s9v`.
         Commands::Tui { thread_id } => {
             let (git, paths) = discover_repo_with_init_warning()?;
             let thread_id = thread_id.map(|id| resolve_tid(&git, &id)).transpose()?;
@@ -787,9 +787,9 @@ fn main() -> Result<(), ForumError> {
             forum_tui::run(&git, &db_path, thread_id.as_deref())?;
         }
 
-        // Import / Export arms were removed at Phase 2 slot 11; the
+        // Import / Export arms were removed at task `1hg98odf`; the
         // github / github_import / github_export modules were deleted at
-        // Phase 4 Step 3 (ADR-011 Decision 7 / SPEC-3.0 §13: GitHub
+        // task `913c4s9v` (SPEC-3.0 §13: GitHub
         // bridge is not part of v3.0.0 core).
         Commands::Thread {
             cmd:
@@ -1110,11 +1110,11 @@ fn main() -> Result<(), ForumError> {
             )?;
         }
 
-        // Log arm removed at Phase 2 slot 11 (RFC `7ymtc4b2`); the
-        // domain-timeline view is on the Phase 4 DELETE list. Per
+        // Log arm removed at task `1hg98odf`; the
+        // domain-timeline view is on the task `913c4s9v` DELETE list. Per
         // SPEC-3.0 §5.4, `git forum log` is to be re-introduced as a
         // git-history wrapper over the snapshot ref — that is a NEW
-        // additive arm landing alongside or after slot 11, not an
+        // additive arm tracked separately from task `1hg98odf`, not an
         // extraction of this body.
         Commands::Diff { thread_id, rev } => {
             let ctx = Context::discover(Box::new(SystemClock))?;

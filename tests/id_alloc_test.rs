@@ -7,7 +7,7 @@ use git_forum::internal::id_alloc;
 use git_forum::internal::legacy::event::ThreadKind;
 
 // `id_alloc::alloc_thread_id*` takes the literal display prefix
-// (`"ASK"`, `"RFC"`, …) since v3.1 step 3n dropped the `ThreadKind`
+// (`"ASK"`, `"RFC"`, …) since task `1v400j3l` dropped the `ThreadKind`
 // public surface. Tests still spell prefixes via the legacy enum's
 // `.id_prefix()` helper for readability — the typed enum survives in
 // `internal::legacy::event::ThreadKind`.

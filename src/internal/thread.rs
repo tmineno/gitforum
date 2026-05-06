@@ -11,7 +11,7 @@ use super::validate::StrictReplayIssue;
 pub const MIN_NODE_ID_PREFIX_LEN: usize = 4;
 
 // `ThreadKind` (the v2 4-variant enum) was removed from
-// `internal::thread` in v3.1 step 3n (task `1v400j3l`). ThreadState's
+// `internal::thread` in task `1v400j3l`. ThreadState's
 // `kind` field is gone; the 3.0-native shape is `category: String`
 // + canonical §8.3 `tags`. Display surfaces compute the kind label
 // via `policy::kind_label_for(category, tags)`. The typed enum
@@ -20,8 +20,8 @@ pub const MIN_NODE_ID_PREFIX_LEN: usize = 4;
 // transitions against the v2 graph (re-exported through
 // `internal::legacy::event::ThreadKind` for legacy reader callers).
 
-// `ThreadStatus` (the v2 8-variant enum) was removed in v3.1 step 3l
-// (task `1v400j3l`). ThreadState's `status` field is now a plain
+// `ThreadStatus` (the v2 8-variant enum) was removed in task `1v400j3l`.
+// ThreadState's `status` field is now a plain
 // `String`. The typed enum survives only inside
 // `internal::legacy::chain_replay`, where the lenient/strict event
 // replay state machine still needs it to validate transitions
@@ -36,11 +36,11 @@ pub const MIN_NODE_ID_PREFIX_LEN: usize = 4;
 /// - Length 2..=32
 /// - Not a reserved literal (`all`, `none`, `any`, `untagged`)
 ///
-/// Phase 4 Step 2a (RFC `7ymtc4b2`, task `913c4s9v`) relocated this
+/// task `913c4s9v` relocated this
 /// from `event.rs` so KEEP files (e.g. `tui/state.rs`) can validate
 /// user-input tags without importing the v2 event module.
 /// `internal::event::validate_tag` remains as a `pub use` re-export
-/// for legacy callers retired in Steps 2/3.
+/// for legacy callers retired by task `913c4s9v`.
 pub fn validate_tag(tag: &str) -> Result<(), String> {
     const RESERVED: &[&str] = &["all", "none", "any", "untagged"];
     if tag.len() < 2 {
@@ -106,18 +106,18 @@ pub struct ThreadState {
     /// Most recent change timestamp. Snapshot-derived states use the
     /// snapshot's `updated_at`; legacy event-chain replays carry the
     /// most recent event's `created_at` (see `legacy::chain_replay`).
-    /// v3.1 step 3j replaced the v2 `events: Vec<Event>` field — the
+    /// task `1v400j3l` replaced the v2 `events: Vec<Event>` field — the
     /// only consumer of `events.last()` was `ls.rs`'s "updated"
     /// column, which now reads this field directly.
     pub updated_at: DateTime<Utc>,
     /// All discussion nodes (say/edit/retract/resolve/reopen applied).
     /// 3.0-native shape: each entry is a `NodeWithBody` (the snapshot
-    /// pair `nodes/<id>.toml` + `nodes/<id>.md`). v3.1 step 3o
-    /// (task `1v400j3l`) replaced the v2 `Vec<Node>` flat shape.
+    /// pair `nodes/<id>.toml` + `nodes/<id>.md`). task `1v400j3l`
+    /// replaced the v2 `Vec<Node>` flat shape.
     pub nodes: Vec<NodeWithBody>,
     /// Evidence items attached to this thread via Link events.
-    /// 3.0-native shape per SPEC-3.0 §2.3 `evidence.toml` row. v3.1
-    /// step 3o (task `1v400j3l`) replaced the v2 `Vec<Evidence>` shape.
+    /// 3.0-native shape per SPEC-3.0 §2.3 `evidence.toml` row. Task
+    /// `1v400j3l` replaced the v2 `Vec<Evidence>` shape.
     pub evidence_items: Vec<EvidenceRecord>,
     /// Links to other threads via Link events.
     pub links: Vec<ThreadLink>,
@@ -130,7 +130,7 @@ pub struct ThreadState {
     /// chain replay derives it from the v2 `ThreadKind` + tags. The
     /// user-facing "lifecycle" label (proposal/execution/record) is
     /// computed via `policy::lifecycle_label_for(&category, &tags)` —
-    /// v3.1 step 3m removed the typed `Lifecycle` enum from the
+    /// task `1v400j3l` removed the typed `Lifecycle` enum from the
     /// public surface.
     pub category: String,
     /// `true` iff a `facet_set` event in the chain explicitly wrote
@@ -201,7 +201,7 @@ impl ThreadState {
 /// Read the SPEC-3.0 snapshot at the thread ref tip and materialize
 /// it as [`ThreadState`].
 ///
-/// v3.1 step 3j (task `1v400j3l`) made this snapshot-only: the
+/// task `1v400j3l` made this snapshot-only: the
 /// mixed-chain / pure-event-chain replay path moved to
 /// [`super::legacy::chain_replay::replay_chain_at`] and is reachable
 /// only from `commands::migrate`. Threads whose tip still carries an
@@ -255,7 +255,7 @@ pub fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocume
     let status = snapshot.status.clone();
     let category = snapshot.category.clone();
 
-    // v3.1 step 3o: ThreadState now carries SPEC-3.0 native types
+    // task `1v400j3l`: ThreadState now carries SPEC-3.0 native types
     // directly (`NodeWithBody` / `EvidenceRecord`); no v2 projection.
     let evidence_items = evidence.entries;
 

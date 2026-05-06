@@ -1,6 +1,6 @@
 //! `git forum diff <THREAD_ID> [--rev N|N..M]` orchestration.
 //!
-//! Phase 4 Step 1b (RFC `7ymtc4b2`, task `913c4s9v`): revisions are
+//! task `913c4s9v`: revisions are
 //! derived from the snapshot ref's git history per SPEC-3.0 §5.4 —
 //! a "body revision" is a snapshot commit whose tree changed
 //! `body.md`. Earlier revisions of this file walked

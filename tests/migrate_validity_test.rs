@@ -1,5 +1,5 @@
 //! Comprehensive `git forum migrate --to 3.0` validity test
-//! (task `9635buy0` step 7 / item 14).
+//! (task `9635buy0` / item 14).
 //!
 //! Two fixtures, four legacy kinds each:
 //!

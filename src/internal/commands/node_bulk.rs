@@ -1,6 +1,6 @@
 //! `git forum {retract|resolve|reopen}` orchestration over a node id list.
 //!
-//! Phase 2 slot 4 (RFC `7ymtc4b2`): node lifecycle changes update
+//! task `1hg98odf`: node lifecycle changes update
 //! `nodes/<id>.toml` `status` directly via
 //! `snapshot::store::write_snapshot`. The legacy
 //! `internal::write_ops::node_lifecycle` event-write path (which

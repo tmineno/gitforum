@@ -32,7 +32,7 @@ use super::node::NodeKind;
 use super::thread::ThreadState;
 
 // `Lifecycle` (the v2 3-variant enum) was removed from
-// `internal::policy` in v3.1 step 3m (task `1v400j3l`). The
+// `internal::policy` in task `1v400j3l`. The
 // SPEC-3.0 successor is the snapshot's `category` string +
 // `tags`; the user-facing "lifecycle" label is computed via
 // `lifecycle_label_for` below. The typed enum survives only inside
@@ -65,8 +65,8 @@ pub fn lifecycle_label_for(category: &str, tags: &[String]) -> &'static str {
 /// Compute the v2-style kind preset name (`"rfc"` / `"dec"` /
 /// `"issue"` / `"task"`) from a SPEC-3.0 category + tag set per §8.3.
 /// Replaces the public `ThreadKind` enum's display path on read
-/// surfaces (`ls --kind` filter, `verify` advisory message) per v3.1
-/// step 3n (task `1v400j3l`). The typed enum survives only inside
+/// surfaces (`ls --kind` filter, `verify` advisory message) per task
+/// `1v400j3l`. The typed enum survives only inside
 /// `legacy/`.
 pub fn kind_label_for(category: &str, tags: &[String]) -> &'static str {
     match category {
@@ -89,7 +89,7 @@ pub fn kind_label_for(category: &str, tags: &[String]) -> &'static str {
 /// `id_alloc::alloc_thread_id` (legacy KIND-prefixed allocator,
 /// retained for migration-window code paths). New 3.0 writes use the
 /// bare-token form via `id_alloc::alloc_bare_thread_id` and never
-/// touch this helper. v3.1 step 3n (task `1v400j3l`).
+/// touch this helper. task `1v400j3l`.
 pub fn id_prefix_for(category: &str, tags: &[String]) -> &'static str {
     match kind_label_for(category, tags) {
         "rfc" => "RFC",
@@ -286,8 +286,8 @@ fn built_in_task() -> CategoryDefinition {
 // ---------------------------------------------------------------------
 
 /// Resolve a thread state's 3.0 category. Trivial helper preserved as
-/// a stable seam for callers that fan out over `ThreadState` — v3.1
-/// step 3m switched ThreadState's storage from a typed `Lifecycle`
+/// a stable seam for callers that fan out over `ThreadState` — task
+/// `1v400j3l` switched ThreadState's storage from a typed `Lifecycle`
 /// to a category string, so this just exposes that field.
 pub fn category_for_state(state: &ThreadState) -> &str {
     &state.category
@@ -300,7 +300,7 @@ pub fn category_for_state(state: &ThreadState) -> &str {
 /// is neither a known alias nor already canonical.
 ///
 /// 3.0-native replacement for the v2 `policy::normalize_state_name`
-/// helper (removed in v3.1 step 3p, task `1v400j3l`) — the alias
+/// helper (removed in task `1v400j3l`) — the alias
 /// table is now embedded here. v3 KEEP code that wants
 /// "fold-or-passthrough" behavior writes
 /// `canonical_status_lenient(s).unwrap_or(s)` at the call site so
@@ -336,12 +336,12 @@ pub fn canonical_status_lenient(s: &str) -> Option<&'static str> {
 /// SPEC-3.0 §3.1 `category` + default tag set. The legacy `kind` and
 /// `lifecycle` axes are derivable from `(category, tags)` via
 /// `policy::kind_label_for` / `policy::lifecycle_label_for` and no
-/// longer ride on the preset row (v3.1 steps 3m / 3n removed both
-/// typed enums from the public surface).
+/// longer ride on the preset row (task `1v400j3l` removed both typed
+/// enums from the public surface).
 ///
 /// Replaces the legacy `legacy::workflow::KindPreset` (which carried a
 /// v2 `ThreadKind` field that the snapshot writer no longer consumes)
-/// per RFC `7ymtc4b2` v3.1 follow-up task `1v400j3l` step 3b.
+/// per RFC `7ymtc4b2`, task `1v400j3l`.
 pub struct CategoryPreset {
     pub name: &'static str,
     pub aliases: &'static [&'static str],
@@ -397,7 +397,7 @@ pub fn presets() -> &'static [CategoryPreset] {
 ///
 /// Replaces the legacy `legacy::workflow::ShorthandResolution` (which was
 /// keyed on `Lifecycle`) per RFC `7ymtc4b2` v3.1 follow-up task
-/// `1v400j3l` step 3a.
+/// task `1v400j3l`.
 pub enum ShorthandResolution {
     /// Resolved to a concrete 3.0 status name.
     Target(&'static str),
@@ -1705,7 +1705,7 @@ mod evaluate_tests {
     }
 
     /// 3.0-shape state fixture keyed on the SPEC-3.0 §3.1 category
-    /// string (`"rfc"` or `"task"`). Replaces the v3.1 step 3n removed
+    /// string (`"rfc"` or `"task"`). Replaces the task `1v400j3l` removed
     /// `state_for(ThreadKind)` shape; the typed kind enum is no
     /// longer on the public surface.
     fn state_for(category: &str) -> ThreadState {

@@ -366,7 +366,7 @@ fn constrain_column_widths(natural: &[usize], budget: usize) -> Vec<usize> {
     let n = natural.len();
     let mut result = vec![0usize; n];
 
-    // Phase 1: give each column its minimum
+    // First pass: give each column its minimum.
     let mins: Vec<usize> = natural.iter().map(|&w| w.min(MIN_COL)).collect();
     let min_total: usize = mins.iter().sum();
     if budget <= min_total {
@@ -385,7 +385,7 @@ fn constrain_column_widths(natural: &[usize], budget: usize) -> Vec<usize> {
         return result;
     }
 
-    // Phase 2: distribute remaining budget proportionally
+    // Second pass: distribute remaining budget proportionally.
     let extra_budget = budget - min_total;
     let extra_natural: Vec<usize> = natural
         .iter()
