@@ -44,10 +44,14 @@ pub struct NodeAddArgs {
 
 /// Render `git forum node show <NODE_ID>` for a single node.
 ///
-/// `find_node` does the snapshot tree lookup; `render_node_show` is
-/// the shared canonical formatter.
+/// Bug `bvdk2w48`: resolves the node id through the cheap
+/// [`thread::NodeIdIndex`] cached on `Context` (one
+/// `ls-tree --name-only nodes/` per thread, no body reads) and
+/// then replays only the owning thread, instead of the historical
+/// "replay every thread twice" path. `render_node_show` is the
+/// shared canonical formatter.
 pub fn run_show(args: NodeShowArgs, ctx: &Context) -> Result<(), ForumError> {
-    let lookup = thread::find_node(&ctx.git, &args.node_id)?;
+    let lookup = thread::find_node_with_index(&ctx.git, &args.node_id, ctx.node_index()?)?;
     // SPEC-3.0 §5.4: per-node history is the slice of the thread's
     // snapshot ref log that touched `nodes/<id>.{toml,md}`. The
     // renderer does the path filtering — we just hand it the full log.
