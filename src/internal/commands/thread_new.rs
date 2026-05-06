@@ -86,6 +86,17 @@ pub enum ThreadCmd {
         #[arg(long)]
         force: bool,
     },
+    /// Toggle a thread's publish visibility (RFC fls856j3 §6)
+    SetVisibility {
+        thread_id: String,
+        /// `public` or `private`
+        visibility: String,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        /// Required to flip public → private from a non-interactive shell
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// Inline-node bodies attached during `git forum new <preset>` (kind preset

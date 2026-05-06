@@ -34,5 +34,6 @@ pub mod state;
 pub mod status;
 pub mod thread_new;
 pub mod verify;
+pub mod visibility;
 
 pub use context::Context;

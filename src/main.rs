@@ -835,6 +835,36 @@ fn main() -> Result<(), ForumError> {
             )?;
         }
 
+        Commands::Thread {
+            cmd:
+                ThreadCmd::SetVisibility {
+                    thread_id,
+                    visibility,
+                    as_actor,
+                    force,
+                },
+        } => {
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            let parsed = match visibility.as_str() {
+                "public" => git_forum::internal::thread::Visibility::Public,
+                "private" => git_forum::internal::thread::Visibility::Private,
+                other => {
+                    return Err(git_forum::internal::error::ForumError::Config(format!(
+                        "invalid visibility '{other}': expected 'public' or 'private'"
+                    )));
+                }
+            };
+            commands::visibility::run(
+                commands::visibility::SetVisibilityArgs {
+                    thread_id,
+                    visibility: parsed,
+                    as_actor,
+                    force,
+                },
+                &ctx,
+            )?;
+        }
+
         Commands::New {
             kind,
             title,
