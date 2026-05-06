@@ -2,8 +2,9 @@
 //!
 //! Provides:
 //! - A commit-msg hook that validates thread ID references in commit messages.
-//! - A post-checkout hook that repairs missing blob references in the index.
-//! - A `fix-index` subcommand that detects and re-hashes missing blobs.
+//! - A post-checkout hook that initializes git-forum in fresh worktrees.
+//! - A `fix-index` subcommand that detects and re-hashes missing blobs
+//!   (manual recovery; also invoked by `git-forum doctor`).
 //!
 //! Phase 2 slot 10b (RFC `7ymtc4b2`): the `Hook::*` arm body relocates
 //! from `main.rs` to [`run_arm`] in this module. The lower-level
@@ -37,7 +38,6 @@ const POST_CHECKOUT_HOOK_MARKER: &str = "# git-forum post-checkout hook";
 const POST_CHECKOUT_HOOK_SCRIPT: &str = r#"#!/bin/sh
 # git-forum post-checkout hook
 git-forum hook worktree-init
-git-forum hook fix-index
 "#;
 
 // ── arm dispatcher ──────────────────────────────────────────────────
@@ -161,10 +161,8 @@ pub struct FixIndexResult {
 ///    itself references a pruned blob — the next commit will then carry
 ///    the repair into a new tree.
 ///
-/// HEAD-tree corruption is the failure mode that breaks the pre-commit
-/// framework's `git diff --diff-filter=A` startup probe before any user
-/// hook runs, so detecting and staging it here gives the user a one-step
-/// recovery (`git-forum hook fix-index && git commit --no-verify`).
+/// Defense-in-depth recovery; see ADR-008. Invoked manually via
+/// `git-forum hook fix-index` and as part of `git-forum doctor`.
 ///
 /// Also runs `git worktree prune` first to clean up stale worktree metadata
 /// that could cause GC to skip dead worktree indices.
@@ -767,7 +765,7 @@ mod tests {
         assert!(hook_path.exists());
         let content = fs::read_to_string(&hook_path).unwrap();
         assert!(content.contains(POST_CHECKOUT_HOOK_MARKER));
-        assert!(content.contains("git-forum hook fix-index"));
+        assert!(content.contains("git-forum hook worktree-init"));
     }
 
     #[test]

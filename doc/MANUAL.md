@@ -907,13 +907,13 @@ git forum hook uninstall                 # remove both
 
 The `commit-msg` hook validates `Refs:` trailers point at known
 threads and rejects commits that reference unknown IDs. The
-`post-checkout` hook initializes `git forum` in a new worktree
-and repairs the index after `git read-tree` / `git checkout`
-operations.
+`post-checkout` hook initializes `git forum` in a new worktree.
 
 The advanced sub-commands (`hook check-commit-msg`,
-`hook fix-index`, `hook worktree-init`) are wired by the hook
-scripts themselves; you should not need to run them directly.
+`hook worktree-init`) are wired by the hook scripts themselves;
+you should not need to run them directly. `hook fix-index` is a
+manual defense-in-depth recovery (see ADR-008); `git forum doctor`
+also invokes it.
 
 ## TUI
 

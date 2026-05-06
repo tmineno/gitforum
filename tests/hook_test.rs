@@ -159,7 +159,7 @@ fn hook_install_creates_executable_files() {
     let post_checkout_path = repo.path().join(".git/hooks/post-checkout");
     assert!(post_checkout_path.exists());
     let pc_content = fs::read_to_string(&post_checkout_path).unwrap();
-    assert!(pc_content.contains("fix-index"));
+    assert!(pc_content.contains("worktree-init"));
 
     #[cfg(unix)]
     {

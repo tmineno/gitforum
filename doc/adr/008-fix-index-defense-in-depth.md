@@ -18,6 +18,7 @@ Document `fix-index` as defense-in-depth recovery, **not** as a known-cause fix.
 - Future readers (humans, AI assistants) building on the docs will not start from a discarded causal model.
 - If a deterministic reproduction is later discovered, the docs need a positive update at that time. Until then, the absence of a cause is itself the documented state.
 - The `fix-index` code path and the `fix_index_repairs_missing_head_tree_blob` test stay as-is. They exercise the recovery against artificially-induced corruption (`fs::remove_file` on a loose blob), which is the most we can verify until the wild mechanism is identified.
+- The recovery is no longer auto-wired into the post-checkout hook. The post-checkout hook only runs `worktree-init`. `fix-index` is invoked manually (`git-forum hook fix-index`) and as part of `git-forum doctor`. Auto-running on every checkout normalized the recovery into the steady-state path without a known cause to justify the cost; making it explicit keeps it as the defense-in-depth mechanism this ADR describes.
 
 ## Alternatives
 

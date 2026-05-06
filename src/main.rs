@@ -683,7 +683,7 @@ enum HookCmd {
         /// Path to the commit message file (provided by Git)
         file: PathBuf,
     },
-    /// Repair missing blob references in the git index (used by post-checkout hook)
+    /// Repair missing blob references in the git index (manual recovery; also run by `doctor`)
     FixIndex,
     /// Initialize git-forum in a new worktree (used by post-checkout hook)
     WorktreeInit,
