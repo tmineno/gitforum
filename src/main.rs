@@ -102,6 +102,7 @@ node shorthands (convenience aliases for 'node add <ID> --type <type>')
 #[derive(Parser)]
 #[command(
     name = "git-forum",
+    version,
     about = "Structured discussion in Git",
     help_template = "\
 {about-with-newline}
