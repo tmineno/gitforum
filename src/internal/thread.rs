@@ -506,14 +506,28 @@ pub fn find_node_in_thread(
 }
 
 /// List all thread IDs from Git refs.
+///
+/// RFC `fls856j3` §5: walks both `refs/forum/threads/*` and
+/// `refs/forum/published/*` and deduplicates by id. Published-only
+/// clones (whose fetch refspec is `+refs/forum/published/*` only)
+/// see ids that exist solely in the published namespace; trusted-
+/// collaborator clones see authoritative ids plus any published
+/// orphan whose authoritative counterpart was deleted.
 pub fn list_thread_ids(git: &GitOps) -> ForumResult<Vec<String>> {
-    let ref_names = git.list_refs(refs::THREADS_PREFIX)?;
-    let mut ids: Vec<String> = ref_names
-        .iter()
-        .filter_map(|r| refs::thread_id_from_ref(r).map(|s| s.to_string()))
-        .collect();
-    ids.sort();
-    Ok(ids)
+    use std::collections::BTreeSet;
+
+    let mut ids: BTreeSet<String> = BTreeSet::new();
+    for r in git.list_refs(refs::THREADS_PREFIX)? {
+        if let Some(id) = refs::thread_id_from_ref(&r) {
+            ids.insert(id.to_string());
+        }
+    }
+    for r in git.list_refs(refs::PUBLISHED_PREFIX)? {
+        if let Some(id) = refs::thread_id_from_published_ref(&r) {
+            ids.insert(id.to_string());
+        }
+    }
+    Ok(ids.into_iter().collect())
 }
 
 /// Resolve a user-supplied thread reference to a canonical full thread ID.

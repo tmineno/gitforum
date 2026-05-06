@@ -25,7 +25,7 @@ use crate::internal::publish::exclusion;
 use crate::internal::publish::lint::{self, LintWarning};
 use crate::internal::refs;
 use crate::internal::snapshot;
-use crate::internal::thread::{self, Visibility};
+use crate::internal::thread::Visibility;
 
 /// Per-thread record of what the publisher did locally and what
 /// remote action (if any) is staged.
@@ -108,7 +108,16 @@ impl PublishPlan {
 /// Side effects: writes blob/tree/commit objects and updates local
 /// `refs/forum/published/*` for changed public threads.
 pub fn build_plan(git: &GitOps) -> ForumResult<PublishPlan> {
-    let auth_ids: Vec<String> = thread::list_thread_ids(git)?;
+    // The publisher cares only about *authoritative* threads. We
+    // bypass the §5 read-protocol fallback here: a published-only
+    // orphan must surface as a withdrawal candidate, not as an
+    // authoritative public thread we'd try to re-publish (which
+    // would fail to find the thread for the visibility check).
+    let auth_ids: Vec<String> = git
+        .list_refs(refs::THREADS_PREFIX)?
+        .iter()
+        .filter_map(|r| refs::thread_id_from_ref(r).map(|s| s.to_string()))
+        .collect();
     let private_ids = compute_private_set(git, &auth_ids)?;
 
     let mut threads: Vec<ThreadPlan> = Vec::new();
