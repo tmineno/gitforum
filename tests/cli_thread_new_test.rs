@@ -1,42 +1,14 @@
 mod support;
 
 use std::io::Write;
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Stdio};
 
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::thread;
 
-fn extract_created_id(output: &Output) -> String {
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
-        .trim()
-        .strip_prefix("Created ")
-        .unwrap_or(stdout.trim())
-        .split_whitespace()
-        .next()
-        .unwrap()
-        .to_string()
-}
-
-/// Snapshot fixture: invoke `git forum new` to write a fresh SPEC-3.0
-/// thread. Replaces the legacy `create::create_thread` fixture path
-/// now that ADR-011 Decision 3 forbids non-migrate code paths from
-/// consuming legacy event chains.
-fn make_thread_via_cli(repo_path: &std::path::Path, kind: &str, title: &str, body: &str) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
-        .current_dir(repo_path)
-        .args(["new", kind, title, "--body", body])
-        .output()
-        .expect("failed to run");
-    assert!(
-        output.status.success(),
-        "make_thread_via_cli failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    extract_created_id(&output)
-}
+use support::cli::{extract_created_id, make_thread_via_cli};
 
 /// Drive a fresh RFC to `accepted` via the CLI state arms (used by
 /// the `--from-thread` regression that wants the source already

@@ -2,37 +2,13 @@
 /// Validates RFC-0024 — generic-first canonical CLI policy.
 mod support;
 
-use std::process::Command;
-
 use git_forum::internal::config::RepoPaths;
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::init;
 use git_forum::internal::node::NodeKind;
 use git_forum::internal::thread;
 
-fn bin() -> String {
-    env!("CARGO_BIN_EXE_git-forum").to_string()
-}
-
-fn run(repo_path: &std::path::Path, args: &[&str]) -> std::process::Output {
-    Command::new(bin())
-        .current_dir(repo_path)
-        .args(args)
-        .output()
-        .expect("command failed to execute")
-}
-
-fn extract_created_id(output: &std::process::Output) -> String {
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
-        .trim()
-        .strip_prefix("Created ")
-        .unwrap_or(stdout.trim())
-        .split_whitespace()
-        .next()
-        .unwrap()
-        .to_string()
-}
+use support::cli::{extract_created_id, run};
 
 fn setup_issue(repo_path: &std::path::Path) -> String {
     let out = run(repo_path, &["new", "ask", "Test issue"]);

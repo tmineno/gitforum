@@ -19,63 +19,14 @@
 
 mod support;
 
-use std::process::{Command, Output};
-
-use git_forum::internal::config::RepoPaths;
 use git_forum::internal::evidence::{EvidenceFile, EvidenceKind, EvidenceRecord};
 use git_forum::internal::git_ops::GitOps;
-use git_forum::internal::init;
 use git_forum::internal::node::{NodeKind, NodeRecord, NodeStatus};
 use git_forum::internal::snapshot::{write_snapshot, Link, Links, NodeWithBody, ThreadDocument};
 use git_forum::internal::thread::ThreadSnapshot;
 
-fn bin() -> String {
-    env!("CARGO_BIN_EXE_git-forum").to_string()
-}
-
-fn run_ok(repo: &support::repo::TestRepo, args: &[&str]) -> Output {
-    let out = Command::new(bin())
-        .current_dir(repo.path())
-        .args(args)
-        .output()
-        .expect("git-forum invocation failed");
-    assert!(
-        out.status.success(),
-        "`git-forum {}` failed: stdout={}, stderr={}",
-        args.join(" "),
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr),
-    );
-    out
-}
-
-fn extract_created_id(out: &Output) -> String {
-    let s = String::from_utf8_lossy(&out.stdout);
-    s.trim()
-        .strip_prefix("Created ")
-        .unwrap_or(s.trim())
-        .split_whitespace()
-        .next()
-        .expect("no thread id in `Created …` line")
-        .to_string()
-}
-
-fn fresh_cli_repo() -> support::repo::TestRepo {
-    let repo = support::repo::TestRepo::new();
-    let paths = RepoPaths::from_repo_root(repo.path());
-    init::init_forum(&paths).unwrap();
-    repo
-}
-
-fn list_tree_paths(git: &GitOps, refname: &str) -> Vec<String> {
-    let tip = git.run(&["rev-parse", refname]).unwrap();
-    let out = git
-        .run(&["ls-tree", "-r", "--name-only", tip.trim()])
-        .unwrap();
-    let mut paths: Vec<String> = out.lines().map(|s| s.to_string()).collect();
-    paths.sort();
-    paths
-}
+use support::cli::{extract_created_id, fresh_repo as fresh_cli_repo, run_ok};
+use support::git::{list_tree_paths, ls_thread_tip, read_thread_file};
 
 // --------------------------------------------------------------------
 // (1) Direct snapshot-store shape tests — Phase 1, run NOW.
@@ -190,7 +141,7 @@ fn v3_empty_snapshot_omits_all_optional_files() {
 #[test]
 fn v3_cli_thread_new_writes_thread_toml() {
     let repo = fresh_cli_repo();
-    let id = extract_created_id(&run_ok(&repo, &["new", "issue", "v3 shape probe"]));
+    let id = extract_created_id(&run_ok(repo.path(), &["new", "issue", "v3 shape probe"]));
 
     let git = GitOps::new(repo.path().to_path_buf());
     let tip_ref = format!("refs/forum/threads/{id}");
@@ -222,33 +173,19 @@ fn v3_cli_thread_new_writes_thread_toml() {
     );
 }
 
-// Helpers shared by the per-command storage-shape gates below.
-fn ls_tip(git: &GitOps, id: &str) -> Vec<String> {
-    let tip_ref = format!("refs/forum/threads/{id}");
-    let tip = git.run(&["rev-parse", &tip_ref]).expect("rev-parse tip");
-    let tree = git
-        .run(&["ls-tree", "-r", "--name-only", tip.trim()])
-        .expect("ls-tree tip");
-    tree.lines().map(str::to_string).collect()
-}
-
-fn cat_tip_file(git: &GitOps, id: &str, path: &str) -> String {
-    let tip_ref = format!("refs/forum/threads/{id}");
-    let tip = git.run(&["rev-parse", &tip_ref]).expect("rev-parse tip");
-    git.run(&["cat-file", "-p", &format!("{}:{path}", tip.trim())])
-        .unwrap_or_else(|e| panic!("cat-file {path} on {id}: {e}"))
-}
-
 /// v3 invariant (slot 2 / shorthand_say): `git forum comment` writes
 /// `nodes/<id>.toml` and `nodes/<id>.md` to the snapshot tip.
 #[test]
 fn v3_cli_comment_writes_node_files() {
     let repo = fresh_cli_repo();
-    let id = extract_created_id(&run_ok(&repo, &["new", "issue", "comment shape probe"]));
-    run_ok(&repo, &["comment", &id, "--body", "hello"]);
+    let id = extract_created_id(&run_ok(
+        repo.path(),
+        &["new", "issue", "comment shape probe"],
+    ));
+    run_ok(repo.path(), &["comment", &id, "--body", "hello"]);
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let entries = ls_tip(&git, &id);
+    let entries = ls_thread_tip(&git, &id);
     let has_node_toml = entries
         .iter()
         .any(|e| e.starts_with("nodes/") && e.ends_with(".toml"));
@@ -267,11 +204,11 @@ fn v3_cli_comment_writes_node_files() {
 #[test]
 fn v3_cli_state_updates_thread_toml_status() {
     let repo = fresh_cli_repo();
-    let id = extract_created_id(&run_ok(&repo, &["new", "issue", "state shape probe"]));
-    run_ok(&repo, &["state", &id, "closed"]);
+    let id = extract_created_id(&run_ok(repo.path(), &["new", "issue", "state shape probe"]));
+    run_ok(repo.path(), &["state", &id, "closed"]);
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let body = cat_tip_file(&git, &id, "thread.toml");
+    let body = read_thread_file(&git, &id, "thread.toml");
     assert!(
         body.contains("status = \"done\""),
         "v3 thread.toml must reflect the new status; got:\n{body}"
@@ -283,8 +220,11 @@ fn v3_cli_state_updates_thread_toml_status() {
 #[test]
 fn v3_cli_resolve_updates_node_status() {
     let repo = fresh_cli_repo();
-    let id = extract_created_id(&run_ok(&repo, &["new", "issue", "resolve shape probe"]));
-    let comment = run_ok(&repo, &["comment", &id, "--body", "open question"]);
+    let id = extract_created_id(&run_ok(
+        repo.path(),
+        &["new", "issue", "resolve shape probe"],
+    ));
+    let comment = run_ok(repo.path(), &["comment", &id, "--body", "open question"]);
     let comment_stdout = String::from_utf8_lossy(&comment.stdout);
     let node_id = comment_stdout
         .lines()
@@ -293,15 +233,15 @@ fn v3_cli_resolve_updates_node_status() {
         .trim()
         .to_string();
 
-    run_ok(&repo, &["resolve", &id, &node_id]);
+    run_ok(repo.path(), &["resolve", &id, &node_id]);
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let entries = ls_tip(&git, &id);
+    let entries = ls_thread_tip(&git, &id);
     let toml = entries
         .iter()
         .find(|e| e.starts_with("nodes/") && e.ends_with(".toml"))
         .expect("nodes/<id>.toml present");
-    let body = cat_tip_file(&git, &id, toml);
+    let body = read_thread_file(&git, &id, toml);
     assert!(
         body.contains("status = \"resolved\""),
         "v3 nodes/*.toml must reflect resolved status; got:\n{body}"
@@ -314,13 +254,13 @@ fn v3_cli_resolve_updates_node_status() {
 fn v3_cli_revise_overwrites_body_md() {
     let repo = fresh_cli_repo();
     let id = extract_created_id(&run_ok(
-        &repo,
+        repo.path(),
         &["new", "issue", "revise shape probe", "--body", "v1"],
     ));
-    run_ok(&repo, &["revise", &id, "--body", "v2 final"]);
+    run_ok(repo.path(), &["revise", &id, "--body", "v2 final"]);
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let body_md = cat_tip_file(&git, &id, "body.md");
+    let body_md = read_thread_file(&git, &id, "body.md");
     assert!(
         body_md.contains("v2 final"),
         "v3 body.md must contain the revised text; got:\n{body_md}"
@@ -339,10 +279,13 @@ fn v3_cli_branch_bind_writes_thread_toml_branch() {
         .unwrap();
     git.run(&["commit", "--allow-empty", "-m", "seed"]).unwrap();
 
-    let id = extract_created_id(&run_ok(&repo, &["new", "issue", "branch shape probe"]));
-    run_ok(&repo, &["branch", "bind", &id, "feat/storage-probe"]);
+    let id = extract_created_id(&run_ok(
+        repo.path(),
+        &["new", "issue", "branch shape probe"],
+    ));
+    run_ok(repo.path(), &["branch", "bind", &id, "feat/storage-probe"]);
 
-    let body = cat_tip_file(&git, &id, "thread.toml");
+    let body = read_thread_file(&git, &id, "thread.toml");
     assert!(
         body.contains("branch = \"feat/storage-probe\""),
         "v3 thread.toml must record the bound branch; got:\n{body}"
@@ -354,9 +297,12 @@ fn v3_cli_branch_bind_writes_thread_toml_branch() {
 #[test]
 fn v3_cli_retype_updates_node_kind() {
     let repo = fresh_cli_repo();
-    let id = extract_created_id(&run_ok(&repo, &["new", "issue", "retype shape probe"]));
+    let id = extract_created_id(&run_ok(
+        repo.path(),
+        &["new", "issue", "retype shape probe"],
+    ));
     let comment = run_ok(
-        &repo,
+        repo.path(),
         &["comment", &id, "--body", "let's call this an action"],
     );
     let comment_stdout = String::from_utf8_lossy(&comment.stdout);
@@ -367,15 +313,15 @@ fn v3_cli_retype_updates_node_kind() {
         .trim()
         .to_string();
 
-    run_ok(&repo, &["retype", &id, &node_id, "--type", "action"]);
+    run_ok(repo.path(), &["retype", &id, &node_id, "--type", "action"]);
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let entries = ls_tip(&git, &id);
+    let entries = ls_thread_tip(&git, &id);
     let toml = entries
         .iter()
         .find(|e| e.starts_with("nodes/") && e.ends_with(".toml"))
         .expect("nodes/<id>.toml present");
-    let body = cat_tip_file(&git, &id, toml);
+    let body = read_thread_file(&git, &id, toml);
     assert!(
         body.contains("type = \"action\""),
         "v3 nodes/*.toml must reflect retyped type; got:\n{body}"
@@ -387,22 +333,25 @@ fn v3_cli_retype_updates_node_kind() {
 #[test]
 fn v3_cli_evidence_add_writes_evidence_toml() {
     let repo = fresh_cli_repo();
-    let id = extract_created_id(&run_ok(&repo, &["new", "issue", "evidence shape probe"]));
+    let id = extract_created_id(&run_ok(
+        repo.path(),
+        &["new", "issue", "evidence shape probe"],
+    ));
     // Need a real commit ref to satisfy commit-ref canonicalization.
     let git = GitOps::new(repo.path().to_path_buf());
     git.run(&["commit", "--allow-empty", "-m", "evidence target"])
         .unwrap();
     run_ok(
-        &repo,
+        repo.path(),
         &["evidence", "add", &id, "--kind", "commit", "--ref", "HEAD"],
     );
 
-    let entries = ls_tip(&git, &id);
+    let entries = ls_thread_tip(&git, &id);
     assert!(
         entries.iter().any(|e| e == "evidence.toml"),
         "v3 snapshot must contain evidence.toml after `evidence add`; got {entries:?}"
     );
-    let body = cat_tip_file(&git, &id, "evidence.toml");
+    let body = read_thread_file(&git, &id, "evidence.toml");
     assert!(
         body.contains("kind = \"commit\""),
         "v3 evidence.toml must record the kind; got:\n{body}"
@@ -414,20 +363,20 @@ fn v3_cli_evidence_add_writes_evidence_toml() {
 #[test]
 fn v3_cli_link_writes_links_toml() {
     let repo = fresh_cli_repo();
-    let src = extract_created_id(&run_ok(&repo, &["new", "issue", "link source"]));
+    let src = extract_created_id(&run_ok(repo.path(), &["new", "issue", "link source"]));
     let dst = extract_created_id(&run_ok(
-        &repo,
+        repo.path(),
         &["new", "rfc", "link target", "--body", "## Goal\nv3 probe."],
     ));
-    run_ok(&repo, &["link", &src, &dst, "--rel", "implements"]);
+    run_ok(repo.path(), &["link", &src, &dst, "--rel", "implements"]);
 
     let git = GitOps::new(repo.path().to_path_buf());
-    let entries = ls_tip(&git, &src);
+    let entries = ls_thread_tip(&git, &src);
     assert!(
         entries.iter().any(|e| e == "links.toml"),
         "v3 source snapshot must contain links.toml after `link`; got {entries:?}"
     );
-    let body = cat_tip_file(&git, &src, "links.toml");
+    let body = read_thread_file(&git, &src, "links.toml");
     assert!(
         body.contains(&format!("target = \"{dst}\"")),
         "v3 links.toml must record the target id; got:\n{body}"
