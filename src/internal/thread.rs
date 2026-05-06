@@ -345,6 +345,19 @@ impl NodeIdIndex {
         Ok(Self { by_id })
     }
 
+    /// Look up an exact full node id without any prefix matching.
+    /// Returns the owning thread id, or `None` if `node_id` is not a
+    /// known node anywhere in the forum. Bug `k4p0ya0b`: lets
+    /// `show <id>` distinguish "this is a node, not a thread" from
+    /// "this id is unknown" without triggering prefix ambiguity
+    /// errors that would mask the friendly hint.
+    pub fn lookup_exact(&self, node_id: &str) -> Option<&str> {
+        match self.by_id.get(node_id)?.as_slice() {
+            [thread_id] => Some(thread_id.as_str()),
+            _ => None,
+        }
+    }
+
     /// Resolve `node_ref` (full id or unique prefix) to
     /// `(node_id, thread_id)`. Exact match wins, prefix shorter than
     /// [`MIN_NODE_ID_PREFIX_LEN`] is rejected, ambiguous prefix is

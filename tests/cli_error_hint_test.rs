@@ -105,6 +105,107 @@ fn add_subcommand_shows_hint() {
     );
 }
 
+/// Bug `k4p0ya0b`: `git forum show <node-id>` historically dead-ended
+/// at "thread '<id>' not found" because thread ids and node ids
+/// share the same 8-char base36 shape. Now the show command falls
+/// through to the node-id index and emits a friendly redirect.
+#[test]
+fn show_with_node_id_redirects_to_node_show() {
+    let repo = support::cli::fresh_repo();
+
+    let thread_id = support::cli::make_thread_via_cli(
+        repo.path(),
+        "task",
+        "Parent thread for node-id-redirect",
+        "Body for parent thread.",
+    );
+
+    let comment_out = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args([
+            "comment",
+            &thread_id,
+            "Comment whose id will be pasted into show",
+        ])
+        .output()
+        .expect("failed to run git-forum comment");
+    assert!(
+        comment_out.status.success(),
+        "comment failed: {}",
+        String::from_utf8_lossy(&comment_out.stderr)
+    );
+
+    // `comment` prints `Created node <node-id> on @<thread-id>`.
+    let comment_stdout = String::from_utf8_lossy(&comment_out.stdout).to_string();
+    let node_id = comment_stdout
+        .split_whitespace()
+        .nth(2)
+        .expect("comment output should contain the node id")
+        .to_string();
+
+    let show_out = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["show", &node_id])
+        .output()
+        .expect("failed to run git-forum show");
+
+    assert!(
+        !show_out.status.success(),
+        "show <node-id> should still exit non-zero (callers expect an error \
+         exit while we keep `node show` as the canonical surface)"
+    );
+
+    let stderr = String::from_utf8(show_out.stderr).expect("stderr utf-8");
+    assert!(
+        stderr.contains("is a node, not a thread"),
+        "stderr should name the input as a node; got: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("git forum node show {node_id}")),
+        "stderr should redirect to `node show <node-id>`; got: {stderr}"
+    );
+    assert!(
+        stderr.contains(&thread_id),
+        "stderr should name the parent thread {thread_id}; got: {stderr}"
+    );
+}
+
+/// Bug `k4p0ya0b` exception: ids that match neither a thread nor a
+/// node must still surface the original thread-not-found error so
+/// the user is told to run `git forum ls`.
+#[test]
+fn show_with_unknown_id_still_errors_thread_not_found() {
+    let repo = support::cli::fresh_repo();
+    // Seed one thread so the forum is initialised but our probe id
+    // is genuinely unknown.
+    support::cli::make_thread_via_cli(repo.path(), "task", "A real thread", "Body.");
+
+    let show_out = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["show", "zzzzzzzz"])
+        .output()
+        .expect("failed to run git-forum show");
+
+    assert!(
+        !show_out.status.success(),
+        "show on an unknown id should still fail"
+    );
+
+    let stderr = String::from_utf8(show_out.stderr).expect("stderr utf-8");
+    assert!(
+        stderr.contains("thread 'zzzzzzzz' not found"),
+        "stderr should keep the thread-not-found message for unknown ids; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("git forum ls"),
+        "stderr should keep the `git forum ls` hint for unknown ids; got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("is a node, not a thread"),
+        "stderr should NOT misclassify an unknown id as a node; got: {stderr}"
+    );
+}
+
 #[test]
 fn unknown_subcommand_shows_help_llm_fallback() {
     let repo = support::repo::TestRepo::new();
