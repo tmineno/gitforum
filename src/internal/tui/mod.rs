@@ -294,6 +294,14 @@ pub struct App {
     filter: FilterCriteria,
     filter_bar: Option<FilterBar>,
     pub thread_text: String,
+    /// Structured section list for the thread-detail body pane (task
+    /// `px3ss55s`). Populated by `open_thread_detail` from
+    /// `show::render_full_sections` so the body-pane composer can
+    /// style the `OpenObjections` / `OpenActions` / `Conversations`
+    /// variants while passing every other block through as plain
+    /// text. `thread_text` mirrors the joined CLI text of these
+    /// sections and is kept for tests / debugging fallback.
+    pub thread_sections: Vec<crate::internal::commands::show::Section>,
     pub thread_scroll: u16,
     pub thread_nodes: Vec<NodeWithBody>,
     /// Tree-ordered entries for the nodes panel (may differ from thread_nodes order).
@@ -368,6 +376,7 @@ impl App {
             filter: FilterCriteria::default(),
             filter_bar: None,
             thread_text: String::new(),
+            thread_sections: Vec::new(),
             thread_scroll: 0,
             thread_nodes: Vec::new(),
             tree_entries: Vec::new(),
@@ -2459,6 +2468,263 @@ mod tests {
         assert!(
             app.thread_nodes[0].record.legacy_label.is_none(),
             "default Comment must have no legacy_subtype"
+        );
+    }
+
+    // ============================================================
+    //  task `px3ss55s` — structured-section TUI body pane
+    // ============================================================
+    //
+    // Buffer-style assertions complement the existing
+    // `render_to_string` helper: that helper flattens the ratatui
+    // buffer to symbols and discards style, so it cannot catch a
+    // missing red foreground on an objection row, missing cyan on
+    // an action row, or missing bold on a section header. The
+    // helpers below preserve cell `Style` so we can verify the
+    // node-kind palette is actually applied.
+
+    fn render_to_buffer(app: &mut App, width: u16, height: u16) -> ratatui::buffer::Buffer {
+        use ratatui::Terminal;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| super::render::render(f, app)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn buffer_row_str(buf: &ratatui::buffer::Buffer, y: usize) -> String {
+        let w = buf.area.width as usize;
+        buf.content()[(y * w)..((y + 1) * w)]
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>()
+    }
+
+    /// Find a row whose flattened symbols contain `needle`. Returns
+    /// (y, byte_offset_in_row) for the first match.
+    fn find_row(buf: &ratatui::buffer::Buffer, needle: &str) -> Option<(usize, usize)> {
+        let h = buf.area.height as usize;
+        for y in 0..h {
+            let row = buffer_row_str(buf, y);
+            if let Some(start) = row.find(needle) {
+                return Some((y, start));
+            }
+        }
+        None
+    }
+
+    /// Style at cell `(y, col)` where `col` indexes ASCII columns
+    /// (caller asserts the content is ASCII; ratatui cells are
+    /// per-symbol so this matches `buffer_row_str.find()` byte
+    /// offsets for ASCII rows).
+    fn cell_style_at(buf: &ratatui::buffer::Buffer, y: usize, col: usize) -> ratatui::style::Style {
+        let w = buf.area.width as usize;
+        buf.content()[y * w + col].style()
+    }
+
+    fn rich_state_for_body_pane() -> crate::internal::thread::ThreadState {
+        use crate::internal::node::{NodeKind, NodeRecord};
+        use crate::internal::snapshot::store::NodeWithBody;
+        use crate::internal::thread::{ThreadLink, ThreadState};
+        let t = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let mut state = ThreadState {
+            id: "RFC-test01".into(),
+            category: "rfc".into(),
+            title: "Cache eviction proposal".into(),
+            body: Some("This is the thread body text.".into()),
+            status: "review".into(),
+            created_at: t,
+            created_by: "human/alice".into(),
+            updated_at: t,
+            ..ThreadState::default()
+        };
+        state.nodes = vec![
+            NodeWithBody {
+                record: NodeRecord {
+                    id: "obj00001".into(),
+                    kind: NodeKind::Objection,
+                    created_at: t,
+                    created_by: "ai/reviewer".into(),
+                    ..Default::default()
+                },
+                body: "Benchmarks are missing.".into(),
+            },
+            NodeWithBody {
+                record: NodeRecord {
+                    id: "act00002".into(),
+                    kind: NodeKind::Action,
+                    created_at: t,
+                    created_by: "human/bob".into(),
+                    ..Default::default()
+                },
+                body: "Backfill index column.".into(),
+            },
+            NodeWithBody {
+                record: NodeRecord {
+                    id: "cmt00003".into(),
+                    kind: NodeKind::Comment,
+                    created_at: t,
+                    created_by: "human/carol".into(),
+                    ..Default::default()
+                },
+                body: "Standalone comment leaf.".into(),
+            },
+        ];
+        state.evidence_items = vec![crate::internal::evidence::EvidenceRecord {
+            id: "evid0001".into(),
+            kind: crate::internal::evidence::EvidenceKind::Commit,
+            ref_target: "abc1234".into(),
+            created_at: t,
+            created_by: "human/alice".into(),
+        }];
+        state.links = vec![ThreadLink {
+            target_thread_id: "RFC-other1".into(),
+            rel: "implements".into(),
+        }];
+        state
+    }
+
+    fn open_thread_app_with_state(state: &crate::internal::thread::ThreadState) -> App {
+        use crate::internal::commands::show;
+        let mut app = App::new(vec![]);
+        app.view = View::ThreadDetail(state.id.clone());
+        let sections = show::render_full_sections(state, &show::ShowOptions::default());
+        let mut text_lines: Vec<String> = Vec::new();
+        for s in &sections {
+            text_lines.extend(s.to_text_lines());
+        }
+        app.thread_text = text_lines.join("\n");
+        app.thread_sections = sections;
+        app.thread_title = state.title.clone();
+        app.thread_lifecycle = Some("proposal".into());
+        app.thread_tags = state.tags.clone();
+        app.thread_status = state.status.clone();
+        app.thread_nodes = state.nodes.clone();
+        app
+    }
+
+    #[test]
+    fn body_pane_section_headers_are_bold_in_markdown_mode() {
+        // task `px3ss55s`: structured sections emit markdown text that
+        // is parsed by `markdown_to_text` when the user has the
+        // markdown toggle on (`m` keybinding). `markdown_to_text`
+        // styles `## Header` as bold + cyan; this test confirms the
+        // section text reaches the markdown parser.
+        let state = rich_state_for_body_pane();
+        let mut app = open_thread_app_with_state(&state);
+        app.markdown_mode = true;
+        let buf = render_to_buffer(&mut app, 140, 60);
+
+        for header in [
+            "Open objections (1)",
+            "Open actions (1)",
+            "Conversations (3)",
+        ] {
+            let (y, x) = find_row(&buf, header).unwrap_or_else(|| {
+                panic!(
+                    "header `{header}` not found in body pane buffer\n{}",
+                    (0..buf.area.height as usize)
+                        .map(|y| buffer_row_str(&buf, y))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            });
+            let style = cell_style_at(&buf, y, x);
+            assert!(
+                style.add_modifier.contains(ratatui::style::Modifier::BOLD),
+                "section header `{header}` at ({y},{x}) is not bold; style = {:?}",
+                style
+            );
+        }
+    }
+
+    #[test]
+    fn body_pane_preserves_non_section_content() {
+        // task `px3ss55s` AC: the body pane keeps thread body,
+        // evidence, and links visible after the structured-section
+        // change. This guards against accidentally dropping the
+        // existing `render_show` content during the section rewrite.
+        let state = rich_state_for_body_pane();
+        let mut app = open_thread_app_with_state(&state);
+        let out = render_to_string(&mut app, 140, 60);
+
+        for needle in [
+            "This is the thread body text.", // body
+            "evid0001",                      // evidence id
+            "commit",                        // evidence kind
+            "abc1234",                       // evidence ref
+            "RFC-other1",                    // link target
+            "implements",                    // link rel
+        ] {
+            assert!(
+                out.contains(needle),
+                "expected `{needle}` to be visible in body pane; got:\n{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn body_pane_zero_nodes_elides_conversation_section() {
+        // task `px3ss55s` AC: a thread with `build_conversations(...)`
+        // empty (i.e. no nodes) renders no `Conversations` section.
+        use crate::internal::thread::ThreadState;
+        let t = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let state = ThreadState {
+            id: "RFC-empty01".into(),
+            category: "rfc".into(),
+            title: "Empty thread".into(),
+            body: Some("body".into()),
+            status: "open".into(),
+            created_at: t,
+            created_by: "human/alice".into(),
+            updated_at: t,
+            ..ThreadState::default()
+        };
+        let mut app = open_thread_app_with_state(&state);
+        let out = render_to_string(&mut app, 140, 60);
+        assert!(
+            !out.contains("Conversations ("),
+            "zero-node thread should not render a Conversations section; got:\n{out}"
+        );
+        assert!(
+            !out.contains("Open objections ("),
+            "zero-node thread should not render an Open objections section; got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn body_pane_standalone_leaf_counts_as_one_conversation() {
+        // task `px3ss55s` AC: a standalone leaf node is a one-element
+        // chain and counts as one conversation, matching CLI today.
+        use crate::internal::node::{NodeKind, NodeRecord};
+        use crate::internal::snapshot::store::NodeWithBody;
+        use crate::internal::thread::ThreadState;
+        let t = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let mut state = ThreadState {
+            id: "RFC-leaf01".into(),
+            category: "rfc".into(),
+            title: "Leaf only".into(),
+            body: Some("body".into()),
+            status: "open".into(),
+            created_at: t,
+            created_by: "human/alice".into(),
+            updated_at: t,
+            ..ThreadState::default()
+        };
+        state.nodes = vec![NodeWithBody {
+            record: NodeRecord {
+                id: "leaf0001".into(),
+                kind: NodeKind::Comment,
+                created_at: t,
+                created_by: "human/alice".into(),
+                ..Default::default()
+            },
+            body: "Just a single leaf.".into(),
+        }];
+        let mut app = open_thread_app_with_state(&state);
+        let out = render_to_string(&mut app, 140, 60);
+        assert!(
+            out.contains("Conversations (1)"),
+            "single-leaf thread should render Conversations (1); got:\n{out}"
         );
     }
 }

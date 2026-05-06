@@ -116,9 +116,10 @@ fn node_bulk_resolve_visible_in_show() {
         "resolved action body missing from show:\n{show}"
     );
     // `show` lists open actions only; once resolved the action drops out
-    // of the open list (advisory line "open actions: N" decrements).
+    // of the open list (the `Open actions (N)` section header is elided
+    // when the count would be zero).
     assert!(
-        !show.contains("**open actions:** 1"),
+        !show.contains("Open actions (1)"),
         "show should no longer list this action as open:\n{show}"
     );
 }
