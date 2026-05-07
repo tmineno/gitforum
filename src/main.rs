@@ -79,6 +79,10 @@ policy and preflight
 hooks and maintenance
    hook        Manage git-forum hooks (commit-msg, post-checkout)
 
+publishing (RFC fls856j3)
+   push                  Publish public threads to refs/forum/published/* on a remote
+   thread set-visibility Toggle a thread's publish visibility (public/private)
+
 interactive
    tui         Open the interactive TUI
 
