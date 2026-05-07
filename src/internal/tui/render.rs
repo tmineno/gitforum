@@ -94,6 +94,15 @@ pub(super) fn row_lifecycle(row: &ThreadRow) -> String {
     }
 }
 
+/// Compact label for the RFC `fls856j3` publish visibility, shown
+/// in the TUI list pane's bracket prefix (the same slot tags use).
+pub(super) fn visibility_marker(v: crate::internal::thread::Visibility) -> &'static str {
+    match v {
+        crate::internal::thread::Visibility::Public => "pub",
+        crate::internal::thread::Visibility::Private => "priv",
+    }
+}
+
 /// Display tags for a `ThreadRow`. task `9635buy0`: reads the real `thread_tags`
 /// rows (joined into `ThreadRow.tags`). For rows with no replayed tags
 /// AND no explicit `facet_set`, falls back to the kind-conventional set
@@ -329,11 +338,24 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
             .iter()
             .map(|t| {
                 let tags = row_tags(t);
-                let title_cell = if tags.is_empty() {
-                    t.title.clone()
-                } else {
-                    format!("[{}] {}", tags.join(","), t.title)
-                };
+                // RFC fls856j3: surface publish visibility on the
+                // thread row so operators can spot which threads are
+                // publishable at a glance. Lives in the title-cell
+                // bracket prefix alongside the existing tag list,
+                // since adding a sortable column would ripple
+                // through SORT_COLUMNS and the click-detection rects.
+                let mut prefix: Vec<String> = Vec::new();
+                prefix.push(visibility_marker(t.visibility).to_string());
+                if t.from_published {
+                    // Sanitized fallback (`refs/forum/published/<id>`)
+                    // — clones reading via §5.1 fallback see this
+                    // marker instead of `pub`/`priv` accuracy.
+                    prefix.last_mut().unwrap().push('*');
+                }
+                if !tags.is_empty() {
+                    prefix.extend(tags.iter().map(|s| s.to_string()));
+                }
+                let title_cell = format!("[{}] {}", prefix.join(","), t.title);
                 Row::new(vec![
                     Cell::from(display_thread_id(&t.id)),
                     Cell::from(t.status.clone())

@@ -145,6 +145,11 @@ pub struct ThreadState {
     /// every `facet_set` event in chain order (v2 chains) or copied
     /// from the snapshot (v3 path).
     pub tags: Vec<String>,
+    /// RFC `fls856j3` §2.1 publish visibility. Copied from
+    /// `ThreadSnapshot.visibility`; defaults to `Private` so older
+    /// callers and fixtures that don't set the field stay
+    /// publish-safe.
+    pub visibility: Visibility,
 }
 
 /// Resolved view of a single node inside a thread.
@@ -287,6 +292,7 @@ pub fn materialize_thread_state_from_snapshot(doc: super::snapshot::ThreadDocume
         category,
         lifecycle_explicit: true,
         tags: snapshot.tags,
+        visibility: snapshot.visibility,
     }
 }
 

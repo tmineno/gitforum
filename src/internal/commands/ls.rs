@@ -64,7 +64,8 @@ pub fn run(args: LsArgs, ctx: &Context) -> Result<(), ForumError> {
 /// Render `git forum ls` output for a list of threads.
 ///
 /// SPEC-2.0 classification: classification axes are LIFECYCLE + TAGS, not KIND. Output
-/// columns: ID, LIFECYCLE, STATUS, TAGS, BRANCH, CREATED, UPDATED, TITLE.
+/// columns: ID, VIS, LIFECYCLE, STATUS, TAGS, BRANCH, CREATED, UPDATED, TITLE.
+/// `VIS` is the RFC `fls856j3` publish visibility (`pub`/`priv`).
 /// Deterministic when thread IDs, statuses, and tag insertion order are
 /// deterministic.
 pub fn render_ls(states: &[&ThreadState]) -> String {
@@ -77,6 +78,7 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
         .max()
         .unwrap_or(12)
         .clamp(12, 20);
+    let vis_width = 4; // "pub" / "priv"
     let lifecycle_width = states
         .iter()
         .map(|s| policy::lifecycle_label_for(&s.category, &s.tags).len())
@@ -102,13 +104,19 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
         .unwrap_or(12)
         .clamp(12, 30);
     let date_width = 16;
-    let fixed_cols =
-        id_width + lifecycle_width + status_width + tags_width + branch_width + date_width * 2 + 16;
+    let fixed_cols = id_width
+        + vis_width
+        + lifecycle_width
+        + status_width
+        + tags_width
+        + branch_width
+        + date_width * 2
+        + 18;
     let title_max = title_max_for(fixed_cols);
     let mut lines: Vec<String> = Vec::new();
     lines.push(format!(
-        "{:<id_width$}  {:<lifecycle_width$}  {:<status_width$}  {:<tags_width$}  {:<branch_width$}  {:<date_width$}  {:<date_width$}  {}",
-        "ID", "LIFECYCLE", "STATUS", "TAGS", "BRANCH", "CREATED", "UPDATED", "TITLE"
+        "{:<id_width$}  {:<vis_width$}  {:<lifecycle_width$}  {:<status_width$}  {:<tags_width$}  {:<branch_width$}  {:<date_width$}  {:<date_width$}  {}",
+        "ID", "VIS", "LIFECYCLE", "STATUS", "TAGS", "BRANCH", "CREATED", "UPDATED", "TITLE"
     ));
     lines.push("-".repeat(fixed_cols));
     for s in states {
@@ -116,9 +124,11 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
         let updated = s.updated_at.format("%Y-%m-%d %H:%M").to_string();
         let title = truncate_with_ellipsis(&s.title, title_max);
         let tags = join_tags(&s.tags);
+        let vis = visibility_label(s.visibility);
         lines.push(format!(
-            "{:<id_width$}  {:<lifecycle_width$}  {:<status_width$}  {:<tags_width$}  {:<branch_width$}  {:<date_width$}  {:<date_width$}  {}",
+            "{:<id_width$}  {:<vis_width$}  {:<lifecycle_width$}  {:<status_width$}  {:<tags_width$}  {:<branch_width$}  {:<date_width$}  {:<date_width$}  {}",
             s.id,
+            vis,
             policy::lifecycle_label_for(&s.category, &s.tags),
             s.status,
             truncate_with_ellipsis(&tags, tags_width),
@@ -130,6 +140,13 @@ pub fn render_ls(states: &[&ThreadState]) -> String {
     }
     lines.push(String::new());
     lines.join("\n")
+}
+
+fn visibility_label(v: super::super::thread::Visibility) -> &'static str {
+    match v {
+        super::super::thread::Visibility::Public => "pub",
+        super::super::thread::Visibility::Private => "priv",
+    }
 }
 
 /// Render a thread's tag list for column display: comma-joined or `-`.
