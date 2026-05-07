@@ -1207,6 +1207,15 @@ pub struct ShowArgs {
     pub thread_id: String,
     pub what_next: bool,
     pub compact: bool,
+    /// Ticket `kym9rgdi`: append the full snapshot-history table.
+    /// Without this flag, non-compact `show` ends after the
+    /// conversations / tip block. `--compact` always renders its
+    /// own one-line summary regardless of `with_timeline`.
+    pub with_timeline: bool,
+    /// Legacy explicit suppress. Ticket `kym9rgdi`: now redundant
+    /// with the default in non-compact mode; preserved so
+    /// `--compact --no-timeline` still suppresses the compact
+    /// one-liner the way it did before the default flip.
     pub no_timeline: bool,
     pub tree: bool,
 }
@@ -1249,7 +1258,12 @@ pub fn run(args: ShowArgs, ctx: &Context) -> Result<(), ForumError> {
         } else {
             ShowMode::Full
         };
-        let timeline_entries = if args.no_timeline {
+        // Ticket `kym9rgdi`: timeline is omitted by default in
+        // non-compact mode. `--with-timeline` opts back in; `--compact`
+        // continues to emit its one-line summary; `--no-timeline`
+        // remains a hard suppress (also kills the compact one-liner).
+        let suppress_timeline = args.no_timeline || (!args.compact && !args.with_timeline);
+        let timeline_entries = if suppress_timeline {
             None
         } else {
             // SPEC-3.0 §5.4: thread history is the snapshot ref's git log.
@@ -1261,7 +1275,7 @@ pub fn run(args: ShowArgs, ctx: &Context) -> Result<(), ForumError> {
                 &state,
                 &ShowOptions {
                     compact: args.compact,
-                    no_timeline: args.no_timeline,
+                    no_timeline: suppress_timeline,
                     policy: Some(policy),
                     mode,
                     timeline_entries,

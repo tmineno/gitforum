@@ -1,9 +1,10 @@
 RFC-a1b2c3d4 (review)
 
-valid transitions: done, rejected
+valid transitions: done, rejected, deprecated
 
 guard check (review -> done): PASS
 guard check (review -> rejected): PASS
+guard check (review -> deprecated): PASS
 
 open objections: 1
 open actions:    0

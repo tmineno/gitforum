@@ -198,3 +198,81 @@ fn migrate_without_to_is_rejected() {
         "rejection should mention the missing --to argument:\n{stderr}"
     );
 }
+
+// --- ticket `kym9rgdi`: timeline omitted by default --------------------
+
+#[test]
+fn show_default_omits_timeline_section() {
+    let repo = fresh_repo();
+    let id = extract_created_id(&run_ok(
+        repo.path(),
+        &["new", "issue", "No timeline by default"],
+    ));
+    // A second commit on the snapshot ref ensures the timeline would
+    // be non-trivial if it were rendered.
+    run_ok(repo.path(), &["comment", &id, "second commit"]);
+
+    let show = show_stdout(&repo, &id);
+    assert!(
+        !show.contains("### timeline"),
+        "default `show` should omit the `### timeline` section:\n{show}"
+    );
+    assert!(
+        !show.contains("**timeline:**"),
+        "default `show` should not emit the compact timeline one-liner:\n{show}"
+    );
+}
+
+#[test]
+fn show_with_timeline_flag_renders_full_table() {
+    let repo = fresh_repo();
+    let id = extract_created_id(&run_ok(repo.path(), &["new", "issue", "Opt-in timeline"]));
+    run_ok(repo.path(), &["comment", &id, "another commit"]);
+
+    let out = run_ok(repo.path(), &["show", &id, "--with-timeline"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("### timeline"),
+        "--with-timeline should restore the timeline section:\n{stdout}"
+    );
+    // SPEC-3.0 §5.4 timeline header columns: date | sha | author | op | detail.
+    assert!(
+        stdout.contains("| date |"),
+        "--with-timeline should render the markdown table header:\n{stdout}"
+    );
+}
+
+#[test]
+fn show_compact_still_emits_one_line_summary() {
+    let repo = fresh_repo();
+    let id = extract_created_id(&run_ok(repo.path(), &["new", "issue", "Compact stays"]));
+    run_ok(repo.path(), &["comment", &id, "extra commit"]);
+
+    let out = run_ok(repo.path(), &["show", &id, "--compact"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("**timeline:**") && stdout.contains("commits"),
+        "--compact should keep the one-line `**timeline:** N commits` summary:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("### timeline"),
+        "--compact should not render the full markdown table:\n{stdout}"
+    );
+}
+
+#[test]
+fn show_no_timeline_remains_a_hard_suppress_under_compact() {
+    let repo = fresh_repo();
+    let id = extract_created_id(&run_ok(
+        repo.path(),
+        &["new", "issue", "No timeline back-compat"],
+    ));
+    run_ok(repo.path(), &["comment", &id, "extra commit"]);
+
+    let out = run_ok(repo.path(), &["show", &id, "--compact", "--no-timeline"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("**timeline:**"),
+        "--compact --no-timeline must suppress the compact one-liner:\n{stdout}"
+    );
+}

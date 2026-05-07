@@ -15,20 +15,39 @@ use crate::internal::snapshot::{self, store::write_snapshot};
 use crate::internal::thread;
 
 use super::shared::{
-    apply_operation_checks, discover_repo_with_init_warning, resolve_actor, resolve_tid,
+    apply_operation_checks, discover_repo_with_init_warning, resolve_actor, resolve_node_targets,
+    NodeTargetSelection,
 };
 
 #[allow(clippy::too_many_arguments)]
 pub fn run_retype(
-    thread_id: &str,
-    node_ref: &str,
+    args: &[String],
     new_type: &str,
     as_actor: Option<String>,
     force: bool,
     clock: &dyn Clock,
 ) -> Result<(), ForumError> {
     let (git, paths) = discover_repo_with_init_warning()?;
-    let thread_id = resolve_tid(&git, thread_id)?;
+
+    // Ticket `ycnxmj0y`: accept either `<node>` or `<thread> <node>`.
+    let NodeTargetSelection {
+        thread_id,
+        node_refs,
+        explicit_thread,
+    } = resolve_node_targets(&git, args)?;
+    let node_ref = match node_refs.as_slice() {
+        [single] => single.clone(),
+        [] => {
+            return Err(ForumError::Repo("retype requires a node id".to_string()));
+        }
+        _ => {
+            return Err(ForumError::Repo(format!(
+                "retype takes at most one node id (got {})",
+                node_refs.len()
+            )));
+        }
+    };
+
     let policy = Policy::load(&paths.dot_forum.join("policy.toml")).unwrap_or_default();
     let actor = resolve_actor(as_actor, &git);
 
@@ -39,7 +58,21 @@ pub fn run_retype(
     let violations = operation_check::check_revise(&policy, category, state.status.as_str(), false);
     apply_operation_checks(&violations, force, policy.checks.strict)?;
 
-    let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, node_ref)?;
+    let resolved = thread::resolve_node_id_in_thread(&git, &thread_id, &node_ref).map_err(|e| {
+        // Ticket `ycnxmj0y`: in the explicit form, give the helpful
+        // "is in thread Y, not <wrong>" hint when the node lives in a
+        // different thread.
+        if explicit_thread {
+            if let Ok(index) = thread::NodeIdIndex::build(&git) {
+                if let Ok((found_node, found_thread)) = index.resolve(&node_ref) {
+                    return ForumError::Repo(format!(
+                        "node {found_node} is in thread {found_thread}, not {thread_id}"
+                    ));
+                }
+            }
+        }
+        e
+    })?;
     let mut doc = snapshot::read_snapshot(&git, &thread_id)?;
     let now = clock.now();
     let node = doc

@@ -82,7 +82,7 @@ hooks and maintenance
 interactive
    tui         Open the interactive TUI
 
-state shorthands (lifecycle-aware: close/accept/propose/pend/reject/withdraw/deprecate)
+state shorthands (lifecycle-aware: close/accept/propose/pend/reject/withdraw/deprecate/supersede)
    close       proposal: rejected (use accept) | execution/record: -> done
    accept      proposal/record: -> done | execution: rejected (use close)
    propose     proposal: draft -> open | other lifecycles: rejected
@@ -90,6 +90,7 @@ state shorthands (lifecycle-aware: close/accept/propose/pend/reject/withdraw/dep
    reject      any lifecycle: -> rejected
    withdraw    proposal: -> withdrawn | other lifecycles: rejected
    deprecate   any lifecycle: -> deprecated
+   supersede   <OLD> --by <NEW>: link superseded-by + comment + -> deprecated
 
 node shorthands (convenience aliases for 'node add <ID> --type <type>')
    comment     node add --type comment
@@ -165,8 +166,10 @@ enum Commands {
             required_unless_present_any = ["from_commit", "from_thread"]
         )]
         title: Option<String>,
-        #[arg(long, conflicts_with = "body_file")]
+        /// Thread body text (use "-" to read from stdin)
+        #[arg(long, value_name = "TEXT", conflicts_with = "body_file")]
         body: Option<String>,
+        /// Read thread body from a file (use "-" to read from stdin)
         #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
         body_file: Option<PathBuf>,
         /// Open $EDITOR to compose the body
@@ -213,6 +216,11 @@ enum Commands {
         /// Filter by thread status (open, closed, draft, etc.)
         #[arg(long, value_name = "STATUS")]
         status: Option<String>,
+        /// Comma-separated columns to render (overrides auto-hide of empty columns).
+        /// Valid: id, lifecycle, status, tags, branch, created, updated, title.
+        /// Recommended for scripts that depend on column positions.
+        #[arg(long, value_name = "COLS")]
+        columns: Option<String>,
     },
     /// List threads that reached terminal state since a date or tag
     Shortlog {
@@ -335,6 +343,29 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Mark a thread superseded by another (link + comment + deprecate
+    /// in one step). Ticket `eda1c050`: distinguishes the supersede
+    /// case from genuinely-rejected work — `<old>` lands in
+    /// `deprecated`, never in `rejected`.
+    Supersede {
+        /// Thread being superseded
+        thread_id: String,
+        /// Replacement thread (the one that supersedes <thread_id>)
+        #[arg(long = "by", value_name = "NEW_THREAD_ID")]
+        by: String,
+        /// Comment body on <thread_id> (default: "Superseded by @<NEW_THREAD_ID>")
+        #[arg(long)]
+        body: Option<String>,
+        #[arg(long = "as", value_name = "ACTOR")]
+        as_actor: Option<String>,
+        /// Walk through intermediate states to reach `deprecated` (rarely needed —
+        /// the registry has direct edges from open/working/review/done/rejected)
+        #[arg(long)]
+        fast_track: bool,
+        /// Bypass warning-level operation checks (does not bypass errors)
+        #[arg(long)]
+        force: bool,
+    },
     /// Show thread details
     Show {
         thread_id: String,
@@ -344,7 +375,14 @@ enum Commands {
         /// Truncate node bodies and timeline details to single-line previews
         #[arg(long)]
         compact: bool,
-        /// Omit the timeline section
+        /// Append the full snapshot-history table to the output (ticket
+        /// `kym9rgdi`: timeline is omitted by default; use this flag or
+        /// `git forum log <id>` to read it).
+        #[arg(long)]
+        with_timeline: bool,
+        /// Omit the timeline section. Redundant with the new default
+        /// (ticket `kym9rgdi`); kept for backward compatibility — still
+        /// suppresses the compact one-liner when combined with `--compact`.
         #[arg(long)]
         no_timeline: bool,
         /// Advisory: list direct incoming `implements` children (one hop, no recursion).
@@ -393,7 +431,7 @@ enum Commands {
         /// New thread body text (use "-" to read from stdin)
         #[arg(long, conflicts_with = "body_file")]
         body: Option<String>,
-        /// Read new thread body from a file
+        /// Read new thread body from a file (use "-" to read from stdin)
         #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
         body_file: Option<PathBuf>,
         /// Open $EDITOR to compose the body
@@ -415,8 +453,10 @@ enum Commands {
         thread_id: String,
         /// Node body (positional; use --body or --body-file for named alternatives)
         body_positional: Option<String>,
+        /// Node body text (use "-" to read from stdin)
         #[arg(long = "body", value_name = "TEXT")]
         body_flag: Option<String>,
+        /// Read node body from a file (use "-" to read from stdin)
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
         /// Open $EDITOR to compose the body
@@ -433,9 +473,12 @@ enum Commands {
     /// Add an objection node to a thread
     Objection {
         thread_id: String,
+        /// Node body (positional; use --body or --body-file for named alternatives)
         body_positional: Option<String>,
+        /// Node body text (use "-" to read from stdin)
         #[arg(long = "body", value_name = "TEXT")]
         body_flag: Option<String>,
+        /// Read node body from a file (use "-" to read from stdin)
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
         /// Open $EDITOR to compose the body
@@ -452,9 +495,12 @@ enum Commands {
     /// Add an action node to a thread
     Action {
         thread_id: String,
+        /// Node body (positional; use --body or --body-file for named alternatives)
         body_positional: Option<String>,
+        /// Node body text (use "-" to read from stdin)
         #[arg(long = "body", value_name = "TEXT")]
         body_flag: Option<String>,
+        /// Read node body from a file (use "-" to read from stdin)
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
         /// Open $EDITOR to compose the body
@@ -470,51 +516,50 @@ enum Commands {
     },
     /// Retract one or more nodes (soft-delete)
     Retract {
-        thread_id: String,
         #[arg(
             num_args = 1..,
             required = true,
-            value_name = "NODE_ID",
-            help = "Full node ID(s) or unique prefix within the thread (8+ chars unless exact match)"
+            value_name = "NODE_ID|THREAD_ID NODE_ID...",
+            help = "Node id(s) — or `<thread-id> <node-id>...` to scope to a specific thread"
         )]
-        node_ids: Vec<String>,
+        args: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
     /// Resolve one or more nodes (mark as addressed)
     Resolve {
-        thread_id: String,
         #[arg(
             num_args = 1..,
             required = true,
-            value_name = "NODE_ID",
-            help = "Full node ID(s) or unique prefix within the thread (8+ chars unless exact match)"
+            value_name = "NODE_ID|THREAD_ID NODE_ID...",
+            help = "Node id(s) — or `<thread-id> <node-id>...` to scope to a specific thread"
         )]
-        node_ids: Vec<String>,
+        args: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
-    /// Reopen resolved/retracted node(s), or reopen a closed thread (when no NODE_ID given)
+    /// Reopen resolved/retracted node(s), or reopen a closed thread
     Reopen {
-        thread_id: String,
         #[arg(
             num_args = 1..,
-            value_name = "NODE_ID",
-            help = "Full node ID(s) or unique prefix within the thread; omit to reopen the thread itself"
+            required = true,
+            value_name = "NODE_ID|THREAD_ID [NODE_ID...]",
+            help = "A thread id (reopens the thread), a node id, or `<thread-id> <node-id>...`"
         )]
-        node_ids: Vec<String>,
+        args: Vec<String>,
         #[arg(long = "as", value_name = "ACTOR")]
         as_actor: Option<String>,
     },
     /// Change the type of an existing node
     Retype {
-        thread_id: String,
         #[arg(
-            value_name = "NODE_ID",
-            help = "Full node ID or unique prefix within the thread"
+            num_args = 1..=2,
+            required = true,
+            value_name = "NODE_ID|THREAD_ID NODE_ID",
+            help = "Node id — or `<thread-id> <node-id>` to scope to a specific thread"
         )]
-        node_id: String,
-        /// New node type (claim, question, objection, evidence, summary, action, risk, review, alternative, assumption)
+        args: Vec<String>,
+        /// New node type (canonical SPEC-3.0 kinds: comment, approval, objection, action)
         #[arg(long = "type", value_name = "TYPE")]
         new_type: String,
         #[arg(long = "as", value_name = "ACTOR")]
@@ -638,10 +683,10 @@ enum NodeCmd {
         /// Node body (positional)
         #[arg(allow_hyphen_values = true)]
         body_positional: Option<String>,
-        /// Node body (flag)
+        /// Node body text (use "-" to read from stdin)
         #[arg(long = "body", value_name = "TEXT", conflicts_with = "body_positional")]
         body_flag: Option<String>,
-        /// Read body from file
+        /// Read node body from a file (use "-" to read from stdin)
         #[arg(
             long = "body-file",
             value_name = "PATH",
@@ -1067,11 +1112,34 @@ fn main() -> Result<(), ForumError> {
             )?;
         }
 
+        Commands::Supersede {
+            thread_id,
+            by,
+            body,
+            as_actor,
+            fast_track,
+            force,
+        } => {
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            commands::supersede::run(
+                commands::supersede::SupersedeArgs {
+                    thread_id,
+                    by,
+                    body,
+                    as_actor,
+                    fast_track,
+                    force,
+                },
+                &ctx,
+            )?;
+        }
+
         Commands::Ls {
             kind_positional,
             branch,
             kind,
             status,
+            columns,
         } => {
             let ctx = Context::discover(Box::new(SystemClock))?;
             ls::run(
@@ -1080,6 +1148,7 @@ fn main() -> Result<(), ForumError> {
                     branch,
                     kind,
                     status,
+                    columns,
                 },
                 &ctx,
             )?;
@@ -1094,6 +1163,7 @@ fn main() -> Result<(), ForumError> {
             thread_id,
             what_next,
             compact,
+            with_timeline,
             no_timeline,
             tree,
         } => {
@@ -1103,6 +1173,7 @@ fn main() -> Result<(), ForumError> {
                     thread_id,
                     what_next,
                     compact,
+                    with_timeline,
                     no_timeline,
                     tree,
                 },
@@ -1250,38 +1321,34 @@ fn main() -> Result<(), ForumError> {
             force,
             &clock,
         )?,
-        Commands::Retract {
-            thread_id,
-            node_ids,
-            as_actor,
-        } => run_node_lifecycle_bulk(
-            &thread_id,
-            &node_ids,
+        Commands::Retract { args, as_actor } => run_node_lifecycle_bulk(
+            &args,
             as_actor,
             NodeLifecycleOp::Retract,
             "Retracted",
             &clock,
         )?,
 
-        Commands::Resolve {
-            thread_id,
-            node_ids,
-            as_actor,
-        } => run_node_lifecycle_bulk(
-            &thread_id,
-            &node_ids,
+        Commands::Resolve { args, as_actor } => run_node_lifecycle_bulk(
+            &args,
             as_actor,
             NodeLifecycleOp::Resolve,
             "Resolved",
             &clock,
         )?,
 
-        Commands::Reopen {
-            thread_id,
-            node_ids,
-            as_actor,
-        } => {
-            if node_ids.is_empty() {
+        Commands::Reopen { args, as_actor } => {
+            // Ticket `ycnxmj0y`: with a single positional that names a
+            // thread, fall back to the thread-reopen shorthand. Otherwise
+            // delegate to the node-lifecycle path, which itself accepts
+            // the new single-positional `<node-id>` form.
+            let single_thread_target = if args.len() == 1 {
+                let (git, _paths) = discover_repo_with_init_warning()?;
+                resolve_tid(&git, &args[0]).ok()
+            } else {
+                None
+            };
+            if let Some(thread_id) = single_thread_target {
                 run_state_shorthand(
                     &thread_id,
                     "open",
@@ -1297,8 +1364,7 @@ fn main() -> Result<(), ForumError> {
                 )?;
             } else {
                 run_node_lifecycle_bulk(
-                    &thread_id,
-                    &node_ids,
+                    &args,
                     as_actor,
                     NodeLifecycleOp::Reopen,
                     "Reopened",
@@ -1308,14 +1374,11 @@ fn main() -> Result<(), ForumError> {
         }
 
         Commands::Retype {
-            thread_id,
-            node_id,
+            args,
             new_type,
             as_actor,
             force,
-        } => {
-            commands::retype::run_retype(&thread_id, &node_id, &new_type, as_actor, force, &clock)?
-        }
+        } => commands::retype::run_retype(&args, &new_type, as_actor, force, &clock)?,
 
         Commands::State {
             cmd,

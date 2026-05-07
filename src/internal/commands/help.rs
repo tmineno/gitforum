@@ -29,7 +29,8 @@ pub fn run(context: Option<&str>) {
         // State-transition cluster: the generic `state` arm plus the
         // category-aware shorthands.
         Some(
-            "state" | "close" | "reject" | "accept" | "propose" | "deprecate" | "pend" | "withdraw",
+            "state" | "close" | "reject" | "accept" | "propose" | "deprecate" | "pend" | "withdraw"
+            | "supersede",
         ) => {
             print!("{}", help::state_transition_map());
         }

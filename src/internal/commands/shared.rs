@@ -81,6 +81,72 @@ pub fn resolve_tid(git: &GitOps, user_input: &str) -> Result<String, ForumError>
     thread::resolve_thread_id(git, user_input)
 }
 
+/// Outcome of inspecting the positional args of a node-targeting command
+/// (`resolve` / `retract` / `reopen` / `retype`). Per ticket `ycnxmj0y`:
+///
+/// - **Single positional** that resolves only as a node id: returns the
+///   discovered owning thread plus that node id (`explicit_thread = false`).
+/// - **Single positional** that resolves as a thread id: caller-specific
+///   handling (e.g. `reopen <thread>` reopens the thread itself);
+///   surfaces as `explicit_thread = true` with no node ids.
+/// - **Two-or-more positionals** with the first arg resolving as a thread:
+///   explicit-safety form. Returns the named thread and the remaining args
+///   as node refs (`explicit_thread = true`). Per-node mismatches are
+///   reported by the lifecycle loop with the
+///   `node X is in thread Y, not <wrong-thread>` hint.
+/// - **Two-or-more positionals** with no thread match on the first arg:
+///   all args are treated as node refs and must share one owning thread.
+pub struct NodeTargetSelection {
+    pub thread_id: String,
+    pub node_refs: Vec<String>,
+    pub explicit_thread: bool,
+}
+
+/// Decide how to interpret the positional args of a node-targeting CLI
+/// command (`resolve` / `retract` / `reopen` / `retype`). See
+/// [`NodeTargetSelection`] for the resolution rules.
+pub fn resolve_node_targets(
+    git: &GitOps,
+    args: &[String],
+) -> Result<NodeTargetSelection, ForumError> {
+    if args.is_empty() {
+        return Err(ForumError::Repo("no thread or node id given".to_string()));
+    }
+
+    if let Ok(thread_id) = thread::resolve_thread_id(git, &args[0]) {
+        return Ok(NodeTargetSelection {
+            thread_id,
+            node_refs: args[1..].to_vec(),
+            explicit_thread: true,
+        });
+    }
+
+    let index = thread::NodeIdIndex::build(git)?;
+    let mut shared_thread: Option<String> = None;
+    for arg in args {
+        let (_, t) = index.resolve(arg).map_err(|inner| {
+            ForumError::Repo(format!(
+                "'{arg}' is not a known thread id or node id ({inner})"
+            ))
+        })?;
+        match shared_thread.as_deref() {
+            None => shared_thread = Some(t),
+            Some(existing) if existing == t => {}
+            Some(existing) => {
+                return Err(ForumError::Repo(format!(
+                    "node ids span multiple threads ({existing} and {t}); \
+                     pass the thread id explicitly to disambiguate"
+                )));
+            }
+        }
+    }
+    Ok(NodeTargetSelection {
+        thread_id: shared_thread.expect("non-empty args"),
+        node_refs: args.to_vec(),
+        explicit_thread: false,
+    })
+}
+
 // =============================================================================
 // CLI parsing helpers — relocated from main.rs by task `t8o3vnt6`.
 // =============================================================================
