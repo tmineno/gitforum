@@ -110,6 +110,7 @@ fn make_snapshot_thread(
             updated_by: "human/alice".into(),
             branch: None,
             supersedes: vec![],
+            visibility: Default::default(),
         })
     };
     write_snapshot(git, &id, &doc, "create test thread").unwrap();
@@ -164,6 +165,7 @@ pub fn make_dec(git: &GitOps) -> String {
             updated_by: "human/alice".into(),
             branch: None,
             supersedes: vec![],
+            visibility: Default::default(),
         })
     };
     write_snapshot(git, &id, &doc, "create test thread").unwrap();

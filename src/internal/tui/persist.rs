@@ -398,6 +398,8 @@ markdown_mode = true
             created_at: "2026-01-01T00:00:00Z".to_string(),
             created_by: "test".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
+            visibility: crate::internal::thread::Visibility::Private,
+            from_published: false,
         }
     }
 

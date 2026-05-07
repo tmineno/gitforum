@@ -49,6 +49,7 @@ fn make_snapshot_thread(git: &GitOps, kind: &str, title: &str, seed: u8) -> Stri
         updated_by: "human/alice".into(),
         branch: None,
         supersedes: vec![],
+        visibility: Default::default(),
     });
     write_snapshot(git, &id, &doc, "create test thread").unwrap();
     id

@@ -64,9 +64,18 @@ fn is_forum_initialized(paths: &RepoPaths, git: &GitOps) -> bool {
     if paths.dot_forum.join("policy.toml").is_file() && paths.git_forum.join("logs").is_dir() {
         return true;
     }
-    git.list_refs("refs/forum/threads/")
+    // Either authoritative or published refs count as evidence of a
+    // forum-using clone. RFC fls856j3 §3 public-consumer clones only
+    // ever have `refs/forum/published/*`.
+    let has_threads = git
+        .list_refs("refs/forum/threads/")
         .map(|refs| !refs.is_empty())
-        .unwrap_or(false)
+        .unwrap_or(false);
+    let has_published = git
+        .list_refs("refs/forum/published/")
+        .map(|refs| !refs.is_empty())
+        .unwrap_or(false);
+    has_threads || has_published
 }
 
 /// Resolve the effective actor for a CLI write: prefer `--as`, otherwise

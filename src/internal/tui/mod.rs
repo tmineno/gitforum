@@ -1257,6 +1257,8 @@ mod tests {
             created_at: "2026-01-01T00:00:00Z".into(),
             created_by: "human/alice".into(),
             updated_at: "2026-01-01T00:00:00Z".into(),
+            visibility: crate::internal::thread::Visibility::Private,
+            from_published: false,
         }
     }
 
@@ -1360,6 +1362,7 @@ mod tests {
             updated_by: "human/test-user".into(),
             branch: None,
             supersedes: vec![],
+            visibility: Default::default(),
         });
         write_snapshot(git, &id, &doc, "create test thread").unwrap();
         id
@@ -2352,14 +2355,15 @@ mod tests {
             !out.contains("LIFECYCLE"),
             "LIFECYCLE column was removed but header is still rendered:\n{out}"
         );
-        // Tag chip prefix on the title cell
+        // RFC fls856j3: visibility marker is the first chip in the
+        // bracket prefix; tag chips follow.
         assert!(
-            out.contains("[bug] fix the bug"),
-            "missing [bug] tag chip:\n{out}"
+            out.contains("[priv,bug] fix the bug"),
+            "missing [priv,bug] visibility+tag chip:\n{out}"
         );
         assert!(
-            out.contains("[cross-cutting]"),
-            "missing [cross-cutting] tag chip:\n{out}"
+            out.contains("[priv,cross-cutting]"),
+            "missing [priv,cross-cutting] chip:\n{out}"
         );
     }
 

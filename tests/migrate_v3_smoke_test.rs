@@ -953,6 +953,7 @@ fn migrate_handles_mixed_chain_with_snapshot_bottom_and_event_tail() {
         updated_by: "human/alice".into(),
         branch: None,
         supersedes: vec![],
+        visibility: Default::default(),
     });
     // Add a node so the tail's reply can target it (not used here
     // but exercises the snapshot-seed path).
@@ -1062,6 +1063,7 @@ fn migrate_cli_handles_mixed_chain_through_full_handler() {
         updated_by: "human/alice".into(),
         branch: None,
         supersedes: vec![],
+        visibility: Default::default(),
     });
     doc.nodes.push(NodeWithBody {
         record: NodeRecord {

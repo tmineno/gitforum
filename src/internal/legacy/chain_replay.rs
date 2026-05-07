@@ -257,6 +257,11 @@ fn replay_with_issues_inner(
         category: lifecycle_to_category(current_lifecycle).to_string(),
         lifecycle_explicit: false,
         tags: initial_tags,
+        // RFC `fls856j3`: legacy event chains pre-date the visibility
+        // field; default to private so migrated threads stay
+        // publish-safe until the operator opts in via
+        // `git forum thread set-visibility`.
+        visibility: super::super::thread::Visibility::Private,
     };
 
     let mut issues = Vec::new();

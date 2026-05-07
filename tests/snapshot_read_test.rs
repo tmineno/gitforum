@@ -37,6 +37,7 @@ fn sample_thread(id: &str) -> ThreadSnapshot {
         updated_by: "human/alice".into(),
         branch: None,
         supersedes: vec![],
+        visibility: Default::default(),
     }
 }
 

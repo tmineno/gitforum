@@ -54,6 +54,7 @@ fn make_thread(git: &GitOps, idx: usize) -> String {
         updated_by: "human/alice".into(),
         branch: None,
         supersedes: vec![],
+        visibility: Default::default(),
     });
     write_snapshot(git, &id, &doc, "create perf thread").unwrap();
     id

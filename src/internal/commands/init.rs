@@ -11,12 +11,25 @@
 
 use crate::internal::actor;
 use crate::internal::error::ForumError;
-use crate::internal::init;
+use crate::internal::init::{self, InitMode};
 
 use super::context::Context;
 use super::hook;
 
-/// Uniform entry point for the `init` subcommand. Takes no args.
+/// CLI args for `git forum init` (RFC `fls856j3` §6).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct InitArgs {
+    /// `--public-only`: install the public-consumer refspec only.
+    /// Authoritative refs are never imported.
+    pub public_only: bool,
+    /// `--auto-push`: install
+    /// `remote.<name>.push = +refs/forum/published/*:...` on every
+    /// remote. The publisher refuses to push the authoritative
+    /// namespace regardless.
+    pub auto_push: bool,
+}
+
+/// Uniform entry point for the `init` subcommand.
 ///
 /// Doubles as the post-clone bootstrap: when `.forum/policy.toml` is
 /// already tracked, init skips re-seeding the shared config and instead
@@ -24,7 +37,12 @@ use super::hook;
 /// register the fetch refspec, fetch `refs/forum/*`, and create the
 /// per-clone `.git/forum/` state. See README "Cloning a repo that
 /// already uses git-forum".
-pub fn run(ctx: &Context) -> Result<(), ForumError> {
+pub fn run(args: InitArgs, ctx: &Context) -> Result<(), ForumError> {
+    let mode = if args.public_only {
+        InitMode::PublicOnly
+    } else {
+        InitMode::TrustedCollaborator
+    };
     // Detect "fresh clone" before init_forum runs — `.forum/policy.toml`
     // tracked in the cloned tree is the signal that this repo already
     // uses git-forum and we just need to wire up local state + fetch.
@@ -58,14 +76,31 @@ pub fn run(ctx: &Context) -> Result<(), ForumError> {
     }
 
     // Configure fetch refspecs for forum refs on all remotes.
-    match init::ensure_forum_refspecs(&ctx.git) {
+    match init::ensure_forum_refspecs(&ctx.git, mode) {
         Ok(modified) => {
             for remote in &modified {
-                eprintln!("Added forum fetch refspec for remote '{remote}'");
+                let label = match mode {
+                    InitMode::TrustedCollaborator => "trusted-collaborator",
+                    InitMode::PublicOnly => "public-only",
+                };
+                eprintln!("Configured {label} fetch refspecs for remote '{remote}'");
             }
         }
         Err(e) => {
             eprintln!("warning: could not configure forum fetch refspecs: {e}");
+        }
+    }
+
+    if args.auto_push {
+        match init::ensure_forum_push_refspec(&ctx.git) {
+            Ok(modified) => {
+                for remote in &modified {
+                    eprintln!("Configured forum push refspec for remote '{remote}'");
+                }
+            }
+            Err(e) => {
+                eprintln!("warning: could not configure forum push refspec: {e}");
+            }
         }
     }
 
@@ -85,7 +120,11 @@ pub fn run(ctx: &Context) -> Result<(), ForumError> {
                 .list_refs("refs/forum/threads/")
                 .map(|v| v.len())
                 .unwrap_or(0);
-            match ctx.git.run(&["fetch", remote, init::FORUM_REFSPEC]) {
+            let fetch_refspec = match mode {
+                InitMode::TrustedCollaborator => init::FORUM_REFSPEC,
+                InitMode::PublicOnly => init::PUBLISHED_REFSPEC,
+            };
+            match ctx.git.run(&["fetch", remote, fetch_refspec]) {
                 Ok(_) => {
                     let after = ctx
                         .git

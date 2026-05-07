@@ -79,9 +79,12 @@ pub fn run(args: LsArgs, ctx: &Context) -> Result<(), ForumError> {
 // v3.1 concern — see the RFC Exceptions section.
 
 /// Columns rendered by `git forum ls` (ticket `030xm9s2`).
+///
+/// `Visibility` (VIS) is the RFC `fls856j3` publish visibility (`pub`/`priv`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Column {
     Id,
+    Visibility,
     Lifecycle,
     Status,
     Tags,
@@ -95,6 +98,7 @@ impl Column {
     fn header(self) -> &'static str {
         match self {
             Column::Id => "ID",
+            Column::Visibility => "VIS",
             Column::Lifecycle => "LIFECYCLE",
             Column::Status => "STATUS",
             Column::Tags => "TAGS",
@@ -112,6 +116,7 @@ impl FromStr for Column {
     fn from_str(s: &str) -> Result<Self, ForumError> {
         match s.trim().to_ascii_lowercase().as_str() {
             "id" => Ok(Column::Id),
+            "vis" | "visibility" => Ok(Column::Visibility),
             "lifecycle" => Ok(Column::Lifecycle),
             "status" => Ok(Column::Status),
             "tags" => Ok(Column::Tags),
@@ -120,7 +125,7 @@ impl FromStr for Column {
             "updated" => Ok(Column::Updated),
             "title" => Ok(Column::Title),
             other => Err(ForumError::Config(format!(
-                "unknown ls column '{other}'; valid: id, lifecycle, status, tags, branch, created, updated, title"
+                "unknown ls column '{other}'; valid: id, vis, lifecycle, status, tags, branch, created, updated, title"
             ))),
         }
     }
@@ -156,6 +161,7 @@ pub struct LsRenderOptions {
 
 const DEFAULT_COLUMNS: &[Column] = &[
     Column::Id,
+    Column::Visibility,
     Column::Lifecycle,
     Column::Status,
     Column::Tags,
@@ -168,12 +174,14 @@ const DEFAULT_COLUMNS: &[Column] = &[
 /// Render `git forum ls` output for a list of threads.
 ///
 /// SPEC-2.0 classification: classification axes are LIFECYCLE + TAGS, not
-/// KIND. Default columns: ID, LIFECYCLE, STATUS, TAGS, BRANCH, CREATED,
-/// UPDATED, TITLE. Per ticket `030xm9s2`, TAGS and BRANCH are dropped
-/// when uniformly empty across the rendered rows; `opts.columns`
-/// overrides the auto-hide rule entirely; `opts.force_branch_column`
-/// keeps BRANCH even when uniformly empty (used when `--branch` filter
-/// narrowed the rows). Width is recomputed on each call.
+/// KIND. Default columns: ID, VIS, LIFECYCLE, STATUS, TAGS, BRANCH,
+/// CREATED, UPDATED, TITLE. `VIS` is the RFC `fls856j3` publish
+/// visibility (`pub`/`priv`). Per ticket `030xm9s2`, TAGS and BRANCH are
+/// dropped when uniformly empty across the rendered rows;
+/// `opts.columns` overrides the auto-hide rule entirely;
+/// `opts.force_branch_column` keeps BRANCH even when uniformly empty
+/// (used when `--branch` filter narrowed the rows). Width is recomputed
+/// on each call.
 pub fn render_ls(states: &[&ThreadState], opts: &LsRenderOptions) -> String {
     if states.is_empty() {
         return "no threads found\n".into();
@@ -238,6 +246,7 @@ fn auto_hide(column: Column, states: &[&ThreadState], opts: &LsRenderOptions) ->
 fn cell_value(column: Column, s: &ThreadState, title_max: usize) -> String {
     match column {
         Column::Id => s.id.clone(),
+        Column::Visibility => visibility_label(s.visibility).to_string(),
         Column::Lifecycle => policy::lifecycle_label_for(&s.category, &s.tags).to_string(),
         Column::Status => s.status.clone(),
         Column::Tags => join_tags(&s.tags),
@@ -256,6 +265,8 @@ fn column_width(column: Column, states: &[&ThreadState]) -> usize {
             .max()
             .unwrap_or(12)
             .clamp(12, 20),
+        // "priv" (4) is the longest visibility label.
+        Column::Visibility => 4,
         Column::Lifecycle => states
             .iter()
             .map(|s| policy::lifecycle_label_for(&s.category, &s.tags).len())
@@ -317,6 +328,13 @@ fn format_row(
         }
     }
     out
+}
+
+fn visibility_label(v: super::super::thread::Visibility) -> &'static str {
+    match v {
+        super::super::thread::Visibility::Public => "pub",
+        super::super::thread::Visibility::Private => "priv",
+    }
 }
 
 /// Render a thread's tag list for column display: comma-joined or `-`.

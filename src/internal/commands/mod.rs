@@ -22,6 +22,7 @@ pub mod migrate;
 pub mod node;
 pub mod node_bulk;
 pub mod policy;
+pub mod push;
 // task `913c4s9v`:
 // `commands::repair_workflow` git rm'd alongside the v2 event-runtime.
 pub mod retype;
@@ -35,5 +36,6 @@ pub mod status;
 pub mod supersede;
 pub mod thread_new;
 pub mod verify;
+pub mod visibility;
 
 pub use context::Context;

@@ -79,6 +79,10 @@ policy and preflight
 hooks and maintenance
    hook        Manage git-forum hooks (commit-msg, post-checkout)
 
+publishing (RFC fls856j3)
+   push                  Publish public threads to refs/forum/published/* on a remote
+   thread set-visibility Toggle a thread's publish visibility (public/private)
+
 interactive
    tui         Open the interactive TUI
 
@@ -123,7 +127,22 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Initialize a git-forum repository
-    Init,
+    Init {
+        /// Public-consumer mode: fetch only refs/forum/published/*
+        #[arg(long = "public-only")]
+        public_only: bool,
+        /// Configure remote.<name>.push = +refs/forum/published/*:... on every remote
+        #[arg(long = "auto-push")]
+        auto_push: bool,
+    },
+    /// Publish public threads to a remote (RFC fls856j3 §6)
+    Push {
+        /// Remote name (defaults to `origin`)
+        remote: Option<String>,
+        /// Exit non-zero on any pre-publish lint warning
+        #[arg(long)]
+        strict: bool,
+    },
     /// Diagnose repo health (config, refs, snapshot integrity)
     Doctor {
         /// Show all checks including passing ones
@@ -793,9 +812,23 @@ fn main() -> Result<(), ForumError> {
     let clock = SystemClock;
 
     match command {
-        Commands::Init => {
+        Commands::Init {
+            public_only,
+            auto_push,
+        } => {
             let ctx = Context::discover_quiet(Box::new(SystemClock))?;
-            commands::init::run(&ctx)?;
+            commands::init::run(
+                commands::init::InitArgs {
+                    public_only,
+                    auto_push,
+                },
+                &ctx,
+            )?;
+        }
+
+        Commands::Push { remote, strict } => {
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            commands::push::run(commands::push::PushArgs { remote, strict }, &ctx)?;
         }
 
         Commands::Doctor { verbose, strict } => {
@@ -875,6 +908,36 @@ fn main() -> Result<(), ForumError> {
                     force,
                     category,
                     tags,
+                },
+                &ctx,
+            )?;
+        }
+
+        Commands::Thread {
+            cmd:
+                ThreadCmd::SetVisibility {
+                    thread_id,
+                    visibility,
+                    as_actor,
+                    force,
+                },
+        } => {
+            let ctx = Context::discover(Box::new(SystemClock))?;
+            let parsed = match visibility.as_str() {
+                "public" => git_forum::internal::thread::Visibility::Public,
+                "private" => git_forum::internal::thread::Visibility::Private,
+                other => {
+                    return Err(git_forum::internal::error::ForumError::Config(format!(
+                        "invalid visibility '{other}': expected 'public' or 'private'"
+                    )));
+                }
+            };
+            commands::visibility::run(
+                commands::visibility::SetVisibilityArgs {
+                    thread_id,
+                    visibility: parsed,
+                    as_actor,
+                    force,
                 },
                 &ctx,
             )?;

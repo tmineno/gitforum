@@ -157,6 +157,28 @@ fn write_snapshot_inner(
     let refname = format!("refs/forum/threads/{thread_id}");
     let parent = git.resolve_ref(&refname)?;
 
+    // RFC fls856j3: refuse to synthesize a fresh authoritative ref
+    // from a published-only state. The §5.1 read fallback lets
+    // public-consumer clones (`git forum init --public-only`) view
+    // sanitized published snapshots without an authoritative ref —
+    // but a write must not promote that sanitized view back into
+    // authoritative storage. Catching this at the write boundary
+    // means callers don't have to remember which `read_*` variant
+    // is correct for their context.
+    if parent.is_none() {
+        let published = format!("refs/forum/published/{thread_id}");
+        if git.resolve_ref(&published)?.is_some() {
+            return Err(ForumError::Repo(format!(
+                "refusing to create {refname}: a sanitized published ref already exists at {published}. \
+                 This clone is reading {thread_id} from the published namespace; promoting that \
+                 snapshot into authoritative storage would erase content the publisher dropped \
+                 (links/evidence to non-public targets) and re-emit it under a different commit \
+                 identity. Run `git fetch <remote> '+refs/forum/threads/{thread_id}:refs/forum/threads/{thread_id}'` \
+                 if you have authoritative access, or perform this edit on a trusted-collaborator clone."
+            )));
+        }
+    }
+
     let archive = match archive_bytes {
         Some(bytes) => ArchiveSource::Supplied(bytes),
         None => match &parent {
@@ -315,11 +337,23 @@ fn build_tree(
 ///   failure encountered while parsing one of the files.
 /// - [`ForumError::Toml`] — TOML parse error with line/column context.
 pub fn read_snapshot(git: &GitOps, thread_id: &str) -> Result<ThreadDocument, ForumError> {
-    let refname = format!("refs/forum/threads/{thread_id}");
-    let tip = git
-        .resolve_ref(&refname)?
-        .ok_or_else(|| ForumError::SnapshotMissing(format!("{refname} does not exist")))?;
-    read_snapshot_at(git, &tip)
+    // RFC fls856j3 §5 read protocol: prefer authoritative, fall back
+    // to the published namespace when the authoritative ref is
+    // absent. This keeps `--public-only` clones (which fetch only
+    // `refs/forum/published/*`) functional for read commands —
+    // `ls`, `show`, `brief`, `status`, and `tui` all flow through
+    // this entry point.
+    let auth = format!("refs/forum/threads/{thread_id}");
+    if let Some(tip) = git.resolve_ref(&auth)? {
+        return read_snapshot_at(git, &tip);
+    }
+    let published = format!("refs/forum/published/{thread_id}");
+    if let Some(tip) = git.resolve_ref(&published)? {
+        return read_snapshot_at(git, &tip);
+    }
+    Err(ForumError::SnapshotMissing(format!(
+        "{auth} does not exist (and no published fallback)"
+    )))
 }
 
 /// Like [`read_snapshot`] but parses the tree at a specific commit

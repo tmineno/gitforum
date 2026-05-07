@@ -825,6 +825,7 @@ fn project_state_to_doc(state: ThreadState) -> Result<(ThreadDocument, Vec<Omiss
                 updated_by: state.created_by,
                 branch: state.branch,
                 supersedes: Vec::new(),
+                visibility: Default::default(),
             },
             body: state.body,
             nodes,

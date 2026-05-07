@@ -77,6 +77,7 @@ Optional fields:
 |---|---|---|
 | `branch` | string | Branch scope advisory. |
 | `supersedes` | array | Convenience summary of outgoing `supersedes` links, if implementations choose to denormalize. |
+| `visibility` | string | `"public"` or `"private"`. Controls whether the thread is materialized into the published namespace by `git forum push`. **Absent means `private`.** Older writers that drop unknown keys under-publish (recoverable) instead of leaking (unrecoverable); the asymmetry of failure modes locks the absent-is-private rule in. No `schema_version` bump is required. |
 
 The thread body is stored separately as `body.md` so ordinary Git diffs are useful.
 
@@ -355,12 +356,22 @@ transition, or transition that references a status outside `statuses` is invalid
 Authoritative thread data:
 
 ```text
-refs/forum/threads/<thread-id>    # points to a snapshot commit
+refs/forum/threads/<thread-id>      # points to a snapshot commit
+refs/forum/published/<thread-id>    # derived, public-only mirror
 ```
 
-The snapshot commit tree, not the user's working tree, contains the current
-thread data. Implementations MUST NOT store authoritative thread data under
-tracked paths such as `.forum/threads/<id>/`.
+`refs/forum/threads/<thread-id>` is the authoritative ref: full content,
+private and public alike. The snapshot commit tree, not the user's
+working tree, contains the current thread data. Implementations MUST
+NOT store authoritative thread data under tracked paths such as
+`.forum/threads/<id>/`.
+
+`refs/forum/published/<thread-id>` is a derived, public-only mirror
+maintained by `git forum push` (§5.5). It holds a parentless,
+force-updated snapshot of threads with `visibility = "public"`,
+filtered through the exclusion pipeline in §5.5. Authoritative refs
+MUST NOT be pushed to a public-consumer remote; the published
+namespace is the only namespace `git forum push` writes to a remote.
 
 This is the core invariant that preserves branch/worktree independence.
 
@@ -448,12 +459,19 @@ state is per clone/worktree and is not authoritative thread storage.
 
 To read a thread:
 
-1. Resolve `refs/forum/threads/<thread-id>`.
+1. Resolve `refs/forum/threads/<thread-id>`. If absent, fall back to
+   `refs/forum/published/<thread-id>` (§4.1). If both are absent, the
+   thread does not exist.
 2. Read the tip commit tree.
 3. Parse `thread.toml`.
 4. Parse optional `body.md`, `nodes/*`, `links.toml`, and `evidence.toml`.
 5. Validate schema, category/status/tag grammar, node references, and link/evidence shape.
 6. Return `ThreadSnapshot`.
+
+When both refs resolve to the same `<id>`, the authoritative ref wins.
+Listing commands MUST deduplicate by ID across both namespaces. The
+mixed case is normal on trusted-collaborator clones; the published-only
+case is normal on public-consumer clones (§5.4).
 
 No event replay is performed for native 3.0 snapshots.
 
@@ -498,6 +516,128 @@ MUST NOT require replaying historical snapshots to compute current state.
 
 `git forum diff <THREAD>` uses Git diffs over snapshot files, especially
 `body.md` and `nodes/*.md`.
+
+### 5.5 Publish protocol
+
+`git forum push` projects threads with `visibility = "public"`
+(§2.1) into `refs/forum/published/<thread-id>` (§4.1) and
+propagates the resulting refs to a remote. Authoritative refs MUST
+NOT be transmitted by this command.
+
+For each public thread the publisher MUST:
+
+1. **Filter structured references.**
+   - Drop entries from `links.toml` whose target is a non-public
+     thread. Substituted placeholders MUST NOT be written; a
+     placeholder leaks the existence, count, or topology of
+     private threads.
+   - Drop entries from `evidence.toml` where `kind = "thread"` and
+     the target is non-public.
+2. **Pass body and node text through unchanged.** `body.md`,
+   `nodes/<id>.md`, and `nodes/<id>.toml` MUST NOT be rewritten,
+   redacted, or otherwise mutated by the publisher. Authors are
+   responsible for the contents of public bodies. The publisher's
+   privacy contract covers structured references only.
+3. **Run a pre-publish lint.** Scan `body.md` and node body text
+   for tokens that name a thread the local index marks as
+   private. The lint MUST recognize the `@<id>` display form, the
+   full `refs/forum/threads/<id>` ref form, labeled-context bare
+   IDs after `Refs:`, `thread:`, `parent:`, or `reply_to:`
+   markers, and bare 8-char tokens that exact-match a known
+   private thread ID. Bare tokens that do not exact-match a known
+   private ID MUST NOT warn (so abbreviated commit hashes and
+   base36 nonces do not produce false positives). Structured
+   references in `links.toml` and `evidence.toml` are handled by
+   the filter step in (1)–(2), not by the lint. The lint is
+   informational by default and MUST exit non-zero only under
+   `--strict`.
+4. **Build a parentless snapshot commit.** The published commit
+   MUST be parentless (`git commit-tree <tree-sha>` with no
+   `-p`). `git log refs/forum/published/<id>` therefore shows
+   only the current snapshot; there is no walk into prior
+   snapshots. Author, committer, dates, and signing follow the
+   operator's normal Git config; the publisher MUST NOT invent a
+   synthetic identity or pin timestamps.
+5. **Idempotency by tree.** Before writing, the publisher MUST
+   compare the recomputed published *tree* SHA against the tree
+   pointed at by the current `refs/forum/published/<id>`. When
+   trees match, the publisher MUST skip that thread (no new
+   commit, no ref update, no remote transmission). Tree
+   equivalence — not commit-SHA reproducibility — is the
+   property the publisher relies on, because commit metadata is
+   operator-local.
+6. **Force-update the published ref.** On a content change the
+   published ref is force-updated to the new parentless commit;
+   the prior commit becomes unreachable from any ref. The
+   published fetch refspec uses `+refs/forum/published/*:...` so
+   consumers accept the force-update.
+
+### 5.6 Withdrawal protocol
+
+A thread becomes withdrawn from the published namespace when:
+
+- a `private → public` toggle has been reversed via
+  `git forum thread set-visibility <id> private`,
+- the authoritative thread has been deleted entirely, or
+- a `refs/forum/published/<id>` exists locally with no
+  corresponding authoritative thread.
+
+`git forum push` is the operation that propagates withdrawals to
+the remote. The flow MUST be:
+
+1. **Identify withdrawal candidates.** Any `<id>` where
+   `refs/forum/published/<id>` exists locally and the
+   authoritative thread is either absent or has
+   `visibility = "private"`.
+2. **Stage remote deletions.** Build the push refspec list with
+   `:refs/forum/published/<id>` for each candidate, alongside the
+   normal `+refs/forum/published/<id>:refs/forum/published/<id>`
+   updates for creates/updates.
+3. **Push creates, updates, and deletions in a single
+   invocation.** Per-ref atomicity is whatever the underlying
+   `git push` already provides; this specification does not
+   introduce a new transaction layer.
+4. **Update local refs only on remote success.** For every
+   withdrawal the remote accepted, the publisher MUST delete the
+   local `refs/forum/published/<id>`. For every withdrawal the
+   remote rejected (permission denied, ref protection, transient
+   network failure), the local published ref MUST be preserved
+   so a retry of `git forum push` reattempts the deletion
+   without manual cleanup. Implementations MUST NOT delete the
+   local ref before the remote operation succeeds (the
+   "preserve-then-retry" rule).
+5. **Report outcomes.** The summary MUST count successful
+   withdrawals (local + remote both gone) separately from
+   failures (remote refused, local preserved). The exit code
+   MUST be non-zero whenever any remote operation failed,
+   regardless of `--strict`.
+
+### 5.7 Privacy contract and residual retention
+
+`git forum push` commits to:
+
+- not transmitting private thread bodies,
+- not transmitting structured references (links, evidence) from
+  public threads to private threads.
+
+It does NOT commit to:
+
+- redacting private thread IDs that appear in public body or
+  node text,
+- preventing observers from inferring the existence or
+  correlation of private threads via text references,
+- catching every textual reference at lint time (the lint is
+  best-effort author tooling, not a security boundary),
+- recalling content from clients that have already fetched a
+  prior published snapshot,
+- bounding the GC schedule of the canonical remote or of forks
+  and mirrors.
+
+Withdrawal removes a ref pointer but does not retract objects
+that consumers have already fetched. Operators MUST NOT treat
+withdrawal as content recall. Repositories that need stricter
+guarantees should rely on transport-layer access control rather
+than on the published namespace.
 
 ## 6. Identity scheme
 
@@ -558,13 +698,44 @@ git forum link <FROM> <TO> --rel <REL>
 git forum branch bind <THREAD> [<BRANCH>]
 git forum branch unbind <THREAD>
 git forum hooks install
+git forum init [--public-only] [--auto-push]
+git forum thread set-visibility <THREAD> public|private [--force]
+git forum push [<REMOTE>] [--strict]
 ```
 
-The last three commands implement the connection-to-code mechanisms from
-§2.5. `branch bind` sets the optional `branch` field on `thread.toml` to the
-named branch, defaulting to the current branch when `<BRANCH>` is omitted.
-`branch unbind` clears the field. `hooks install` installs the optional
-`commit-msg` validator hook into the local clone.
+The `branch ...` and `hooks install` commands implement the
+connection-to-code mechanisms from §2.5. `branch bind` sets the
+optional `branch` field on `thread.toml` to the named branch,
+defaulting to the current branch when `<BRANCH>` is omitted.
+`branch unbind` clears the field. `hooks install` installs the
+optional `commit-msg` validator hook into the local clone.
+
+`init`, `thread set-visibility`, and `push` implement the publish
+protocol (§5.5–§5.7):
+
+- `init` configures the per-remote fetch refspec. The default is
+  trusted-collaborator mode:
+  `+refs/forum/threads/*:refs/forum/threads/*` plus
+  `+refs/forum/published/*:refs/forum/published/*`. With
+  `--public-only`, only the published refspec is configured —
+  authoritative refs are never imported on these clones.
+  `--auto-push` additionally sets
+  `remote.<name>.push = +refs/forum/published/*:refs/forum/published/*`
+  on every remote, so a bare `git push` propagates the published
+  namespace. `init` MUST NOT configure
+  `refs/forum/threads/*` as a push refspec.
+- `thread set-visibility` toggles the `visibility` field on
+  `thread.toml`. The `private → public` transition is the
+  explicit allowlist step; there is no "publish all" flag. The
+  `public → private` transition warns once per session about
+  irrevocability and requires `--force` in non-interactive runs.
+  The flip is recorded immediately on the authoritative thread;
+  `refs/forum/published/<id>` is removed on the next
+  `git forum push` per §5.6.
+- `push` runs the publish protocol of §5.5 followed by the
+  withdrawal protocol of §5.6. The remote argument defaults to
+  `origin`. `--strict` exits non-zero on any pre-publish lint
+  warning; failed remote operations always exit non-zero.
 
 Removed from the 3.0 live CLI:
 
@@ -714,7 +885,24 @@ names the ref and suggests `git forum migrate --to 3.0`.
 - node metadata/body pairing;
 - `reply_to` references target existing nodes;
 - link targets are syntactically valid thread IDs, and optionally resolvable;
-- policy file shape.
+- policy file shape;
+- the publish namespace is consistent with thread visibility.
+
+Publish-namespace advisories cross-check `refs/forum/threads/*` and
+`refs/forum/published/*` (§4.1):
+
+- `auth-without-published` (INFO) — a thread has
+  `visibility = "public"` but no `refs/forum/published/<id>`.
+  Likely "you forgot to push," but not publishing is a legitimate
+  state, so this is informational rather than a warning.
+- `visibility-mismatch` (WARN) — both refs exist and the published
+  tree's `thread.toml` disagrees with the authoritative
+  visibility. Would only happen across writer-version skews.
+- `stale-published` (WARN) — `refs/forum/published/<id>` exists
+  locally with no authoritative thread, or the authoritative
+  thread is `visibility = "private"`. Indicates an interrupted
+  withdrawal (§5.6); re-run `git forum push` to retry the remote
+  delete.
 
 Doctor no longer performs strict replay validation for native 3.0 snapshots.
 

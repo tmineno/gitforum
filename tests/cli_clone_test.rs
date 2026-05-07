@@ -55,11 +55,18 @@ fn init_adds_refspec_for_existing_remote() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Check refspec was added
+    // Check refspecs were added. RFC fls856j3 §3 trusted-collaborator
+    // mode installs the two narrow refspecs; the legacy wildcard is
+    // accepted on already-configured clones but not produced by a
+    // fresh init.
     let refspecs = git(repo.path(), &["config", "--get-all", "remote.origin.fetch"]);
     assert!(
-        refspecs.contains("+refs/forum/*:refs/forum/*"),
-        "refspec not found in: {refspecs}"
+        refspecs.contains("+refs/forum/threads/*:refs/forum/threads/*"),
+        "threads refspec not found in: {refspecs}"
+    );
+    assert!(
+        refspecs.contains("+refs/forum/published/*:refs/forum/published/*"),
+        "published refspec not found in: {refspecs}"
     );
 }
 
@@ -76,16 +83,18 @@ fn init_refspec_is_idempotent() {
     git_forum_cmd(repo.path(), &["init"]);
     git_forum_cmd(repo.path(), &["init"]);
 
-    // Refspec should appear exactly once
+    // Each forum refspec should appear exactly once (RFC fls856j3 §3).
     let refspecs = git(repo.path(), &["config", "--get-all", "remote.origin.fetch"]);
-    let count = refspecs
-        .lines()
-        .filter(|l| l.trim() == "+refs/forum/*:refs/forum/*")
-        .count();
-    assert_eq!(
-        count, 1,
-        "refspec should appear exactly once, got {count} in:\n{refspecs}"
-    );
+    for want in [
+        "+refs/forum/threads/*:refs/forum/threads/*",
+        "+refs/forum/published/*:refs/forum/published/*",
+    ] {
+        let count = refspecs.lines().filter(|l| l.trim() == want).count();
+        assert_eq!(
+            count, 1,
+            "{want} should appear exactly once, got {count} in:\n{refspecs}"
+        );
+    }
 }
 
 #[test]
@@ -174,30 +183,33 @@ fn doctor_warns_on_missing_refspec() {
         String::from_utf8_lossy(&init_out.stderr)
     );
 
-    // Remove the refspec via the `git()` helper so GIT_DIR / GIT_WORK_TREE /
-    // GIT_INDEX_FILE inherited from a hook context (e.g. pre-commit) are
-    // stripped — otherwise the unset can silently target the wrong repo.
-    // `--unset-all` is robust against the (unlikely) case where the refspec
-    // got added more than once.
-    git(
-        repo.path(),
-        &[
-            "config",
-            "--unset-all",
-            "remote.origin.fetch",
-            r"\+refs/forum/\*:refs/forum/\*",
-        ],
-    );
+    // Remove every forum-namespace refspec (legacy wildcard plus the
+    // RFC fls856j3 §3 narrow forms). `git()` strips inherited GIT_DIR
+    // / GIT_WORK_TREE / GIT_INDEX_FILE so the unset operates on the
+    // test repo even from a pre-commit hook context.
+    for pattern in [
+        r"\+refs/forum/\*:refs/forum/\*",
+        r"\+refs/forum/threads/\*:refs/forum/threads/\*",
+        r"\+refs/forum/published/\*:refs/forum/published/\*",
+    ] {
+        git(
+            repo.path(),
+            &["config", "--unset-all", "remote.origin.fetch", pattern],
+        );
+    }
 
-    // Verify the unset actually took effect — turns any silent failure into a
-    // loud assertion here instead of a confusing miscount in doctor's output.
+    // Verify the unset took effect.
     let remaining = git(repo.path(), &["config", "--get-all", "remote.origin.fetch"]);
-    assert!(
-        !remaining
-            .lines()
-            .any(|l| l.trim() == "+refs/forum/*:refs/forum/*"),
-        "forum refspec should be unset before invoking doctor; remaining:\n{remaining}"
-    );
+    for v in [
+        "+refs/forum/*:refs/forum/*",
+        "+refs/forum/threads/*:refs/forum/threads/*",
+        "+refs/forum/published/*:refs/forum/published/*",
+    ] {
+        assert!(
+            !remaining.lines().any(|l| l.trim() == v),
+            "forum refspec '{v}' should be unset before invoking doctor; remaining:\n{remaining}"
+        );
+    }
 
     // Run doctor
     let output = git_forum_cmd(repo.path(), &["doctor"]);
@@ -341,4 +353,123 @@ fn init_reports_fetched_thread_count() {
         combined.contains("Detected existing forum config"),
         "init should announce existing forum config on a fresh clone:\n{combined}"
     );
+}
+
+// --------------------------------------------------------------------
+// RFC fls856j3 §3 transport-mode tests.
+// --------------------------------------------------------------------
+
+#[test]
+fn init_public_only_skips_threads_refspec() {
+    let repo = support::repo::TestRepo::new();
+    git(
+        repo.path(),
+        &["remote", "add", "origin", "https://example.com/repo.git"],
+    );
+
+    let out = git_forum_cmd(repo.path(), &["init", "--public-only"]);
+    assert!(
+        out.status.success(),
+        "init --public-only failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let refspecs = git(repo.path(), &["config", "--get-all", "remote.origin.fetch"]);
+    assert!(
+        refspecs.contains("+refs/forum/published/*:refs/forum/published/*"),
+        "published refspec missing: {refspecs}"
+    );
+    assert!(
+        !refspecs.contains("+refs/forum/threads/*:refs/forum/threads/*"),
+        "threads refspec must be absent in --public-only mode: {refspecs}"
+    );
+    assert!(
+        !refspecs.contains("+refs/forum/*:refs/forum/*"),
+        "wildcard refspec must be absent in --public-only mode: {refspecs}"
+    );
+}
+
+#[test]
+fn init_public_only_strips_legacy_wildcard() {
+    // A clone that previously ran the pre-RFC init has the
+    // `+refs/forum/*:refs/forum/*` wildcard configured. Switching
+    // it to --public-only must remove the wildcard so subsequent
+    // fetches don't smuggle authoritative refs across.
+    let repo = support::repo::TestRepo::new();
+    git(
+        repo.path(),
+        &["remote", "add", "origin", "https://example.com/repo.git"],
+    );
+    git(
+        repo.path(),
+        &[
+            "config",
+            "--add",
+            "remote.origin.fetch",
+            "+refs/forum/*:refs/forum/*",
+        ],
+    );
+
+    let out = git_forum_cmd(repo.path(), &["init", "--public-only"]);
+    assert!(out.status.success());
+
+    let refspecs = git(repo.path(), &["config", "--get-all", "remote.origin.fetch"]);
+    assert!(
+        !refspecs.contains("+refs/forum/*:refs/forum/*"),
+        "legacy wildcard must be removed: {refspecs}"
+    );
+    assert!(
+        refspecs.contains("+refs/forum/published/*:refs/forum/published/*"),
+        "published refspec missing: {refspecs}"
+    );
+}
+
+#[test]
+fn init_auto_push_configures_published_only_push_refspec() {
+    let repo = support::repo::TestRepo::new();
+    git(
+        repo.path(),
+        &["remote", "add", "origin", "https://example.com/repo.git"],
+    );
+
+    let out = git_forum_cmd(repo.path(), &["init", "--auto-push"]);
+    assert!(
+        out.status.success(),
+        "init --auto-push failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let push_refspecs = git(repo.path(), &["config", "--get-all", "remote.origin.push"]);
+    assert!(
+        push_refspecs.contains("+refs/forum/published/*:refs/forum/published/*"),
+        "auto-push must install published push refspec: {push_refspecs}"
+    );
+    assert!(
+        !push_refspecs.contains("refs/forum/threads/"),
+        "auto-push must never install a threads-namespace push refspec: {push_refspecs}"
+    );
+}
+
+#[test]
+fn legacy_wildcard_is_recognized_as_having_forum_refspec() {
+    // Pure unit-style coverage of `has_forum_refspec`: an existing
+    // wildcard must continue to count as "configured" so older
+    // clones don't get a spurious "Added refspec" announcement on
+    // every `init`.
+    let repo = support::repo::TestRepo::new();
+    let git_ops = git_forum::internal::git_ops::GitOps::new(repo.path().to_path_buf());
+    git(
+        repo.path(),
+        &["remote", "add", "origin", "https://example.com/repo.git"],
+    );
+    git(
+        repo.path(),
+        &[
+            "config",
+            "--add",
+            "remote.origin.fetch",
+            "+refs/forum/*:refs/forum/*",
+        ],
+    );
+    assert!(init::has_forum_refspec(&git_ops, "origin").unwrap());
 }

@@ -90,6 +90,13 @@ git forum policy show                                Show loaded policy
 git forum policy lint                                Validate policy.toml
 git forum policy check <ID> --to <STATE>             Re-evaluate guards
 
+# publishing (RFC fls856j3)
+git forum thread set-visibility <ID> public|private  Toggle publish visibility
+                                                     (--force for public→private)
+git forum push [<REMOTE>] [--strict]                 Publish public threads to
+                                                     refs/forum/published/* on
+                                                     a remote (defaults to origin)
+
 # repo health and migration
 git forum doctor [--strict] [-v]                     Diagnose repo
 git forum migrate --to 3.0 [--dry-run]               1.x/2.x → 3.0
@@ -488,8 +495,16 @@ git forum ls --columns id,status,title   # explicit column pin
 ```
 
 The list is sorted by `thread.toml.updated_at` descending. Each
-row shows ID, status, category/tags, and title. Use `git forum show
-<ID>` for full detail.
+row shows ID, **VIS** (publish visibility — `pub` or `priv`),
+lifecycle, status, tags, branch, dates, and title. Use `git forum
+show <ID>` for full detail.
+
+The TUI list pane surfaces visibility as the first chip in the
+title-cell bracket prefix, e.g. `[priv,bug] fix the login`. A
+trailing `*` (e.g. `[pub*] ...`) indicates the row was read from
+`refs/forum/published/<id>` rather than the authoritative ref —
+this is the normal state on `git forum init --public-only`
+clones.
 
 #### Columns
 
@@ -774,6 +789,7 @@ form is useful in CI.
 | "Is policy.toml valid?" | `git forum policy lint` |
 | "Is this repo healthy?" | `git forum doctor` |
 | "Are any threads still on the legacy event chain?" | `git forum doctor --strict` |
+| "Did my last push actually publish what I expected?" | `git forum doctor` (look for `auth-without-published` / `stale-published`) |
 
 ## Workflows
 
@@ -887,6 +903,170 @@ them like a Git branch: pull before writing.
 "index-out-of-date" failure mode. The optional `refs/forum/index/*`
 namespace (rebuildable cache) is regenerated on demand.
 
+## Publishing (visibility and `git forum push`)
+
+Forum data lives under `refs/forum/*`. `git forum push` is the
+opt-in command that copies the public subset to a remote. Per
+RFC `fls856j3`, threads carry a `visibility` field that controls
+whether they are mirrored into the **published namespace**.
+
+### Two namespaces
+
+```text
+refs/forum/threads/<id>      # authoritative, full content (private + public)
+refs/forum/published/<id>    # derived, public-only, history-free
+```
+
+`refs/forum/threads/*` is the source of truth. `refs/forum/published/*`
+is a parentless, force-updated mirror that `git forum push`
+maintains for the threads you have explicitly marked public.
+Authoritative refs are never written to a remote by
+`git forum push`; only the published namespace is.
+
+### Visibility is opt-in
+
+A thread's visibility lives on `thread.toml`:
+
+```toml
+visibility = "public"
+```
+
+**Absent means private.** New threads are private until you
+flip them with `git forum thread set-visibility`. Older writers
+that drop unknown keys under-publish (recoverable) instead of
+leak (unrecoverable) — that asymmetry is why absent-is-private
+is not negotiable.
+
+```text
+git forum thread set-visibility @1hg98odf public
+git forum thread set-visibility @1hg98odf private              # interactive
+git forum thread set-visibility @1hg98odf private --force      # non-interactive
+```
+
+The `private → public` flip is the only allowlist step — there
+is no "publish all" flag. The `public → private` flip warns once
+per session about irrevocability and requires `--force` outside
+a TTY. The flip lands immediately on the authoritative thread;
+the published ref is removed on the next `git forum push` (see
+"Withdrawal" below).
+
+### Push
+
+```text
+git forum push                 # publish to origin
+git forum push my-remote       # publish to a specific remote
+git forum push --strict        # exit non-zero on any lint warning
+```
+
+For each public thread, `git forum push`:
+
+1. Filters `links.toml` and `evidence.toml`, dropping rows that
+   target non-public threads. Placeholders are not substituted
+   — even an opaque placeholder leaks the existence of a
+   private thread.
+2. Passes `body.md` and `nodes/*.md` through unchanged. The
+   publisher does not rewrite, redact, or otherwise mutate
+   author-written prose.
+3. Runs a pre-publish lint over `body.md` and node body text,
+   looking for tokens that name a thread the local index marks
+   as private: `@<id>`, `refs/forum/threads/<id>`,
+   labeled-context bare IDs after `Refs:` / `thread:` / `parent:`
+   / `reply_to:` markers, and bare 8-char tokens that exact-match
+   a known private ID. Bare tokens that don't match a known
+   private ID don't warn. Structured references (links.toml,
+   evidence.toml) are filtered in step 1, not by the lint.
+   Default behaviour is print-and-proceed; `--strict` exits
+   non-zero on any warning **before** any local writes or remote
+   push happen.
+4. Builds a parentless commit from the filtered tree with your
+   normal Git author/committer/signing config. Commit SHAs
+   reflect the operator and the moment; tree SHAs are stable
+   given the same source tree and public/private partition.
+5. Skips local writes for threads whose recomputed published
+   *tree* matches the tree already at `refs/forum/published/<id>`
+   — re-running `git forum push` on an unchanged repo writes no
+   new commits.
+6. Force-updates `refs/forum/published/<id>` and pushes the
+   result. The published fetch refspec uses `+...:...` so
+   consumers accept the force-update. The push includes one
+   `+REF:REF` refspec for **every** public thread (created,
+   updated, *and* skipped), so a previously failed remote push
+   for an otherwise-unchanged thread retries automatically. Wire
+   cost is ~zero for matching SHAs — git push negotiates ref
+   states and sends no objects.
+
+The summary line breaks out the four outcomes:
+
+```text
+Published 7 threads (3 new, 2 updated, 1 withdrawn, 1 failed)
+```
+
+`failed` always exits non-zero, regardless of `--strict`. The
+"new" / "updated" counts reflect *local* writes; a thread whose
+tree was already up-to-date locally but whose remote push failed
+on a prior run will retry on the wire without changing the
+counts.
+
+### Withdrawal
+
+A thread is withdrawn from the published namespace whenever:
+
+- you flip it `public → private`,
+- you delete the authoritative thread, or
+- a `refs/forum/published/<id>` exists locally with no
+  authoritative counterpart.
+
+`git forum push` propagates withdrawals as `:refs/forum/published/<id>`
+deletion refspecs in the same push that carries creates and
+updates. Local refs are deleted only after the remote accepts
+the deletion ("preserve-then-retry"): if the remote rejects the
+delete, the local published ref is preserved so a retry of
+`git forum push` reattempts the deletion without manual
+cleanup.
+
+### Read protocol on consumers
+
+Reads (`ls`, `show`, `brief`, `status`, the TUI) resolve refs
+in this order:
+
+1. `refs/forum/threads/<id>` — authoritative.
+2. `refs/forum/published/<id>` — sanitized fallback.
+
+Trusted-collaborator clones see both refs and prefer
+authoritative. Public-consumer clones (`git forum init
+--public-only`) only have published refs configured for fetch,
+so they read from the published namespace exclusively.
+
+### What publishing does NOT promise
+
+- It does not redact private thread IDs that appear in public
+  body or node text. The pre-publish lint flags them but does
+  not rewrite them.
+- It does not prevent observers from inferring the existence
+  or correlation of private threads via text references.
+- It does not recall content from anyone who already fetched
+  a prior published snapshot. Forks and mirrors lag
+  arbitrarily.
+- It does not bound the GC schedule of the canonical remote.
+  Until the remote prunes unreachable objects, a client who
+  knows a prior published commit SHA may be able to fetch it
+  on hosts that allow direct-SHA fetches (most public hosts,
+  including GitHub, do not by default).
+
+If you need stronger guarantees, gate the repository at the
+transport layer (private remote, access control) rather than
+relying on the published namespace.
+
+### Doctor advisories
+
+`git forum doctor` cross-checks the two namespaces:
+
+| code | severity | meaning |
+|------|----------|---------|
+| `auth-without-published <id>` | INFO | public thread, no published ref. Run `git forum push` if you meant to publish. |
+| `visibility-mismatch <id>` | WARN | both refs exist but the published tree's `thread.toml` disagrees with authoritative. Re-run `git forum push`. |
+| `stale-published <id>` | WARN | published ref exists locally with no authoritative thread (or authoritative is private). Re-run `git forum push` to retry the withdrawal. |
+
 ## Setup and tools
 
 ### Install
@@ -898,19 +1078,42 @@ git forum --version
 
 ### Repository setup
 
-`git forum init` covers two distinct entry points:
+`git forum init` covers two distinct entry points and two
+transport modes (per RFC `fls856j3` §3):
 
 **First-time setup in a new repo.** Run from the repo root.
 
 ```text
-git forum init
+git forum init                       # trusted-collaborator (default)
+git forum init --public-only         # public-consumer clone
+git forum init --auto-push           # also wire `git push` for published refs
 ```
 
 Init creates `./.forum/` with the default `policy.toml`, the
 templates directory, the per-clone `.git/forum/` state and a
-`local.toml` with your default actor, configures the
-`+refs/forum/*:refs/forum/*` refspec on every git remote, and
-installs the `commit-msg` / `post-checkout` hooks.
+`local.toml` with your default actor, registers the configured
+fetch refspec on every git remote, and installs the
+`commit-msg` / `post-checkout` hooks.
+
+The fetch refspec depends on the transport mode:
+
+| mode | fetch refspec |
+|------|---------------|
+| trusted-collaborator (default) | `+refs/forum/threads/*:refs/forum/threads/*` plus `+refs/forum/published/*:refs/forum/published/*` |
+| public-consumer (`--public-only`) | `+refs/forum/published/*:refs/forum/published/*` only |
+
+Use `--public-only` on clones that should never see private
+thread bodies — the wildcard for the authoritative namespace is
+not configured, so a `git fetch` does not bring those refs
+across at all. Public-consumer clones read threads from
+`refs/forum/published/*` only (see "Publishing" below).
+
+`--auto-push` additionally sets
+`remote.<name>.push = +refs/forum/published/*:refs/forum/published/*`
+on every remote, so a bare `git push` propagates the published
+namespace. `init` never configures `refs/forum/threads/*` as a
+push refspec; authoritative refs only move with explicit
+`git push` invocations from the operator.
 
 **After cloning a repo that already uses git-forum.** A plain
 `git clone` does not bring `refs/forum/*` along — Git's default
@@ -922,14 +1125,17 @@ init has run.
 ```text
 git clone <url> some-repo
 cd some-repo
-git forum init
+git forum init                       # trusted-collaborator
+# or
+git forum init --public-only         # public-consumer
 git forum ls
 ```
 
 In this mode init detects the existing `.forum/policy.toml`,
 skips re-seeding shared config, registers the fetch refspec on
-each remote, fetches forum refs (reporting how many thread refs
-were pulled), and creates `.git/forum/` and `local.toml`.
+each remote (per the chosen mode), fetches forum refs (reporting
+how many thread refs were pulled), and creates `.git/forum/`
+and `local.toml`.
 
 `git forum doctor` recognises the post-clone state explicitly: a
 repo with `.forum/` content but no `.git/forum/` and no
