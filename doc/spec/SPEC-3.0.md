@@ -533,17 +533,19 @@ For each public thread the publisher MUST:
    redacted, or otherwise mutated by the publisher. Authors are
    responsible for the contents of public bodies. The publisher's
    privacy contract covers structured references only.
-3. **Run a pre-publish lint.** Scan body and node text for tokens
-   that name a thread the local index marks as private. The lint
-   MUST recognize the `@<id>` display form, the full
-   `refs/forum/threads/<id>` ref form, labeled-context bare IDs
-   after `Refs:`, `thread:`, `parent:`, or `reply_to:` markers,
-   the `target_thread_id` and `reply_to` TOML fields, and bare
-   8-char tokens that exact-match a known private thread ID.
-   Bare tokens that do not exact-match a known private ID MUST
-   NOT warn (so abbreviated commit hashes and base36 nonces do
-   not produce false positives). The lint is informational by
-   default and MUST exit non-zero only under `--strict`.
+3. **Run a pre-publish lint.** Scan `body.md` and node body text
+   for tokens that name a thread the local index marks as
+   private. The lint MUST recognize the `@<id>` display form, the
+   full `refs/forum/threads/<id>` ref form, labeled-context bare
+   IDs after `Refs:`, `thread:`, `parent:`, or `reply_to:`
+   markers, and bare 8-char tokens that exact-match a known
+   private thread ID. Bare tokens that do not exact-match a known
+   private ID MUST NOT warn (so abbreviated commit hashes and
+   base36 nonces do not produce false positives). Structured
+   references in `links.toml` and `evidence.toml` are handled by
+   the filter step in (1)–(2), not by the lint. The lint is
+   informational by default and MUST exit non-zero only under
+   `--strict`.
 4. **Build a parentless snapshot commit.** The published commit
    MUST be parentless (`git commit-tree <tree-sha>` with no
    `-p`). `git log refs/forum/published/<id>` therefore shows

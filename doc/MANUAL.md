@@ -480,8 +480,16 @@ git forum ls --branch feature/auth
 ```
 
 The list is sorted by `thread.toml.updated_at` descending. Each
-row shows ID, status, category/tags, and title. Use `git forum show
-<ID>` for full detail.
+row shows ID, **VIS** (publish visibility — `pub` or `priv`),
+lifecycle, status, tags, branch, dates, and title. Use `git forum
+show <ID>` for full detail.
+
+The TUI list pane surfaces visibility as the first chip in the
+title-cell bracket prefix, e.g. `[priv,bug] fix the login`. A
+trailing `*` (e.g. `[pub*] ...`) indicates the row was read from
+`refs/forum/published/<id>` rather than the authoritative ref —
+this is the normal state on `git forum init --public-only`
+clones.
 
 ### Show thread details
 
@@ -920,25 +928,33 @@ For each public thread, `git forum push`:
 2. Passes `body.md` and `nodes/*.md` through unchanged. The
    publisher does not rewrite, redact, or otherwise mutate
    author-written prose.
-3. Runs a pre-publish lint over body and node text, looking for
-   tokens that name a thread the local index marks as private:
-   `@<id>`, `refs/forum/threads/<id>`, labeled-context bare IDs
-   after `Refs:` / `thread:` / `parent:` / `reply_to:` markers,
-   `target_thread_id` and `reply_to` TOML fields, and bare
-   8-char tokens that exact-match a known private ID. Bare
-   tokens that don't match a known private ID don't warn.
+3. Runs a pre-publish lint over `body.md` and node body text,
+   looking for tokens that name a thread the local index marks
+   as private: `@<id>`, `refs/forum/threads/<id>`,
+   labeled-context bare IDs after `Refs:` / `thread:` / `parent:`
+   / `reply_to:` markers, and bare 8-char tokens that exact-match
+   a known private ID. Bare tokens that don't match a known
+   private ID don't warn. Structured references (links.toml,
+   evidence.toml) are filtered in step 1, not by the lint.
    Default behaviour is print-and-proceed; `--strict` exits
-   non-zero on any warning.
+   non-zero on any warning **before** any local writes or remote
+   push happen.
 4. Builds a parentless commit from the filtered tree with your
    normal Git author/committer/signing config. Commit SHAs
    reflect the operator and the moment; tree SHAs are stable
    given the same source tree and public/private partition.
-5. Skips threads whose recomputed published *tree* matches the
-   tree already at `refs/forum/published/<id>` — re-running
-   `git forum push` on an unchanged repo perturbs nothing.
+5. Skips local writes for threads whose recomputed published
+   *tree* matches the tree already at `refs/forum/published/<id>`
+   — re-running `git forum push` on an unchanged repo writes no
+   new commits.
 6. Force-updates `refs/forum/published/<id>` and pushes the
    result. The published fetch refspec uses `+...:...` so
-   consumers accept the force-update.
+   consumers accept the force-update. The push includes one
+   `+REF:REF` refspec for **every** public thread (created,
+   updated, *and* skipped), so a previously failed remote push
+   for an otherwise-unchanged thread retries automatically. Wire
+   cost is ~zero for matching SHAs — git push negotiates ref
+   states and sends no objects.
 
 The summary line breaks out the four outcomes:
 
@@ -946,7 +962,11 @@ The summary line breaks out the four outcomes:
 Published 7 threads (3 new, 2 updated, 1 withdrawn, 1 failed)
 ```
 
-`failed` always exits non-zero, regardless of `--strict`.
+`failed` always exits non-zero, regardless of `--strict`. The
+"new" / "updated" counts reflect *local* writes; a thread whose
+tree was already up-to-date locally but whose remote push failed
+on a prior run will retry on the wire without changing the
+counts.
 
 ### Withdrawal
 
