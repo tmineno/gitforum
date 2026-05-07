@@ -32,6 +32,7 @@ pub mod shortlog;
 pub mod show;
 pub mod state;
 pub mod status;
+pub mod supersede;
 pub mod thread_new;
 pub mod verify;
 

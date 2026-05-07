@@ -114,7 +114,7 @@ pub enum ReviseCmd {
         /// New thread body text (use "-" to read from stdin)
         #[arg(long, conflicts_with = "body_file")]
         body: Option<String>,
-        /// Read new thread body from a file
+        /// Read new thread body from a file (use "-" to read from stdin)
         #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
         body_file: Option<PathBuf>,
         /// Open $EDITOR to compose the body
@@ -137,9 +137,10 @@ pub enum ReviseCmd {
             help = "Full node ID or unique prefix within the thread (8+ chars unless exact match)"
         )]
         node_id: String,
+        /// New node body text (use "-" to read from stdin)
         #[arg(long, conflicts_with = "body_file")]
         body: Option<String>,
-        /// Read revised body from a file
+        /// Read revised body from a file (use "-" to read from stdin)
         #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
         body_file: Option<PathBuf>,
         /// Open $EDITOR to compose the body

@@ -16,7 +16,9 @@ use crate::internal::node::NodeStatus;
 use crate::internal::snapshot::{self, store::write_snapshot};
 use crate::internal::thread;
 
-use super::shared::{discover_repo_with_init_warning, resolve_actor, resolve_tid};
+use super::shared::{
+    discover_repo_with_init_warning, resolve_actor, resolve_node_targets, NodeTargetSelection,
+};
 
 /// Lifecycle update applied to a list of nodes by `git forum
 /// {retract|resolve|reopen}`. SPEC-3.0 §2.2: each maps to a
@@ -41,8 +43,7 @@ impl NodeLifecycleOp {
 
 /// Args for `commands::node_bulk::run`.
 pub struct NodeBulkArgs {
-    pub thread_id: String,
-    pub node_ids: Vec<String>,
+    pub args: Vec<String>,
     pub as_actor: Option<String>,
     pub op: NodeLifecycleOp,
     pub label: String,
@@ -51,8 +52,7 @@ pub struct NodeBulkArgs {
 /// Uniform entry point per task `t8o3vnt6`.
 pub fn run(args: NodeBulkArgs, ctx: &Context) -> Result<(), ForumError> {
     run_node_lifecycle_bulk(
-        &args.thread_id,
-        &args.node_ids,
+        &args.args,
         args.as_actor,
         args.op,
         &args.label,
@@ -61,31 +61,68 @@ pub fn run(args: NodeBulkArgs, ctx: &Context) -> Result<(), ForumError> {
 }
 
 pub fn run_node_lifecycle_bulk(
-    thread_id: &str,
-    node_ids: &[String],
+    args: &[String],
     as_actor: Option<String>,
     op: NodeLifecycleOp,
     label: &str,
     clock: &dyn Clock,
 ) -> Result<(), ForumError> {
     let (git, _paths) = discover_repo_with_init_warning()?;
-    let thread_id = &resolve_tid(&git, thread_id)?;
+
+    // Ticket `ycnxmj0y`: positionals may be `<node-id>...`, `<thread> <node>...`,
+    // or `<thread>` alone. Resolve up-front so the rest of the loop can stay
+    // node-only.
+    let NodeTargetSelection {
+        thread_id,
+        node_refs,
+        explicit_thread,
+    } = resolve_node_targets(&git, args)?;
+
+    if node_refs.is_empty() {
+        return Err(ForumError::Repo(format!(
+            "no node ids given (got thread '{thread_id}' only)"
+        )));
+    }
+
     let actor = resolve_actor(as_actor, &git);
 
-    let mut doc = snapshot::read_snapshot(&git, thread_id)?;
+    let mut doc = snapshot::read_snapshot(&git, &thread_id)?;
 
     let now = clock.now();
     let target = op.target_status();
     let mut failures = 0usize;
     let mut applied: Vec<String> = Vec::new();
 
-    for node_id in node_ids {
+    // Build the global index lazily — only the explicit-thread form needs
+    // it (to provide the "node X is in thread Y, not <wrong>" hint).
+    let mut wrong_thread_index: Option<thread::NodeIdIndex> = None;
+
+    for node_ref in &node_refs {
         // Resolve via `replay_thread` so the existing prefix / collision
         // semantics carry through. `replay_thread` is mixed-chain aware.
-        let resolved = match thread::resolve_node_id_in_thread(&git, thread_id, node_id) {
+        let resolved = match thread::resolve_node_id_in_thread(&git, &thread_id, node_ref) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("error: {node_id}: {e}");
+                if explicit_thread {
+                    // Ticket `ycnxmj0y`: when the user passed an explicit
+                    // thread id, give the more helpful "in thread Y, not
+                    // <wrong-thread>" message if the node lives elsewhere.
+                    let index = match wrong_thread_index.as_ref() {
+                        Some(i) => i,
+                        None => {
+                            wrong_thread_index = Some(thread::NodeIdIndex::build(&git)?);
+                            wrong_thread_index.as_ref().unwrap()
+                        }
+                    };
+                    if let Ok((found_node, found_thread)) = index.resolve(node_ref) {
+                        eprintln!(
+                            "error: {node_ref}: node {found_node} is in thread {found_thread}, not {thread_id}"
+                        );
+                        failures += 1;
+                        continue;
+                    }
+                }
+                eprintln!("error: {node_ref}: {e}");
                 failures += 1;
                 continue;
             }
@@ -109,7 +146,7 @@ pub fn run_node_lifecycle_bulk(
         doc.snapshot.updated_by = actor.clone();
         write_snapshot(
             &git,
-            thread_id,
+            &thread_id,
             &doc,
             &format!(
                 "node lifecycle: {} ({})",

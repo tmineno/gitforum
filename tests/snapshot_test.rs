@@ -176,7 +176,7 @@ fn node_show_question() {
 
 #[test]
 fn ls_empty() {
-    let out = ls::render_ls(&[]);
+    let out = ls::render_ls(&[], &ls::LsRenderOptions::default());
     assert_snapshot("ls_empty", &out);
 }
 
@@ -192,7 +192,7 @@ fn ls_two_threads() {
     s2.title = "Implement trait backend".into();
     s2.status = "open".into();
     s2.branch = Some("feat/parser".into());
-    let out = ls::render_ls(&[&s1, &s2]);
+    let out = ls::render_ls(&[&s1, &s2], &ls::LsRenderOptions::default());
     assert_snapshot("ls_two_threads", &out);
 }
 

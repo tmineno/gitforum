@@ -43,7 +43,9 @@ git forum ls [--kind <kind>] [--status <S>] [--branch <B>]
 git forum show <ID>                                  Show thread details
 git forum show <ID> --what-next                      Show valid next actions
 git forum show <ID> --compact                        Compact single-line view
-git forum show <ID> --no-timeline                    Omit timeline
+git forum show <ID> --with-timeline                  Append snapshot-history
+                                                     table (omitted by default
+                                                     since ticket `kym9rgdi`)
 git forum show <ID> --tree                           Show direct `implements`
                                                      children (advisory)
 git forum brief <ID> [--json]                        Read-only digest
@@ -74,6 +76,7 @@ git forum pend <ID>                                  task → working
 git forum reject <ID>                                any → rejected
 git forum withdraw <ID>                              rfc → withdrawn
 git forum deprecate <ID>                             any → deprecated
+git forum supersede <OLD> --by <NEW>                 link + comment + → deprecated
 
 # evidence and links
 git forum evidence add <ID> --kind <K> --ref <R>...  Attach evidence
@@ -435,10 +438,21 @@ policy guards and reports which (if any) block the move.
 | `reject`    | → rejected         | → rejected     |
 | `withdraw`  | → withdrawn        | rejected       |
 | `deprecate` | → deprecated       | → deprecated   |
+| `supersede` | → deprecated       | → deprecated   |
 
 Each shorthand accepts the same flags as `state`: `--as`,
 `--approve`, `--resolve-open-actions`, `--link-to`, `--rel`,
 `--comment`, `--fast-track`, `--force`.
+
+`supersede <OLD> --by <NEW>` is the supersede recipe in one
+verb: it adds a `superseded-by` link from `<old>` to `<new>`,
+attaches a comment (default body `Superseded by @<new>`,
+overridable with `--body`), transitions `<old>` to `deprecated`,
+and writes the symmetric `supersedes` link onto `<new>` so
+`git forum show <new>` surfaces the relationship without a
+reverse-link index. Lands `<old>` in `deprecated` rather than
+`rejected`, keeping superseded work out of
+`git forum ls --status rejected`.
 
 ### Generic state command
 
@@ -470,11 +484,29 @@ git forum ls                             # everything
 git forum ls --kind rfc
 git forum ls --status open
 git forum ls --branch feature/auth
+git forum ls --columns id,status,title   # explicit column pin
 ```
 
 The list is sorted by `thread.toml.updated_at` descending. Each
 row shows ID, status, category/tags, and title. Use `git forum show
 <ID>` for full detail.
+
+#### Columns
+
+Default columns: `id`, `lifecycle`, `status`, `tags`, `branch`,
+`created`, `updated`, `title`. Per ticket `030xm9s2`, `tags` and
+`branch` auto-hide when every rendered row has them empty —
+otherwise an unused branch column would steal ~26 columns of
+width on terminals where no thread has a bound branch. The
+`--branch <B>` filter forces `branch` to render so you can verify
+the filter took effect, even when every result happens to share
+the same value.
+
+Pass `--columns id,status,title` (or any comma-separated subset)
+to pin an explicit column set; this overrides the auto-hide rule
+entirely. Recommended for scripts that pipe the output through
+`awk` / `cut` and depend on column positions — the auto-hide
+default can shift positions across repos.
 
 ### Show thread details
 
@@ -482,7 +514,7 @@ row shows ID, status, category/tags, and title. Use `git forum show
 git forum show @1hg98odf
 git forum show @1hg98odf --what-next
 git forum show @1hg98odf --compact
-git forum show @1hg98odf --no-timeline
+git forum show @1hg98odf --with-timeline
 git forum show @1hg98odf --tree
 ```
 
@@ -493,8 +525,15 @@ The default rendering reads the snapshot tree and prints:
 - thread body (if present);
 - nodes (resolved + retracted dimmed);
 - links (outgoing edges from `links.toml`);
-- evidence (rows from `evidence.toml`);
-- timeline (a Git-log-over-snapshot view: who changed what when).
+- evidence (rows from `evidence.toml`).
+
+Ticket `kym9rgdi`: the snapshot-history timeline is **omitted by
+default**. Use `--with-timeline` to append it, or
+`git forum log <ID>` for the canonical full-history surface.
+`--compact` continues to print a one-line `**timeline:** N
+commits` summary. `--no-timeline` is preserved for back-compat
+(now redundant in non-compact mode; with `--compact` it suppresses
+the one-liner).
 
 `--what-next` adds a per-guard report (which guards pass, which
 block, and the actor IDs needed to satisfy them). `--tree` lists

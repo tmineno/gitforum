@@ -341,3 +341,194 @@ fn thread_reopen_via_issue_subcommand() {
     let state = thread::replay_thread(&git, &thread_id).unwrap();
     assert_eq!(state.status, "open");
 }
+
+// =============================================================================
+// Ticket `ycnxmj0y`: single-positional `<node-id>` form for
+// resolve / retract / reopen / retype.
+// =============================================================================
+
+#[test]
+fn resolve_with_only_node_id_succeeds() {
+    let (repo, git, _paths) = setup();
+    let thread_id = make_snapshot_thread(&git, "rfc", "Auto thread test", 0x10);
+    let n1 = append_snapshot_node(
+        &git,
+        &thread_id,
+        NodeKind::Objection,
+        "Single-positional resolve",
+        "human/bob",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["resolve", &n1])
+        .output()
+        .expect("failed to run");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "single-positional resolve failed: stdout={stdout}, stderr={stderr}"
+    );
+    assert!(stdout.contains("Resolved"));
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert!(state.open_objections().is_empty());
+}
+
+#[test]
+fn retract_with_only_node_id_succeeds() {
+    let (repo, git, _paths) = setup();
+    let thread_id = make_snapshot_thread(&git, "rfc", "Single retract test", 0x11);
+    let n1 = append_snapshot_node(
+        &git,
+        &thread_id,
+        NodeKind::Comment,
+        "Note to retract",
+        "human/alice",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["retract", &n1])
+        .output()
+        .expect("failed to run");
+    assert!(
+        output.status.success(),
+        "single-positional retract failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(
+        state.nodes[0].record.status,
+        git_forum::internal::node::NodeStatus::Retracted
+    );
+}
+
+#[test]
+fn reopen_with_only_node_id_succeeds() {
+    let (repo, git, _paths) = setup();
+    let thread_id = make_snapshot_thread(&git, "rfc", "Single reopen test", 0x12);
+    let n1 = append_snapshot_node(
+        &git,
+        &thread_id,
+        NodeKind::Objection,
+        "Closed objection",
+        "human/bob",
+    );
+    resolve_snapshot_node(&git, &thread_id, &n1, "human/alice");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["reopen", &n1])
+        .output()
+        .expect("failed to run");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "single-positional reopen failed: stdout={stdout}, stderr={stderr}"
+    );
+    assert!(stdout.contains("Reopened"));
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(state.open_objections().len(), 1);
+}
+
+#[test]
+fn retype_with_only_node_id_succeeds() {
+    let (repo, git, _paths) = setup();
+    let thread_id = make_snapshot_thread(&git, "rfc", "Single retype test", 0x13);
+    let n1 = append_snapshot_node(
+        &git,
+        &thread_id,
+        NodeKind::Comment,
+        "Misclassified",
+        "human/alice",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["retype", &n1, "--type", "objection"])
+        .output()
+        .expect("failed to run");
+    assert!(
+        output.status.success(),
+        "single-positional retype failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let state = thread::replay_thread(&git, &thread_id).unwrap();
+    assert_eq!(
+        state.nodes[0].record.kind,
+        git_forum::internal::node::NodeKind::Objection
+    );
+}
+
+#[test]
+fn resolve_with_wrong_thread_explicit_form_errors_with_hint() {
+    let (repo, git, _paths) = setup();
+    let thread_a = make_snapshot_thread(&git, "rfc", "Thread A", 0x14);
+    let thread_b = make_snapshot_thread(&git, "rfc", "Thread B", 0x15);
+    let _node_a = append_snapshot_node(
+        &git,
+        &thread_a,
+        NodeKind::Objection,
+        "Lives in A",
+        "human/bob",
+    );
+    let node_b = append_snapshot_node(
+        &git,
+        &thread_b,
+        NodeKind::Objection,
+        "Lives in B",
+        "human/bob",
+    );
+
+    // Tell `resolve` the wrong thread for node_b — should error with a
+    // hint pointing at thread_b.
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["resolve", &thread_a, &node_b])
+        .output()
+        .expect("failed to run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "explicit wrong-thread resolve unexpectedly succeeded"
+    );
+    assert!(
+        stderr.contains(&format!("is in thread {thread_b}, not {thread_a}")),
+        "expected mismatch hint, got stderr: {stderr}"
+    );
+
+    // Sanity: nothing changed on thread_b.
+    let state_b = thread::replay_thread(&git, &thread_b).unwrap();
+    assert_eq!(state_b.open_objections().len(), 1);
+}
+
+#[test]
+fn resolve_node_ids_across_threads_errors() {
+    let (repo, git, _paths) = setup();
+    let thread_a = make_snapshot_thread(&git, "rfc", "Thread A", 0x16);
+    let thread_b = make_snapshot_thread(&git, "rfc", "Thread B", 0x17);
+    let node_a = append_snapshot_node(&git, &thread_a, NodeKind::Objection, "In A", "human/bob");
+    let node_b = append_snapshot_node(&git, &thread_b, NodeKind::Objection, "In B", "human/bob");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_git-forum"))
+        .current_dir(repo.path())
+        .args(["resolve", &node_a, &node_b])
+        .output()
+        .expect("failed to run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "cross-thread node ids unexpectedly succeeded"
+    );
+    assert!(
+        stderr.contains("multiple threads"),
+        "expected cross-thread error, got: {stderr}"
+    );
+}

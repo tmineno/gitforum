@@ -34,10 +34,11 @@ git forum node add <THREAD> --type <TYPE> "body"
 
 Accepts positional body, `--body`, `--body-file`, `--edit`,
 `--reply-to`, and `--as`. Priority: positional > `--body` >
-`--body-file`. Pass `"-"` to read from stdin. `--edit` opens
-`$VISUAL` / `$EDITOR` / `vi` (requires a TTY; conflicts with body
-args). In scripts or agent workflows, use `--body`, `--body-file`,
-or `--body -` instead.
+`--body-file`. Both `--body -` and `--body-file -` read from
+stdin (ticket `h36at1ti`). `--edit` opens `$VISUAL` / `$EDITOR`
+/ `vi` (requires a TTY; conflicts with body args, including the
+stdin `-` form). In scripts or agent workflows, prefer `--body`,
+`--body-file`, or pipe content via `--body -`.
 
 ## Shorthand commands
 
@@ -108,7 +109,7 @@ pub fn state_transition_map() -> String {
     out.push_str("```\n");
     out.push_str("git forum state <ID> <STATUS>     # single grammar for all transitions\n");
     out.push_str("git forum state bulk --to <STATUS> <ID>...\n");
-    out.push_str("git forum reopen <ID>             # closed → open (no NODE_ID args)\n");
+    out.push_str("git forum reopen <THREAD_ID>      # closed → open (single thread id)\n");
     out.push_str("```\n\n");
     out.push_str(
         "Status names are SPEC-3.0 canonical: `draft`, `open`, `working`,\n\
@@ -131,7 +132,20 @@ pub fn state_transition_map() -> String {
     out.push_str("git forum reject   <ID>   # any category: -> rejected\n");
     out.push_str("git forum withdraw <ID>   # rfc: -> withdrawn; task: rejected\n");
     out.push_str("git forum deprecate <ID>  # any category: -> deprecated\n");
+    out.push_str(
+        "git forum supersede <OLD> --by <NEW>  # link superseded-by + comment + -> deprecated\n",
+    );
     out.push_str("```\n\n");
+    out.push_str(
+        "`supersede` collapses the three-step recipe (link `<old>`\n\
+         `superseded-by` `<new>`, attach a comment on `<old>`, transition\n\
+         `<old>` to `deprecated`) into one verb. Default comment body is\n\
+         `Superseded by @<new>` if `--body` is omitted. Lands `<old>` in\n\
+         `deprecated` (not `rejected`), so superseded threads do not\n\
+         appear in `git forum ls --status rejected`. Also writes the\n\
+         symmetric `supersedes` link on `<new>` so `git forum show <NEW>`\n\
+         surfaces the relationship.\n\n",
+    );
 
     out.push_str("## Discoverability\n\n");
     out.push_str("`git forum show <ID>` prints a compact `next:` line and state diagram.\n");

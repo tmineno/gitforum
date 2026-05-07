@@ -63,8 +63,10 @@ pub enum ThreadCmd {
         /// Tag(s) to attach via the create-time facet_set (may be repeated). SPEC-2.0 §2.3.5.
         #[arg(long, value_name = "TAG")]
         tag: Vec<String>,
-        #[arg(long, conflicts_with = "body_file")]
+        /// Thread body text (use "-" to read from stdin)
+        #[arg(long, value_name = "TEXT", conflicts_with = "body_file")]
         body: Option<String>,
+        /// Read thread body from a file (use "-" to read from stdin)
         #[arg(long = "body-file", value_name = "PATH", conflicts_with = "body")]
         body_file: Option<PathBuf>,
         /// Open $EDITOR to compose the body
@@ -563,6 +565,12 @@ pub fn parse_lifecycle_label(s: &str) -> Result<&'static str, ForumError> {
 /// Resolve a body-source flag triple (`--body` / `--body-file` / `--edit`)
 /// to a concrete `Option<String>`. Returns `None` if no source was given;
 /// callers that require non-empty bodies wrap with `resolve_body_required`.
+///
+/// Stdin handling (ticket `h36at1ti`): both `--body -` and
+/// `--body-file -` read piped content from stdin. `--edit` is mutually
+/// exclusive with stdin (clap already conflicts edit with body / body_file
+/// at the CLI surface, so the only way to reach this function with
+/// `edit = true` is without a stdin source).
 pub fn resolve_thread_body(
     body: Option<String>,
     body_file: Option<PathBuf>,
@@ -573,26 +581,33 @@ pub fn resolve_thread_body(
         return Ok(Some(crate::internal::editor::edit_body(edit_hint)?));
     }
     match (body, body_file) {
-        (Some(body), None) if body == "-" => {
-            if std::io::stdin().is_terminal() {
-                return Err(ForumError::Config(
-                    "--body - requires piped input; use --body <text>, --body-file, or --edit instead".into(),
-                ));
-            }
-            let mut buf = String::new();
-            std::io::stdin().read_to_string(&mut buf)?;
-            if buf.trim().is_empty() {
-                return Err(ForumError::Config(
-                    "--body - received empty input; provide non-empty content via stdin".into(),
-                ));
-            }
-            Ok(Some(buf))
+        (Some(body), None) if body == "-" => Ok(Some(read_stdin_body("--body -")?)),
+        (None, Some(path)) if path.as_os_str() == "-" => {
+            Ok(Some(read_stdin_body("--body-file -")?))
         }
         (Some(body), None) => Ok(Some(body)),
         (None, Some(path)) => Ok(Some(fs::read_to_string(path)?)),
         (None, None) => Ok(None),
         (Some(_), Some(_)) => unreachable!("clap enforces body/body-file conflicts"),
     }
+}
+
+/// Read a body from stdin for `--body -` / `--body-file -`. Errors when
+/// stdin is a TTY (no pipe to consume) or when the input is whitespace-only.
+fn read_stdin_body(flag: &str) -> Result<String, ForumError> {
+    if std::io::stdin().is_terminal() {
+        return Err(ForumError::Config(format!(
+            "{flag} requires piped input; use --body <text>, --body-file <path>, or --edit instead"
+        )));
+    }
+    let mut buf = String::new();
+    std::io::stdin().read_to_string(&mut buf)?;
+    if buf.trim().is_empty() {
+        return Err(ForumError::Config(format!(
+            "{flag} received empty input; provide non-empty content via stdin"
+        )));
+    }
+    Ok(buf)
 }
 
 /// Like [`resolve_thread_body`] but errors out if no body source was given.

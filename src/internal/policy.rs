@@ -212,6 +212,12 @@ fn built_in_rfc() -> CategoryDefinition {
     // baseline. Two reopen edges (`done->open`, `rejected->open`) are
     // added beyond the example so the everyday `git forum reopen <ID>`
     // shorthand keeps working without per-repo overrides.
+    //
+    // Ticket `eda1c050`: direct `open->deprecated` and
+    // `review->deprecated` edges back the `supersede` shorthand verb so
+    // a thread can be marked deprecated without first transiting through
+    // `rejected` (which would mix superseded threads into
+    // `git forum ls --status rejected`).
     CategoryDefinition {
         initial_status: "draft".into(),
         statuses: [
@@ -232,8 +238,10 @@ fn built_in_rfc() -> CategoryDefinition {
             "open->review",
             "open->rejected",
             "open->withdrawn",
+            "open->deprecated",
             "review->done",
             "review->rejected",
+            "review->deprecated",
             "done->open",
             "rejected->open",
             "done->deprecated",
@@ -246,6 +254,12 @@ fn built_in_rfc() -> CategoryDefinition {
 }
 
 fn built_in_task() -> CategoryDefinition {
+    // Ticket `eda1c050`: direct `open->deprecated`, `working->deprecated`,
+    // and `review->deprecated` edges back the `supersede` shorthand verb
+    // so an in-flight task can be marked deprecated when superseded by a
+    // newer thread, without transiting through `done` (work didn't
+    // succeed) or `rejected` (we want to preserve the superseded
+    // signal, not mix it into rejected work).
     CategoryDefinition {
         initial_status: "open".into(),
         statuses: [
@@ -264,12 +278,15 @@ fn built_in_task() -> CategoryDefinition {
             "open->review",
             "open->done",
             "open->rejected",
+            "open->deprecated",
             "working->review",
             "working->done",
             "working->rejected",
+            "working->deprecated",
             "review->done",
             "review->working",
             "review->rejected",
+            "review->deprecated",
             "done->open",
             "rejected->open",
             "done->deprecated",
