@@ -157,6 +157,28 @@ fn write_snapshot_inner(
     let refname = format!("refs/forum/threads/{thread_id}");
     let parent = git.resolve_ref(&refname)?;
 
+    // RFC fls856j3: refuse to synthesize a fresh authoritative ref
+    // from a published-only state. The §5.1 read fallback lets
+    // public-consumer clones (`git forum init --public-only`) view
+    // sanitized published snapshots without an authoritative ref —
+    // but a write must not promote that sanitized view back into
+    // authoritative storage. Catching this at the write boundary
+    // means callers don't have to remember which `read_*` variant
+    // is correct for their context.
+    if parent.is_none() {
+        let published = format!("refs/forum/published/{thread_id}");
+        if git.resolve_ref(&published)?.is_some() {
+            return Err(ForumError::Repo(format!(
+                "refusing to create {refname}: a sanitized published ref already exists at {published}. \
+                 This clone is reading {thread_id} from the published namespace; promoting that \
+                 snapshot into authoritative storage would erase content the publisher dropped \
+                 (links/evidence to non-public targets) and re-emit it under a different commit \
+                 identity. Run `git fetch <remote> '+refs/forum/threads/{thread_id}:refs/forum/threads/{thread_id}'` \
+                 if you have authoritative access, or perform this edit on a trusted-collaborator clone."
+            )));
+        }
+    }
+
     let archive = match archive_bytes {
         Some(bytes) => ArchiveSource::Supplied(bytes),
         None => match &parent {

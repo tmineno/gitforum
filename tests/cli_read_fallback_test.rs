@@ -146,4 +146,35 @@ fn show_falls_back_to_published_when_authoritative_absent() {
     assert!(ls.status.success());
     let ls_out = String::from_utf8_lossy(&ls.stdout);
     assert!(ls_out.contains(&id), "ls missing id {id}: {ls_out}");
+
+    // RFC §5.5: write paths must NOT synthesize a fresh
+    // authoritative ref from the published-only state. A
+    // visibility flip on the consumer (which has only the published
+    // ref) must be rejected before `refs/forum/threads/<id>` gets
+    // written from sanitized data.
+    let flip = run_forum(
+        &consumer_path,
+        &["thread", "set-visibility", &id, "private", "--force"],
+    );
+    assert!(
+        !flip.status.success(),
+        "set-visibility on published-only thread must fail; stdout={} stderr={}",
+        String::from_utf8_lossy(&flip.stdout),
+        String::from_utf8_lossy(&flip.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&flip.stderr);
+    assert!(
+        stderr.contains("refusing to create"),
+        "expected synthesize-guard error, got: {stderr}"
+    );
+    // No authoritative ref was created on the consumer.
+    assert!(
+        !run_git(
+            &consumer_path,
+            &["rev-parse", "--verify", &format!("refs/forum/threads/{id}")],
+        )
+        .status
+        .success(),
+        "consumer must still have no authoritative ref after the rejected write"
+    );
 }

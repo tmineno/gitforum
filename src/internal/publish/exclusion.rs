@@ -1,20 +1,24 @@
 //! Pure exclusion pipeline for the published namespace (RFC
-//! `fls856j3` §4).
+//! `fls856j3` §5.5).
 //!
 //! Given a public thread's [`ThreadDocument`] and the set of thread
-//! IDs marked private, this module produces the materialised
+//! IDs known to be public, this module produces the materialised
 //! published `ThreadDocument` by:
 //!
-//! 1. Dropping `links.toml` entries whose `target` is non-public.
+//! 1. Dropping `links.toml` entries whose `target` is **non-public**
+//!    — i.e. not in the public allowlist. This catches private
+//!    targets *and* unknown/absent targets (the publisher cannot
+//!    verify a target it has no authoritative ref for, so it is
+//!    treated as non-public).
 //! 2. Dropping `evidence.toml` entries with `kind = "thread"` whose
 //!    target is non-public.
 //! 3. Passing `body.md`, `nodes/*.md`, and `nodes/*.toml` through
 //!    unchanged. The publisher does not rewrite text bytes; the
-//!    pre-publish lint (forthcoming module) is informational.
+//!    pre-publish lint module is informational.
 //!
 //! The transform is a pure function of `(source ThreadDocument,
-//! private set)` so identical input partitions produce identical
-//! published trees — RFC §2's tree-equivalence idempotency property.
+//! public set)` so identical input partitions produce identical
+//! published trees — RFC §5.5's tree-equivalence idempotency property.
 
 use std::collections::HashSet;
 
@@ -22,8 +26,8 @@ use crate::internal::evidence::EvidenceKind;
 use crate::internal::snapshot::ThreadDocument;
 
 /// Apply the published-namespace exclusion rules to `doc` in place,
-/// using `private_ids` as the set of thread IDs marked private (or
-/// absent) in the local index.
+/// using `public_ids` as the allowlist of thread IDs known to be
+/// public locally.
 ///
 /// Preconditions: `doc.snapshot.visibility == Visibility::Public`
 /// (callers should not invoke this on a private thread; the
@@ -31,25 +35,26 @@ use crate::internal::snapshot::ThreadDocument;
 /// function does not check that itself — it is a pure tree
 /// transform.
 /// Postconditions: `doc.links.entries` and `doc.evidence.entries`
-/// contain no entries pointing at any id in `private_ids`. All
-/// other fields are unchanged byte-for-byte.
+/// contain no entries pointing at any id outside `public_ids`
+/// (private + unknown + absent are all dropped). All other fields
+/// are unchanged byte-for-byte.
 /// Failure modes: none — the transform never fails.
 /// Side effects: none — `doc` is mutated, no I/O.
-pub fn apply(doc: &mut ThreadDocument, private_ids: &HashSet<String>) {
+pub fn apply(doc: &mut ThreadDocument, public_ids: &HashSet<String>) {
     doc.links
         .entries
-        .retain(|link| !private_ids.contains(&link.target));
+        .retain(|link| public_ids.contains(&link.target));
 
     doc.evidence
         .entries
-        .retain(|ev| !(ev.kind == EvidenceKind::Thread && private_ids.contains(&ev.ref_target)));
+        .retain(|ev| !(ev.kind == EvidenceKind::Thread) || public_ids.contains(&ev.ref_target));
 }
 
 /// Convenience: take a snapshot by value, apply [`apply`], return
 /// the filtered tree. Useful when the caller has the source
 /// document but does not need the original after publishing.
-pub fn filter(mut doc: ThreadDocument, private_ids: &HashSet<String>) -> ThreadDocument {
-    apply(&mut doc, private_ids);
+pub fn filter(mut doc: ThreadDocument, public_ids: &HashSet<String>) -> ThreadDocument {
+    apply(&mut doc, public_ids);
     doc
 }
 
@@ -121,20 +126,21 @@ mod tests {
         }
     }
 
-    fn private_set(ids: &[&str]) -> HashSet<String> {
+    fn public_set(ids: &[&str]) -> HashSet<String> {
         ids.iter().map(|s| (*s).to_string()).collect()
     }
 
     #[test]
-    fn drops_links_to_private_threads() {
+    fn drops_links_outside_the_public_allowlist() {
         let mut doc = public_doc("pub00000");
         doc.links.entries = vec![
             link("pub11111", "depends-on"), // public — kept
             link("priv1234", "blocks"),     // private — dropped
             link("pub22222", "relates-to"), // public — kept
+            link("unknown1", "related"),    // unknown — dropped
         ];
 
-        apply(&mut doc, &private_set(&["priv1234"]));
+        apply(&mut doc, &public_set(&["pub11111", "pub22222"]));
 
         assert_eq!(doc.links.entries.len(), 2);
         assert_eq!(doc.links.entries[0].target, "pub11111");
@@ -142,17 +148,18 @@ mod tests {
     }
 
     #[test]
-    fn drops_thread_evidence_to_private_only() {
+    fn drops_thread_evidence_outside_the_public_allowlist() {
         let mut doc = public_doc("pub00000");
         doc.evidence.entries = vec![
             ev_thread("ev01", "pub11111"),
             ev_thread("ev02", "priv1234"), // dropped
-            ev_commit("ev03", "deadbeefdeadbeef"),
-            // Hunk evidence carries a SHA path string in `ref_target`;
-            // even if the string happens to equal "priv1234", a
-            // non-thread kind must NOT be dropped.
+            ev_thread("ev03", "unknown1"), // dropped (unknown target)
+            ev_commit("ev04", "deadbeefdeadbeef"),
+            // Hunk/file evidence carries a SHA or path string in
+            // `ref_target`; non-thread kinds are never gated by the
+            // public allowlist.
             EvidenceRecord {
-                id: "ev04".into(),
+                id: "ev05".into(),
                 kind: EvidenceKind::File,
                 ref_target: "priv1234".into(),
                 created_at: epoch(),
@@ -160,10 +167,10 @@ mod tests {
             },
         ];
 
-        apply(&mut doc, &private_set(&["priv1234"]));
+        apply(&mut doc, &public_set(&["pub11111"]));
 
         let ids: Vec<&str> = doc.evidence.entries.iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(ids, vec!["ev01", "ev03", "ev04"]);
+        assert_eq!(ids, vec!["ev01", "ev04", "ev05"]);
     }
 
     #[test]
@@ -182,7 +189,7 @@ mod tests {
         ];
         let original_nodes = doc.nodes.clone();
 
-        apply(&mut doc, &private_set(&["priv1234", "priv5678"]));
+        apply(&mut doc, &public_set(&[]));
 
         assert_eq!(doc.body, original_body, "body bytes must be byte-identical");
         assert_eq!(
@@ -192,20 +199,22 @@ mod tests {
     }
 
     #[test]
-    fn empty_private_set_is_identity() {
+    fn empty_public_set_drops_all_thread_targets() {
+        // No allowlist → drop every link and every thread evidence,
+        // since the publisher cannot prove any target is public.
         let mut doc = public_doc("pub00000");
         doc.links.entries = vec![link("pub11111", "depends-on")];
         doc.evidence.entries = vec![ev_thread("ev01", "pub11111")];
-        let original = doc.clone();
 
         apply(&mut doc, &HashSet::new());
 
-        assert_eq!(doc, original);
+        assert!(doc.links.entries.is_empty());
+        assert!(doc.evidence.entries.is_empty());
     }
 
     #[test]
     fn deterministic_across_repeated_application() {
-        // Tree-equivalence (RFC §2): same input → same output.
+        // Tree-equivalence (RFC §5.5): same input → same output.
         let mut a = public_doc("pub00000");
         let mut b = public_doc("pub00000");
 
@@ -219,9 +228,9 @@ mod tests {
         a.evidence.entries = vec![ev_thread("ev01", "priv1234")];
         b.evidence.entries = vec![ev_thread("ev01", "priv1234")];
 
-        let private = private_set(&["priv1234", "priv5678"]);
-        apply(&mut a, &private);
-        apply(&mut b, &private);
+        let public = public_set(&["pub11111"]);
+        apply(&mut a, &public);
+        apply(&mut b, &public);
 
         assert_eq!(a, b);
     }
@@ -230,7 +239,7 @@ mod tests {
     fn filter_returns_owned_value() {
         let doc = public_doc("pub00000");
         let original_id = doc.snapshot.id.clone();
-        let filtered = filter(doc, &HashSet::new());
+        let filtered = filter(doc, &public_set(&[]));
         assert_eq!(filtered.snapshot.id, original_id);
     }
 }

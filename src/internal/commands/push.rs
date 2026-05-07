@@ -5,14 +5,24 @@
 //! to a Git remote: creates/updates published refs and stages
 //! deletions for withdrawn threads.
 //!
-//! Failure handling per RFC §7 ("preserve-then-retry"): when the
-//! remote rejects a withdrawal, the local `refs/forum/published/<id>`
-//! is preserved so a retry reattempts the deletion. When the remote
-//! rejects a create/update, the local force-update has already
-//! landed; the next push retries the publish. The summary line
-//! breaks out failures separately (`L`) and the exit code is
-//! non-zero whenever any remote operation failed, regardless of
-//! `--strict`.
+//! Two-phase orchestration:
+//!
+//! 1. [`orchestrate::lint_pass`] — read-only. Computes the post-
+//!    exclusion document, lint warnings, and withdrawal candidates
+//!    without writing anything. Under `--strict`, any lint warning
+//!    aborts here so no local refs are advanced and no `git push`
+//!    runs (RFC §5.5: "lint before build").
+//! 2. [`orchestrate::commit_plan`] — writes parentless snapshot
+//!    commits and advances local `refs/forum/published/*` refs.
+//!    Then `git push` propagates the refspec set, including
+//!    refspecs for tree-equivalence-skipped entries so a previously
+//!    failed remote push retries on its own.
+//!
+//! Withdrawal preserve-then-retry (RFC §5.6): local
+//! `refs/forum/published/<id>` is deleted only after the remote
+//! acknowledges the deletion. The summary line breaks out failures
+//! separately (`L`); exit code is non-zero whenever any remote
+//! operation failed, regardless of `--strict`.
 
 use std::process::Command as ProcCommand;
 
@@ -53,49 +63,48 @@ pub fn run(args: PushArgs, _ctx: &Context) -> ForumResult<()> {
     let (git, _paths) = discover_repo_with_init_warning()?;
     let remote = args.remote.unwrap_or_else(|| "origin".to_string());
 
-    // Phase 1: build the local plan. This applies exclusion + lint +
-    // tree-equivalence write to every public thread and identifies
-    // withdrawal candidates.
-    let plan = orchestrate::build_plan(&git)?;
+    // Phase 1: read-only lint pass. No local writes, no push.
+    let mut plan = orchestrate::lint_pass(&git)?;
 
     // Phase 2: emit lint warnings to stderr in document-source order.
+    let total_warnings = plan.total_warnings();
     for tp in &plan.threads {
         for w in &tp.warnings {
             eprintln!("warning: {}", w.render());
         }
     }
 
+    // Phase 3: --strict short-circuits BEFORE any local writes or
+    // remote push. This implements the "lint before build" rule in
+    // RFC §5.5 / SPEC-3.0 §5.5 — fail-closed without perturbing
+    // anything.
+    if total_warnings > 0 && args.strict {
+        return Err(ForumError::Repo(format!(
+            "{total_warnings} pre-publish warning(s); --strict requested non-zero exit (no refs were written or pushed)"
+        )));
+    }
+
+    // Phase 4: realise the local writes.
+    orchestrate::commit_plan(&git, &mut plan)?;
+
     let refspecs = plan.refspecs();
     let mut summary = summary_from_plan(&plan);
 
     // Nothing to push? Print the summary and return.
     if refspecs.is_empty() {
-        if summary.warnings > 0 && args.strict {
-            return Err(ForumError::Repo(format!(
-                "{} pre-publish warning(s); --strict requested non-zero exit",
-                summary.warnings
-            )));
-        }
         println!("{}", summary.render());
         return Ok(());
     }
 
-    // Phase 3: push.
+    // Phase 5: push.
     let push_outcome = run_git_push(git.root(), &remote, &refspecs);
     match push_outcome {
         Ok(_) => {
-            // Phase 4: on push success, delete local refs for any
+            // Phase 6: on push success, delete local refs for any
             // withdrawal we staged (preserve-then-retry rule:
             // local delete only after remote ack).
             for wid in plan.withdrawal_ids() {
                 delete_published(&git, wid)?;
-            }
-            if summary.warnings > 0 && args.strict {
-                println!("{}", summary.render());
-                return Err(ForumError::Repo(format!(
-                    "{} pre-publish warning(s); --strict requested non-zero exit",
-                    summary.warnings
-                )));
             }
             println!("{}", summary.render());
         }
@@ -104,7 +113,10 @@ pub fn run(args: PushArgs, _ctx: &Context) -> ForumResult<()> {
             // know which refs the server accepted from a single
             // string; conservatively treat the whole batch as
             // failed for the count, leave local state alone, and
-            // exit non-zero.
+            // exit non-zero. The next `git forum push` re-emits
+            // refspecs for create/update/skip entries (see
+            // `PublishPlan::refspecs`) so the retry reattempts the
+            // remote update.
             //
             // A future iteration can run `git push --porcelain` and
             // parse per-ref outcomes to be more precise.
@@ -131,7 +143,7 @@ fn summary_from_plan(plan: &PublishPlan) -> PushSummary {
             PlannedAction::Created { .. } => s.created += 1,
             PlannedAction::Updated { .. } => s.updated += 1,
             PlannedAction::Withdraw => s.withdrawn += 1,
-            PlannedAction::Skipped => {}
+            PlannedAction::Skipped | PlannedAction::Publish { .. } => {}
         }
         s.warnings += t.warnings.len();
     }

@@ -245,3 +245,88 @@ fn lint_warning_with_strict_exits_non_zero() {
     let strict = run_forum(repo.path(), &["push", "--strict"]);
     assert!(!strict.status.success(), "strict mode should exit non-zero");
 }
+
+#[test]
+fn strict_failure_does_not_advance_local_or_remote() {
+    // RFC §5.5 "lint before build": --strict must not write any
+    // local published ref or push anything when warnings exist.
+    let repo = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(repo.path());
+    init::init_forum(&paths).unwrap();
+    let priv_id = create_issue(repo.path(), "Private");
+    let body = format!("see @{priv_id}");
+    let create = run_forum(repo.path(), &["new", "issue", "Public", "--body", &body]);
+    assert!(create.status.success());
+    let pub_id = extract_created_id(&create);
+    set_visibility(repo.path(), &pub_id, "public", false);
+
+    let bare = init_bare_remote();
+    add_origin(repo.path(), bare.path());
+
+    // Strict push should fail and leave local + remote untouched.
+    let strict = run_forum(repo.path(), &["push", "--strict"]);
+    assert!(!strict.status.success(), "strict should exit non-zero");
+
+    // No local published ref was created.
+    let local = run_git(
+        repo.path(),
+        &[
+            "rev-parse",
+            "--verify",
+            &format!("refs/forum/published/{pub_id}"),
+        ],
+    );
+    assert!(
+        !local.status.success(),
+        "strict failure must not write a local published ref"
+    );
+    // Remote received nothing.
+    assert!(
+        ls_remote_published(bare.path()).is_empty(),
+        "strict failure must not push anything"
+    );
+}
+
+#[test]
+fn skipped_entries_are_re_pushed_after_remote_failure() {
+    // RFC §5.6 retry semantics: when a previous push failed remotely,
+    // a re-push must include the otherwise-skipped refspec so the
+    // remote catches up. We simulate the failure by deleting the
+    // remote ref directly and re-running push — the local ref
+    // matches the source tree so build_plan would mark it Skipped,
+    // but refspecs() still emits +REF:REF.
+    let repo = support::repo::TestRepo::new();
+    let paths = RepoPaths::from_repo_root(repo.path());
+    init::init_forum(&paths).unwrap();
+    let id = create_issue(repo.path(), "Public");
+    set_visibility(repo.path(), &id, "public", false);
+
+    let bare = init_bare_remote();
+    add_origin(repo.path(), bare.path());
+
+    let p1 = run_forum(repo.path(), &["push"]);
+    assert!(p1.status.success());
+    assert!(ls_remote_published(bare.path()).contains(&format!("refs/forum/published/{id}")));
+
+    // Simulate a partial failure: remote forgets the published ref,
+    // local still has it.
+    let del = run_git(
+        bare.path(),
+        &["update-ref", "-d", &format!("refs/forum/published/{id}")],
+    );
+    assert!(del.status.success());
+    assert!(ls_remote_published(bare.path()).is_empty());
+
+    // Second push: tree-equivalence-skip locally, but the refspec
+    // is still emitted so the remote ref is restored.
+    let p2 = run_forum(repo.path(), &["push"]);
+    assert!(
+        p2.status.success(),
+        "retry push failed: {}",
+        String::from_utf8_lossy(&p2.stderr)
+    );
+    assert!(
+        ls_remote_published(bare.path()).contains(&format!("refs/forum/published/{id}")),
+        "remote published ref must be restored on retry"
+    );
+}
