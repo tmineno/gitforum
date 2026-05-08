@@ -229,6 +229,7 @@ fn sort_column_to_str(col: SortColumn) -> &'static str {
     match col {
         SortColumn::Id => "id",
         SortColumn::Status => "status",
+        SortColumn::Visibility => "visibility",
         SortColumn::Created => "created",
         SortColumn::Updated => "updated",
         SortColumn::Title => "title",
@@ -239,6 +240,7 @@ fn sort_column_from_str(s: &str) -> SortColumn {
     match s {
         "id" => SortColumn::Id,
         "status" => SortColumn::Status,
+        "visibility" => SortColumn::Visibility,
         "created" => SortColumn::Created,
         "title" => SortColumn::Title,
         // v1 used "kind"; v2 used "lifecycle". Both columns were
@@ -337,6 +339,7 @@ mod tests {
         for col in &[
             SortColumn::Id,
             SortColumn::Status,
+            SortColumn::Visibility,
             SortColumn::Created,
             SortColumn::Updated,
             SortColumn::Title,

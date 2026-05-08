@@ -200,14 +200,16 @@ pub(super) const FILTER_STATUS_LABELS: [&str; 8] = [
 pub(crate) enum SortColumn {
     Id,
     Status,
+    Visibility,
     Created,
     Updated,
     Title,
 }
 
-pub(super) const SORT_COLUMNS: [SortColumn; 5] = [
+pub(super) const SORT_COLUMNS: [SortColumn; 6] = [
     SortColumn::Id,
     SortColumn::Status,
+    SortColumn::Visibility,
     SortColumn::Created,
     SortColumn::Updated,
     SortColumn::Title,
@@ -251,7 +253,7 @@ struct UiRects {
     /// Dropdown area in form views (right pane).
     dropdown: Option<Rect>,
     /// Column header rects for click-to-sort in list view.
-    column_headers: [Option<Rect>; 5],
+    column_headers: [Option<Rect>; 6],
     /// Filter label area in list view help line.
     filter_label: Option<Rect>,
     /// Filter popup area (when open).
@@ -455,6 +457,8 @@ impl App {
             let ord = match self.sort_column {
                 SortColumn::Id => a.id.cmp(&b.id),
                 SortColumn::Status => a.status.cmp(&b.status),
+                SortColumn::Visibility => render::visibility_marker(a.visibility)
+                    .cmp(render::visibility_marker(b.visibility)),
                 SortColumn::Created => a.created_at.cmp(&b.created_at),
                 SortColumn::Updated => a.updated_at.cmp(&b.updated_at),
                 SortColumn::Title => a.title.cmp(&b.title),
@@ -1485,8 +1489,8 @@ mod tests {
 
         let _ = render_to_string(&mut app, 100, 20);
 
-        // Click on the "CREATED" column header (3rd column after LIFECYCLE removal)
-        let header_rect = app.ui_rects.column_headers[2].unwrap();
+        // Click on the "CREATED" column header (4th column: ID, STATUS, VIS, CREATED).
+        let header_rect = app.ui_rects.column_headers[3].unwrap();
         let click = mouse_event(
             MouseEventKind::Down(MouseButton::Left),
             header_rect.x + 1,
@@ -2355,16 +2359,18 @@ mod tests {
             !out.contains("LIFECYCLE"),
             "LIFECYCLE column was removed but header is still rendered:\n{out}"
         );
-        // RFC fls856j3: visibility marker is the first chip in the
-        // bracket prefix; tag chips follow.
+        // Visibility lives in its own VIS column; the bracket
+        // prefix on the title carries tags only.
         assert!(
-            out.contains("[priv,bug] fix the bug"),
-            "missing [priv,bug] visibility+tag chip:\n{out}"
+            out.contains("[bug] fix the bug"),
+            "missing [bug] tag chip on title:\n{out}"
         );
         assert!(
-            out.contains("[priv,cross-cutting]"),
-            "missing [priv,cross-cutting] chip:\n{out}"
+            out.contains("[cross-cutting]"),
+            "missing [cross-cutting] tag chip on title:\n{out}"
         );
+        assert!(out.contains("VIS"), "missing VIS column header:\n{out}");
+        assert!(out.contains("priv"), "missing priv visibility cell:\n{out}");
     }
 
     // task `913c4s9v`: the
