@@ -33,21 +33,50 @@ git forum new <kind> "Title" [--body "..."|--edit]   Create via kind preset
                                                      → maps to (category, tags)
 
 # create — canonical (power-user, scriptable; SPEC-3.0 §7)
-git forum thread new "Title" --category <C> [--tag <T>]...
+git forum thread new "Title" --lifecycle <LABEL> [--tag <T>]...
                                                      Create with explicit
-                                                     category + tags
+                                                     lifecycle label
+                                                     (proposal/execution/record)
+                                                     + tags. The lifecycle
+                                                     label maps to a
+                                                     `category` + tag set on
+                                                     storage (SPEC-3.0 §8.3).
 
 # inspect
-git forum ls [--kind <kind>] [--status <S>] [--branch <B>]
-                                                     List threads
-git forum show <ID>                                  Show thread details
+git forum ls [--kind <preset>] [--status <S>] [--branch <B>]
+                                                     List threads. `--kind`
+                                                     is a legacy compatibility
+                                                     alias (rfc/dec/task/
+                                                     issue/bug); the
+                                                     rendered LIFECYCLE
+                                                     column shows the
+                                                     canonical 3.0 label
+                                                     (proposal/execution/
+                                                     record) per
+                                                     ticket `ah5gepry`.
+git forum show <ID>                                  Show thread (body-focused
+                                                     by default per ticket
+                                                     `234ql16h`)
+git forum show <ID> --full                           Full detail view: open
+                                                     items, conversations,
+                                                     links, evidence, hints,
+                                                     timeline (ticket
+                                                     `234ql16h`)
 git forum show <ID> --what-next                      Show valid next actions
 git forum show <ID> --compact                        Compact single-line view
+                                                     (implies --full)
 git forum show <ID> --with-timeline                  Append snapshot-history
                                                      table (omitted by default
-                                                     since ticket `kym9rgdi`)
+                                                     since ticket `kym9rgdi`;
+                                                     implies --full)
 git forum show <ID> --tree                           Show direct `implements`
                                                      children (advisory)
+git forum status <ID>                                Compact open-items list
+git forum status <ID> --full                         Full bodies of open
+                                                     objections, actions, and
+                                                     questions with per-item
+                                                     resolve/reply hints
+                                                     (ticket `fb1dxj2d`)
 git forum brief <ID> [--json]                        Read-only digest
 git forum diff <ID> [--rev N|N..M]                   Diff body revisions
 git forum shortlog --since <DATE_OR_REV>             Threads resolved since
@@ -206,8 +235,10 @@ The 5 built-in presets map to a `(category, tags)` pair:
 | `issue` | `task`   | `[bug]`     | `open`         | bug report |
 | `bug`   | `task`   | `[bug]`     | `open`         | alias for `issue` |
 
-Use `git forum thread new --category <C> --tag <T>...` for the
-canonical form, or `git forum new <preset>` for the everyday one.
+Use `git forum thread new --lifecycle <LABEL> --tag <T>...` for the
+canonical power-user form (the `--lifecycle` label maps to a
+`category` + tag set on storage per SPEC-3.0 §8.3), or
+`git forum new <preset>` for the everyday one.
 
 ## Create threads
 

@@ -1,0 +1,155 @@
+.\" Manual page for git-forum (ticket wm25ip8y).
+.\"
+.\" Why this file exists: `git forum --help` is transformed by git
+.\" itself into `git help git-forum`, which tries `man git-forum`.
+.\" Without this manual page, the user sees `No manual entry for
+.\" git-forum` and the in-binary clap help is never reached. This
+.\" page satisfies that lookup so `git forum --help` exits 0 with a
+.\" usable top-level synopsis.
+.\"
+.\" Keep in sync with the GROUPED_HELP block in src/main.rs and with
+.\" doc/MANUAL.md. The full agent/manual reference lives behind
+.\" `git forum --help-llm`.
+.TH GIT-FORUM 1 "2026-05-08" "git-forum" "Git Forum Manual"
+.SH NAME
+git-forum \- structured discussion in Git
+.SH SYNOPSIS
+.B git forum
+.RI [ options ]
+.RI [ command
+.RI [ args... ]]
+.PP
+.B git-forum
+.RI [ options ]
+.RI [ command
+.RI [ args... ]]
+.SH DESCRIPTION
+.B git-forum
+stores RFCs, decisions, tasks, and issues as snapshot trees on
+.B refs/forum/threads/<id>
+inside the same git repository as the code.
+Threads carry a single required category
+.RB ( rfc " or " task )
+plus free-form tags.
+Discussion uses four canonical node kinds:
+.BR comment ", " approval ", " objection ", and " action .
+.PP
+This page lists the common top-level subcommands. The full agent /
+manual reference is available via
+.BR "git forum --help-llm" .
+.SH COMMANDS
+.SS Setup and repo health
+.TP
+.B init
+Initialize a git-forum repository.
+.TP
+.B doctor
+Diagnose repo health (refs, snapshot integrity).
+.TP
+.B migrate
+Rewrite a 1.x/2.x repo to the 3.0 snapshot-ref format.
+.SS Create and browse threads
+.TP
+.B new
+Create a new thread via kind preset
+.RB ( rfc / dec / task / issue / bug ).
+.TP
+.B thread
+Canonical lifecycle/tag form (power-user / scripts).
+.TP
+.B ls
+List threads (filter by lifecycle, tag, status, or branch).
+.TP
+.B show
+Show thread details. Use
+.B --full
+for the complete detail surface and
+.B --what-next
+for transition diagnostics.
+.TP
+.B diff
+Show diff between body revisions.
+.TP
+.B shortlog
+List threads resolved since a date or tag.
+.TP
+.B status
+Show unresolved items for a thread. Use
+.B --full
+for full bodies of open objections, actions, and questions.
+.SS Structured discussion
+.TP
+.B node show
+Show full body of a node by ID.
+.TP
+.B node add
+Add a typed discussion node
+.RB ( comment / approval / objection / action ).
+.TP
+.B revise
+Revise thread body or node body.
+.TP
+.B retract
+Retract a node (soft-delete).
+.TP
+.B comment ", " objection ", " action
+Shorthands for
+.BR "node add --type <type>" .
+.SS State transitions
+.TP
+.B state
+Generic state transition. See
+.BR "git forum state --help" .
+.TP
+.B accept ", " close ", " propose ", " pend ", " reject ", " withdraw ", " deprecate ", " supersede
+Lifecycle-aware shortcuts.
+.SS Evidence, links, and policy
+.TP
+.B evidence add
+Attach evidence to a thread.
+.TP
+.B link
+Cross-thread link.
+.TP
+.B verify ", " policy ", " branch ", " brief
+Preflight, policy, branch scope, and read-only digest.
+.SS Publishing
+.TP
+.B thread set-visibility
+Toggle a thread between
+.B public
+and
+.BR private .
+.TP
+.B push
+Publish public threads to
+.B refs/forum/published/*
+on a remote.
+.SH OPTIONS
+.TP
+.B --help-llm
+Print the full agent/manual reference and exit.
+.TP
+.B -h ", " --help
+Print this manual page.
+.TP
+.B -V ", " --version
+Print version.
+.SH FILES
+.TP
+.B refs/forum/threads/<id>
+Per-thread snapshot ref. Each write creates a new commit on this ref.
+.TP
+.B refs/forum/published/<id>
+Per-thread published copy used by
+.BR "git forum push" .
+.TP
+.B .git/forum/policy.toml
+Optional policy overrides. See
+.BR "git forum policy show" .
+.SH SEE ALSO
+.BR git (1),
+.BR "git-forum --help-llm"
+for the full manual.
+.SH AUTHORS
+git-forum is developed in the open at the project repository.

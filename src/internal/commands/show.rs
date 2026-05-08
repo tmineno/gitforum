@@ -52,11 +52,23 @@ pub struct ShowOptions {
 /// Sub-views of the canonical thread renderer.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ShowMode {
-    /// Default `git forum show` output.
+    /// `git forum show <id> --full` — the canonical "everything" view:
+    /// metadata, transitions, body, open items, conversations, links,
+    /// evidence, hints, timeline. Kept as `Default` so existing
+    /// library callers (and snapshot tests) get the historical layout
+    /// when they construct `ShowOptions::default()`.
     #[default]
     Full,
-    /// `git forum status` — open items only.
+    /// Default `git forum show <id>` output (ticket `234ql16h`):
+    /// minimal header (id, title, lifecycle/tags, status, created/by,
+    /// optional branch) plus the full thread body. Reviewers can scan
+    /// the authored content without paging through discussion context.
+    BodyFocused,
+    /// `git forum status` — open items only (compact one-line previews).
     Status,
+    /// `git forum status --full` — open items with full bodies and
+    /// per-item resolve/reply hints (ticket `fb1dxj2d`).
+    StatusFull,
     /// `git forum show --what-next` — transitions + guard checks + op-checks.
     WhatNext,
     /// Post-state-change hint emitted to stderr (legacy `render_next_actions`).
@@ -71,7 +83,9 @@ pub enum ShowMode {
 pub fn render_show(state: &ThreadState, options: &ShowOptions) -> String {
     match options.mode {
         ShowMode::Full => render_full(state, options),
+        ShowMode::BodyFocused => render_body_focused(state),
         ShowMode::Status => render_status_block(state),
+        ShowMode::StatusFull => render_status_full_block(state),
         ShowMode::WhatNext => {
             let policy = options.policy.as_ref().expect("WhatNext requires policy");
             render_what_next_block(state, policy)
@@ -401,6 +415,46 @@ fn render_full(state: &ThreadState, options: &ShowOptions) -> String {
     lines.join("\n")
 }
 
+/// Ticket `234ql16h`: the new default `show` view. Trims everything
+/// except a minimal header and the authored body so reviewers can scan
+/// the current proposal without paging through transitions, open
+/// items, conversations, links, evidence, and the timeline. The full
+/// detail surface is still reachable via `--full` (→ `ShowMode::Full`).
+fn render_body_focused(state: &ThreadState) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(format!("## {} {}", state.id, state.title));
+    lines.push(String::new());
+    lines.push(format!(
+        "**lifecycle:** {}",
+        policy::lifecycle_label_for(&state.category, &state.tags)
+    ));
+    if !state.tags.is_empty() {
+        lines.push(format!("**tags:**      {}", state.tags.join(", ")));
+    }
+    lines.push(format!("**status:**    {}", state.status));
+    lines.push(format!(
+        "**created:**   {}",
+        state.created_at.format("%Y-%m-%dT%H:%M:%SZ")
+    ));
+    lines.push(format!("**by:**        {}", state.created_by));
+    if let Some(branch) = &state.branch {
+        lines.push(format!("**branch:**    {}", branch));
+    }
+    if let Some(body) = &state.body {
+        lines.push(String::new());
+        lines.push("---".into());
+        lines.push(String::new());
+        push_body_lines(&mut lines, body);
+    }
+    lines.push(String::new());
+    lines.push(format!(
+        "tip: run `git forum show {} --full` for open items, conversations, links, and timeline",
+        state.id
+    ));
+    lines.push(String::new());
+    lines.join("\n")
+}
+
 fn build_header_lines(state: &ThreadState, options: &ShowOptions) -> Vec<String> {
     let compact = options.compact;
     let mut lines: Vec<String> = Vec::new();
@@ -531,7 +585,7 @@ fn render_open_items_text(section: &OpenItemsSection, header: &str) -> Vec<Strin
         ));
         if section.with_reply {
             out.push(format!(
-                "    reply:   git forum claim {} --reply-to {} --body \"...\"",
+                "    reply:   git forum comment {} --reply-to {} --body \"...\"",
                 section.thread_id, item.id_short
             ));
         }
@@ -594,7 +648,7 @@ fn render_conversations_text(section: &ConversationsSection) -> Vec<String> {
             if chain.last_is_open {
                 out.push(String::new());
                 out.push(format!(
-                    "    reply: git forum claim {} --reply-to {} --body \"...\"",
+                    "    reply: git forum comment {} --reply-to {} --body \"...\"",
                     section.thread_id,
                     chain.nodes.last().unwrap().id_short
                 ));
@@ -756,6 +810,83 @@ fn push_status_group(
             short_oid(&node.record.id),
             truncate_body(&node.body, 60)
         ));
+    }
+}
+
+/// `git forum status --full` — open items rendered with full bodies and
+/// per-item resolve/reply hints (ticket `fb1dxj2d`). Unlike
+/// [`render_status_block`], this view is intended for review loops where
+/// the next action is to read the active blocker, so bodies are not
+/// truncated and each item carries the same `resolve:`/`reply:`
+/// cheat-sheet shown in `show`'s open-items section.
+fn render_status_full_block(state: &ThreadState) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(format!(
+        "{:<12} {} ({})",
+        state.id, state.title, state.status
+    ));
+    lines.push(String::new());
+
+    use super::super::node::NodeStatus;
+    let open_obj = state.open_objections();
+    let open_act = state.open_actions();
+    let open_questions: Vec<&super::super::snapshot::store::NodeWithBody> = state
+        .nodes
+        .iter()
+        .filter(|n| {
+            n.record.legacy_label.as_deref() == Some("question")
+                && n.record.status == NodeStatus::Open
+        })
+        .collect();
+
+    if open_obj.is_empty() && open_act.is_empty() && open_questions.is_empty() {
+        lines.push("  no open items".into());
+        lines.push(String::new());
+        return lines.join("\n");
+    }
+
+    push_status_full_group(&mut lines, "objections", &state.id, &open_obj);
+    push_status_full_group(&mut lines, "actions", &state.id, &open_act);
+    push_status_full_group(&mut lines, "questions", &state.id, &open_questions);
+
+    lines.join("\n")
+}
+
+fn push_status_full_group(
+    lines: &mut Vec<String>,
+    label: &str,
+    thread_id: &str,
+    items: &[&super::super::snapshot::store::NodeWithBody],
+) {
+    if items.is_empty() {
+        return;
+    }
+    lines.push(format!("## {label} ({})", items.len()));
+    lines.push(String::new());
+    for node in items {
+        let id_short = short_oid(&node.record.id);
+        lines.push(format!(
+            "  {} [{}] {} {}",
+            id_short,
+            node_status(node),
+            node.record.created_by,
+            node.record.created_at.format("%Y-%m-%dT%H:%M:%SZ")
+        ));
+        lines.push(String::new());
+        for body_line in node.body.lines() {
+            lines.push(format!("  {body_line}"));
+        }
+        if node.body.is_empty() {
+            lines.push("  (empty body)".to_string());
+        }
+        lines.push(String::new());
+        lines.push(format!(
+            "    resolve: git forum resolve {thread_id} {id_short}"
+        ));
+        lines.push(format!(
+            "    reply:   git forum comment {thread_id} --reply-to {id_short} --body \"...\""
+        ));
+        lines.push(String::new());
     }
 }
 
@@ -1205,6 +1336,11 @@ pub fn render_tree(parent: &ThreadState, children: &[TreeChild]) -> String {
 /// Args for [`run`] — `git forum show` flags.
 pub struct ShowArgs {
     pub thread_id: String,
+    /// Ticket `234ql16h`: opt back into the canonical detail view
+    /// (metadata, transitions, body, open items, conversations, links,
+    /// evidence, hints, timeline). Without `--full`, `show` renders
+    /// the body-focused view.
+    pub full: bool,
     pub what_next: bool,
     pub compact: bool,
     /// Ticket `kym9rgdi`: append the full snapshot-history table.
@@ -1253,10 +1389,18 @@ pub fn run(args: ShowArgs, ctx: &Context) -> Result<(), ForumError> {
         let children = collect_implements_children(&ctx.git, &thread_id)?;
         print!("{}", render_tree(&state, &children));
     } else {
+        // Ticket `234ql16h`: `show` defaults to the body-focused view.
+        // Any flag that refines a section of the full layout
+        // (`--full`, `--compact`, `--with-timeline`, `--no-timeline`)
+        // implicitly opts into the full mode. `--what-next` keeps its
+        // own renderer.
+        let want_full = args.full || args.compact || args.with_timeline || args.no_timeline;
         let mode = if args.what_next {
             ShowMode::WhatNext
-        } else {
+        } else if want_full {
             ShowMode::Full
+        } else {
+            ShowMode::BodyFocused
         };
         // Ticket `kym9rgdi`: timeline is omitted by default in
         // non-compact mode. `--with-timeline` opts back in; `--compact`

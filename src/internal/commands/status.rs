@@ -16,18 +16,26 @@ use super::show::{render_show, ShowMode, ShowOptions};
 /// Args for [`run`] — `git forum status`.
 pub struct StatusArgs {
     pub thread_id: String,
+    /// `--full`: print full bodies of open items with per-item
+    /// resolve/reply hints (ticket `fb1dxj2d`).
+    pub full: bool,
 }
 
 /// Uniform entry point for the `status` subcommand.
 pub fn run(args: StatusArgs, ctx: &Context) -> Result<(), ForumError> {
     let thread_id = resolve_tid(&ctx.git, &args.thread_id)?;
     let state = thread::replay_thread(&ctx.git, &thread_id)?;
+    let mode = if args.full {
+        ShowMode::StatusFull
+    } else {
+        ShowMode::Status
+    };
     print!(
         "{}",
         render_show(
             &state,
             &ShowOptions {
-                mode: ShowMode::Status,
+                mode,
                 ..ShowOptions::default()
             }
         )

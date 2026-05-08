@@ -14,7 +14,7 @@ Initial thread body.
 
   node-0001  ai/reviewer  Benchmarks are missing.
     resolve: git forum resolve RFC-a1b2c3d4 node-0001
-    reply:   git forum claim RFC-a1b2c3d4 --reply-to node-0001 --body "..."
+    reply:   git forum comment RFC-a1b2c3d4 --reply-to node-0001 --body "..."
 
 **latest summary:**
   Direction is sound; migration evidence needed.

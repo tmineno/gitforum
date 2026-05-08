@@ -222,21 +222,36 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// List all threads (optionally filter by kind and/or status)
+    /// List threads (filter by lifecycle, tag, status, or branch)
+    ///
+    /// Canonical 3.0 axes (ticket `ah5gepry`): the rendered LIFECYCLE
+    /// column shows the lifecycle label (`proposal` / `execution` /
+    /// `record`) derived from the snapshot's `category` + `tags`.
+    /// `--kind <preset>` is a legacy preset filter
+    /// (`rfc` / `dec` / `task` / `issue` / `bug`); kept as a
+    /// compatibility alias and documented as such here and in
+    /// `--help-llm`.
     #[command(alias = "list")]
     Ls {
-        /// Thread kind (rfc or issue) — positional shorthand for --kind
+        /// Kind preset (legacy compatibility alias): rfc / dec / task /
+        /// issue / bug. Positional shorthand for `--kind`. Maps to a
+        /// (category, tag) pair (SPEC-3.0 §8.3).
         kind_positional: Option<String>,
+        /// Filter rows by bound branch (RFC `f8a64ad7`).
         #[arg(long, value_name = "BRANCH")]
         branch: Option<String>,
-        /// Filter by thread kind (rfc or issue)
+        /// Filter by kind preset (legacy compatibility alias):
+        /// rfc / dec / task / issue / bug. The 3.0-canonical axes are
+        /// the LIFECYCLE label and `tags`; this flag survives so 1.x /
+        /// 2.x scripts keep working.
         #[arg(long, value_name = "KIND")]
         kind: Option<String>,
-        /// Filter by thread status (open, closed, draft, etc.)
+        /// Filter by thread status (open, working, review, done,
+        /// rejected, withdrawn, deprecated, draft).
         #[arg(long, value_name = "STATUS")]
         status: Option<String>,
         /// Comma-separated columns to render (overrides auto-hide of empty columns).
-        /// Valid: id, lifecycle, status, tags, branch, created, updated, title.
+        /// Valid: id, vis, lifecycle, status, tags, branch, created, updated, title.
         /// Recommended for scripts that depend on column positions.
         #[arg(long, value_name = "COLS")]
         columns: Option<String>,
@@ -246,7 +261,9 @@ enum Commands {
         /// Show threads resolved after this date (ISO) or git revision (tag/SHA)
         #[arg(long, value_name = "DATE_OR_REV")]
         since: String,
-        /// Filter by thread kind (ask, rfc, dec, job)
+        /// Filter by kind preset (legacy compatibility alias):
+        /// rfc / dec / task / issue / bug. Maps to a (category, tag)
+        /// pair (SPEC-3.0 §8.3); ticket `ah5gepry`.
         #[arg(long, value_name = "KIND")]
         kind: Option<String>,
     },
@@ -386,22 +403,34 @@ enum Commands {
         force: bool,
     },
     /// Show thread details
+    ///
+    /// Default (ticket `234ql16h`): body-focused — minimal header plus
+    /// the authored thread body. Use `--full` for the complete view
+    /// (transitions, open items, conversations, links, evidence,
+    /// timeline).
     Show {
         thread_id: String,
+        /// Render the complete thread detail view: metadata, transitions,
+        /// body, open items, conversations, links, evidence, hints, and
+        /// timeline (ticket `234ql16h`).
+        #[arg(long)]
+        full: bool,
         /// Show valid next actions, transitions, and guard check results
         #[arg(long)]
         what_next: bool,
-        /// Truncate node bodies and timeline details to single-line previews
+        /// Truncate node bodies and timeline details to single-line previews.
+        /// Implies `--full` since the body-focused default has no
+        /// section structure to truncate.
         #[arg(long)]
         compact: bool,
         /// Append the full snapshot-history table to the output (ticket
-        /// `kym9rgdi`: timeline is omitted by default; use this flag or
-        /// `git forum log <id>` to read it).
+        /// `kym9rgdi`). Implies `--full`.
         #[arg(long)]
         with_timeline: bool,
         /// Omit the timeline section. Redundant with the new default
         /// (ticket `kym9rgdi`); kept for backward compatibility — still
         /// suppresses the compact one-liner when combined with `--compact`.
+        /// Implies `--full`.
         #[arg(long)]
         no_timeline: bool,
         /// Advisory: list direct incoming `implements` children (one hop, no recursion).
@@ -417,7 +446,13 @@ enum Commands {
         rev: Option<String>,
     },
     /// Show unresolved items for a thread
-    Status { thread_id: String },
+    Status {
+        thread_id: String,
+        /// Print full bodies of open objections, actions, and questions
+        /// with per-item resolve/reply hints (ticket `fb1dxj2d`).
+        #[arg(long)]
+        full: bool,
+    },
     /// Read-only single-thread digest (RFC-5wf2v8hv).
     ///
     /// Reads only the named thread's snapshot. Outgoing-link summary is
@@ -1224,6 +1259,7 @@ fn main() -> Result<(), ForumError> {
 
         Commands::Show {
             thread_id,
+            full,
             what_next,
             compact,
             with_timeline,
@@ -1234,6 +1270,7 @@ fn main() -> Result<(), ForumError> {
             show::run(
                 show::ShowArgs {
                     thread_id,
+                    full,
                     what_next,
                     compact,
                     with_timeline,
@@ -1255,9 +1292,9 @@ fn main() -> Result<(), ForumError> {
             diff::run(diff::DiffArgs { thread_id, rev }, &ctx)?;
         }
 
-        Commands::Status { thread_id } => {
+        Commands::Status { thread_id, full } => {
             let ctx = Context::discover(Box::new(SystemClock))?;
-            commands::status::run(commands::status::StatusArgs { thread_id }, &ctx)?;
+            commands::status::run(commands::status::StatusArgs { thread_id, full }, &ctx)?;
         }
 
         Commands::Node { cmd } => match cmd {

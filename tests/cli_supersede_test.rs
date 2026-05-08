@@ -119,7 +119,8 @@ fn supersede_writes_back_supersedes_link_on_new_side() {
         new_state.links
     );
 
-    let show_out = run_ok(repo.path(), &["show", &new]);
+    // Ticket `234ql16h`: links surface lives behind `--full`.
+    let show_out = run_ok(repo.path(), &["show", &new, "--full"]);
     let body = String::from_utf8_lossy(&show_out.stdout);
     assert!(
         body.contains("supersedes"),

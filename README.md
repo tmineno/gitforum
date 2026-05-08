@@ -112,7 +112,17 @@ Requirements:
 
 ```bash
 cargo install --path .
-git forum --help
+# Install the man page so `git forum --help` works (ticket wm25ip8y).
+# Without this, git transforms `git forum --help` into `git help git-forum`
+# and falls back to `man git-forum`, which would otherwise print
+# `No manual entry for git-forum`.
+mkdir -p ~/.local/share/man/man1
+cp doc/man/git-forum.1 ~/.local/share/man/man1/
+# (Optional, if your shell does not pick it up automatically:)
+#   export MANPATH="$HOME/.local/share/man:$MANPATH"
+git-forum --help          # short top-level CLI synopsis
+git-forum --help-llm      # full agent / manual reference
+git forum --help          # routed via `git help git-forum` -> the man page
 ```
 
 For development:

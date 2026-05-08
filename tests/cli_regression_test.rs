@@ -13,7 +13,10 @@ mod support;
 use support::cli::{extract_created_id, fresh_repo, run, run_ok};
 
 fn show_stdout(repo: &support::repo::TestRepo, thread_id: &str) -> String {
-    let out = run_ok(repo.path(), &["show", thread_id]);
+    // Ticket `234ql16h`: default `show` is body-focused. These regression
+    // tests assert on the canonical detail surface (open items,
+    // conversations, links) so they pin `--full` explicitly.
+    let out = run_ok(repo.path(), &["show", thread_id, "--full"]);
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 

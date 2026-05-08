@@ -102,7 +102,7 @@ impl GitOps {
             .output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(ForumError::Git(stderr));
+            return Err(ForumError::Git(annotate_git_stderr(&stderr)));
         }
         Ok(String::from_utf8_lossy(&output.stdout)
             .trim_end()
@@ -131,7 +131,7 @@ impl GitOps {
         let output = child.wait_with_output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(ForumError::Git(stderr));
+            return Err(ForumError::Git(annotate_git_stderr(&stderr)));
         }
         Ok(String::from_utf8_lossy(&output.stdout)
             .trim_end()
@@ -194,7 +194,7 @@ impl GitOps {
             let output = cmd.output()?;
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                return Err(ForumError::Git(stderr));
+                return Err(ForumError::Git(annotate_git_stderr(&stderr)));
             }
             Ok(String::from_utf8_lossy(&output.stdout)
                 .trim_end()
@@ -393,10 +393,89 @@ impl GitOps {
         let code = output.status.code().unwrap_or(2);
         if code >= 2 {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(ForumError::Git(stderr));
+            return Err(ForumError::Git(annotate_git_stderr(&stderr)));
         }
         Ok(String::from_utf8_lossy(&output.stdout)
             .trim_end()
             .to_string())
+    }
+}
+
+/// Ticket `1nqfgm8u`: when git stderr names a low-level
+/// object/ref/temp-file write failure, prepend a forum-level hint that
+/// (a) tells the operator the forum mutation never reached the thread
+/// ref, (b) names the most likely cause (object database / repo
+/// permissions, read-only file system, missing/full disk), and
+/// (c) says retrying the same command is safe once the underlying
+/// condition is fixed. Anything else passes through unchanged so we
+/// don't bury unrelated git output.
+fn annotate_git_stderr(stderr: &str) -> String {
+    let lower = stderr.to_lowercase();
+    let object_db_hit = lower.contains("unable to create temporary file")
+        || lower.contains("read-only file system")
+        || lower.contains("unable to add")
+        || lower.contains("could not write")
+        || lower.contains("error writing object")
+        || lower.contains("no space left on device")
+        || lower.contains("permission denied")
+        || lower.contains("unable to write");
+    if !object_db_hit {
+        return stderr.to_string();
+    }
+    let mut out = String::new();
+    out.push_str(
+        "forum write failed before updating the thread ref.\n  \
+         Git could not write to the object database or ref store.\n  \
+         Check repository/object database write permissions, free disk space,\n  \
+         and that the repo is not on a read-only file system, then retry the\n  \
+         same command.\n  \
+         The forum mutation has not been recorded; retrying is safe.\n  \
+         underlying git error:\n",
+    );
+    for line in stderr.lines() {
+        out.push_str("    ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    let trimmed = out.trim_end().to_string();
+    trimmed
+}
+
+#[cfg(test)]
+mod git_error_annotation_tests {
+    use super::annotate_git_stderr;
+
+    #[test]
+    fn annotates_unable_to_create_temporary_file() {
+        let stderr = "error: unable to create temporary file: Read-only file system\n\
+                      fatal: Unable to add (null) to database";
+        let out = annotate_git_stderr(stderr);
+        assert!(
+            out.contains("forum write failed before updating the thread ref"),
+            "expected forum-level hint, got:\n{out}"
+        );
+        assert!(
+            out.contains("retrying is safe"),
+            "expected retry guidance, got:\n{out}"
+        );
+        assert!(
+            out.contains("unable to create temporary file"),
+            "expected raw git error to be preserved, got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn annotates_no_space_left() {
+        let stderr = "error: No space left on device";
+        let out = annotate_git_stderr(stderr);
+        assert!(out.contains("forum write failed"));
+        assert!(out.contains("free disk space"));
+    }
+
+    #[test]
+    fn passes_unrelated_errors_through_unchanged() {
+        let stderr = "fatal: not a git repository";
+        let out = annotate_git_stderr(stderr);
+        assert_eq!(out, stderr);
     }
 }
