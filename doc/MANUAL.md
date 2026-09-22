@@ -1150,6 +1150,8 @@ git forum --version
 transport modes (per RFC `fls856j3` §3):
 
 **First-time setup in a new repo.** Run from the repo root.
+(`git forum` is a Git subcommand, so every command also runs
+against another repository with `git -C <path> forum ...`.)
 
 ```text
 git forum init                       # trusted-collaborator (default)
