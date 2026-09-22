@@ -1,7 +1,8 @@
 //! Git hook support for git-forum.
 //!
 //! Provides:
-//! - A commit-msg hook that validates thread ID references in commit messages.
+//! - A commit-msg hook that validates the thread IDs on `Refs:` trailers
+//!   (SPEC-3.0 §2.5 (3), ADR-013).
 //! - A post-checkout hook that initializes git-forum in fresh worktrees.
 //! - A `fix-index` subcommand that detects and re-hashes missing blobs
 //!   (manual recovery; also invoked by `git-forum doctor`).
@@ -16,6 +17,7 @@ use std::path::Path;
 
 use crate::internal::actor;
 use crate::internal::config::RepoPaths;
+use crate::internal::id_alloc;
 
 use super::super::error::{ForumError, ForumResult};
 use super::super::git_ops::GitOps;
@@ -72,9 +74,12 @@ fn run_check_commit_msg(git: &GitOps, file: &Path) -> Result<(), ForumError> {
     let raw = fs::read_to_string(file)?;
     let comment_char = get_comment_char(git);
     let cleaned = strip_comments(&raw, comment_char);
-    let ids = extract_thread_ids(&cleaned);
+    let ids = read_refs_trailer_ids(git, &cleaned)?;
     if ids.is_empty() {
-        eprintln!("git-forum: warning: no thread ID referenced in commit message");
+        // The suggestion is best-effort: a failure to list threads must
+        // not turn an advisory warning into a refused commit.
+        let suggested = suggest_refs(git, &cleaned).unwrap_or_default();
+        eprint!("{}", render_no_refs_warning(&suggested));
         return Ok(());
     }
     let result = check_thread_refs(git, &ids)?;
@@ -83,9 +88,7 @@ fn run_check_commit_msg(git: &GitOps, file: &Path) -> Result<(), ForumError> {
         for id in &result.missing_ids {
             eprintln!("  {id} — not found");
         }
-        eprintln!(
-            "hint: create the thread first, or remove the reference from the commit message."
-        );
+        eprintln!("hint: create the thread first, or remove it from the `Refs:` trailer.");
         std::process::exit(1);
     }
     Ok(())
@@ -238,11 +241,6 @@ pub fn fix_index_blobs(git: &GitOps) -> ForumResult<FixIndexResult> {
     Ok(FixIndexResult { fixed, warnings })
 }
 
-/// Known v2 thread ID prefixes (must match the prefix table in
-/// `id_alloc::KNOWN_THREAD_PREFIXES` and the legacy
-/// `ThreadKind::id_prefix` mapping).
-const KNOWN_PREFIXES: &[&str] = &["ASK", "ISSUE", "RFC", "DEC", "JOB", "TASK"];
-
 /// Result of checking a commit message for thread references.
 pub struct HookCheckResult {
     pub found_ids: Vec<String>,
@@ -278,127 +276,123 @@ pub fn strip_comments(message: &str, comment_char: char) -> String {
     lines.join("\n")
 }
 
-/// Extract git-forum thread IDs from a commit message.
+/// Extract thread IDs from the `Refs:` trailers of a commit message
+/// (SPEC-3.0 §2.5 (3), ADR-013).
 ///
-/// Matches three forms (SPEC-2.0 §6.1):
-/// - 2.0 display form: `@<8 base36 chars>` (e.g. `@e216r3on`)
-/// - Legacy opaque: `KIND-<8 base36>` (e.g. `RFC-a7f3b2x1`)
-/// - Legacy sequential: `KIND-NNNN` (e.g. `ISSUE-0001`)
-///
-/// Returns deduplicated results in match order. The leading `@` is stripped
-/// so callers can resolve uniformly via `refs/forum/threads/<token>` or the
-/// alias namespace.
-pub fn extract_thread_ids(message: &str) -> Vec<String> {
-    let mut ids = Vec::new();
-    let chars: Vec<char> = message.chars().collect();
-    let len = chars.len();
-    let mut i = 0;
-
-    while i < len {
-        // Check word boundary: start of string or previous char is not alphanumeric.
-        // The `@` marker is not alphanumeric, so it preserves the boundary.
-        if i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_') {
-            i += 1;
+/// `parsed_trailers` is the output of `git interpret-trailers --parse`:
+/// one `Key: value` line per trailer, continuation lines already folded.
+/// The key matches case-insensitively. A value may list several IDs
+/// separated by commas or whitespace, each optionally written with a
+/// leading `@`, which is stripped. Tokens without thread-ID shape (`#123`,
+/// URLs) are ignored. Returns deduplicated IDs in trailer order.
+pub fn refs_trailer_ids(parsed_trailers: &str) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    for line in parsed_trailers.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        if !key.trim().eq_ignore_ascii_case("refs") {
             continue;
         }
-
-        // 2.0 display form: `@<8-char base36 token>`.
-        if chars[i] == '@' {
-            let token_start = i + 1;
-            let mut token_len = 0;
-            while token_start + token_len < len
-                && token_len < 8
-                && (chars[token_start + token_len].is_ascii_digit()
-                    || chars[token_start + token_len].is_ascii_lowercase())
-            {
-                token_len += 1;
-            }
-            let end = token_start + token_len;
-            let trailing_word = end < len && (chars[end].is_alphanumeric() || chars[end] == '_');
-            let is_bare_token = token_len == 8
-                && !chars[token_start..end].iter().all(|c| c.is_ascii_digit())
-                && !trailing_word;
-            if is_bare_token {
-                let id: String = chars[token_start..end].iter().collect();
-                if !ids.contains(&id) {
-                    ids.push(id);
-                }
-                i = end;
-                continue;
+        for token in value.split(|c: char| c == ',' || c.is_whitespace()) {
+            let token = token.strip_prefix('@').unwrap_or(token);
+            if id_alloc::is_valid_thread_id(token) && !ids.iter().any(|id| id == token) {
+                ids.push(token.to_string());
             }
         }
-
-        for prefix in KNOWN_PREFIXES {
-            let prefix_chars: Vec<char> = prefix.chars().collect();
-            let prefix_len = prefix_chars.len();
-
-            // Need at least prefix + '-' + 4 chars (minimum token length)
-            if i + prefix_len + 1 + 4 > len {
-                continue;
-            }
-
-            let mut matched = true;
-            for (j, &pc) in prefix_chars.iter().enumerate() {
-                if chars[i + j] != pc {
-                    matched = false;
-                    break;
-                }
-            }
-            if !matched {
-                continue;
-            }
-
-            // Check for '-' after prefix
-            if chars[i + prefix_len] != '-' {
-                continue;
-            }
-
-            // Collect the token: digits and lowercase letters after the dash
-            let token_start = i + prefix_len + 1;
-            let mut token_len = 0;
-            while token_start + token_len < len
-                && (chars[token_start + token_len].is_ascii_digit()
-                    || chars[token_start + token_len].is_ascii_lowercase())
-            {
-                token_len += 1;
-            }
-
-            // Check trailing word boundary
-            let end = token_start + token_len;
-            if end < len && (chars[end].is_alphanumeric() || chars[end] == '_') {
-                continue;
-            }
-
-            // Match legacy sequential: exactly 4 digits
-            let is_sequential =
-                token_len == 4 && chars[token_start..end].iter().all(|c| c.is_ascii_digit());
-            // Match opaque: exactly 8 base36 chars (not all digits)
-            let is_opaque = token_len == 8
-                && chars[token_start..end]
-                    .iter()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-                && !chars[token_start..end].iter().all(|c| c.is_ascii_digit());
-
-            if is_sequential || is_opaque {
-                let id: String = chars[i..end].iter().collect();
-                if !ids.contains(&id) {
-                    ids.push(id);
-                }
-                break;
-            }
-        }
-
-        i += 1;
     }
-
     ids
+}
+
+/// Read the `Refs:` trailer IDs of a commit message through Git's own
+/// trailer parser, so "trailer" means exactly what it means to Git.
+fn read_refs_trailer_ids(git: &GitOps, message: &str) -> ForumResult<Vec<String>> {
+    let parsed = git.run_with_stdin(
+        &["interpret-trailers", "--parse", "--no-divider"],
+        message.as_bytes(),
+    )?;
+    Ok(refs_trailer_ids(&parsed))
+}
+
+/// Thread-ID-shaped tokens anywhere in a commit message, deduplicated in
+/// order. Only feeds the suggestion in the no-trailer warning; these are
+/// never treated as references (SPEC-3.0 §2.5 (3)).
+pub fn id_shaped_tokens(message: &str) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    let mut push = |s: &str| {
+        if id_alloc::is_valid_thread_id(s) && !ids.iter().any(|id| id == s) {
+            ids.push(s.to_string());
+        }
+    };
+    for word in message.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-')) {
+        if id_alloc::is_valid_thread_id(word) {
+            push(word);
+        } else {
+            word.split('-').for_each(&mut push);
+        }
+    }
+    ids
+}
+
+/// Existing threads named by ID-shaped tokens elsewhere in the message —
+/// the values the no-trailer warning offers for the `Refs:` line. Lists the
+/// thread refs once instead of resolving every English 8-letter word.
+fn suggest_refs(git: &GitOps, message: &str) -> ForumResult<Vec<String>> {
+    let tokens = id_shaped_tokens(message);
+    if tokens.is_empty() {
+        return Ok(Vec::new());
+    }
+    let known = crate::internal::thread::list_thread_ids(git)?;
+    let mut found = Vec::new();
+    for token in tokens {
+        let exists = if token.contains('-') {
+            git.resolve_ref(&super::migrate::alias_ref(&token))?
+                .is_some()
+        } else {
+            known.contains(&token)
+        };
+        if exists {
+            found.push(token);
+        }
+    }
+    Ok(found)
+}
+
+/// The warning for a commit message whose trailers name no thread
+/// (ADR-013). The first line is unchanged from earlier releases; the rest
+/// shows the form that is read and how to attach the commit afterwards.
+/// `suggested` fills in the IDs when the message names threads elsewhere.
+pub fn render_no_refs_warning(suggested: &[String]) -> String {
+    let mut out = String::from("git-forum: warning: no thread ID referenced in commit message\n");
+    out.push_str("  expected a trailer as the last paragraph of the message:\n");
+    if suggested.is_empty() {
+        out.push_str("    Refs: <thread-id>\n");
+        out.push_str("  (subject tags such as [<thread-id>] and IDs in body text are not read)\n");
+    } else {
+        let listed = suggested.join(", ");
+        out.push_str(&format!("    Refs: {listed}\n"));
+        out.push_str(&format!(
+            "  ({listed} appears in the subject or body, which are not read)\n"
+        ));
+    }
+    let id = match suggested {
+        [only] => only.as_str(),
+        _ => "<thread-id>",
+    };
+    out.push_str("  to attach this commit as evidence after committing:\n");
+    out.push_str(&format!(
+        "    git forum evidence add {id} --kind commit --ref HEAD\n"
+    ));
+    out
 }
 
 /// Check which thread IDs exist as git-forum refs.
 ///
-/// Resolution order (per SPEC-2.0 §6.1.1 / §10.1):
+/// Resolution order (per SPEC-3.0 §2.5 (3), §4.1):
 /// 1. Canonical thread ref under `refs/forum/threads/<id>`.
-/// 2. Post-migration alias under `refs/forum/aliases/<id>` — covers legacy
+/// 2. Published mirror under `refs/forum/published/<id>` — the only ref a
+///    public-only clone has for a thread.
+/// 3. Post-migration alias under `refs/forum/aliases/<id>` — covers legacy
 ///    kind-prefixed IDs (`RFC-0001`, `JOB-e216r3on`, etc.) that were
 ///    rewritten to bare tokens by `git forum migrate`.
 pub fn check_thread_refs(git: &GitOps, ids: &[String]) -> ForumResult<HookCheckResult> {
@@ -406,11 +400,10 @@ pub fn check_thread_refs(git: &GitOps, ids: &[String]) -> ForumResult<HookCheckR
     let mut missing_ids = Vec::new();
 
     for id in ids {
-        if git.resolve_ref(&refs::thread_ref(id))?.is_some() {
-            found_ids.push(id.clone());
-            continue;
-        }
-        if git.resolve_ref(&super::migrate::alias_ref(id))?.is_some() {
+        if git.resolve_ref(&refs::thread_ref(id))?.is_some()
+            || git.resolve_ref(&refs::published_ref(id))?.is_some()
+            || git.resolve_ref(&super::migrate::alias_ref(id))?.is_some()
+        {
             found_ids.push(id.clone());
             continue;
         }
@@ -558,158 +551,102 @@ pub fn uninstall_all_hooks(git: &GitOps) -> ForumResult<()> {
 mod tests {
     use super::*;
 
+    // ── refs_trailer_ids (input: `git interpret-trailers --parse` output) ──
+
     #[test]
-    fn extract_no_ids() {
-        assert!(extract_thread_ids("fix typo in README").is_empty());
+    fn trailer_bare_id() {
+        assert_eq!(refs_trailer_ids("Refs: a7f3b2x1"), vec!["a7f3b2x1"]);
     }
 
     #[test]
-    fn extract_single_issue() {
-        assert_eq!(extract_thread_ids("fix ISSUE-0001 bug"), vec!["ISSUE-0001"]);
+    fn trailer_at_marker_is_stripped() {
+        assert_eq!(refs_trailer_ids("Refs: @a7f3b2x1"), vec!["a7f3b2x1"]);
     }
 
     #[test]
-    fn extract_single_rfc() {
+    fn trailer_list_and_repeated_keys() {
         assert_eq!(
-            extract_thread_ids("implement RFC-0042 design"),
-            vec!["RFC-0042"]
+            refs_trailer_ids("Refs: a7f3b2x1, @e216r3on\nRefs: q59k5a38 a7f3b2x1"),
+            vec!["a7f3b2x1", "e216r3on", "q59k5a38"]
         );
     }
 
     #[test]
-    fn extract_multiple_ids() {
+    fn trailer_key_is_case_insensitive() {
+        assert_eq!(refs_trailer_ids("refs: a7f3b2x1"), vec!["a7f3b2x1"]);
+        assert_eq!(refs_trailer_ids("REFS : a7f3b2x1"), vec!["a7f3b2x1"]);
+    }
+
+    #[test]
+    fn trailer_other_keys_are_ignored() {
+        assert!(refs_trailer_ids("Signed-off-by: a7f3b2x1 <a@example.com>").is_empty());
+        assert!(refs_trailer_ids("Closes: a7f3b2x1").is_empty());
+    }
+
+    #[test]
+    fn trailer_non_id_tokens_are_ignored() {
+        // Another tracker's convention on the same key.
+        assert!(refs_trailer_ids("Refs: #123").is_empty());
+        assert!(refs_trailer_ids("Refs: https://example.com/x").is_empty());
+        // Wrong length, all digits, uppercase.
+        assert!(refs_trailer_ids("Refs: a7f3 a7f3b2x1z 12345678 A7F3B2X1").is_empty());
+        assert_eq!(refs_trailer_ids("Refs: #123, a7f3b2x1"), vec!["a7f3b2x1"]);
+    }
+
+    #[test]
+    fn trailer_legacy_ids() {
         assert_eq!(
-            extract_thread_ids("address RFC-0001, closes ISSUE-0042"),
-            vec!["RFC-0001", "ISSUE-0042"]
+            refs_trailer_ids("Refs: RFC-0001, ASK-a7f3b2x1"),
+            vec!["RFC-0001", "ASK-a7f3b2x1"]
+        );
+    }
+
+    // ── id_shaped_tokens (warning suggestion only) ──
+
+    #[test]
+    fn shaped_tokens_subject_tag_and_marker() {
+        assert_eq!(
+            id_shaped_tokens("docs: foo [a7f3b2x1] see @e216r3on"),
+            vec!["a7f3b2x1", "e216r3on"]
         );
     }
 
     #[test]
-    fn extract_dedup() {
+    fn shaped_tokens_path_and_hyphen_suffix() {
         assert_eq!(
-            extract_thread_ids("ISSUE-0001 and ISSUE-0001 again"),
-            vec!["ISSUE-0001"]
+            id_shaped_tokens("branch issue/a7f3b2x1, and e216r3on-fix"),
+            vec!["a7f3b2x1", "e216r3on"]
         );
     }
 
     #[test]
-    fn extract_at_start_and_end() {
-        assert_eq!(extract_thread_ids("ISSUE-0001"), vec!["ISSUE-0001"]);
-        assert_eq!(extract_thread_ids("fix for RFC-0001"), vec!["RFC-0001"]);
+    fn shaped_tokens_legacy_and_rejects() {
+        assert_eq!(id_shaped_tokens("fix RFC-0001"), vec!["RFC-0001"]);
+        assert!(id_shaped_tokens("12345678 a7f3 a7f3b2x1z").is_empty());
+    }
+
+    // ── render_no_refs_warning ──
+
+    #[test]
+    fn warning_keeps_first_line_and_shows_placeholder() {
+        let w = render_no_refs_warning(&[]);
+        assert!(w.starts_with("git-forum: warning: no thread ID referenced in commit message\n"));
+        assert!(w.contains("    Refs: <thread-id>\n"));
+        assert!(w.contains("git forum evidence add <thread-id> --kind commit --ref HEAD"));
     }
 
     #[test]
-    fn extract_ignores_unknown_prefix() {
-        assert!(extract_thread_ids("fix JIRA-1234 ticket").is_empty());
-        assert!(extract_thread_ids("see PROJ-0001").is_empty());
+    fn warning_fills_in_single_suggestion() {
+        let w = render_no_refs_warning(&["a7f3b2x1".to_string()]);
+        assert!(w.contains("    Refs: a7f3b2x1\n"));
+        assert!(w.contains("git forum evidence add a7f3b2x1 --kind commit --ref HEAD"));
     }
 
     #[test]
-    fn extract_ignores_wrong_digit_count() {
-        assert!(extract_thread_ids("ISSUE-001 too few").is_empty());
-        assert!(extract_thread_ids("ISSUE-00001 too many").is_empty());
-    }
-
-    #[test]
-    fn extract_respects_word_boundary() {
-        assert!(extract_thread_ids("XISSUE-0001 not a match").is_empty());
-        assert!(extract_thread_ids("ISSUE-0001x not a match").is_empty());
-    }
-
-    #[test]
-    fn extract_id_after_punctuation() {
-        assert_eq!(extract_thread_ids("(ISSUE-0001)"), vec!["ISSUE-0001"]);
-        assert_eq!(extract_thread_ids("[RFC-0001]"), vec!["RFC-0001"]);
-    }
-
-    #[test]
-    fn extract_id_on_newline() {
-        assert_eq!(
-            extract_thread_ids("subject line\n\nISSUE-0001"),
-            vec!["ISSUE-0001"]
-        );
-    }
-
-    // Tests for opaque content-addressed IDs
-    #[test]
-    fn extract_opaque_id() {
-        assert_eq!(
-            extract_thread_ids("implement RFC-a7f3b2x1 design"),
-            vec!["RFC-a7f3b2x1"]
-        );
-    }
-
-    #[test]
-    fn extract_opaque_ask_id() {
-        assert_eq!(
-            extract_thread_ids("fix ASK-0a1b2c3d bug"),
-            vec!["ASK-0a1b2c3d"]
-        );
-    }
-
-    #[test]
-    fn extract_mixed_legacy_and_opaque() {
-        assert_eq!(
-            extract_thread_ids("RFC-0001 and RFC-a7f3b2x1"),
-            vec!["RFC-0001", "RFC-a7f3b2x1"]
-        );
-    }
-
-    #[test]
-    fn extract_opaque_respects_word_boundary() {
-        assert!(extract_thread_ids("XRFC-a7f3b2x1").is_empty());
-        assert!(extract_thread_ids("RFC-a7f3b2x1z").is_empty());
-    }
-
-    #[test]
-    fn extract_opaque_rejects_all_digits() {
-        // 8 digits is neither sequential (4 digits) nor opaque (must have letters)
-        assert!(extract_thread_ids("RFC-12345678").is_empty());
-    }
-
-    #[test]
-    fn extract_opaque_after_punctuation() {
-        assert_eq!(extract_thread_ids("(JOB-x8n2q1d4)"), vec!["JOB-x8n2q1d4"]);
-    }
-
-    // SPEC-2.0 §6.1 `@<token>` display form.
-    #[test]
-    fn extract_at_marker_form() {
-        assert_eq!(
-            extract_thread_ids("see @e216r3on for details"),
-            vec!["e216r3on"]
-        );
-    }
-
-    #[test]
-    fn extract_at_marker_in_parens() {
-        assert_eq!(extract_thread_ids("(@a7f3b2x1)"), vec!["a7f3b2x1"]);
-    }
-
-    #[test]
-    fn extract_at_marker_dedup_and_mixed_with_legacy() {
-        // @e216r3on and the legacy alias JOB-e216r3on both surface; the bare
-        // form is deduplicated separately because the alias path resolves
-        // it via `migrate::alias_ref`.
-        let out = extract_thread_ids("Closes JOB-e216r3on (aka @e216r3on)");
-        assert_eq!(out, vec!["JOB-e216r3on", "e216r3on"]);
-    }
-
-    #[test]
-    fn extract_at_marker_word_boundary() {
-        // No bare bare-letters before/after the token.
-        assert!(extract_thread_ids("foo@e216r3on").is_empty());
-        assert!(extract_thread_ids("@e216r3on0extra").is_empty());
-    }
-
-    #[test]
-    fn extract_at_marker_rejects_short_or_all_digits() {
-        // Too short.
-        assert!(extract_thread_ids("@a7f3").is_empty());
-        // All-digit token is reserved by the bare-token grammar (id_alloc).
-        assert!(extract_thread_ids("@12345678").is_empty());
-        // Uppercase rejected.
-        assert!(extract_thread_ids("@E216R3ON").is_empty());
+    fn warning_lists_several_suggestions_without_picking_one() {
+        let w = render_no_refs_warning(&["a7f3b2x1".to_string(), "e216r3on".to_string()]);
+        assert!(w.contains("    Refs: a7f3b2x1, e216r3on\n"));
+        assert!(w.contains("git forum evidence add <thread-id> --kind commit --ref HEAD"));
     }
 
     #[test]

@@ -193,20 +193,28 @@ thread ref. There is no separate event log; revision history is
 is a rebuildable cache only (SPEC-3.0 §9.2).
 
 **Refs trailer.** Connect a code commit to one or more threads with
-a `Refs:` trailer in the commit message:
+a `Refs:` trailer — a `Key: value` line in the last paragraph of
+the commit message:
 
 ```text
 Add JWT validator
 
 Implements the auth layer.
 
-Refs: @1hg98odf
+Refs: 1hg98odf
 ```
 
+The ID may be written with or without `@` (`Refs: @1hg98odf`), and
+one trailer may list several (`Refs: 1hg98odf, 9p3v2k7t`). Only the
+trailer is read: an ID in the subject line (`[1hg98odf]`) or in the
+body text is not a reference.
+
 `git forum hook install` adds the `commit-msg` validator hook that
-checks `Refs:` trailers point at known threads. The hook also
-attaches each `Refs:` thread as `kind=commit` evidence on the next
-`evidence add`. There is no `Threads:` or `Touches:` legacy form.
+checks `Refs:` trailers point at known threads (ADR-013). The hook
+does **not** attach the commit as evidence; run
+`git forum evidence add <ID> --kind commit --ref HEAD` after
+committing. Automatic attachment is proposal `o6e7d49a` and is not
+implemented. There is no `Threads:` or `Touches:` legacy form.
 
 ### Trust model
 
@@ -653,17 +661,22 @@ becomes the resolved 40-char SHA.
 
 ### Linking implementation commits
 
-The `commit-msg` hook recognizes `Refs: @<id>` trailers and
-auto-attaches the commit as evidence on the next `evidence add`.
-For the everyday flow you can skip the manual `evidence add`:
+Name the thread on a `Refs:` trailer, then attach the commit as
+evidence. The `commit-msg` hook validates the trailer but attaches
+nothing (automatic attachment is proposal `o6e7d49a`, not
+implemented):
 
 ```text
 $ git commit -m "Add JWT validator
 
-Refs: @1hg98odf"
+Refs: 1hg98odf"
+$ git forum evidence add 1hg98odf --kind commit --ref HEAD
 ```
 
-The hook validates that the referenced thread exists; the
+A commit without a trailer is still accepted. The hook prints a
+warning with the expected `Refs:` line, and fills in the ID when the
+message names an existing thread elsewhere (for example as a subject
+tag). A trailer that names an unknown thread refuses the commit. The
 post-checkout hook handles worktree initialization.
 
 ### Link two threads
@@ -845,10 +858,11 @@ git forum accept @ABCDEF01 --approve human/alice --approve human/bob
 git forum new task "Wire up JWT validator" \
   --from-thread @ABCDEF01 --link-to @ABCDEF01 --rel implements
 
-# 6. Commit code with a Refs trailer
+# 6. Commit code with a Refs trailer, then attach it as evidence
 git commit -m "Implement JWT validator
 
-Refs: @<task_id>"
+Refs: <task_id>"
+git forum evidence add <task_id> --kind commit --ref HEAD
 
 # 7. Close the task
 git forum close @<task_id>
@@ -1182,8 +1196,10 @@ git forum hook uninstall                 # remove both
 ```
 
 The `commit-msg` hook validates `Refs:` trailers point at known
-threads and rejects commits that reference unknown IDs. The
-`post-checkout` hook initializes `git forum` in a new worktree.
+threads and rejects commits that reference unknown IDs. IDs outside
+the trailer are not read, and no evidence is attached (see
+"Refs trailer"). The `post-checkout` hook initializes `git forum` in
+a new worktree.
 
 The advanced sub-commands (`hook check-commit-msg`,
 `hook worktree-init`) are wired by the hook scripts themselves;

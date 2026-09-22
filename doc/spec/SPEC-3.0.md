@@ -219,12 +219,26 @@ Bounded Policy).
    `<THREAD>` argument requires it explicitly.
 3. **Commit-message validation.** An optional `commit-msg` Git hook installed
    by git-forum validates thread IDs that appear on a `Refs:` trailer line in
-   a commit message. The trailer takes the form `Refs: <id>[, <id>...]`,
-   where each `<id>` is a bare 3.0 thread ID (no `@` prefix; §6). The hook
-   MUST NOT scan the commit message body for bare IDs — base36 thread tokens
-   collide with abbreviated commit hashes and free-form prose. The hook MUST
-   NOT block commits that have no `Refs:` trailer. It MUST fail commits
-   whose `Refs:` trailer names an undefined thread ID.
+   a commit message. "Trailer" has Git's meaning: a line of the message's
+   final paragraph as `git interpret-trailers --parse` reports it, with the
+   key matched case-insensitively. The trailer takes the form
+   `Refs: <id>[, <id>...]`, where each `<id>` is a bare 3.0 thread ID (§6).
+   The hook MUST also accept an `<id>` written with a leading `@` and treat
+   it as the same ID (ADR-013); this is a commit-message allowance only and
+   does not make `@<id>` a display marker or a valid CLI input. Trailer
+   tokens that do not have thread-ID shape (an 8-character lowercase base36
+   token that is not all digits, or a legacy ID covered by a migration alias)
+   are ignored, so `Refs:` values from other trackers such as `#123` pass
+   through. The hook MUST NOT treat IDs outside the trailer (subject, body
+   prose) as references — base36 thread tokens collide with abbreviated
+   commit hashes and free-form prose, and an `@name` mention is not a
+   reference. The hook MUST NOT block commits that have no `Refs:` trailer;
+   it SHOULD warn, and the warning SHOULD show the expected trailer line. The
+   warning MAY name a token found elsewhere in the message that is an
+   existing thread ID, as the suggested trailer value. The hook MUST fail
+   commits whose `Refs:` trailer names a thread ID that is not defined in
+   the clone, where defined means an authoritative or published thread ref
+   (§4.1) or a migration alias.
 
 These mechanisms are required surface (per CORE-VALUE: Code-Adjacent
 Deliberation). Their CLI entry points are listed in §7.
