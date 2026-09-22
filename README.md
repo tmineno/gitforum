@@ -46,22 +46,22 @@ git forum init
 git forum new rfc "Adopt snapshot-backed review" \
   --body "Goal, constraints, acceptance criteria."
 
-git forum propose @a7f3b2x1
-git forum comment @a7f3b2x1 "Need compatibility evidence before acceptance."
-git forum objection @a7f3b2x1 "Migration dry-run output is not specified."
-git forum action @a7f3b2x1 "Document migration dry-run output."
-git forum evidence add @a7f3b2x1 --kind doc --ref doc/spec/SPEC-3.0.md
-git forum resolve @a7f3b2x1 n4k9v2mx
-git forum accept @a7f3b2x1 --approve human/alice
+git forum propose a7f3b2x1
+git forum comment a7f3b2x1 "Need compatibility evidence before acceptance."
+git forum objection a7f3b2x1 "Migration dry-run output is not specified."
+git forum action a7f3b2x1 "Document migration dry-run output."
+git forum evidence add a7f3b2x1 --kind doc --ref doc/spec/SPEC-3.0.md
+git forum resolve a7f3b2x1 n4k9v2mx
+git forum accept a7f3b2x1 --approve human/alice
 
 git forum new task "Implement snapshot migration dry-run" \
-  --link-to @a7f3b2x1 --rel implements
-git forum branch bind @m2k9p4n8 feat/snapshot-migration
-git forum evidence add @m2k9p4n8 --kind test --ref tests/migrate_v3_smoke_test.rs
-git forum close @m2k9p4n8 --comment "Implemented and tested."
+  --link-to a7f3b2x1 --rel implements
+git forum branch bind m2k9p4n8 feat/snapshot-migration
+git forum evidence add m2k9p4n8 --kind test --ref tests/migrate_v3_smoke_test.rs
+git forum close m2k9p4n8 --comment "Implemented and tested."
 ```
 
-Every command position accepts the bare ID too, for example `a7f3b2x1`.
+Every command position also accepts the ID with a leading `@`, for example `@a7f3b2x1`.
 
 ## Data Model
 

@@ -8,8 +8,8 @@
 > `action` — chosen by protocol effect (SPEC-3.0 §2.2).
 > Thread states are unified across categories: `draft`, `open`,
 > `working`, `review`, `done`, `rejected`, `withdrawn`, `deprecated`
-> (SPEC-3.0 §3.1). Thread IDs display as `@XXXXXXXX` and store as the
-> bare 8-char base36 token (SPEC-3.0 §6).
+> (SPEC-3.0 §3.1). Thread IDs are bare 8-char base36 tokens, in storage
+> and in output; commands also accept them with a leading `@` (SPEC-3.0 §6).
 >
 > Storage is a **snapshot tree** at `refs/forum/threads/<id>`:
 > `thread.toml`, optional `body.md`, `nodes/<id>.{toml,md}`,
@@ -172,8 +172,9 @@ the rhetorical 1.x shorthands (`claim`, `question`, `summary`,
 `risk`, `review`) are no longer node kinds in 3.0; they survive in
 migrated threads as a `legacy_label` on `comment` nodes.
 
-**IDs.** Thread IDs are 8-char base36 (e.g. `1hg98odf`). Display
-form is `@<id>`. Node IDs are 16-char base36 (longer to avoid
+**IDs.** Thread IDs are 8-char base36 (e.g. `1hg98odf`). Output
+always shows the bare ID; input also accepts `@1hg98odf` (ADR-014).
+Node IDs are 16-char base36 (longer to avoid
 intra-thread collisions). Both are content-derived (actor + body
 + timestamp; SPEC-3.0 §6).
 
@@ -333,7 +334,7 @@ guards (e.g. `HasCommitEvidence`) see it immediately.
 ### Create from another thread
 
 ```text
-git forum new rfc --from-thread @abcdef01 --body "v2 of the proposal"
+git forum new rfc --from-thread abcdef01 --body "v2 of the proposal"
 ```
 
 Records a `supersedes` row in `thread.toml` and writes the symmetric
@@ -365,10 +366,10 @@ follows SPEC-3.0 §8.3.
 ### Add a node
 
 ```text
-git forum comment @1hg98odf "Worth checking the libv2 changelog"
-git forum objection @1hg98odf "This breaks downstream signing"
-git forum action @1hg98odf "Audit existing key-rotation paths"
-git forum node add @1hg98odf --type comment "..."
+git forum comment 1hg98odf "Worth checking the libv2 changelog"
+git forum objection 1hg98odf "This breaks downstream signing"
+git forum action 1hg98odf "Audit existing key-rotation paths"
+git forum node add 1hg98odf --type comment "..."
 ```
 
 All three shorthand commands (`comment`, `objection`, `action`) are
@@ -391,7 +392,7 @@ in the same commit.
 Mistaken kind? Re-classify in place:
 
 ```text
-git forum retype @1hg98odf <NODE> --type action
+git forum retype 1hg98odf <NODE> --type action
 ```
 
 The retype rewrites only `nodes/<id>.toml` `type` field (not the
@@ -412,9 +413,9 @@ in `git log` over the ref.
 ### Retract / resolve / reopen a node
 
 ```text
-git forum retract @1hg98odf <NODE>...      # soft-delete (still readable)
-git forum resolve @1hg98odf <NODE>...      # mark addressed
-git forum reopen  @1hg98odf <NODE>...      # back to open
+git forum retract 1hg98odf <NODE>...      # soft-delete (still readable)
+git forum resolve 1hg98odf <NODE>...      # mark addressed
+git forum reopen  1hg98odf <NODE>...      # back to open
 ```
 
 These set `nodes/<id>.toml.status` to `retracted` / `resolved` /
@@ -428,7 +429,7 @@ sets `thread.toml.status` back to `open` from a closed state.
 ### Reply to a node
 
 ```text
-git forum comment @1hg98odf "Agreed, see SPEC-3.0 §2.5" --reply-to <NODE>
+git forum comment 1hg98odf "Agreed, see SPEC-3.0 §2.5" --reply-to <NODE>
 ```
 
 The new node's `reply_to` field points at the parent. The TUI
@@ -495,7 +496,7 @@ Each shorthand accepts the same flags as `state`: `--as`,
 
 `supersede <OLD> --by <NEW>` is the supersede recipe in one
 verb: it adds a `superseded-by` link from `<old>` to `<new>`,
-attaches a comment (default body `Superseded by @<new>`,
+attaches a comment (default body `Superseded by <new>`,
 overridable with `--body`), transitions `<old>` to `deprecated`,
 and writes the symmetric `supersedes` link onto `<new>` so
 `git forum show <new>` surfaces the relationship without a
@@ -506,9 +507,9 @@ reverse-link index. Lands `<old>` in `deprecated` rather than
 ### Generic state command
 
 ```text
-git forum state @1hg98odf done              # transition
-git forum state @1hg98odf review --comment "ready for review"
-git forum state @1hg98odf done --approve human/alice --approve human/bob
+git forum state 1hg98odf done              # transition
+git forum state 1hg98odf review --comment "ready for review"
+git forum state 1hg98odf done --approve human/alice --approve human/bob
 git forum state bulk --to done @abc @def @ghi
 ```
 
@@ -568,13 +569,13 @@ default can shift positions across repos.
 ### Show thread details
 
 ```text
-git forum show @1hg98odf
-git forum show @1hg98odf --what-next
-git forum show @1hg98odf --compact
-git forum show @1hg98odf --with-timeline
-git forum show @1hg98odf --tree
-git forum show @1hg98odf --full
-git forum show @1hg98odf --json
+git forum show 1hg98odf
+git forum show 1hg98odf --what-next
+git forum show 1hg98odf --compact
+git forum show 1hg98odf --with-timeline
+git forum show 1hg98odf --tree
+git forum show 1hg98odf --full
+git forum show 1hg98odf --json
 ```
 
 The default rendering (ticket `234ql16h`) prints a short header (id,
@@ -617,8 +618,8 @@ discover its execution threads.
 ### Brief
 
 ```text
-git forum brief @1hg98odf
-git forum brief @1hg98odf --json
+git forum brief 1hg98odf
+git forum brief 1hg98odf --json
 ```
 
 A read-only single-thread digest aimed at LLMs and review tools:
@@ -628,9 +629,9 @@ counts. JSON output is stable across versions.
 ### Diff body revisions
 
 ```text
-git forum diff @1hg98odf                 # latest body change
-git forum diff @1hg98odf --rev 3         # rev 2 vs 3
-git forum diff @1hg98odf --rev 1..3      # rev 1 vs 3
+git forum diff 1hg98odf                 # latest body change
+git forum diff 1hg98odf --rev 3         # rev 2 vs 3
+git forum diff 1hg98odf --rev 1..3      # rev 1 vs 3
 ```
 
 Diff is a `git diff` over `body.md` between two commits on the
@@ -653,7 +654,7 @@ no event chain is walked.
 ### Status (open items)
 
 ```text
-git forum status @1hg98odf
+git forum status 1hg98odf
 ```
 
 Compact view: open objections, open actions, missing evidence,
@@ -665,12 +666,12 @@ the unresolved subset.
 ### Add evidence to a thread
 
 ```text
-git forum evidence add @1hg98odf --kind commit --ref HEAD
-git forum evidence add @1hg98odf --kind commit --ref a1b2c3d --ref e4f5
-git forum evidence add @1hg98odf --kind file --ref src/auth/jwt.rs
-git forum evidence add @1hg98odf --kind test --ref tests/jwt_test.rs
-git forum evidence add @1hg98odf --kind benchmark --ref bench/result.csv
-git forum evidence add @1hg98odf --kind external --ref https://example.com/postmortem
+git forum evidence add 1hg98odf --kind commit --ref HEAD
+git forum evidence add 1hg98odf --kind commit --ref a1b2c3d --ref e4f5
+git forum evidence add 1hg98odf --kind file --ref src/auth/jwt.rs
+git forum evidence add 1hg98odf --kind test --ref tests/jwt_test.rs
+git forum evidence add 1hg98odf --kind benchmark --ref bench/result.csv
+git forum evidence add 1hg98odf --kind external --ref https://example.com/postmortem
 ```
 
 Each `--ref` writes one row to `evidence.toml`. The supported
@@ -702,9 +703,9 @@ post-checkout hook handles worktree initialization.
 ### Link two threads
 
 ```text
-git forum link @1hg98odf @abcdef01 --rel implements
-git forum link @1hg98odf @abcdef01 --rel blocks
-git forum link @1hg98odf @abcdef01 --rel related
+git forum link 1hg98odf abcdef01 --rel implements
+git forum link 1hg98odf abcdef01 --rel blocks
+git forum link 1hg98odf abcdef01 --rel related
 ```
 
 Writes one row to `links.toml` on the FROM thread. The link is
@@ -716,9 +717,9 @@ written automatically by `new --from-thread`).
 ### Bind a thread to a Git branch
 
 ```text
-git forum branch bind @1hg98odf feature/jwt-rewrite
-git forum branch bind @1hg98odf                        # binds to current branch
-git forum branch clear @1hg98odf
+git forum branch bind 1hg98odf feature/jwt-rewrite
+git forum branch bind 1hg98odf                        # binds to current branch
+git forum branch clear 1hg98odf
 ```
 
 Sets `thread.toml.branch` to the named branch (or the current
@@ -731,10 +732,10 @@ in the branch column of `show` output.
 ### Revise thread body
 
 ```text
-git forum revise body @1hg98odf --body "..."
-git forum revise body @1hg98odf --body-file ./body.md
-git forum revise body @1hg98odf --edit
-git forum revise @1hg98odf --body "..."                # default form
+git forum revise body 1hg98odf --body "..."
+git forum revise body 1hg98odf --body-file ./body.md
+git forum revise body 1hg98odf --edit
+git forum revise 1hg98odf --body "..."                # default form
 ```
 
 Overwrites `body.md` on the thread ref. Previous bodies are
@@ -826,7 +827,7 @@ strict = true` to promote warnings to errors globally.
 ### Verify (preflight)
 
 ```text
-git forum verify @1hg98odf
+git forum verify 1hg98odf
 ```
 
 Evaluates the guards for the thread's next forward transition
@@ -864,19 +865,19 @@ form is useful in CI.
 git forum new rfc "Replace JWT validator" --edit
 
 # 2. Discuss
-git forum objection @ABCDEF01 "Risks libv1 callers"
-git forum comment   @ABCDEF01 "Mitigation: feature-flag the rollout"
+git forum objection ABCDEF01 "Risks libv1 callers"
+git forum comment   ABCDEF01 "Mitigation: feature-flag the rollout"
 
 # 3. Resolve objections, then propose for review
-git forum resolve @ABCDEF01 <objection_node>
-git forum propose @ABCDEF01
+git forum resolve ABCDEF01 <objection_node>
+git forum propose ABCDEF01
 
 # 4. Get approvals and accept
-git forum accept @ABCDEF01 --approve human/alice --approve human/bob
+git forum accept ABCDEF01 --approve human/alice --approve human/bob
 
 # 5. Open implementation tasks
 git forum new task "Wire up JWT validator" \
-  --from-thread @ABCDEF01 --link-to @ABCDEF01 --rel implements
+  --from-thread ABCDEF01 --link-to ABCDEF01 --rel implements
 
 # 6. Commit code with a Refs trailer, then attach it as evidence
 git commit -m "Implement JWT validator
@@ -885,7 +886,7 @@ Refs: <task_id>"
 git forum evidence add <task_id> --kind commit --ref HEAD
 
 # 7. Close the task
-git forum close @<task_id>
+git forum close <task_id>
 ```
 
 ### AI-agent workflow
@@ -914,38 +915,38 @@ $ git forum new rfc "Search index ranking refresh" \
     --body-file ./rfc.md \
     --tag domain=search
 
-Created @9p3v2k7t
+Created 9p3v2k7t
 
-$ git forum show @9p3v2k7t --what-next
+$ git forum show 9p3v2k7t --what-next
 
 [ guard checks for draft → open ]
 - RequiredBody         PASS
 - AtLeastOneTag        PASS
 
-$ git forum propose @9p3v2k7t
-@9p3v2k7t: draft → open
+$ git forum propose 9p3v2k7t
+9p3v2k7t: draft → open
 
-$ git forum objection @9p3v2k7t \
+$ git forum objection 9p3v2k7t \
     "Index rebuild downtime is unacceptable" \
     --as human/sre
 
-$ git forum action @9p3v2k7t \
+$ git forum action 9p3v2k7t \
     "Benchmark warm-rebuild path on staging" \
     --as human/lead
 
-$ git forum show @9p3v2k7t --what-next
+$ git forum show 9p3v2k7t --what-next
 
 [ guard checks for review → done ]
 - NoOpenObjections     BLOCK (1 open: <id>)
 - NoOpenActions        BLOCK (1 open: <id>)
 - OneHumanApproval     BLOCK (no human/* approval recorded)
 
-$ git forum resolve @9p3v2k7t <objection_id> <action_id>
+$ git forum resolve 9p3v2k7t <objection_id> <action_id>
 
-$ git forum state @9p3v2k7t review
+$ git forum state 9p3v2k7t review
 
-$ git forum accept @9p3v2k7t --approve human/sre --approve human/lead
-@9p3v2k7t: review → done
+$ git forum accept 9p3v2k7t --approve human/sre --approve human/lead
+9p3v2k7t: review → done
 ```
 
 ## Concurrency and distribution
@@ -1006,9 +1007,9 @@ leak (unrecoverable) — that asymmetry is why absent-is-private
 is not negotiable.
 
 ```text
-git forum thread set-visibility @1hg98odf public
-git forum thread set-visibility @1hg98odf private              # interactive
-git forum thread set-visibility @1hg98odf private --force      # non-interactive
+git forum thread set-visibility 1hg98odf public
+git forum thread set-visibility 1hg98odf private              # interactive
+git forum thread set-visibility 1hg98odf private --force      # non-interactive
 ```
 
 The `private → public` flip is the only allowlist step — there
@@ -1236,7 +1237,7 @@ also invokes it.
 
 ```text
 git forum tui                            # thread list view
-git forum tui @1hg98odf                  # open detail view
+git forum tui 1hg98odf                  # open detail view
 ```
 
 ### Display surface (SPEC-3.0)
