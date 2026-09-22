@@ -71,6 +71,9 @@ git forum show <ID> --with-timeline                  Append snapshot-history
                                                      implies --full)
 git forum show <ID> --tree                           Show direct `implements`
                                                      children (advisory)
+git forum show <ID> --json                           Snapshot as JSON: body,
+                                                     nodes, links, evidence
+                                                     (SPEC-3.0 §7)
 git forum status <ID>                                Compact open-items list
 git forum status <ID> --full                         Full bodies of open
                                                      objections, actions, and
@@ -570,9 +573,15 @@ git forum show @1hg98odf --what-next
 git forum show @1hg98odf --compact
 git forum show @1hg98odf --with-timeline
 git forum show @1hg98odf --tree
+git forum show @1hg98odf --full
+git forum show @1hg98odf --json
 ```
 
-The default rendering reads the snapshot tree and prints:
+The default rendering (ticket `234ql16h`) prints a short header (id,
+title, lifecycle, tags, status, created, branch when bound) and the
+thread body. It does **not** list nodes, links, or evidence.
+
+`--full` reads the snapshot tree and prints:
 
 - header (id, title, category, tags, status, branch);
 - valid next transitions (status diagram);
@@ -580,6 +589,17 @@ The default rendering reads the snapshot tree and prints:
 - nodes (resolved + retracted dimmed);
 - links (outgoing edges from `links.toml`);
 - evidence (rows from `evidence.toml`).
+
+`--compact` and `--with-timeline` imply `--full`.
+
+`--json` prints the same snapshot as one JSON object for programs and
+agents: `id`, `title`, `category`, `lifecycle`, `tags`, `status`,
+`visibility`, `branch`, `created_at`, `created_by`, `updated_at`,
+`body`, `body_revision_count`, `latest_summary`, and the arrays
+`nodes`, `links`, and `evidence`. Absent values are `null`, never
+omitted keys. The field names are fixed by SPEC-3.0 §7. The timeline
+is not included, and `--json` cannot be combined with `--what-next`,
+`--tree`, `--compact`, or `--with-timeline`.
 
 Ticket `kym9rgdi`: the snapshot-history timeline is **omitted by
 default**. Use `--with-timeline` to append it, or
@@ -873,8 +893,11 @@ git forum close @<task_id>
 When `git forum` is driven by an AI agent (`--as ai/<name>`), the
 recommended pattern is:
 
-1. **Read first** — `git forum show <ID>` or `git forum brief <ID>
-   --json` to load thread state into the agent's context.
+1. **Read first** — `git forum show <ID> --json` to load the whole
+   thread (body, nodes, links, evidence) into the agent's context,
+   or `git forum brief <ID> --json` for counts only. Use the same
+   `show --json` to check a write landed: `brief --json` carries no
+   body and only an evidence count.
 2. **Reply, don't restart** — use `--reply-to <NODE>` so threads
    stay coherent.
 3. **One commit per concern** — split node-add and state-change

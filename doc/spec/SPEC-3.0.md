@@ -697,7 +697,7 @@ The everyday CLI surface remains recognizable:
 git forum new <CATEGORY> <TITLE> [--tag <T>]...
 git forum thread new <TITLE> --category <CATEGORY> [--tag <T>]...
 git forum ls
-git forum show <THREAD>
+git forum show <THREAD> [--json]
 git forum log <THREAD>
 git forum diff <THREAD>
 git forum comment <THREAD> <BODY>
@@ -723,6 +723,21 @@ optional `branch` field on `thread.toml` to the named branch,
 defaulting to the current branch when `<BRANCH>` is omitted.
 `branch unbind` clears the field. `hooks install` installs the
 optional `commit-msg` validator hook into the local clone.
+
+`show --json` prints the thread snapshot as one JSON object, so that
+programs and agents can read back what they wrote without parsing the
+human rendering, which is unchanged. The object carries `id`, `title`,
+`category`, `lifecycle`, `tags`, `status`, `visibility`, `branch`,
+`created_at`, `created_by`, `updated_at`, `body`, `body_revision_count`,
+`latest_summary`, `nodes` (each `id`, `type`, `status`, `body`,
+`created_at`, `created_by`, `updated_at`, `updated_by`, `reply_to`),
+`links` (each `target`, `rel`), and `evidence` (each `id`, `kind`, `ref`,
+`created_at`, `created_by`). Timestamps are RFC 3339 UTC. An absent
+optional value is `null`, never an omitted key. Fields MAY be added;
+existing names and types MUST NOT change without revising this
+paragraph. The snapshot history is not part of the object; it is the Git
+log of the thread ref (§5.4). `--json` cannot be combined with the other
+view flags (`--what-next`, `--tree`, `--compact`, `--with-timeline`).
 
 `init`, `thread set-visibility`, and `push` implement the publish
 protocol (§5.5–§5.7):

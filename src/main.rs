@@ -437,6 +437,11 @@ enum Commands {
         /// Cross-thread display only — never gates an operation.
         #[arg(long)]
         tree: bool,
+        /// Print the thread snapshot as one JSON object: metadata, body,
+        /// nodes, links, and evidence (SPEC-3.0 §7). The history
+        /// timeline is not included.
+        #[arg(long, conflicts_with_all = ["what_next", "tree", "compact", "with_timeline"])]
+        json: bool,
     },
     /// Show unified diff between body revisions
     Diff {
@@ -1265,6 +1270,7 @@ fn main() -> Result<(), ForumError> {
             with_timeline,
             no_timeline,
             tree,
+            json,
         } => {
             let ctx = Context::discover(Box::new(SystemClock))?;
             show::run(
@@ -1276,6 +1282,7 @@ fn main() -> Result<(), ForumError> {
                     with_timeline,
                     no_timeline,
                     tree,
+                    json,
                 },
                 &ctx,
             )?;

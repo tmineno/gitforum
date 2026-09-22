@@ -10,13 +10,17 @@
 //! is on the task `913c4s9v` DELETE list, so the tree-scan fallback is the
 //! only path.
 
+use serde::Serialize;
+
 use super::super::error::ForumError;
+use super::super::evidence::EvidenceKind;
 use super::super::git_ops::GitOps;
 use super::super::id::strip_thread_marker;
+use super::super::node::{NodeKind, NodeStatus};
 use super::super::policy::{self, CategoryRegistry, Policy};
 use super::super::refs::thread_ref;
 use super::super::snapshot::history::{self, SnapshotLogEntry};
-use super::super::thread::{self, NodeLookup, ThreadState};
+use super::super::thread::{self, NodeLookup, ThreadState, Visibility};
 use super::context::Context;
 use super::shared::resolve_tid;
 
@@ -448,7 +452,7 @@ fn render_body_focused(state: &ThreadState) -> String {
     }
     lines.push(String::new());
     lines.push(format!(
-        "tip: run `git forum show {} --full` for open items, conversations, links, and timeline",
+        "tip: run `git forum show {} --full` for open items, conversations, links, evidence, and timeline",
         state.id
     ));
     lines.push(String::new());
@@ -1354,6 +1358,123 @@ pub struct ShowArgs {
     /// one-liner the way it did before the default flip.
     pub no_timeline: bool,
     pub tree: bool,
+    /// Print the snapshot as one JSON object ([`ShowJson`]) instead of
+    /// the human rendering (SPEC-3.0 §7, ticket `g0nh5fjf`).
+    pub json: bool,
+}
+
+/// Stable v1 schema for `git forum show --json` (SPEC-3.0 §7).
+///
+/// Fields may be added; names and types must not change without a SPEC
+/// update. Optional values serialize as `null` rather than being omitted,
+/// so consumers can rely on every key being present.
+#[derive(Debug, Clone, Serialize)]
+pub struct ShowJson {
+    pub id: String,
+    pub title: String,
+    pub category: String,
+    pub lifecycle: String,
+    pub tags: Vec<String>,
+    pub status: String,
+    pub visibility: Visibility,
+    pub branch: Option<String>,
+    pub created_at: String,
+    pub created_by: String,
+    pub updated_at: String,
+    pub body: Option<String>,
+    pub body_revision_count: usize,
+    pub latest_summary: Option<String>,
+    pub nodes: Vec<ShowJsonNode>,
+    pub links: Vec<ShowJsonLink>,
+    pub evidence: Vec<ShowJsonEvidence>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ShowJsonNode {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: NodeKind,
+    pub status: NodeStatus,
+    pub body: String,
+    pub created_at: String,
+    pub created_by: String,
+    pub updated_at: Option<String>,
+    pub updated_by: Option<String>,
+    pub reply_to: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ShowJsonLink {
+    pub target: String,
+    pub rel: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ShowJsonEvidence {
+    pub id: String,
+    pub kind: EvidenceKind,
+    #[serde(rename = "ref")]
+    pub ref_target: String,
+    pub created_at: String,
+    pub created_by: String,
+}
+
+fn rfc3339(t: &chrono::DateTime<chrono::Utc>) -> String {
+    t.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// Build the v1 JSON payload for `git forum show <THREAD> --json`.
+pub fn build_show_json(state: &ThreadState) -> ShowJson {
+    ShowJson {
+        id: state.id.clone(),
+        title: state.title.clone(),
+        category: state.category.clone(),
+        lifecycle: policy::lifecycle_label_for(&state.category, &state.tags).to_string(),
+        tags: state.tags.clone(),
+        status: state.status.clone(),
+        visibility: state.visibility,
+        branch: state.branch.clone(),
+        created_at: rfc3339(&state.created_at),
+        created_by: state.created_by.clone(),
+        updated_at: rfc3339(&state.updated_at),
+        body: state.body.clone(),
+        body_revision_count: state.body_revision_count,
+        latest_summary: state.latest_summary().map(|s| s.body.clone()),
+        nodes: state
+            .nodes
+            .iter()
+            .map(|n| ShowJsonNode {
+                id: n.record.id.clone(),
+                kind: n.record.kind,
+                status: n.record.status,
+                body: n.body.clone(),
+                created_at: rfc3339(&n.record.created_at),
+                created_by: n.record.created_by.clone(),
+                updated_at: n.record.updated_at.as_ref().map(rfc3339),
+                updated_by: n.record.updated_by.clone(),
+                reply_to: n.record.reply_to.clone(),
+            })
+            .collect(),
+        links: state
+            .links
+            .iter()
+            .map(|l| ShowJsonLink {
+                target: l.target_thread_id.clone(),
+                rel: l.rel.clone(),
+            })
+            .collect(),
+        evidence: state
+            .evidence_items
+            .iter()
+            .map(|e| ShowJsonEvidence {
+                id: e.id.clone(),
+                kind: e.kind.clone(),
+                ref_target: e.ref_target.clone(),
+                created_at: rfc3339(&e.created_at),
+                created_by: e.created_by.clone(),
+            })
+            .collect(),
+    }
 }
 
 /// Uniform entry point for the `show` subcommand.
@@ -1385,7 +1506,11 @@ pub fn run(args: ShowArgs, ctx: &Context) -> Result<(), ForumError> {
     };
     let policy = Policy::load(&ctx.paths.dot_forum.join("policy.toml"))?;
     let state = thread::replay_thread(&ctx.git, &thread_id)?;
-    if args.tree {
+    if args.json {
+        let rendered = serde_json::to_string_pretty(&build_show_json(&state))
+            .map_err(|e| ForumError::Repo(e.to_string()))?;
+        println!("{rendered}");
+    } else if args.tree {
         let children = collect_implements_children(&ctx.git, &thread_id)?;
         print!("{}", render_tree(&state, &children));
     } else {
