@@ -140,7 +140,7 @@ pub fn state_transition_map() -> String {
         "`supersede` collapses the three-step recipe (link `<old>`\n\
          `superseded-by` `<new>`, attach a comment on `<old>`, transition\n\
          `<old>` to `deprecated`) into one verb. Default comment body is\n\
-         `Superseded by @<new>` if `--body` is omitted. Lands `<old>` in\n\
+         `Superseded by <new>` if `--body` is omitted. Lands `<old>` in\n\
          `deprecated` (not `rejected`), so superseded threads do not\n\
          appear in `git forum ls --status rejected`. Also writes the\n\
          symmetric `supersedes` link on `<new>` so `git forum show <NEW>`\n\

@@ -50,7 +50,7 @@ pub fn run(args: SupersedeArgs, ctx: &Context) -> Result<(), ForumError> {
         ));
     }
     let actor = resolve_actor(as_actor.clone(), &git);
-    let comment = body.unwrap_or_else(|| format!("Superseded by @{new_id}"));
+    let comment = body.unwrap_or_else(|| format!("Superseded by {new_id}"));
 
     // Old side: superseded-by link + comment + state -> deprecated, all
     // bundled into the same snapshot commit by run_state_shorthand.

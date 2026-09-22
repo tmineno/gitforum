@@ -389,7 +389,7 @@ enum Commands {
         /// Replacement thread (the one that supersedes <thread_id>)
         #[arg(long = "by", value_name = "NEW_THREAD_ID")]
         by: String,
-        /// Comment body on <thread_id> (default: "Superseded by @<NEW_THREAD_ID>")
+        /// Comment body on <thread_id> (default: "Superseded by <NEW_THREAD_ID>")
         #[arg(long)]
         body: Option<String>,
         #[arg(long = "as", value_name = "ACTOR")]

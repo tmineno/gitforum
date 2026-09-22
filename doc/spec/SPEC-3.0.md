@@ -224,8 +224,8 @@ Bounded Policy).
    key matched case-insensitively. The trailer takes the form
    `Refs: <id>[, <id>...]`, where each `<id>` is a bare 3.0 thread ID (§6).
    The hook MUST also accept an `<id>` written with a leading `@` and treat
-   it as the same ID (ADR-013); this is a commit-message allowance only and
-   does not make `@<id>` a display marker or a valid CLI input. Trailer
+   it as the same ID (ADR-013), matching the CLI input rule in §6; this does
+   not make `@<id>` a display marker. Trailer
    tokens that do not have thread-ID shape (an 8-character lowercase base36
    token that is not all digits, or a legacy ID covered by a migration alias)
    are ignored, so `Refs:` values from other trackers such as `#123` pass
@@ -661,9 +661,13 @@ Thread IDs have one form:
 |---|---|---|
 | Thread ID | `fg61bcmp` | Ref names, snapshot fields, CLI input, and CLI output. |
 
-3.0 does not define a display marker for thread IDs. Human-facing output MUST
-show bare thread IDs such as `fg61bcmp`. CLI input MUST treat `@fg61bcmp` as an
-invalid 3.0 thread ID input.
+3.0 does not define a display marker for thread IDs. Human-facing output,
+including the TUI and text copied to the clipboard, MUST show bare thread IDs
+such as `fg61bcmp`. CLI input MUST accept a thread ID written with one leading
+`@` (`@fg61bcmp`) and treat it as the bare ID (ADR-014): pre-3.0 output, older
+documentation, and habit all produce that form, and the `@` cannot collide
+with a thread ID because thread IDs never contain `@`. Accepting `@` on input
+does not make it a display form.
 
 Native 3.0 thread IDs SHOULD be 8-character lowercase base36 tokens. They MUST
 be valid as the final path component of `refs/forum/threads/<thread-id>` and

@@ -15,22 +15,19 @@ pub fn strip_thread_marker(input: &str) -> &str {
     input.strip_prefix(THREAD_MARKER).unwrap_or(input)
 }
 
-/// Format a thread ID for human-facing display.
+/// Format a thread or node ID for human-facing display, including text
+/// copied to the clipboard.
 ///
-/// SPEC-2.0 §6.1: 2.0 bare tokens are rendered as `@<token>`. Legacy 1.x
-/// kind-prefixed IDs (`RFC-…`, `ASK-…`) are returned unchanged so existing
-/// repos read coherently during the migration window.
+/// SPEC-3.0 §6 / ADR-014: output is always the bare ID. The `@` marker is
+/// accepted on input ([`strip_thread_marker`]) but never printed. Kept as
+/// the single place that decides how an ID is shown.
 ///
 /// Preconditions: none.
-/// Postconditions: returns a display string suitable for CLI output.
+/// Postconditions: returns `thread_id` unchanged.
 /// Failure modes: none.
 /// Side effects: none.
 pub fn display_thread_id(thread_id: &str) -> String {
-    if thread_id.contains('-') {
-        thread_id.to_string()
-    } else {
-        format!("{THREAD_MARKER}{thread_id}")
-    }
+    thread_id.to_string()
 }
 
 /// Swappable ID generator for deterministic testing.
@@ -137,8 +134,9 @@ mod tests {
     }
 
     #[test]
-    fn display_thread_id_prepends_marker_for_bare_token() {
-        assert_eq!(display_thread_id("a7f3b2x1"), "@a7f3b2x1");
+    fn display_thread_id_is_bare_for_bare_token() {
+        // ADR-014: `@` is accepted on input and never printed.
+        assert_eq!(display_thread_id("a7f3b2x1"), "a7f3b2x1");
     }
 
     #[test]

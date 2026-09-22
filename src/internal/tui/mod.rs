@@ -2336,21 +2336,21 @@ mod tests {
     // JOB-d4cdyi5b AC#10 — Track H acceptance tests
     // ------------------------------------------------------------------
 
-    /// AC#10: list-view row renders the tag chip prefix and `@`-marker
-    /// on bare-token IDs (legacy IDs unchanged). The LIFECYCLE column
-    /// was removed in v3.1.x — lifecycle is still surfaced on the
+    /// AC#10: list-view row renders the tag chip prefix and the bare ID
+    /// (ADR-014: `@` is accepted on input, never printed). The LIFECYCLE
+    /// column was removed in v3.1.x — lifecycle is still surfaced on the
     /// thread-detail header and via the filter popup.
     #[test]
-    fn list_row_shows_tag_chip_with_at_marker() {
+    fn list_row_shows_tag_chip_with_bare_id() {
         let rows = vec![
-            // Bare 8-char token → @-marker
             make_row("a7f3b2x1", "issue", "open", "fix the bug"),
             // Legacy ID → unchanged
             make_row("RFC-0001", "rfc", "draft", "propose a thing"),
         ];
         let mut app = App::new(rows);
         let out = render_to_string(&mut app, 110, 20);
-        assert!(out.contains("@a7f3b2x1"), "missing @-marker:\n{out}");
+        assert!(out.contains("a7f3b2x1"), "missing thread ID:\n{out}");
+        assert!(!out.contains("@a7f3b2x1"), "ID rendered with @:\n{out}");
         assert!(
             out.contains("RFC-0001"),
             "legacy ID should render unchanged:\n{out}"

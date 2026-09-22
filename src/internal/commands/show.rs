@@ -1497,7 +1497,7 @@ pub fn run(args: ShowArgs, ctx: &Context) -> Result<(), ForumError> {
                 return Err(ForumError::Repo(format!(
                     "'{input}' is a node, not a thread\n  \
                      hint: run `git forum node show {input}` to view the node\n  \
-                     hint: it lives in thread @{parent}",
+                     hint: it lives in thread {parent}",
                     input = args.thread_id,
                 )));
             }

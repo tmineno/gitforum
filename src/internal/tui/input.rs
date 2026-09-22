@@ -10,6 +10,7 @@ use ratatui::layout::Rect;
 
 use crate::internal::error::ForumResult;
 use crate::internal::git_ops::GitOps;
+use crate::internal::id::display_thread_id;
 use crate::internal::snapshot::list as snapshot_list;
 
 use super::copy_to_clipboard;
@@ -72,7 +73,7 @@ pub(super) fn handle_key(
                     }
                     KeyCode::Char('y') => {
                         if let Some(id) = app.selected_thread_id() {
-                            let yank = format!("@{id}");
+                            let yank = display_thread_id(&id);
                             match copy_to_clipboard(&yank) {
                                 Ok(()) => app.info_flash = Some(format!("Copied: {yank}")),
                                 Err(e) => app.info_flash = Some(format!("Copy failed: {e}")),
@@ -138,7 +139,7 @@ pub(super) fn handle_key(
             }
             KeyCode::Char('y') => {
                 let id = app.selected_node_id().unwrap_or_else(|| thread_id.clone());
-                let yank = format!("@{id}");
+                let yank = display_thread_id(&id);
                 match copy_to_clipboard(&yank) {
                     Ok(()) => app.info_flash = Some(format!("Copied: {yank}")),
                     Err(e) => app.info_flash = Some(format!("Copy failed: {e}")),
@@ -156,7 +157,7 @@ pub(super) fn handle_key(
                 open_thread_detail(app, git, &thread_id, Some(&node_id))?;
             }
             KeyCode::Char('y') => {
-                let yank = format!("@{node_id}");
+                let yank = display_thread_id(&node_id);
                 match copy_to_clipboard(&yank) {
                     Ok(()) => app.info_flash = Some(format!("Copied: {yank}")),
                     Err(e) => app.info_flash = Some(format!("Copy failed: {e}")),
