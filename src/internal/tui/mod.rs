@@ -1,3 +1,4 @@
+mod effects;
 mod input;
 mod markdown;
 mod persist;
@@ -363,6 +364,9 @@ pub struct App {
     /// When set, the event loop should suspend the terminal, open `$EDITOR`
     /// for the thread body, and submit a revision on save.
     pub(crate) pending_external_edit: Option<String>,
+    /// Clipboard and mouse-capture effects of input handling. Tests replace
+    /// this with `effects::RecordingEffects`.
+    effects: Box<dyn effects::TuiEffects>,
 }
 
 impl App {
@@ -428,6 +432,7 @@ impl App {
             info_flash: None,
             confirm_discard: false,
             pending_external_edit: None,
+            effects: Box::new(effects::TerminalEffects),
         }
     }
 
@@ -988,65 +993,6 @@ pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> For
     terminal.show_cursor().ok();
 
     result
-}
-
-/// Copy text to the system clipboard.
-///
-/// Tries platform-specific commands in order:
-/// - macOS: `pbcopy`
-/// - Linux/Wayland: `wl-copy`
-/// - Linux/X11: `xclip -selection clipboard`
-/// - Linux/X11 fallback: `xsel --clipboard --input`
-///
-/// Returns `Ok(())` on success or an error if no clipboard tool is available.
-fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
-    use std::process::{Command, Stdio};
-
-    let candidates: &[&[&str]] = &[
-        &["pbcopy"],
-        &["wl-copy"],
-        &["xclip", "-selection", "clipboard"],
-        &["xsel", "--clipboard", "--input"],
-    ];
-
-    for args in candidates {
-        let program = args[0];
-        let extra = &args[1..];
-        if let Ok(mut child) = Command::new(program)
-            .args(extra)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            use std::io::Write;
-            // Write data and drop stdin so the child sees EOF
-            let write_ok = match child.stdin.take() {
-                Some(mut stdin) => {
-                    let res = stdin.write_all(text.as_bytes());
-                    drop(stdin);
-                    res.is_ok()
-                }
-                None => false,
-            };
-            if write_ok {
-                if let Ok(status) = child.wait() {
-                    if status.success() {
-                        return Ok(());
-                    }
-                }
-            } else {
-                child.kill().ok();
-                child.wait().ok();
-            }
-            // This candidate failed; try the next one
-        }
-    }
-
-    Err(std::io::Error::new(
-        std::io::ErrorKind::NotFound,
-        "no clipboard tool found (install pbcopy, wl-copy, xclip, or xsel)",
-    ))
 }
 
 /// Suspend the terminal, open `$EDITOR` for the thread body, and submit a revision.
@@ -3005,6 +2951,89 @@ mod tests {
                 !calls.0.iter().any(|c| c == forbidden),
                 "run_app calls {forbidden} directly; route it through dispatch_event"
             );
+        }
+    }
+
+    // ============================================================
+    //  App::effects — clipboard / mouse capture
+    //  (doc/spec/TUI-UX-TESTING.md AT-6(b), AT-7; ADR-012)
+    // ============================================================
+
+    fn record_effects(app: &mut App) -> effects::RecordingEffects {
+        let rec = effects::RecordingEffects::default();
+        app.effects = Box::new(rec.clone());
+        rec
+    }
+
+    #[test]
+    fn yank_in_list_goes_through_effects() {
+        use effects::EffectCall;
+        let (_dir, git, db_path, mut app) = list_app_with_two_threads();
+        let rec = record_effects(&mut app);
+        // ADR-014: yanked text uses the display form of the ID.
+        let shown = crate::internal::id::display_thread_id(&app.selected_thread_id().unwrap());
+
+        dispatch_event(&mut app, key_event(KeyCode::Char('y')), &git, &db_path);
+        assert_eq!(
+            *rec.calls.borrow(),
+            vec![EffectCall::Clipboard(shown.clone())]
+        );
+        assert_eq!(app.info_flash, Some(format!("Copied: {shown}")));
+    }
+
+    #[test]
+    fn select_mode_toggles_mouse_capture_through_effects() {
+        use effects::EffectCall;
+        let (_dir, git, _paths, db_path) = setup_repo();
+        let id = make_snapshot_thread(&git, "task", "Selectable", 4);
+        let mut app = App::new(snapshot_list::list_threads(&git).unwrap());
+        open_thread_detail(&mut app, &git, &id, None).unwrap();
+        let rec = record_effects(&mut app);
+
+        dispatch_event(&mut app, key_event(KeyCode::Char('S')), &git, &db_path);
+        assert_eq!(*rec.calls.borrow(), vec![EffectCall::MouseCapture(false)]);
+        assert!(app.mouse_capture_disabled);
+
+        // Any key leaves select mode and turns capture back on.
+        dispatch_event(&mut app, key_event(KeyCode::Char('j')), &git, &db_path);
+        assert_eq!(
+            *rec.calls.borrow(),
+            vec![
+                EffectCall::MouseCapture(false),
+                EffectCall::MouseCapture(true)
+            ]
+        );
+        assert!(!app.mouse_capture_disabled);
+    }
+
+    /// AT-6(b): input handling reaches the clipboard and the terminal only
+    /// through `App::effects`, so tests using RecordingEffects touch neither.
+    #[test]
+    fn input_handling_has_no_direct_external_effects() {
+        let forbidden = [
+            "std::io::stdout",
+            "execute!",
+            "Command::new",
+            "copy_to_clipboard",
+        ];
+        // Control: the scan must see these tokens where they do live.
+        let effects_src = include_str!("effects.rs");
+        for token in ["std::io::stdout", "execute!", "Command::new"] {
+            assert!(
+                effects_src.contains(token),
+                "control failed: `{token}` not found in effects.rs"
+            );
+        }
+        for (name, src) in [
+            ("input.rs", include_str!("input.rs")),
+            ("state.rs", include_str!("state.rs")),
+        ] {
+            for token in forbidden {
+                assert!(
+                    !src.contains(token),
+                    "{name} contains `{token}`; route the effect through App::effects"
+                );
+            }
         }
     }
 }

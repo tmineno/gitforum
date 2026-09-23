@@ -1,11 +1,7 @@
 use std::path::Path;
 use std::time::Instant;
 
-use crossterm::event::{
-    DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers, MouseButton, MouseEvent,
-    MouseEventKind,
-};
-use crossterm::execute;
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
 use crate::internal::error::ForumResult;
@@ -13,7 +9,6 @@ use crate::internal::git_ops::GitOps;
 use crate::internal::id::display_thread_id;
 use crate::internal::snapshot::list as snapshot_list;
 
-use super::copy_to_clipboard;
 use super::state::{
     apply_node_status_action, auto_link_candidates, link_relation_labels, link_target_kind_labels,
     link_target_kind_values, node_type_labels, node_type_values, open_node_detail,
@@ -41,7 +36,7 @@ pub(super) fn handle_key(
 
     // Re-enable mouse capture if it was temporarily disabled for text selection
     if app.mouse_capture_disabled {
-        execute!(std::io::stdout(), EnableMouseCapture).ok();
+        app.effects.set_mouse_capture(true);
         app.mouse_capture_disabled = false;
         // Don't consume the key — fall through to normal handling
     }
@@ -74,7 +69,7 @@ pub(super) fn handle_key(
                     KeyCode::Char('y') => {
                         if let Some(id) = app.selected_thread_id() {
                             let yank = display_thread_id(&id);
-                            match copy_to_clipboard(&yank) {
+                            match app.effects.set_clipboard(&yank) {
                                 Ok(()) => app.info_flash = Some(format!("Copied: {yank}")),
                                 Err(e) => app.info_flash = Some(format!("Copy failed: {e}")),
                             }
@@ -121,7 +116,7 @@ pub(super) fn handle_key(
             KeyCode::Char('l') => app.begin_create_link_from_thread(&thread_id),
             KeyCode::Char('m') => app.markdown_mode = !app.markdown_mode,
             KeyCode::Char('S') => {
-                execute!(std::io::stdout(), DisableMouseCapture).ok();
+                app.effects.set_mouse_capture(false);
                 app.mouse_capture_disabled = true;
             }
             KeyCode::Char('z') => app.toggle_collapse(),
@@ -140,7 +135,7 @@ pub(super) fn handle_key(
             KeyCode::Char('y') => {
                 let id = app.selected_node_id().unwrap_or_else(|| thread_id.clone());
                 let yank = display_thread_id(&id);
-                match copy_to_clipboard(&yank) {
+                match app.effects.set_clipboard(&yank) {
                     Ok(()) => app.info_flash = Some(format!("Copied: {yank}")),
                     Err(e) => app.info_flash = Some(format!("Copy failed: {e}")),
                 }
@@ -158,7 +153,7 @@ pub(super) fn handle_key(
             }
             KeyCode::Char('y') => {
                 let yank = display_thread_id(&node_id);
-                match copy_to_clipboard(&yank) {
+                match app.effects.set_clipboard(&yank) {
                     Ok(()) => app.info_flash = Some(format!("Copied: {yank}")),
                     Err(e) => app.info_flash = Some(format!("Copy failed: {e}")),
                 }
@@ -167,7 +162,7 @@ pub(super) fn handle_key(
             KeyCode::Char('l') => app.begin_create_link_from_node(&thread_id, &node_id),
             KeyCode::Char('m') => app.markdown_mode = !app.markdown_mode,
             KeyCode::Char('S') => {
-                execute!(std::io::stdout(), DisableMouseCapture).ok();
+                app.effects.set_mouse_capture(false);
                 app.mouse_capture_disabled = true;
             }
             KeyCode::Char('x') => {
