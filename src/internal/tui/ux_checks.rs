@@ -110,14 +110,21 @@ fn allowed(view: &View, filter_open: bool, area: Area) -> bool {
     match view {
         View::List => {
             matches!(area, ListTable | ColumnHeader(_) | FilterLabel)
-                || (filter_open && matches!(area, FilterPopup | FilterKinds | FilterStatuses))
+                || (filter_open
+                    && matches!(area, FilterPopup | FilterKinds | FilterStatuses | HelpLine))
         }
         View::ThreadDetail(_) => matches!(area, HelpLine | ThreadBody | ThreadNodes),
         View::NodeDetail { .. } => matches!(area, HelpLine | NodeDetail),
-        View::CreateThread => matches!(area, ThreadSubmit | Dropdown | FormField(0..=3)),
-        View::CreateNode { .. } => matches!(area, NodeSubmit | Dropdown | FormField(0..=2)),
-        View::CreateLink { .. } => matches!(area, LinkSubmit | Dropdown | FormField(0..=3)),
-        View::EditThreadBody | View::EditNodeBody { .. } => false,
+        View::CreateThread => {
+            matches!(area, HelpLine | ThreadSubmit | Dropdown | FormField(0..=3))
+        }
+        View::CreateNode { .. } => {
+            matches!(area, HelpLine | NodeSubmit | Dropdown | FormField(0..=2))
+        }
+        View::CreateLink { .. } => {
+            matches!(area, HelpLine | LinkSubmit | Dropdown | FormField(0..=3))
+        }
+        View::EditThreadBody | View::EditNodeBody { .. } => matches!(area, HelpLine),
     }
 }
 
@@ -127,7 +134,10 @@ fn label(view: &View, area: Area) -> Option<&'static str> {
     match (view, area) {
         (_, Area::ColumnHeader(i)) => HEADERS.get(i).copied(),
         (_, Area::FilterLabel) => Some("[f]filter:"),
-        (_, Area::HelpLine) => Some("[esc/q]back"),
+        (View::ThreadDetail(_) | View::NodeDetail { .. }, Area::HelpLine) => Some("[esc/q]back"),
+        (View::EditThreadBody | View::EditNodeBody { .. }, Area::HelpLine) => Some("[esc]back"),
+        // The forms, and the list with the filter bar open.
+        (_, Area::HelpLine) => Some("[esc]cancel"),
         (_, Area::ThreadSubmit | Area::NodeSubmit | Area::LinkSubmit) => Some("submit"),
         (View::CreateThread, Area::FormField(i)) => {
             ["lifecycle", "tags", "title", "body"].get(i).copied()
@@ -781,9 +791,10 @@ mod tests {
 
     #[test]
     fn inv10_area_not_in_table_m() {
-        let mut s = Snapshot::blank(View::CreateThread);
-        s.rects.help_line = Some(Rect::new(1, 0, 11, 1));
-        let buf = screen(&[(0, " [esc/q]back [esc]cancel")]);
+        // A body editor has no choice list.
+        let mut s = Snapshot::blank(View::EditThreadBody);
+        s.rects.dropdown = Some(Rect::new(40, 2, 20, 5));
+        let buf = screen(&[(0, " [ctrl+s]done  [esc]back")]);
         let found = check_step(&Step {
             before: &s,
             after: &s,

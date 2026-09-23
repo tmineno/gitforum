@@ -29,15 +29,7 @@ use super::ux_fixture::{copy_tree, stale_row, Fixture, Templates};
 use super::{dispatch_event, App, FilterField, LinkFormField, NodeFormField, View};
 
 /// Rows that the current code is known to violate: (row, ticket).
-const KNOWN_VIOLATIONS: &[(&str, &str)] = &[
-    // INV-12: Esc hints outside the detail views are not clickable.
-    ("back-label-filter-bar", "4jq8b3kj"),
-    ("back-label-create-thread", "4jq8b3kj"),
-    ("back-label-create-node", "4jq8b3kj"),
-    ("back-label-create-link", "4jq8b3kj"),
-    ("back-label-edit-thread-body", "4jq8b3kj"),
-    ("back-label-edit-node-body", "4jq8b3kj"),
-];
+const KNOWN_VIOLATIONS: &[(&str, &str)] = &[];
 
 /// One TUI session on its own copy of the full fixture, at 80x24.
 struct Session {

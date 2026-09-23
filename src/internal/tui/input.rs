@@ -287,6 +287,28 @@ pub(super) fn handle_mouse(
     git: &GitOps,
     db_path: &Path,
 ) -> ForumResult<bool> {
+    // `[esc]cancel` / `[esc]back` in the forms, the body editors and the
+    // filter bar: a click is Esc, so it asks before dropping unsaved input
+    // exactly as the key does (INV-12). The detail views' `[esc/q]back` is
+    // handled below.
+    let esc_hint_view = matches!(
+        app.view,
+        View::CreateThread
+            | View::CreateNode { .. }
+            | View::CreateLink { .. }
+            | View::EditThreadBody
+            | View::EditNodeBody { .. }
+    ) || (app.view == View::List && app.filter_bar.is_some());
+    if esc_hint_view
+        && mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        && app
+            .ui_rects
+            .help_line
+            .is_some_and(|area| rect_contains(area, mouse.column, mouse.row))
+    {
+        let esc = crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        return handle_key(app, esc, git, db_path);
+    }
     match app.view.clone() {
         View::List => match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
