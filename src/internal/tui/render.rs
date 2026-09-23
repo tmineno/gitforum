@@ -433,6 +433,17 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_widget(Paragraph::new(format!(" {count} threads")), chunks[2]);
 }
 
+/// Record where `hint` is drawn in the one-line `help` shown at `area`, as
+/// the click area that acts as Esc (INV-12). `help` is ASCII, so a byte
+/// offset is a column.
+fn record_esc_hint(app: &mut App, help: &str, hint: &str, area: Rect) {
+    app.ui_rects.help_line = help.find(hint).and_then(|x| {
+        let x = u16::try_from(x).ok()?;
+        let width = u16::try_from(hint.len()).ok()?;
+        clipped(Rect::new(area.x.saturating_add(x), area.y, width, 1), area)
+    });
+}
+
 /// `r` cut to the part inside `area`, the row its label is drawn in;
 /// `None` when no part is (INV-7).
 fn clipped(r: Rect, area: Rect) -> Option<Rect> {
@@ -625,10 +636,9 @@ fn render_filter_bar(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_widget(status_list, cols[2]);
 
     // Help line
-    f.render_widget(
-        Paragraph::new(" [tab]col [j/k]move [space]toggle [enter]ok [esc]cancel [x]clear"),
-        chunks[1],
-    );
+    let help = " [tab]col [j/k]move [space]toggle [enter]ok [esc]cancel [x]clear";
+    record_esc_hint(app, help, "[esc]cancel", chunks[1]);
+    f.render_widget(Paragraph::new(help), chunks[1]);
 }
 
 pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
@@ -941,6 +951,7 @@ pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &mut App) {
         ThreadFormField::Body => " [tab]next field  [enter]edit body  [esc]cancel",
         ThreadFormField::Submit => " [tab]next field  [enter]submit  [esc]cancel",
     };
+    record_esc_hint(app, help, "[esc]cancel", chunks[0]);
     f.render_widget(Paragraph::new(help), chunks[0]);
 
     let main = Layout::default()
@@ -1044,6 +1055,7 @@ pub(crate) fn render_create_node(f: &mut Frame, area: Rect, app: &mut App) {
         NodeFormField::Body => " [tab]next field  [enter]edit body  [esc]cancel",
         NodeFormField::Submit => " [tab]next field  [enter]submit  [esc]cancel",
     };
+    record_esc_hint(app, help, "[esc]cancel", chunks[0]);
     f.render_widget(Paragraph::new(help), chunks[0]);
 
     let main = Layout::default()
@@ -1118,16 +1130,15 @@ pub(crate) fn render_create_node(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_widget(list, main[1]);
 }
 
-pub(crate) fn render_edit_node_body(f: &mut Frame, area: Rect, app: &App) {
+pub(crate) fn render_edit_node_body(f: &mut Frame, area: Rect, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(area);
 
-    f.render_widget(
-        Paragraph::new(" [ctrl+s]done  [enter]newline  [tab]indent  [esc]back"),
-        chunks[0],
-    );
+    let help = " [ctrl+s]done  [enter]newline  [tab]indent  [esc]back";
+    record_esc_hint(app, help, "[esc]back", chunks[0]);
+    f.render_widget(Paragraph::new(help), chunks[0]);
 
     f.render_widget(
         Paragraph::new(app.node_form.body.as_str()).block(
@@ -1139,16 +1150,15 @@ pub(crate) fn render_edit_node_body(f: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-pub(crate) fn render_edit_thread_body(f: &mut Frame, area: Rect, app: &App) {
+pub(crate) fn render_edit_thread_body(f: &mut Frame, area: Rect, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(area);
 
-    f.render_widget(
-        Paragraph::new(" [ctrl+s]done  [enter]newline  [tab]indent  [esc]back"),
-        chunks[0],
-    );
+    let help = " [ctrl+s]done  [enter]newline  [tab]indent  [esc]back";
+    record_esc_hint(app, help, "[esc]back", chunks[0]);
+    f.render_widget(Paragraph::new(help), chunks[0]);
 
     f.render_widget(
         Paragraph::new(app.thread_form.body.as_str()).block(
@@ -1179,6 +1189,7 @@ pub(crate) fn render_create_link(f: &mut Frame, area: Rect, app: &mut App) {
         }
         LinkFormField::Submit => " [tab]next field  [enter]submit  [esc]cancel",
     };
+    record_esc_hint(app, help, "[esc]cancel", chunks[0]);
     f.render_widget(Paragraph::new(help), chunks[0]);
 
     let main = Layout::default()
