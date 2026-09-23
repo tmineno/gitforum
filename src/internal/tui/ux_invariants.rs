@@ -388,19 +388,6 @@ fn known() -> Vec<Known> {
             },
         },
         Known {
-            inv: "INV-6",
-            ticket: "yoa20x3n",
-            // `max_scroll` counts bytes, not columns, so End scrolls a pane
-            // of wide text past its last line.
-            covers: |_, v| v.detail.ends_with("pane scrolled blank"),
-            repro: || Case {
-                fixture: Fixture::Full,
-                size: 2,
-                prefix: 1,
-                ops: vec![key(KeyCode::End)],
-            },
-        },
-        Known {
             inv: "INV-7",
             ticket: "uwqh1bld",
             // The column headers, `[f]filter:` and `[esc/q]back` are placed
