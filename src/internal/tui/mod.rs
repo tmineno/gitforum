@@ -1302,6 +1302,25 @@ mod tests {
         assert!(out.contains("Test RFC"), "expected 'Test RFC' in:\n{out}");
     }
 
+    /// wy22s31p: at widths where the list's columns do not fit, redrawing
+    /// the same state must give the same screen every time. Without
+    /// ratatui's `layout-cache` feature every draw solves the layout again
+    /// and may pick another of several equally good column widths.
+    #[test]
+    fn list_redraws_the_same_screen_when_the_columns_do_not_fit() {
+        let mut app = App::new(vec![
+            make_row("ISSUE-0001", "issue", "open", "Bug"),
+            make_row("RFC-0001", "rfc", "draft", "Proposal"),
+        ]);
+        for (w, h) in [(60, 20), (40, 12), (79, 24)] {
+            let first = render_to_string(&mut app, w, h);
+            for n in 1..100 {
+                let again = render_to_string(&mut app, w, h);
+                assert_eq!(again, first, "{w}x{h}: draw {n} differs from the first");
+            }
+        }
+    }
+
     #[test]
     fn list_view_shows_thread_count() {
         let rows = vec![
