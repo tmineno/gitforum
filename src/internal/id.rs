@@ -80,10 +80,24 @@ impl IdGenerator for SequentialIdGenerator {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Set by tests that need the same ids on every run (the TUI UX
+    /// fixtures): while it holds a value, `rand_u64` returns it and counts up
+    /// instead of using entropy. Only this thread is affected.
+    pub(crate) static TEST_NONCE: std::cell::Cell<Option<u64>> =
+        const { std::cell::Cell::new(None) };
+}
+
 /// Minimal random u64 without pulling in the `rand` crate.
 fn rand_u64() -> u64 {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};
+    #[cfg(test)]
+    if let Some(n) = TEST_NONCE.with(|c| c.get()) {
+        TEST_NONCE.with(|c| c.set(Some(n.wrapping_add(1))));
+        return n;
+    }
     RandomState::new().build_hasher().finish()
 }
 

@@ -11,6 +11,7 @@ use tempfile::TempDir;
 use crate::internal::clock::{Clock, StepClock};
 use crate::internal::config::RepoPaths;
 use crate::internal::git_ops::GitOps;
+use crate::internal::id::TEST_NONCE;
 use crate::internal::node::{NodeKind, NodeStatus};
 use crate::internal::snapshot::{self, list as snapshot_list};
 
@@ -49,8 +50,18 @@ impl Templates {
 /// Threads in every lifecycle and several statuses, every node kind with
 /// nested replies, links, a body longer than the viewport, a Markdown
 /// table, CJK and emoji. Created through the TUI's own snapshot writers
-/// with a StepClock, so ids and timestamps are the same on every run.
+/// with a StepClock and a counting id nonce, so ids and timestamps are the
+/// same on every run.
 fn build_full_fixture(git: &GitOps) {
+    struct FixedIds;
+    impl Drop for FixedIds {
+        fn drop(&mut self) {
+            TEST_NONCE.with(|c| c.set(None));
+        }
+    }
+    TEST_NONCE.with(|c| c.set(Some(1)));
+    let _fixed_ids = FixedIds;
+
     let start = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
     let clock = StepClock::new(start, chrono::Duration::minutes(1));
 
@@ -167,6 +178,23 @@ pub(super) fn stale_row() -> snapshot_list::ThreadRow {
         visibility: crate::internal::thread::Visibility::Private,
         from_published: false,
     }
+}
+
+/// Write a fixture repository for the PTY driver `scripts/tui-ux/drive.py`,
+/// so its runs see the same ids and dates as the suites. Ignored in normal
+/// runs; the driver runs it with `--ignored`, `TUI_UX_EXPORT_FIXTURE`
+/// (`full` or `empty`) and `TUI_UX_EXPORT_DIR` (a path that must not exist).
+#[test]
+#[ignore = "run by scripts/tui-ux/drive.py"]
+fn export_fixture() {
+    let fixture = match std::env::var("TUI_UX_EXPORT_FIXTURE").as_deref() {
+        Ok("full") => Fixture::Full,
+        Ok("empty") => Fixture::Empty,
+        other => panic!("TUI_UX_EXPORT_FIXTURE must be full or empty, got {other:?}"),
+    };
+    let dir = PathBuf::from(std::env::var("TUI_UX_EXPORT_DIR").expect("TUI_UX_EXPORT_DIR"));
+    assert!(!dir.exists(), "{} already exists", dir.display());
+    copy_tree(Templates::build().path(fixture), &dir);
 }
 
 /// Copy a fixture repository (worktree and `.git`) into `to`.
