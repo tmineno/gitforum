@@ -321,12 +321,15 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
     let filter_prefix = " [q]quit  [enter]detail  [c]create thread  [r]refresh  ";
     let filter_start = filter_prefix.len() as u16;
     let filter_len = format!("[f]filter:{lifecycle_label}/{tag_label}/{status_label}").len() as u16;
-    app.ui_rects.filter_label = Some(Rect {
-        x: chunks[0].x + filter_start,
-        y: chunks[0].y,
-        width: filter_len,
-        height: 1,
-    });
+    app.ui_rects.filter_label = clipped(
+        Rect {
+            x: chunks[0].x + filter_start,
+            y: chunks[0].y,
+            width: filter_len,
+            height: 1,
+        },
+        chunks[0],
+    );
     f.render_widget(Paragraph::new(Line::from(help_text)), chunks[0]);
 
     let table_area = chunks[1];
@@ -428,6 +431,13 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_stateful_widget(table, chunks[1], &mut app.table_state);
 
     f.render_widget(Paragraph::new(format!(" {count} threads")), chunks[2]);
+}
+
+/// `r` cut to the part inside `area`, the row its label is drawn in;
+/// `None` when no part is (INV-7).
+fn clipped(r: Rect, area: Rect) -> Option<Rect> {
+    let r = r.intersection(area);
+    (!r.is_empty()).then_some(r)
 }
 
 /// Widths of the list's columns, in `SORT_COLUMNS` order, `None` for a
@@ -628,12 +638,15 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         .split(area);
 
     // Track [esc/q]back label for mouse click
-    app.ui_rects.help_line = Some(Rect {
-        x: chunks[0].x + 1,
-        y: chunks[0].y,
-        width: 11, // "[esc/q]back"
-        height: 1,
-    });
+    app.ui_rects.help_line = clipped(
+        Rect {
+            x: chunks[0].x + 1,
+            y: chunks[0].y,
+            width: 11, // "[esc/q]back"
+            height: 1,
+        },
+        chunks[0],
+    );
     let md_indicator = if app.markdown_mode { "md:on" } else { "md:off" };
     let tree_indicator = if app.split_horizontal {
         "t:horiz"
@@ -853,12 +866,15 @@ pub(crate) fn render_node_detail(f: &mut Frame, area: Rect, app: &mut App) {
         .split(area);
 
     // Track [esc/q]back label for mouse click
-    app.ui_rects.help_line = Some(Rect {
-        x: chunks[0].x + 1,
-        y: chunks[0].y,
-        width: 11, // "[esc/q]back"
-        height: 1,
-    });
+    app.ui_rects.help_line = clipped(
+        Rect {
+            x: chunks[0].x + 1,
+            y: chunks[0].y,
+            width: 11, // "[esc/q]back"
+            height: 1,
+        },
+        chunks[0],
+    );
     let md_indicator = if app.markdown_mode { "md:on" } else { "md:off" };
     f.render_widget(
         Paragraph::new(format!(
