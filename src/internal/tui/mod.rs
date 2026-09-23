@@ -8,6 +8,8 @@ mod state;
 mod ux_fixture;
 #[cfg(test)]
 mod ux_invariants;
+#[cfg(test)]
+mod ux_mouse;
 
 use std::collections::HashSet;
 use std::path::Path;
