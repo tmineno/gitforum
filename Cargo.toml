@@ -19,5 +19,6 @@ tempfile = "3"
 sha2 = "0.10"
 
 [dev-dependencies]
+proptest = "1"
 syn = { version = "2", features = ["full", "visit"] }
 walkdir = "2"

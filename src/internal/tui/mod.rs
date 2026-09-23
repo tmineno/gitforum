@@ -1,8 +1,17 @@
+mod effects;
 mod input;
 mod markdown;
 mod persist;
 pub(crate) mod render;
 mod state;
+#[cfg(test)]
+mod ux_checks;
+#[cfg(test)]
+mod ux_fixture;
+#[cfg(test)]
+mod ux_invariants;
+#[cfg(test)]
+mod ux_mouse;
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -363,6 +372,9 @@ pub struct App {
     /// When set, the event loop should suspend the terminal, open `$EDITOR`
     /// for the thread body, and submit a revision on save.
     pub(crate) pending_external_edit: Option<String>,
+    /// Clipboard and mouse-capture effects of input handling. Tests replace
+    /// this with `effects::RecordingEffects`.
+    effects: Box<dyn effects::TuiEffects>,
 }
 
 impl App {
@@ -428,6 +440,7 @@ impl App {
             info_flash: None,
             confirm_discard: false,
             pending_external_edit: None,
+            effects: Box::new(effects::TerminalEffects),
         }
     }
 
@@ -990,65 +1003,6 @@ pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> For
     result
 }
 
-/// Copy text to the system clipboard.
-///
-/// Tries platform-specific commands in order:
-/// - macOS: `pbcopy`
-/// - Linux/Wayland: `wl-copy`
-/// - Linux/X11: `xclip -selection clipboard`
-/// - Linux/X11 fallback: `xsel --clipboard --input`
-///
-/// Returns `Ok(())` on success or an error if no clipboard tool is available.
-fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
-    use std::process::{Command, Stdio};
-
-    let candidates: &[&[&str]] = &[
-        &["pbcopy"],
-        &["wl-copy"],
-        &["xclip", "-selection", "clipboard"],
-        &["xsel", "--clipboard", "--input"],
-    ];
-
-    for args in candidates {
-        let program = args[0];
-        let extra = &args[1..];
-        if let Ok(mut child) = Command::new(program)
-            .args(extra)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            use std::io::Write;
-            // Write data and drop stdin so the child sees EOF
-            let write_ok = match child.stdin.take() {
-                Some(mut stdin) => {
-                    let res = stdin.write_all(text.as_bytes());
-                    drop(stdin);
-                    res.is_ok()
-                }
-                None => false,
-            };
-            if write_ok {
-                if let Ok(status) = child.wait() {
-                    if status.success() {
-                        return Ok(());
-                    }
-                }
-            } else {
-                child.kill().ok();
-                child.wait().ok();
-            }
-            // This candidate failed; try the next one
-        }
-    }
-
-    Err(std::io::Error::new(
-        std::io::ErrorKind::NotFound,
-        "no clipboard tool found (install pbcopy, wl-copy, xclip, or xsel)",
-    ))
-}
-
 /// Suspend the terminal, open `$EDITOR` for the thread body, and submit a revision.
 fn handle_external_edit<B: Backend>(
     terminal: &mut Terminal<B>,
@@ -1135,6 +1089,88 @@ fn to_error_flash(app: &App, err: &ForumError) -> ErrorFlash {
     ErrorFlash { message, hint }
 }
 
+/// What the event loop must do after [`dispatch_event`] handled one event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum EventOutcome {
+    /// Keep running the event loop.
+    Continue,
+    /// Leave the event loop. TUI state has already been persisted.
+    Quit,
+    /// Edit this thread's body in `$EDITOR`. The caller must suspend the
+    /// terminal, so this stays outside `dispatch_event`.
+    ExternalEdit(String),
+}
+
+/// Handle one terminal event: dismiss overlays (info flash, discard
+/// confirmation, error flash), then dispatch to the key/mouse handlers.
+///
+/// `run_app` handles input only through this function, so tests that call
+/// it drive the same path as the real event loop (doc/spec/TUI-UX-TESTING.md,
+/// ADR-012). Handler errors become an error flash instead of propagating.
+pub(crate) fn dispatch_event(
+    app: &mut App,
+    event: Event,
+    git: &GitOps,
+    db_path: &Path,
+) -> EventOutcome {
+    match event {
+        Event::Key(key) => {
+            // Dismiss info flash on any keypress
+            app.info_flash = None;
+            // If a discard confirmation is showing, handle y/n
+            if app.confirm_discard {
+                app.confirm_discard = false;
+                if key.code == KeyCode::Char('y') || key.code == KeyCode::Char('Y') {
+                    // Perform the discard: reset form and navigate away
+                    match input::confirm_discard_action(app, git) {
+                        Ok(()) => {}
+                        Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
+                    }
+                }
+                // On any other key, just dismiss the confirmation
+                return EventOutcome::Continue;
+            }
+            // If an error flash is showing, dismiss it on any keypress
+            if app.error_flash.is_some() {
+                app.error_flash = None;
+                return EventOutcome::Continue;
+            }
+            match handle_key(app, key, git, db_path) {
+                Ok(true) => {
+                    persist::save_state(app, db_path);
+                    return EventOutcome::Quit;
+                }
+                Ok(false) => {}
+                Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
+            }
+            // Pending external editor request (terminal suspend required)
+            match app.pending_external_edit.take() {
+                Some(thread_id) => EventOutcome::ExternalEdit(thread_id),
+                None => EventOutcome::Continue,
+            }
+        }
+        Event::Mouse(mouse) => {
+            // Dismiss info flash on any click
+            app.info_flash = None;
+            // If an error flash is showing, dismiss it on any click
+            if app.error_flash.is_some() {
+                app.error_flash = None;
+                return EventOutcome::Continue;
+            }
+            match handle_mouse(app, mouse, git, db_path) {
+                Ok(true) => {
+                    persist::save_state(app, db_path);
+                    return EventOutcome::Quit;
+                }
+                Ok(false) => {}
+                Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
+            }
+            EventOutcome::Continue
+        }
+        _ => EventOutcome::Continue,
+    }
+}
+
 pub(crate) fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
@@ -1156,62 +1192,15 @@ where
         }
 
         if event::poll(std::time::Duration::from_millis(100))? {
-            match event::read()? {
-                Event::Key(key) => {
-                    // Dismiss info flash on any keypress
-                    app.info_flash = None;
-                    // If a discard confirmation is showing, handle y/n
-                    if app.confirm_discard {
-                        app.confirm_discard = false;
-                        if key.code == KeyCode::Char('y') || key.code == KeyCode::Char('Y') {
-                            // Perform the discard: reset form and navigate away
-                            match input::confirm_discard_action(app, git) {
-                                Ok(()) => {}
-                                Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
-                            }
-                        }
-                        // On any other key, just dismiss the confirmation
-                        continue;
-                    }
-                    // If an error flash is showing, dismiss it on any keypress
-                    if app.error_flash.is_some() {
-                        app.error_flash = None;
-                        continue;
-                    }
-                    match handle_key(app, key, git, db_path) {
-                        Ok(true) => {
-                            persist::save_state(app, db_path);
-                            return Ok(());
-                        }
-                        Ok(false) => {}
-                        Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
-                    }
-                    // Handle pending external editor request (terminal suspend required)
-                    if let Some(thread_id) = app.pending_external_edit.take() {
-                        match handle_external_edit(terminal, app, git, db_path, &thread_id) {
-                            Ok(()) => {}
-                            Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
-                        }
-                    }
-                }
-                Event::Mouse(mouse) => {
-                    // Dismiss info flash on any click
-                    app.info_flash = None;
-                    // If an error flash is showing, dismiss it on any click
-                    if app.error_flash.is_some() {
-                        app.error_flash = None;
-                        continue;
-                    }
-                    match handle_mouse(app, mouse, git, db_path) {
-                        Ok(true) => {
-                            persist::save_state(app, db_path);
-                            return Ok(());
-                        }
-                        Ok(false) => {}
+            match dispatch_event(app, event::read()?, git, db_path) {
+                EventOutcome::Continue => {}
+                EventOutcome::Quit => return Ok(()),
+                EventOutcome::ExternalEdit(thread_id) => {
+                    match handle_external_edit(terminal, app, git, db_path, &thread_id) {
+                        Ok(()) => {}
                         Err(e) => app.error_flash = Some(to_error_flash(app, &e)),
                     }
                 }
-                _ => {}
             }
         }
     }
@@ -1292,7 +1281,7 @@ mod tests {
         }
     }
 
-    fn setup_repo() -> (
+    pub(super) fn setup_repo() -> (
         TempDir,
         GitOps,
         crate::internal::config::RepoPaths,
@@ -2736,5 +2725,323 @@ mod tests {
             out.contains("Conversations (1)"),
             "single-leaf thread should render Conversations (1); got:\n{out}"
         );
+    }
+
+    // ============================================================
+    //  dispatch_event — run_app's per-event path
+    //  (doc/spec/TUI-UX-TESTING.md INV-4, INV-8; ADR-012)
+    // ============================================================
+
+    fn key_event(code: KeyCode) -> Event {
+        Event::Key(crossterm::event::KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn ctrl_c() -> Event {
+        Event::Key(crossterm::event::KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+        ))
+    }
+
+    fn some_error_flash() -> Option<ErrorFlash> {
+        Some(ErrorFlash {
+            message: "boom".into(),
+            hint: None,
+        })
+    }
+
+    /// Repo with two threads and an App on the list view, row 0 selected.
+    fn list_app_with_two_threads() -> (TempDir, GitOps, std::path::PathBuf, App) {
+        let (dir, git, _paths, db_path) = setup_repo();
+        make_snapshot_thread(&git, "task", "First", 1);
+        make_snapshot_thread(&git, "task", "Second", 2);
+        let app = App::new(snapshot_list::list_threads(&git).unwrap());
+        assert_eq!(app.table_state.selected(), Some(0));
+        (dir, git, db_path, app)
+    }
+
+    /// App on the create-thread form with a typed title.
+    fn create_thread_app_with_title() -> (TempDir, GitOps, std::path::PathBuf, App) {
+        let (dir, git, _paths, db_path) = setup_repo();
+        let mut app = App::new(Vec::new());
+        app.begin_create_thread();
+        app.thread_form.title = "Half-written title".into();
+        (dir, git, db_path, app)
+    }
+
+    #[test]
+    fn dispatch_error_flash_consumes_key_without_acting() {
+        let (_dir, git, db_path, mut app) = list_app_with_two_threads();
+        app.error_flash = some_error_flash();
+
+        let out = dispatch_event(&mut app, key_event(KeyCode::Char('j')), &git, &db_path);
+        assert_eq!(out, EventOutcome::Continue);
+        assert!(app.error_flash.is_none());
+        assert_eq!(app.view, View::List);
+        assert_eq!(
+            app.table_state.selected(),
+            Some(0),
+            "flash must eat the key"
+        );
+
+        // Control: the same key moves the selection once the flash is gone.
+        dispatch_event(&mut app, key_event(KeyCode::Char('j')), &git, &db_path);
+        assert_eq!(app.table_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn dispatch_error_flash_consumes_mouse_click_without_acting() {
+        let (_dir, git, db_path, mut app) = list_app_with_two_threads();
+        let _ = render_to_string(&mut app, 80, 20);
+        let area = app.ui_rects.list_table.unwrap();
+        let click_row_1 = Event::Mouse(mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            area.x + 2,
+            area.y + 3,
+        ));
+        app.error_flash = some_error_flash();
+
+        let out = dispatch_event(&mut app, click_row_1.clone(), &git, &db_path);
+        assert_eq!(out, EventOutcome::Continue);
+        assert!(app.error_flash.is_none());
+        assert_eq!(
+            app.table_state.selected(),
+            Some(0),
+            "flash must eat the click"
+        );
+
+        // Control: the same click selects row 1 once the flash is gone.
+        dispatch_event(&mut app, click_row_1, &git, &db_path);
+        assert_eq!(app.table_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn dispatch_ctrl_c_quits_within_two_presses_from_error_flash() {
+        let (_dir, git, db_path, mut app) = list_app_with_two_threads();
+        app.error_flash = some_error_flash();
+
+        assert_eq!(
+            dispatch_event(&mut app, ctrl_c(), &git, &db_path),
+            EventOutcome::Continue,
+            "first Ctrl-C only dismisses the error flash"
+        );
+        assert!(app.error_flash.is_none());
+        assert_eq!(
+            dispatch_event(&mut app, ctrl_c(), &git, &db_path),
+            EventOutcome::Quit
+        );
+    }
+
+    #[test]
+    fn dispatch_ctrl_c_quits_form_with_unsaved_input_without_confirmation() {
+        let (_dir, git, db_path, mut app) = create_thread_app_with_title();
+        assert!(app.has_unsaved_form_input());
+
+        assert_eq!(
+            dispatch_event(&mut app, ctrl_c(), &git, &db_path),
+            EventOutcome::Quit
+        );
+        assert!(!app.confirm_discard);
+    }
+
+    #[test]
+    fn dispatch_confirm_discard_other_keys_keep_form() {
+        for (label, event) in [
+            ("n", key_event(KeyCode::Char('n'))),
+            ("Esc", key_event(KeyCode::Esc)),
+            ("Ctrl-C", ctrl_c()),
+        ] {
+            let (_dir, git, db_path, mut app) = create_thread_app_with_title();
+            dispatch_event(&mut app, key_event(KeyCode::Esc), &git, &db_path);
+            assert!(app.confirm_discard, "Esc with unsaved input must ask first");
+
+            let out = dispatch_event(&mut app, event, &git, &db_path);
+            assert_eq!(out, EventOutcome::Continue, "{label}");
+            assert!(!app.confirm_discard, "{label}: confirmation must close");
+            assert_eq!(app.view, View::CreateThread, "{label}");
+            assert_eq!(app.thread_form.title, "Half-written title", "{label}");
+        }
+    }
+
+    #[test]
+    fn dispatch_confirm_discard_y_discards_form() {
+        for ch in ['y', 'Y'] {
+            let (_dir, git, db_path, mut app) = create_thread_app_with_title();
+            dispatch_event(&mut app, key_event(KeyCode::Esc), &git, &db_path);
+            assert!(app.confirm_discard);
+
+            let out = dispatch_event(&mut app, key_event(KeyCode::Char(ch)), &git, &db_path);
+            assert_eq!(out, EventOutcome::Continue, "{ch}");
+            assert!(!app.confirm_discard, "{ch}");
+            assert_eq!(app.view, View::List, "{ch}");
+            assert!(app.thread_form.title.is_empty(), "{ch}");
+        }
+    }
+
+    #[test]
+    fn dispatch_info_flash_clears_and_key_still_acts() {
+        let (_dir, git, db_path, mut app) = list_app_with_two_threads();
+        app.info_flash = Some("Copied: @x".into());
+
+        dispatch_event(&mut app, key_event(KeyCode::Char('j')), &git, &db_path);
+        assert!(app.info_flash.is_none());
+        assert_eq!(app.table_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn dispatch_quit_persists_tui_state() {
+        let (_dir, git, db_path, mut app) = list_app_with_two_threads();
+        let state_file = db_path.parent().unwrap().join("tui-state.toml");
+        assert!(
+            !state_file.exists(),
+            "fixture must start without a state file"
+        );
+
+        let out = dispatch_event(&mut app, key_event(KeyCode::Char('q')), &git, &db_path);
+        assert_eq!(out, EventOutcome::Quit);
+        assert!(
+            state_file.exists(),
+            "quit must save {}",
+            state_file.display()
+        );
+    }
+
+    #[test]
+    fn dispatch_e_in_thread_detail_requests_external_edit() {
+        let (_dir, git, _paths, db_path) = setup_repo();
+        let id = make_snapshot_thread(&git, "task", "Editable", 3);
+        let mut app = App::new(snapshot_list::list_threads(&git).unwrap());
+        open_thread_detail(&mut app, &git, &id, None).unwrap();
+
+        let out = dispatch_event(&mut app, key_event(KeyCode::Char('e')), &git, &db_path);
+        assert_eq!(out, EventOutcome::ExternalEdit(id));
+        assert!(app.pending_external_edit.is_none());
+    }
+
+    /// AT-6(a): run_app must not handle input except through
+    /// dispatch_event, or the tests above stop describing the real loop.
+    #[test]
+    fn run_app_handles_input_only_through_dispatch_event() {
+        use syn::visit::Visit;
+
+        struct Calls(Vec<String>);
+        impl<'ast> Visit<'ast> for Calls {
+            fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+                if let syn::Expr::Path(p) = &*call.func {
+                    if let Some(seg) = p.path.segments.last() {
+                        self.0.push(seg.ident.to_string());
+                    }
+                }
+                syn::visit::visit_expr_call(self, call);
+            }
+        }
+
+        let file = syn::parse_file(include_str!("mod.rs")).unwrap();
+        let run_app = file
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(f) if f.sig.ident == "run_app" => Some(f),
+                _ => None,
+            })
+            .expect("run_app not found in mod.rs");
+        let mut calls = Calls(Vec::new());
+        calls.visit_item_fn(run_app);
+
+        // Control: the visitor must see the call we know is there.
+        assert!(
+            calls.0.iter().any(|c| c == "dispatch_event"),
+            "visitor found no dispatch_event call; calls seen: {:?}",
+            calls.0
+        );
+        for forbidden in ["handle_key", "handle_mouse"] {
+            assert!(
+                !calls.0.iter().any(|c| c == forbidden),
+                "run_app calls {forbidden} directly; route it through dispatch_event"
+            );
+        }
+    }
+
+    // ============================================================
+    //  App::effects — clipboard / mouse capture
+    //  (doc/spec/TUI-UX-TESTING.md AT-6(b), AT-7; ADR-012)
+    // ============================================================
+
+    fn record_effects(app: &mut App) -> effects::RecordingEffects {
+        let rec = effects::RecordingEffects::default();
+        app.effects = Box::new(rec.clone());
+        rec
+    }
+
+    #[test]
+    fn yank_in_list_goes_through_effects() {
+        use effects::EffectCall;
+        let (_dir, git, db_path, mut app) = list_app_with_two_threads();
+        let rec = record_effects(&mut app);
+        // ADR-014: yanked text uses the display form of the ID.
+        let shown = crate::internal::id::display_thread_id(&app.selected_thread_id().unwrap());
+
+        dispatch_event(&mut app, key_event(KeyCode::Char('y')), &git, &db_path);
+        assert_eq!(
+            *rec.calls.borrow(),
+            vec![EffectCall::Clipboard(shown.clone())]
+        );
+        assert_eq!(app.info_flash, Some(format!("Copied: {shown}")));
+    }
+
+    #[test]
+    fn select_mode_toggles_mouse_capture_through_effects() {
+        use effects::EffectCall;
+        let (_dir, git, _paths, db_path) = setup_repo();
+        let id = make_snapshot_thread(&git, "task", "Selectable", 4);
+        let mut app = App::new(snapshot_list::list_threads(&git).unwrap());
+        open_thread_detail(&mut app, &git, &id, None).unwrap();
+        let rec = record_effects(&mut app);
+
+        dispatch_event(&mut app, key_event(KeyCode::Char('S')), &git, &db_path);
+        assert_eq!(*rec.calls.borrow(), vec![EffectCall::MouseCapture(false)]);
+        assert!(app.mouse_capture_disabled);
+
+        // Any key leaves select mode and turns capture back on.
+        dispatch_event(&mut app, key_event(KeyCode::Char('j')), &git, &db_path);
+        assert_eq!(
+            *rec.calls.borrow(),
+            vec![
+                EffectCall::MouseCapture(false),
+                EffectCall::MouseCapture(true)
+            ]
+        );
+        assert!(!app.mouse_capture_disabled);
+    }
+
+    /// AT-6(b): input handling reaches the clipboard and the terminal only
+    /// through `App::effects`, so tests using RecordingEffects touch neither.
+    #[test]
+    fn input_handling_has_no_direct_external_effects() {
+        let forbidden = [
+            "std::io::stdout",
+            "execute!",
+            "Command::new",
+            "copy_to_clipboard",
+        ];
+        // Control: the scan must see these tokens where they do live.
+        let effects_src = include_str!("effects.rs");
+        for token in ["std::io::stdout", "execute!", "Command::new"] {
+            assert!(
+                effects_src.contains(token),
+                "control failed: `{token}` not found in effects.rs"
+            );
+        }
+        for (name, src) in [
+            ("input.rs", include_str!("input.rs")),
+            ("state.rs", include_str!("state.rs")),
+        ] {
+            for token in forbidden {
+                assert!(
+                    !src.contains(token),
+                    "{name} contains `{token}`; route the effect through App::effects"
+                );
+            }
+        }
     }
 }

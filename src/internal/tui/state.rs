@@ -586,7 +586,7 @@ fn snapshot_update_node_status(
     Ok(())
 }
 
-fn snapshot_append_node(
+pub(super) fn snapshot_append_node(
     git: &GitOps,
     thread_id: &str,
     kind: NodeKind,
@@ -633,7 +633,7 @@ pub(super) fn snapshot_revise_body(
     Ok(())
 }
 
-fn snapshot_append_link(
+pub(super) fn snapshot_append_link(
     git: &GitOps,
     thread_id: &str,
     target_thread_id: &str,
@@ -655,7 +655,7 @@ fn snapshot_append_link(
     Ok(())
 }
 
-fn snapshot_create_thread(
+pub(super) fn snapshot_create_thread(
     git: &GitOps,
     title: &str,
     body: Option<&str>,

@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a67a73f9b5937929d104c7d0ee6a33daa04c14208115921829870995edb85f17 # shrinks to Case { fixture: Full, size: 0, prefix: 10, ops: [Mouse(ScrollUp, Area { index: 0, fx: 0, fy: 0 })] }
+cc 30f72a6d4d5827f63055e189603b0350245b4b642ad879820038c4011fd24d40 # shrinks to Case { fixture: Full, size: 0, prefix: 0, ops: [Key(Char('c'), KeyModifiers(0x0)), Key(Tab, KeyModifiers(0x0)), Key(Char('f'), KeyModifiers(0x0)), Key(Esc, KeyModifiers(0x0))] }
+cc af129b0267353649e378ad9f59d8812d511fbea48834205dbb4a44ba103e6239 # shrinks to Case { fixture: Full, size: 2, prefix: 1, ops: [Key(End, KeyModifiers(0x0))] }
