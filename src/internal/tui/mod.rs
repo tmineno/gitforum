@@ -3031,6 +3031,26 @@ mod tests {
         assert!(app.thread_form.tags.is_empty());
     }
 
+    /// 3abrwnz8: after creating a thread and going back with Esc, the list
+    /// selects the new thread, under the default sort and another one.
+    #[test]
+    fn created_thread_is_selected_back_in_the_list() {
+        for (sort, ascending) in [(SortColumn::Updated, false), (SortColumn::Title, true)] {
+            let (_dir, git, db_path, mut app) = list_app_with_two_threads();
+            app.sort_column = sort;
+            app.sort_ascending = ascending;
+            app.begin_create_thread();
+            app.thread_form.title = "Middle".into();
+            state::submit_create_thread(&mut app, &git).unwrap();
+            let View::ThreadDetail(id) = app.view.clone() else {
+                panic!("{sort:?}: not on the new thread: {:?}", app.view);
+            };
+            dispatch_event(&mut app, key_event(KeyCode::Esc), &git, &db_path);
+            assert_eq!(app.view, View::List, "{sort:?}");
+            assert_eq!(app.selected_thread_id(), Some(id), "{sort:?}");
+        }
+    }
+
     #[test]
     fn dispatch_info_flash_clears_and_key_still_acts() {
         let (_dir, git, db_path, mut app) = list_app_with_two_threads();

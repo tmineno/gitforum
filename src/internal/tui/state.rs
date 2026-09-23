@@ -167,7 +167,13 @@ pub(super) fn submit_create_thread(app: &mut App, git: &GitOps) -> ForumResult<(
     let thread_id =
         snapshot_create_thread(git, title, body, lifecycle, &parsed_tags, &actor, &clock)?;
     refresh_thread_list(app, git)?;
-    if let Some(pos) = app.threads.iter().position(|row| row.id == thread_id) {
+    // The list and `selected_thread_id` index the sorted, filtered rows.
+    // A filter that hides the new thread keeps the selection in range.
+    if let Some(pos) = app
+        .visible_threads()
+        .iter()
+        .position(|row| row.id == thread_id)
+    {
         app.table_state.select(Some(pos));
     }
     open_thread_detail(app, git, &thread_id, None)
