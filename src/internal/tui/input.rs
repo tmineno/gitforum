@@ -329,6 +329,9 @@ pub(super) fn handle_mouse(
                 }
                 app.last_click = Some((mouse.column, mouse.row, now));
             }
+            // The filter bar popup is modal: the wheel does not reach the
+            // list behind it.
+            MouseEventKind::ScrollDown | MouseEventKind::ScrollUp if app.filter_bar.is_some() => {}
             MouseEventKind::ScrollDown => app.move_down(),
             MouseEventKind::ScrollUp => app.move_up(),
             _ => {}
