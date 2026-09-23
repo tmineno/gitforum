@@ -15,6 +15,7 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::time::Instant;
 
 use crossterm::event::{
@@ -27,7 +28,7 @@ use proptest::test_runner::{
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::Terminal;
+use ratatui::{Frame, Terminal};
 use tempfile::TempDir;
 
 use crate::internal::config::RepoPaths;
@@ -314,8 +315,21 @@ fn to_event(op: &Op, app: &App, frame: Rect) -> Option<Event> {
     }
 }
 
-fn draw(terminal: &mut Terminal<TestBackend>, app: &mut App) {
-    terminal.draw(|f| render(f, app)).unwrap();
+/// The event handler and renderer a case runs. The suite runs [`REAL`]; the
+/// self-tests run broken ones and check that the suite reports them (AT-2).
+#[derive(Clone, Copy)]
+struct Harness {
+    dispatch: fn(&mut App, Event, &GitOps, &Path) -> EventOutcome,
+    render: fn(&mut Frame, &mut App),
+}
+
+const REAL: Harness = Harness {
+    dispatch: dispatch_event,
+    render,
+};
+
+fn draw(terminal: &mut Terminal<TestBackend>, app: &mut App, harness: &Harness) {
+    terminal.draw(|f| (harness.render)(f, app)).unwrap();
 }
 
 /// A violation the code is known to have today (spec "既知の違反の除外
@@ -450,7 +464,8 @@ fn escape_to_list(
     app: &mut App,
     terminal: &mut Terminal<TestBackend>,
     git: &GitOps,
-    db_path: &std::path::Path,
+    db_path: &Path,
+    harness: &Harness,
 ) -> Result<(), String> {
     let mut steps = Vec::new();
     while mode_of(app) != Mode::List {
@@ -471,12 +486,12 @@ fn escape_to_list(
         };
         steps.push(code);
         let event = Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
-        if dispatch_event(app, event, git, db_path) == EventOutcome::Quit {
+        if (harness.dispatch)(app, event, git, db_path) == EventOutcome::Quit {
             return Err(format!(
                 "INV-3: quit on the way back to the list after {steps:?}"
             ));
         }
-        draw(terminal, app);
+        draw(terminal, app, harness);
     }
     Ok(())
 }
@@ -489,6 +504,7 @@ fn run_case(
     templates: &Templates,
     tally: &RefCell<BTreeMap<Mode, u64>>,
     known: &[Known],
+    harness: &Harness,
 ) -> Result<(), String> {
     let dir = TempDir::new().unwrap();
     copy_tree(templates.path(case.fixture), dir.path());
@@ -507,7 +523,7 @@ fn run_case(
     let (w, h) = SIZES[case.size];
     let mut frame = Rect::new(0, 0, w, h);
     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
-    draw(&mut terminal, &mut app);
+    draw(&mut terminal, &mut app, harness);
     let visit = |app: &App| *tally.borrow_mut().entry(mode_of(app)).or_default() += 1;
     visit(&app);
     let first = Snapshot::of(&app);
@@ -544,12 +560,12 @@ fn run_case(
         } else if let Some(e) = to_event(op, &app, frame) {
             // ExternalEdit would suspend the terminal for $EDITOR; the suite
             // never runs an editor, so it continues like Continue.
-            outcome = Some(dispatch_event(&mut app, e.clone(), &git, &db_path));
+            outcome = Some((harness.dispatch)(&mut app, e.clone(), &git, &db_path));
             event = Some(e);
         }
         let quit = outcome == Some(EventOutcome::Quit);
         if !quit {
-            draw(&mut terminal, &mut app);
+            draw(&mut terminal, &mut app, harness);
             visit(&app);
         }
         let after = Snapshot::of(&app);
@@ -568,7 +584,7 @@ fn run_case(
             return Ok(());
         }
     }
-    escape_to_list(&mut app, &mut terminal, &git, &db_path)
+    escape_to_list(&mut app, &mut terminal, &git, &db_path, harness)
 }
 
 fn seed_rng() -> (TestRng, String) {
@@ -613,7 +629,7 @@ fn tui_ux_invariants() {
     let tally = RefCell::new(BTreeMap::new());
     let started = Instant::now();
     let result = runner.run(&case_strategy(), |case| -> TestCaseResult {
-        run_case(&case, &templates, &tally, &known).map_err(TestCaseError::fail)
+        run_case(&case, &templates, &tally, &known, &REAL).map_err(TestCaseError::fail)
     });
     let elapsed = started.elapsed();
     if let Err(e) = result {
@@ -656,7 +672,7 @@ fn known_violations_still_occur() {
             .filter(|&(j, _)| j != i)
             .map(|(_, k)| *k)
             .collect();
-        let bare = run_case(&case, &templates, &tally, &others);
+        let bare = run_case(&case, &templates, &tally, &others, &REAL);
         if !matches!(&bare, Err(e) if e.contains(&tag)) {
             stale.push(format!(
                 "{} {}: the repro no longer shows it ({bare:?})",
@@ -664,7 +680,7 @@ fn known_violations_still_occur() {
             ));
             continue;
         }
-        let covered = run_case(&case, &templates, &tally, &all);
+        let covered = run_case(&case, &templates, &tally, &all, &REAL);
         if matches!(&covered, Err(e) if e.contains(&tag)) {
             stale.push(format!(
                 "{} {}: the entry does not cover its repro",
@@ -676,4 +692,67 @@ fn known_violations_still_occur() {
         stale.is_empty(),
         "stale known violations (remove or fix them): {stale:#?}"
     );
+}
+
+/// Run one case through a proptest runner, as the suite does, but without
+/// saving failures. Returns the runner's report.
+fn run_once(case: Case, harness: Harness) -> Result<(), String> {
+    let templates = Templates::build();
+    let tally = RefCell::new(BTreeMap::new());
+    let known = known();
+    let config = Config {
+        cases: 1,
+        failure_persistence: None,
+        ..Config::default()
+    };
+    TestRunner::new(config)
+        .run(&Just(case), |case| {
+            run_case(&case, &templates, &tally, &known, &harness).map_err(TestCaseError::fail)
+        })
+        .map_err(|e| e.to_string())
+}
+
+fn open_first_thread() -> Case {
+    Case {
+        fixture: Fixture::Full,
+        size: 0,
+        prefix: 1,
+        ops: vec![],
+    }
+}
+
+/// AT-2, INV-1: a renderer that panics is reported, not swallowed.
+#[test]
+fn inv1_panicking_render_is_reported() {
+    fn broken(f: &mut Frame, app: &mut App) {
+        if matches!(app.view, View::ThreadDetail(_)) {
+            panic!("planted render panic");
+        }
+        render(f, app);
+    }
+    let harness = Harness {
+        render: broken,
+        ..REAL
+    };
+    let report = run_once(open_first_thread(), harness).unwrap_err();
+    assert!(report.contains("planted render panic"), "{report}");
+    assert!(run_once(open_first_thread(), REAL).is_ok());
+}
+
+/// AT-2, INV-3: a view that Esc cannot leave is reported.
+#[test]
+fn inv3_stuck_view_is_reported() {
+    fn no_esc_in_detail(app: &mut App, event: Event, git: &GitOps, db: &Path) -> EventOutcome {
+        let esc = matches!(event, Event::Key(k) if k.code == KeyCode::Esc);
+        if esc && matches!(app.view, View::ThreadDetail(_)) {
+            return EventOutcome::Continue;
+        }
+        dispatch_event(app, event, git, db)
+    }
+    let harness = Harness {
+        dispatch: no_esc_in_detail,
+        ..REAL
+    };
+    let report = run_once(open_first_thread(), harness).unwrap_err();
+    assert!(report.contains("INV-3: still on ThreadDetail"), "{report}");
 }

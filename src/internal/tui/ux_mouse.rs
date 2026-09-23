@@ -723,6 +723,30 @@ fn rows() -> Vec<Row> {
     ]
 }
 
+/// Run one row on two sessions; Some(details) when the two sides end in
+/// different states (INV-9, and INV-12 for the back-label rows).
+fn compare(row: &Row, templates: &Templates) -> Option<String> {
+    let mut by_mouse = Session::open(templates);
+    let mut by_keys = Session::open(templates);
+    (row.setup)(&mut by_mouse);
+    (row.setup)(&mut by_keys);
+    assert_eq!(
+        by_mouse.observe(),
+        by_keys.observe(),
+        "{}: setup diverged",
+        row.name
+    );
+    (row.mouse)(&mut by_mouse);
+    (row.keys)(&mut by_keys);
+    let (m, k) = (by_mouse.observe(), by_keys.observe());
+    (m != k).then(|| {
+        format!(
+            "mouse: {m:#?}\nkeys:  {k:#?}\nscreen after mouse:\n{}",
+            by_mouse.screen()
+        )
+    })
+}
+
 /// AT-14 / AT-16 / AT-17: every table M row gives the same state by mouse
 /// and by keys, except the rows listed in KNOWN_VIOLATIONS.
 #[test]
@@ -730,27 +754,8 @@ fn mouse_matches_keyboard() {
     let templates = Templates::build();
     let mut failing: BTreeMap<&str, String> = BTreeMap::new();
     for row in rows() {
-        let mut by_mouse = Session::open(&templates);
-        let mut by_keys = Session::open(&templates);
-        (row.setup)(&mut by_mouse);
-        (row.setup)(&mut by_keys);
-        assert_eq!(
-            by_mouse.observe(),
-            by_keys.observe(),
-            "{}: setup diverged",
-            row.name
-        );
-        (row.mouse)(&mut by_mouse);
-        (row.keys)(&mut by_keys);
-        let (m, k) = (by_mouse.observe(), by_keys.observe());
-        if m != k {
-            failing.insert(
-                row.name,
-                format!(
-                    "mouse: {m:#?}\nkeys:  {k:#?}\nscreen after mouse:\n{}",
-                    by_mouse.screen()
-                ),
-            );
+        if let Some(details) = compare(&row, &templates) {
+            failing.insert(row.name, details);
         }
     }
 
@@ -766,4 +771,46 @@ fn mouse_matches_keyboard() {
         "mouse and keys disagree on rows not in KNOWN_VIOLATIONS: {new:?}\n\
          KNOWN_VIOLATIONS rows that now agree (remove them): {stale:?}{details}"
     );
+}
+
+/// AT-2, INV-9 and INV-12: rows whose two sides differ are reported, and a
+/// row whose sides agree is not.
+#[test]
+fn compare_reports_planted_mismatches() {
+    let templates = Templates::build();
+    let planted = [
+        // INV-9: the mouse side leaves the selection where the keys move it.
+        Row {
+            name: "planted-inv9",
+            setup: no_setup,
+            mouse: |_| {},
+            keys: |s| {
+                s.key(KeyCode::Down);
+            },
+        },
+        // INV-12: a hint that does nothing when clicked, paired with Esc.
+        Row {
+            name: "planted-inv12",
+            setup: open_thread,
+            mouse: |s| {
+                let at = s.find("[enter]node");
+                s.click(at);
+            },
+            keys: esc,
+        },
+    ];
+    for row in &planted {
+        assert!(
+            compare(row, &templates).is_some(),
+            "{} was not reported",
+            row.name
+        );
+    }
+    let agree = Row {
+        name: "planted-agree",
+        setup: open_thread,
+        mouse: esc,
+        keys: esc,
+    };
+    assert_eq!(compare(&agree, &templates), None);
 }
