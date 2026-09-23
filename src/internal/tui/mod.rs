@@ -12,6 +12,8 @@ mod ux_fixture;
 mod ux_invariants;
 #[cfg(test)]
 mod ux_mouse;
+#[cfg(test)]
+mod ux_scroll;
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -38,64 +40,6 @@ use render::render;
 /// Number of lines/rows to scroll per PageUp/PageDown press.
 const PAGE_SCROLL: u16 = 20;
 use state::{auto_refresh, default_thread_lifecycle_index};
-
-/// Compute the maximum scroll offset for wrapped text in a bordered area.
-///
-/// Returns the highest scroll value that still shows the last line of content
-/// at the bottom of the viewport. Returns 0 if content fits without scrolling.
-fn max_scroll(text: &str, area: Rect, markdown_mode: bool) -> u16 {
-    // Inner width after block borders (1 char each side)
-    let inner_width = area.width.saturating_sub(2) as usize;
-    // Inner height after block borders (1 char top + 1 char bottom)
-    let viewport_height = area.height.saturating_sub(2) as usize;
-    if inner_width == 0 || viewport_height == 0 {
-        return 0;
-    }
-
-    let total_lines = if markdown_mode {
-        let md = markdown::markdown_to_text(text, Some(inner_width));
-        // ratatui Text is a Vec<Line>; each Line wraps at inner_width
-        md.lines
-            .iter()
-            .map(|line| {
-                let len: usize = line.spans.iter().map(|s| s.content.len()).sum();
-                if len == 0 {
-                    1
-                } else {
-                    len.div_ceil(inner_width)
-                }
-            })
-            .sum::<usize>()
-            .max(1)
-    } else {
-        wrapped_line_count(text, inner_width)
-    };
-
-    total_lines.saturating_sub(viewport_height) as u16
-}
-
-/// Count the number of wrapped lines for plain text at a given width.
-fn wrapped_line_count(text: &str, width: usize) -> usize {
-    if text.is_empty() {
-        return 0;
-    }
-    let mut count: usize = text
-        .lines()
-        .map(|line| {
-            let len = line.len();
-            if len == 0 {
-                1
-            } else {
-                len.div_ceil(width)
-            }
-        })
-        .sum();
-    // Trailing newline adds an empty line
-    if text.ends_with('\n') {
-        count += 1;
-    }
-    count
-}
 
 // Re-export for external tests
 #[doc(hidden)]
@@ -314,12 +258,17 @@ pub struct App {
     /// sections and is kept for tests / debugging fallback.
     pub thread_sections: Vec<crate::internal::commands::show::Section>,
     pub thread_scroll: u16,
+    /// Largest `thread_scroll` that still shows the body pane's last
+    /// line, counted when the pane was last drawn (INV-13).
+    pub thread_scroll_max: Option<u16>,
     pub thread_nodes: Vec<NodeWithBody>,
     /// Tree-ordered entries for the nodes panel (may differ from thread_nodes order).
     tree_entries: Vec<TreeEntry>,
     pub node_table_state: TableState,
     pub node_detail_text: String,
     pub node_detail_scroll: u16,
+    /// The same limit for `node_detail_scroll`.
+    pub node_detail_scroll_max: Option<u16>,
     thread_form: ThreadForm,
     node_form: NodeForm,
     link_form: LinkForm,
@@ -392,11 +341,13 @@ impl App {
             thread_text: String::new(),
             thread_sections: Vec::new(),
             thread_scroll: 0,
+            thread_scroll_max: None,
             thread_nodes: Vec::new(),
             tree_entries: Vec::new(),
             node_table_state: TableState::default(),
             node_detail_text: String::new(),
             node_detail_scroll: 0,
+            node_detail_scroll_max: None,
             thread_form: ThreadForm {
                 lifecycle_index: 0,
                 tags: String::new(),
@@ -793,73 +744,20 @@ impl App {
         self.thread_scroll = self.thread_scroll.saturating_sub(PAGE_SCROLL);
     }
 
-    /// Return the text currently displayed in the body pane.
-    ///
-    /// When a node is selected (row > 0), the body pane shows the node's
-    /// metadata + body. Otherwise it shows the thread text.
-    fn body_pane_content(&self) -> String {
-        let selected_node: Option<&NodeWithBody> = self
-            .node_table_state
-            .selected()
-            .and_then(|i| i.checked_sub(1))
-            .and_then(|i| self.visible_tree_indices.get(i))
-            .and_then(|&ti| self.tree_entries.get(ti))
-            .map(|entry| &self.thread_nodes[entry.node_index]);
-
-        if let Some(node) = selected_node {
-            use super::node::NodeStatus;
-            let mut content = String::new();
-            content.push_str(&format!("**type:**     {}\n", node.record.kind));
-            let status = match node.record.status {
-                NodeStatus::Retracted => "retracted",
-                NodeStatus::Incorporated => "incorporated",
-                NodeStatus::Resolved => "resolved",
-                NodeStatus::Open => "open",
-            };
-            content.push_str(&format!("**status:**   {status}\n"));
-            content.push_str(&format!("**actor:**    {}\n", node.record.created_by));
-            content.push_str(&format!(
-                "**created:**  {}\n",
-                node.record.created_at.format("%Y-%m-%dT%H:%M:%SZ")
-            ));
-            if let Some(ref reply_to) = node.record.reply_to {
-                content.push_str(&format!(
-                    "**reply-to:** {}\n",
-                    &reply_to[..reply_to.len().min(16)]
-                ));
-            }
-            content.push_str("\n---\n\n");
-            for line in node.body.lines() {
-                content.push_str(&format!("{line}\n"));
-            }
-            if node.body.is_empty() {
-                content.push('\n');
-            }
-            content
-        } else {
-            self.thread_text.clone()
+    /// Clamp thread_scroll to the limit the last draw of the body pane
+    /// counted (INV-13). Before the pane has been drawn there is no limit;
+    /// the next draw clamps anyway.
+    fn clamp_thread_scroll(&mut self) {
+        if let Some(max) = self.thread_scroll_max {
+            self.thread_scroll = self.thread_scroll.min(max);
         }
     }
 
-    /// Clamp thread_scroll so the viewport doesn't scroll past the last line of content.
-    fn clamp_thread_scroll(&mut self) {
-        let area = match self.ui_rects.thread_body {
-            Some(a) => a,
-            None => return,
-        };
-        let content = self.body_pane_content();
-        let max = max_scroll(&content, area, self.markdown_mode);
-        self.thread_scroll = self.thread_scroll.min(max);
-    }
-
-    /// Clamp node_detail_scroll so the viewport doesn't scroll past the last line.
+    /// Clamp node_detail_scroll the same way, for the node detail pane.
     fn clamp_node_detail_scroll(&mut self) {
-        let area = match self.ui_rects.node_detail {
-            Some(a) => a,
-            None => return,
-        };
-        let max = max_scroll(&self.node_detail_text, area, self.markdown_mode);
-        self.node_detail_scroll = self.node_detail_scroll.min(max);
+        if let Some(max) = self.node_detail_scroll_max {
+            self.node_detail_scroll = self.node_detail_scroll.min(max);
+        }
     }
 
     fn begin_create_thread(&mut self) {
@@ -1554,11 +1452,11 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let git = GitOps::new(dir.path().to_path_buf());
         app.view = View::ThreadDetail("RFC-0001".into());
-        // Use enough lines to exceed the viewport height so scroll is not clamped to 0
-        app.thread_text = (0..50)
-            .map(|n| format!("line {n}"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        // Enough drawn lines to exceed the viewport, so the scroll limit
+        // is above 0. The pane draws the sections, not `thread_text`.
+        app.thread_sections = vec![crate::internal::commands::show::Section::Text(
+            (0..50).map(|n| format!("line {n}")).collect(),
+        )];
         let _ = render_to_string(&mut app, 120, 24);
         let area = app.ui_rects.thread_body.unwrap();
 

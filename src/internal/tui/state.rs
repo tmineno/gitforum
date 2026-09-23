@@ -59,6 +59,7 @@ pub(super) fn open_thread_detail(
     app.thread_text = text_lines.join("\n");
     app.thread_sections = sections;
     app.thread_scroll = 0;
+    app.thread_scroll_max = None;
     app.thread_nodes = state.nodes;
     app.tree_entries = build_tree_entries(&app.thread_nodes);
     app.recompute_visible_tree();
@@ -91,6 +92,7 @@ pub(super) fn open_node_detail(
         },
     );
     app.node_detail_scroll = 0;
+    app.node_detail_scroll_max = None;
     app.view = View::NodeDetail {
         thread_id: thread_id.to_string(),
         node_id: lookup.node.record.id,

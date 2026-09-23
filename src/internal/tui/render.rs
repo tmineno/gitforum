@@ -1,6 +1,6 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap};
 use ratatui::Frame;
 
@@ -708,6 +708,9 @@ pub(crate) fn render_thread_detail(f: &mut Frame, area: Rect, app: &mut App) {
         };
 
         let body_block = Block::default().borders(Borders::ALL).title(body_title);
+        let max = scroll_limit(&body_text, body_block.inner(main[0]));
+        app.thread_scroll_max = Some(max);
+        app.thread_scroll = app.thread_scroll.min(max);
         f.render_widget(
             Paragraph::new(body_text)
                 .block(body_block)
@@ -829,25 +832,40 @@ pub(crate) fn render_node_detail(f: &mut Frame, area: Rect, app: &mut App) {
     let node_block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" node {title} "));
-    if app.markdown_mode {
+    let text = if app.markdown_mode {
         let inner_w = chunks[1].width.saturating_sub(2) as usize;
-        let md_text = markdown_to_text(app.node_detail_text.as_str(), Some(inner_w));
-        f.render_widget(
-            Paragraph::new(md_text)
-                .block(node_block)
-                .wrap(Wrap { trim: false })
-                .scroll((app.node_detail_scroll, 0)),
-            chunks[1],
-        );
+        markdown_to_text(app.node_detail_text.as_str(), Some(inner_w))
     } else {
-        f.render_widget(
-            Paragraph::new(app.node_detail_text.as_str())
-                .block(node_block)
-                .wrap(Wrap { trim: false })
-                .scroll((app.node_detail_scroll, 0)),
-            chunks[1],
-        );
-    }
+        Text::from(app.node_detail_text.clone())
+    };
+    let max = scroll_limit(&text, node_block.inner(chunks[1]));
+    app.node_detail_scroll_max = Some(max);
+    app.node_detail_scroll = app.node_detail_scroll.min(max);
+    f.render_widget(
+        Paragraph::new(text)
+            .block(node_block)
+            .wrap(Wrap { trim: false })
+            .scroll((app.node_detail_scroll, 0)),
+        chunks[1],
+    );
+}
+
+/// The largest scroll that still shows the last non-blank line of `text`
+/// wrapped into `inner`, the pane's area inside its border (INV-13). It is
+/// counted with the same word wrap the pane draws with; blank lines after
+/// the last text do not count.
+fn scroll_limit(text: &Text, inner: Rect) -> u16 {
+    let end = text
+        .lines
+        .iter()
+        .rposition(|line| line.spans.iter().any(|s| !s.content.trim().is_empty()))
+        .map_or(0, |last| last + 1);
+    let rows = Paragraph::new(Text::from(text.lines[..end].to_vec()))
+        .wrap(Wrap { trim: false })
+        .line_count(inner.width);
+    u16::try_from(rows)
+        .unwrap_or(u16::MAX)
+        .saturating_sub(inner.height)
 }
 
 pub(crate) fn render_create_thread(f: &mut Frame, area: Rect, app: &mut App) {
