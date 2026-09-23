@@ -492,7 +492,11 @@ pub(super) fn handle_mouse(
                 {
                     app.thread_form.field = ThreadFormField::Submit;
                     submit_create_thread(app, git)?;
-                } else if let Some(area) = app.ui_rects.dropdown {
+                } else if let Some(area) = app
+                    .ui_rects
+                    .dropdown
+                    .filter(|area| rect_contains(*area, mouse.column, mouse.row))
+                {
                     if let Some(index) = dropdown_item_at(area, mouse.row) {
                         let max = thread_lifecycle_labels().len();
                         if index < max {
@@ -530,7 +534,11 @@ pub(super) fn handle_mouse(
                 {
                     app.node_form.field = NodeFormField::Submit;
                     submit_create_node(app, git, &thread_id)?;
-                } else if let Some(area) = app.ui_rects.dropdown {
+                } else if let Some(area) = app
+                    .ui_rects
+                    .dropdown
+                    .filter(|area| rect_contains(*area, mouse.column, mouse.row))
+                {
                     if let Some(index) = dropdown_item_at(area, mouse.row) {
                         let max = node_type_labels().len();
                         if index < max {
@@ -564,7 +572,11 @@ pub(super) fn handle_mouse(
                 {
                     app.link_form.field = LinkFormField::Submit;
                     submit_create_link(app, git, &thread_id, &origin)?;
-                } else if let Some(area) = app.ui_rects.dropdown {
+                } else if let Some(area) = app
+                    .ui_rects
+                    .dropdown
+                    .filter(|area| rect_contains(*area, mouse.column, mouse.row))
+                {
                     if let Some(index) = dropdown_item_at(area, mouse.row) {
                         match app.link_form.field {
                             LinkFormField::Relation => {
