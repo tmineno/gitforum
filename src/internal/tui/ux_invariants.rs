@@ -39,7 +39,7 @@ use crate::internal::snapshot::list as snapshot_list;
 
 use super::effects::RecordingEffects;
 use super::render::render;
-use super::ux_checks::{areas, check_step, inside, Area, Snapshot, Step, Violation};
+use super::ux_checks::{check_step, Snapshot, Step, Violation};
 use super::ux_fixture::{copy_tree, stale_row, Fixture, Templates};
 use super::{dispatch_event, App, EventOutcome, UiRects, View};
 
@@ -395,25 +395,6 @@ fn known() -> Vec<Known> {
                 size: 0,
                 prefix: 0,
                 ops: vec![ch('c'), key(KeyCode::Tab), ch('f'), key(KeyCode::Esc)],
-            },
-        },
-        Known {
-            inv: "INV-7",
-            ticket: "uwqh1bld",
-            // `[f]filter:` and `[esc/q]back` are placed by adding widths to
-            // a start column, and never clipped to the frame. (The column
-            // headers follow the list's widths since TUI-LIST-COLUMNS.)
-            covers: |s, _| {
-                areas(&s.after.rects)
-                    .into_iter()
-                    .filter(|(_, r)| !inside(s.screen.area, *r))
-                    .all(|(a, _)| matches!(a, Area::FilterLabel | Area::HelpLine))
-            },
-            repro: || Case {
-                fixture: Fixture::Full,
-                size: 2,
-                prefix: 1,
-                ops: vec![key(KeyCode::Esc)],
             },
         },
     ]
