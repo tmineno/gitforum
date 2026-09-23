@@ -620,7 +620,9 @@ impl App {
     fn has_unsaved_form_input(&self) -> bool {
         match &self.view {
             View::CreateThread => {
-                !self.thread_form.title.is_empty() || !self.thread_form.body.is_empty()
+                !self.thread_form.title.is_empty()
+                    || !self.thread_form.tags.is_empty()
+                    || !self.thread_form.body.is_empty()
             }
             View::CreateNode { .. } => !self.node_form.body.is_empty(),
             View::CreateLink { .. } => !self.link_form.manual_target.is_empty(),
@@ -2982,6 +2984,37 @@ mod tests {
             assert_eq!(app.view, View::List, "{ch}");
             assert!(app.thread_form.title.is_empty(), "{ch}");
         }
+    }
+
+    /// jzba3snd: tags alone are unsaved input (spec 用語, INV-5), so Esc asks
+    /// first; `n` keeps them and `y` drops them (INV-8).
+    #[test]
+    fn dispatch_esc_asks_before_dropping_typed_tags() {
+        let (_dir, git, _paths, db_path) = setup_repo();
+        let mut app = App::new(Vec::new());
+        for code in [KeyCode::Char('c'), KeyCode::Tab, KeyCode::Char('f')] {
+            dispatch_event(&mut app, key_event(code), &git, &db_path);
+        }
+        assert_eq!(
+            (&app.view, app.thread_form.tags.as_str()),
+            (&View::CreateThread, "f")
+        );
+
+        dispatch_event(&mut app, key_event(KeyCode::Esc), &git, &db_path);
+        assert!(
+            app.confirm_discard,
+            "Esc with only tags typed must ask first"
+        );
+        dispatch_event(&mut app, key_event(KeyCode::Char('n')), &git, &db_path);
+        assert_eq!(
+            (&app.view, app.thread_form.tags.as_str()),
+            (&View::CreateThread, "f")
+        );
+
+        dispatch_event(&mut app, key_event(KeyCode::Esc), &git, &db_path);
+        dispatch_event(&mut app, key_event(KeyCode::Char('y')), &git, &db_path);
+        assert_eq!(app.view, View::List);
+        assert!(app.thread_form.tags.is_empty());
     }
 
     #[test]

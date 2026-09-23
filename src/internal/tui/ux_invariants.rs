@@ -361,43 +361,28 @@ struct Known {
 }
 
 fn known() -> Vec<Known> {
-    vec![
-        Known {
-            inv: "INV-11",
-            ticket: "x33ch89q",
-            // The mouse path does not look at the confirmation at all, so a
-            // wheel turn leaves it up and a click reaches the form.
-            covers: |s, _| {
-                s.before.mode == Mode::ConfirmDiscard && matches!(s.event, Some(Event::Mouse(_)))
-            },
-            repro: || Case {
-                fixture: Fixture::Full,
-                size: 0,
-                prefix: 10,
-                ops: vec![Op::Mouse(
-                    MouseKind::ScrollUp,
-                    Target::Area {
-                        index: 0,
-                        fx: 0,
-                        fy: 0,
-                    },
-                )],
-            },
+    vec![Known {
+        inv: "INV-11",
+        ticket: "x33ch89q",
+        // The mouse path does not look at the confirmation at all, so a
+        // wheel turn leaves it up and a click reaches the form.
+        covers: |s, _| {
+            s.before.mode == Mode::ConfirmDiscard && matches!(s.event, Some(Event::Mouse(_)))
         },
-        Known {
-            inv: "INV-5",
-            ticket: "jzba3snd",
-            // `has_unsaved_form_input` does not look at the tags, so Esc
-            // leaves a form holding only tags without asking.
-            covers: |s, _| s.before.unsaved && !s.before.unsaved_by_code,
-            repro: || Case {
-                fixture: Fixture::Full,
-                size: 0,
-                prefix: 0,
-                ops: vec![ch('c'), key(KeyCode::Tab), ch('f'), key(KeyCode::Esc)],
-            },
+        repro: || Case {
+            fixture: Fixture::Full,
+            size: 0,
+            prefix: 10,
+            ops: vec![Op::Mouse(
+                MouseKind::ScrollUp,
+                Target::Area {
+                    index: 0,
+                    fx: 0,
+                    fy: 0,
+                },
+            )],
         },
-    ]
+    }]
 }
 
 /// INV-3 gives up after this many steps (spec: K = 10).

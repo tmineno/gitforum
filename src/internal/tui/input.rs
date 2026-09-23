@@ -241,6 +241,7 @@ pub(super) fn confirm_discard_action(
     match app.view.clone() {
         View::CreateThread => {
             app.thread_form.title.clear();
+            app.thread_form.tags.clear();
             app.thread_form.body.clear();
             app.view = View::List;
         }
