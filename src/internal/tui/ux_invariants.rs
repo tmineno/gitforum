@@ -390,14 +390,28 @@ fn known() -> Vec<Known> {
         Known {
             inv: "INV-6",
             ticket: "yoa20x3n",
-            // `max_scroll` counts bytes, not columns, so End scrolls a pane
-            // of wide text past its last line.
-            covers: |_, v| v.detail.ends_with("pane scrolled blank"),
+            // `max_scroll` counts bytes, not columns, so scrolling down
+            // takes a pane of wide text past its last line.
+            covers: |s, v| v.detail.ends_with("pane scrolled blank") && scrolls_down(s.event),
             repro: || Case {
                 fixture: Fixture::Full,
                 size: 2,
                 prefix: 1,
                 ops: vec![key(KeyCode::End)],
+            },
+        },
+        Known {
+            inv: "INV-6",
+            ticket: "9vspex7p",
+            // The scroll limit is applied only when scrolling down, so a
+            // switch that shortens the pane (Markdown, split, a wider
+            // terminal) leaves the scroll past the new end.
+            covers: |s, v| v.detail.ends_with("pane scrolled blank") && !scrolls_down(s.event),
+            repro: || Case {
+                fixture: Fixture::Full,
+                size: 0,
+                prefix: 1,
+                ops: vec![key(KeyCode::End), ch('m')],
             },
         },
         Known {
@@ -425,6 +439,20 @@ fn known() -> Vec<Known> {
             },
         },
     ]
+}
+
+/// Keys and wheel turns that scroll a detail pane down (`j` scrolls the
+/// node detail; on the thread detail it moves the node selection, which
+/// resets the scroll).
+fn scrolls_down(event: Option<&Event>) -> bool {
+    match event {
+        Some(Event::Key(k)) => matches!(
+            k.code,
+            KeyCode::End | KeyCode::Down | KeyCode::PageDown | KeyCode::Char('j')
+        ),
+        Some(Event::Mouse(m)) => m.kind == MouseEventKind::ScrollDown,
+        _ => false,
+    }
 }
 
 /// INV-3 gives up after this many steps (spec: K = 10).
