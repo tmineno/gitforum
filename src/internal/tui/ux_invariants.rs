@@ -5,8 +5,10 @@
 //! repository, and the screen is re-rendered after every event. Effects go
 //! to `RecordingEffects`, so a run never touches the clipboard or terminal.
 //!
-//! Checked so far: INV-1 (no panic in event handling or rendering) and
-//! AT-3 (every mode is reached at the default case count).
+//! Checked: INV-1 (no panic in event handling or rendering), the per-step
+//! invariants in `ux_checks` after every event, INV-3 (Esc gets back to the
+//! list) at the end of every case, and AT-3 (every mode is reached at the
+//! default case count). Violations listed in [`known`] are skipped.
 //!
 //! Knobs: `PROPTEST_CASES` (default [`DEFAULT_CASES`]) and `TUI_UX_SEED`
 //! (a u64, or `random`; default [`DEFAULT_SEED`], so CI runs are repeatable).
@@ -23,6 +25,7 @@ use proptest::test_runner::{
     Config, FileFailurePersistence, RngAlgorithm, TestCaseResult, TestRng, TestRunner,
 };
 use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 use tempfile::TempDir;
@@ -33,6 +36,7 @@ use crate::internal::snapshot::list as snapshot_list;
 
 use super::effects::RecordingEffects;
 use super::render::render;
+use super::ux_checks::{areas, check_step, inside, Area, Snapshot, Step, Violation};
 use super::ux_fixture::{copy_tree, stale_row, Fixture, Templates};
 use super::{dispatch_event, App, EventOutcome, UiRects, View};
 
@@ -52,7 +56,7 @@ const SIZES: [(u16, u16); 4] = [(80, 24), (1, 1), (40, 12), (200, 60)];
 // ------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Mode {
+pub(super) enum Mode {
     List,
     FilterBar,
     ThreadDetail,
@@ -84,7 +88,7 @@ const ALL_MODES: [Mode; 12] = [
 
 /// The mode that decides how the next input is read. Overlays win over the
 /// view underneath, in the order `dispatch_event` checks them.
-fn mode_of(app: &App) -> Mode {
+pub(super) fn mode_of(app: &App) -> Mode {
     if app.confirm_discard {
         return Mode::ConfirmDiscard;
     }
@@ -314,9 +318,178 @@ fn draw(terminal: &mut Terminal<TestBackend>, app: &mut App) {
     terminal.draw(|f| render(f, app)).unwrap();
 }
 
-/// Run one case. Panics (INV-1) propagate to the proptest runner, which
-/// shrinks the case and reports the smallest one.
-fn run_case(case: &Case, templates: &Templates, tally: &RefCell<BTreeMap<Mode, u64>>) {
+/// A violation the code is known to have today (spec "既知の違反の除外
+/// リスト"): the invariant, its ticket, which steps it covers, and the
+/// smallest case that shows it. `known_violations_still_occur` replays
+/// every repro, so an entry whose bug is fixed fails until it is removed.
+#[derive(Clone, Copy)]
+struct Known {
+    inv: &'static str,
+    ticket: &'static str,
+    covers: fn(&Step, &Violation) -> bool,
+    repro: fn() -> Case,
+}
+
+fn known() -> Vec<Known> {
+    vec![
+        Known {
+            inv: "INV-11",
+            ticket: "x33ch89q",
+            // The mouse path does not look at the confirmation at all, so a
+            // wheel turn leaves it up and a click reaches the form.
+            covers: |s, _| {
+                s.before.mode == Mode::ConfirmDiscard && matches!(s.event, Some(Event::Mouse(_)))
+            },
+            repro: || Case {
+                fixture: Fixture::Full,
+                size: 0,
+                prefix: 10,
+                ops: vec![Op::Mouse(
+                    MouseKind::ScrollUp,
+                    Target::Area {
+                        index: 0,
+                        fx: 0,
+                        fy: 0,
+                    },
+                )],
+            },
+        },
+        Known {
+            inv: "INV-5",
+            ticket: "jzba3snd",
+            // `has_unsaved_form_input` does not look at the tags, so Esc
+            // leaves a form holding only tags without asking.
+            covers: |s, _| s.before.unsaved && !s.before.unsaved_by_code,
+            repro: || Case {
+                fixture: Fixture::Full,
+                size: 0,
+                prefix: 0,
+                ops: vec![ch('c'), key(KeyCode::Tab), ch('f'), key(KeyCode::Esc)],
+            },
+        },
+        Known {
+            inv: "INV-6",
+            ticket: "yoa20x3n",
+            // `max_scroll` counts bytes, not columns, so End scrolls a pane
+            // of wide text past its last line.
+            covers: |_, v| v.detail.ends_with("pane scrolled blank"),
+            repro: || Case {
+                fixture: Fixture::Full,
+                size: 2,
+                prefix: 1,
+                ops: vec![key(KeyCode::End)],
+            },
+        },
+        Known {
+            inv: "INV-7",
+            ticket: "uwqh1bld",
+            // The column headers, `[f]filter:` and `[esc/q]back` are placed
+            // by adding widths to a start column, and never clipped to the
+            // frame.
+            covers: |s, _| {
+                areas(&s.after.rects)
+                    .into_iter()
+                    .filter(|(_, r)| !inside(s.screen.area, *r))
+                    .all(|(a, _)| {
+                        matches!(
+                            a,
+                            Area::ColumnHeader(_) | Area::FilterLabel | Area::HelpLine
+                        )
+                    })
+            },
+            repro: || Case {
+                fixture: Fixture::Full,
+                size: 2,
+                prefix: 1,
+                ops: vec![key(KeyCode::Esc)],
+            },
+        },
+    ]
+}
+
+/// INV-3 gives up after this many steps (spec: K = 10).
+const ESCAPE_LIMIT: usize = 10;
+
+fn screen_text(buf: &Buffer) -> String {
+    (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Check one step, drop what `known` covers, and describe the rest.
+fn check(step: &Step, known: &[Known], at: &str) -> Result<(), String> {
+    let found: Vec<Violation> = check_step(step)
+        .into_iter()
+        .filter(|v| !known.iter().any(|k| k.inv == v.inv && (k.covers)(step, v)))
+        .collect();
+    if found.is_empty() {
+        return Ok(());
+    }
+    let list: Vec<String> = found
+        .iter()
+        .map(|v| format!("{}: {}", v.inv, v.detail))
+        .collect();
+    Err(format!(
+        "{} at {at}\nscreen ({}x{}):\n{}",
+        list.join("; "),
+        step.screen.area.width,
+        step.screen.area.height,
+        screen_text(step.screen)
+    ))
+}
+
+/// INV-3: Esc (y on the discard confirmation) gets back to the list, with
+/// no overlay, within ESCAPE_LIMIT steps and without quitting. Each step is
+/// drawn, so a panic on the way back is INV-1.
+fn escape_to_list(
+    app: &mut App,
+    terminal: &mut Terminal<TestBackend>,
+    git: &GitOps,
+    db_path: &std::path::Path,
+) -> Result<(), String> {
+    let mut steps = Vec::new();
+    while mode_of(app) != Mode::List {
+        if steps.len() == ESCAPE_LIMIT {
+            let screen = terminal.backend().buffer();
+            return Err(format!(
+                "INV-3: still on {:?} after {steps:?}\nscreen ({}x{}):\n{}",
+                mode_of(app),
+                screen.area.width,
+                screen.area.height,
+                screen_text(screen)
+            ));
+        }
+        let code = if app.confirm_discard {
+            KeyCode::Char('y')
+        } else {
+            KeyCode::Esc
+        };
+        steps.push(code);
+        let event = Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+        if dispatch_event(app, event, git, db_path) == EventOutcome::Quit {
+            return Err(format!(
+                "INV-3: quit on the way back to the list after {steps:?}"
+            ));
+        }
+        draw(terminal, app);
+    }
+    Ok(())
+}
+
+/// Run one case and check every step. Panics (INV-1) propagate to the
+/// proptest runner; other violations come back as Err. Either way the
+/// runner shrinks the case and reports the smallest one.
+fn run_case(
+    case: &Case,
+    templates: &Templates,
+    tally: &RefCell<BTreeMap<Mode, u64>>,
+    known: &[Known],
+) -> Result<(), String> {
     let dir = TempDir::new().unwrap();
     copy_tree(templates.path(case.fixture), dir.path());
     let git = GitOps::new(dir.path().to_path_buf());
@@ -337,10 +510,22 @@ fn run_case(case: &Case, templates: &Templates, tally: &RefCell<BTreeMap<Mode, u
     draw(&mut terminal, &mut app);
     let visit = |app: &App| *tally.borrow_mut().entry(mode_of(app)).or_default() += 1;
     visit(&app);
+    let first = Snapshot::of(&app);
+    check(
+        &Step {
+            before: &first,
+            after: &first,
+            event: None,
+            outcome: None,
+            screen: terminal.backend().buffer(),
+        },
+        known,
+        "the first screen",
+    )?;
 
     let prefix = &prefixes()[case.prefix];
     let mut prev_was_click = false;
-    for op in prefix.iter().chain(&case.ops) {
+    for (n, op) in prefix.iter().chain(&case.ops).enumerate() {
         let is_click = matches!(op, Op::Mouse(MouseKind::Click, _));
         // Double-click is timed with Instant::now(). Model it as "two clicks
         // in a row", independent of how fast this machine runs the ops.
@@ -349,20 +534,41 @@ fn run_case(case: &Case, templates: &Templates, tally: &RefCell<BTreeMap<Mode, u
         }
         prev_was_click = is_click;
 
+        let before = Snapshot::of(&app);
+        let mut event = None;
+        let mut outcome = None;
         if let Op::Resize(i) = *op {
             let (w, h) = SIZES[i];
             frame = Rect::new(0, 0, w, h);
             terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
-        } else if let Some(event) = to_event(op, &app, frame) {
+        } else if let Some(e) = to_event(op, &app, frame) {
             // ExternalEdit would suspend the terminal for $EDITOR; the suite
             // never runs an editor, so it continues like Continue.
-            if dispatch_event(&mut app, event, &git, &db_path) == EventOutcome::Quit {
-                return;
-            }
+            outcome = Some(dispatch_event(&mut app, e.clone(), &git, &db_path));
+            event = Some(e);
         }
-        draw(&mut terminal, &mut app);
-        visit(&app);
+        let quit = outcome == Some(EventOutcome::Quit);
+        if !quit {
+            draw(&mut terminal, &mut app);
+            visit(&app);
+        }
+        let after = Snapshot::of(&app);
+        check(
+            &Step {
+                before: &before,
+                after: &after,
+                event: event.as_ref(),
+                outcome: outcome.as_ref(),
+                screen: terminal.backend().buffer(),
+            },
+            known,
+            &format!("step {n} ({op:?})"),
+        )?;
+        if quit {
+            return Ok(());
+        }
     }
+    escape_to_list(&mut app, &mut terminal, &git, &db_path)
 }
 
 fn seed_rng() -> (TestRng, String) {
@@ -403,11 +609,11 @@ fn tui_ux_invariants() {
     let (rng, seed) = seed_rng();
     let mut runner = TestRunner::new_with_rng(config, rng);
 
+    let known = known();
     let tally = RefCell::new(BTreeMap::new());
     let started = Instant::now();
     let result = runner.run(&case_strategy(), |case| -> TestCaseResult {
-        run_case(&case, &templates, &tally);
-        Ok(())
+        run_case(&case, &templates, &tally, &known).map_err(TestCaseError::fail)
     });
     let elapsed = started.elapsed();
     if let Err(e) = result {
@@ -428,5 +634,46 @@ fn tui_ux_invariants() {
     assert!(
         missing.is_empty(),
         "modes never reached with seed={seed} cases={cases}: {missing:?}"
+    );
+}
+
+/// AT-9: every known violation still shows in its repro when its own entry
+/// is off (the others stay on, so an earlier known violation does not stop
+/// the replay first), and its entry covers it. A fixed bug fails here until
+/// its entry is removed.
+#[test]
+fn known_violations_still_occur() {
+    let templates = Templates::build();
+    let tally = RefCell::new(BTreeMap::new());
+    let all = known();
+    let mut stale = Vec::new();
+    for (i, k) in all.iter().enumerate() {
+        let case = (k.repro)();
+        let tag = format!("{}: ", k.inv);
+        let others: Vec<Known> = all
+            .iter()
+            .enumerate()
+            .filter(|&(j, _)| j != i)
+            .map(|(_, k)| *k)
+            .collect();
+        let bare = run_case(&case, &templates, &tally, &others);
+        if !matches!(&bare, Err(e) if e.contains(&tag)) {
+            stale.push(format!(
+                "{} {}: the repro no longer shows it ({bare:?})",
+                k.inv, k.ticket
+            ));
+            continue;
+        }
+        let covered = run_case(&case, &templates, &tally, &all);
+        if matches!(&covered, Err(e) if e.contains(&tag)) {
+            stale.push(format!(
+                "{} {}: the entry does not cover its repro",
+                k.inv, k.ticket
+            ));
+        }
+    }
+    assert!(
+        stale.is_empty(),
+        "stale known violations (remove or fix them): {stale:#?}"
     );
 }

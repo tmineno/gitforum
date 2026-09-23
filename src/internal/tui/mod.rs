@@ -5,6 +5,8 @@ mod persist;
 pub(crate) mod render;
 mod state;
 #[cfg(test)]
+mod ux_checks;
+#[cfg(test)]
 mod ux_fixture;
 #[cfg(test)]
 mod ux_invariants;
