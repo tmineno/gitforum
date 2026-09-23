@@ -2,7 +2,7 @@
 
 > **Status:** Draft · Spec-driven kickoff · 2026-09-23
 > **Owner:** maintainer
-> **Related:** SPEC-3.0 §7.1（TUI surface）、`doc/spec/TEST-POLICY.md`、`doc/adr/012-tui-ux-testing-layers.md`、`scripts/demo/record.py`（実バイナリを PTY で操作する既存の例）、CI 新設チケット（未起票）
+> **Related:** SPEC-3.0 §7.1（TUI surface）、`doc/spec/TEST-POLICY.md`、`doc/adr/012-tui-ux-testing-layers.md`、`scripts/demo/record.py`（実バイナリを PTY で操作する既存の例）、CI 新設チケット `6ncwev44`
 
 ## Goal
 
@@ -17,7 +17,7 @@ TUI の使い勝手に関する約束を、次の 2 つの手段で自動的に�
 
 - **画面全体の golden スナップショット比較。** 表示の細部を変えるたびに大量の更新が必要になるため採らない。見た目の良し悪しは AI レビューで扱う。
 - **実バイナリの PTY E2E を CI ゲートにすること。** 実端末に固有の挙動（raw mode、代替画面、外部エディタ、クリップボード）は AI レビューと手動確認の範囲とする（ADR-012）。
-- **CI の新設。** GitHub Actions の workflow（fmt → clippy → check → test、失敗時はマージ不可）は別チケットで先に作る。この spec が扱うのは「`cargo test` で不変条件スイートが走る」ところまで。
+- **CI の新設。** GitHub Actions の workflow（fmt → clippy → check → test、失敗時はマージ不可）は別チケット `6ncwev44` で先に作る。この spec が扱うのは「`cargo test` で不変条件スイートが走る」ところまで。
 - **見つかった UX 不具合の修正。** 不変条件の違反も AI レビューの指摘も、1 件ずつ別チケットで直す。
 - **AI レビューの指摘を git-forum へ自動で起票すること。** 起票するのは利用者が承認した指摘だけ。
 - **ヘルプ行に書かれたキーが実際に効くかの CI 検査。** 「効いた」の判定に解釈が入るため、AI レビューの点検項目として扱う。
