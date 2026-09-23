@@ -4,6 +4,8 @@ mod markdown;
 mod persist;
 pub(crate) mod render;
 mod state;
+#[cfg(test)]
+mod ux_invariants;
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -1273,7 +1275,7 @@ mod tests {
         }
     }
 
-    fn setup_repo() -> (
+    pub(super) fn setup_repo() -> (
         TempDir,
         GitOps,
         crate::internal::config::RepoPaths,
