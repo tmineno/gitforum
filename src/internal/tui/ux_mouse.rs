@@ -30,8 +30,6 @@ use super::{dispatch_event, App, FilterField, LinkFormField, NodeFormField, View
 
 /// Rows that the current code is known to violate: (row, ticket).
 const KNOWN_VIOLATIONS: &[(&str, &str)] = &[
-    // INV-11: a click on the discard confirmation reaches the form.
-    ("confirm-discard-click", "x33ch89q"),
     // INV-12: Esc hints outside the detail views are not clickable.
     ("back-label-filter-bar", "4jq8b3kj"),
     ("back-label-create-thread", "4jq8b3kj"),
@@ -39,10 +37,6 @@ const KNOWN_VIOLATIONS: &[(&str, &str)] = &[
     ("back-label-create-link", "4jq8b3kj"),
     ("back-label-edit-thread-body", "4jq8b3kj"),
     ("back-label-edit-node-body", "4jq8b3kj"),
-    // INV-9: a field-label click hits the choice list on the same row.
-    ("create-thread-field-label", "vwpjiuw4"),
-    ("create-node-field-label", "vwpjiuw4"),
-    ("create-link-field-label", "vwpjiuw4"),
 ];
 
 /// One TUI session on its own copy of the full fixture, at 80x24.

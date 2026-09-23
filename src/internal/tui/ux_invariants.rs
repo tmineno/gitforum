@@ -361,43 +361,7 @@ struct Known {
 }
 
 fn known() -> Vec<Known> {
-    vec![
-        Known {
-            inv: "INV-11",
-            ticket: "x33ch89q",
-            // The mouse path does not look at the confirmation at all, so a
-            // wheel turn leaves it up and a click reaches the form.
-            covers: |s, _| {
-                s.before.mode == Mode::ConfirmDiscard && matches!(s.event, Some(Event::Mouse(_)))
-            },
-            repro: || Case {
-                fixture: Fixture::Full,
-                size: 0,
-                prefix: 10,
-                ops: vec![Op::Mouse(
-                    MouseKind::ScrollUp,
-                    Target::Area {
-                        index: 0,
-                        fx: 0,
-                        fy: 0,
-                    },
-                )],
-            },
-        },
-        Known {
-            inv: "INV-5",
-            ticket: "jzba3snd",
-            // `has_unsaved_form_input` does not look at the tags, so Esc
-            // leaves a form holding only tags without asking.
-            covers: |s, _| s.before.unsaved && !s.before.unsaved_by_code,
-            repro: || Case {
-                fixture: Fixture::Full,
-                size: 0,
-                prefix: 0,
-                ops: vec![ch('c'), key(KeyCode::Tab), ch('f'), key(KeyCode::Esc)],
-            },
-        },
-    ]
+    vec![]
 }
 
 /// INV-3 gives up after this many steps (spec: K = 10).
@@ -734,9 +698,36 @@ fn tui_ux_invariants() {
 /// its entry is removed.
 #[test]
 fn known_violations_still_occur() {
+    let stale = stale_entries(&known());
+    assert!(
+        stale.is_empty(),
+        "stale known violations (remove or fix them): {stale:#?}"
+    );
+}
+
+/// AT-9: an entry whose repro shows no violation is reported as stale, so
+/// the check keeps working while the known list is empty.
+#[test]
+fn stale_known_entry_is_reported() {
+    let fake = Known {
+        inv: "INV-6",
+        ticket: "none",
+        covers: |_, _| true,
+        repro: open_first_thread,
+    };
+    let stale = stale_entries(&[fake]);
+    assert_eq!(stale.len(), 1, "{stale:?}");
+    assert!(
+        stale[0].contains("the repro no longer shows it"),
+        "{stale:?}"
+    );
+}
+
+/// Entries in `all` whose repro no longer shows their violation with the
+/// entry off, or that do not cover it with the entry on.
+fn stale_entries(all: &[Known]) -> Vec<String> {
     let templates = Templates::build();
     let tally = RefCell::new(BTreeMap::new());
-    let all = known();
     let mut stale = Vec::new();
     for (i, k) in all.iter().enumerate() {
         let case = (k.repro)();
@@ -755,7 +746,7 @@ fn known_violations_still_occur() {
             ));
             continue;
         }
-        let covered = run_case(&case, &templates, &tally, &all, &REAL);
+        let covered = run_case(&case, &templates, &tally, all, &REAL);
         if matches!(&covered, Err(e) if e.contains(&tag)) {
             stale.push(format!(
                 "{} {}: the entry does not cover its repro",
@@ -763,10 +754,7 @@ fn known_violations_still_occur() {
             ));
         }
     }
-    assert!(
-        stale.is_empty(),
-        "stale known violations (remove or fix them): {stale:#?}"
-    );
+    stale
 }
 
 /// Run one case through a proptest runner, as the suite does, but without

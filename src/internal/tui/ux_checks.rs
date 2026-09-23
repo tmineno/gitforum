@@ -152,8 +152,6 @@ pub(super) struct Snapshot {
     pub(super) error_flash: bool,
     /// Spec "フォームの未保存入力" for the form on screen (tags included).
     pub(super) unsaved: bool,
-    /// What the code itself counts as unsaved (`has_unsaved_form_input`).
-    pub(super) unsaved_by_code: bool,
     pub(super) on_submit: bool,
     pub(super) forms: String,
     pub(super) list_selected: Option<usize>,
@@ -194,7 +192,6 @@ impl Snapshot {
             confirm_discard: app.confirm_discard,
             error_flash: app.error_flash.is_some(),
             unsaved,
-            unsaved_by_code: app.has_unsaved_form_input(),
             on_submit,
             forms: format!(
                 "{:?} {:?} {:?}",
@@ -232,7 +229,6 @@ impl Snapshot {
             confirm_discard: false,
             error_flash: false,
             unsaved: false,
-            unsaved_by_code: false,
             on_submit: false,
             forms: String::new(),
             list_selected: None,

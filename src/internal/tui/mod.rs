@@ -19,7 +19,9 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::Instant;
 
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -620,7 +622,9 @@ impl App {
     fn has_unsaved_form_input(&self) -> bool {
         match &self.view {
             View::CreateThread => {
-                !self.thread_form.title.is_empty() || !self.thread_form.body.is_empty()
+                !self.thread_form.title.is_empty()
+                    || !self.thread_form.tags.is_empty()
+                    || !self.thread_form.body.is_empty()
             }
             View::CreateNode { .. } => !self.node_form.body.is_empty(),
             View::CreateLink { .. } => !self.link_form.manual_target.is_empty(),
@@ -1050,6 +1054,18 @@ pub(crate) fn dispatch_event(
         Event::Mouse(mouse) => {
             // Dismiss info flash on any click
             app.info_flash = None;
+            // The discard confirmation is modal: a click or a wheel turn
+            // closes it, like a key other than y; no mouse event reaches
+            // the form underneath (INV-11).
+            if app.confirm_discard {
+                if matches!(
+                    mouse.kind,
+                    MouseEventKind::Down(_) | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                ) {
+                    app.confirm_discard = false;
+                }
+                return EventOutcome::Continue;
+            }
             // If an error flash is showing, dismiss it on any click
             if app.error_flash.is_some() {
                 app.error_flash = None;
@@ -2981,6 +2997,57 @@ mod tests {
             assert!(!app.confirm_discard, "{ch}");
             assert_eq!(app.view, View::List, "{ch}");
             assert!(app.thread_form.title.is_empty(), "{ch}");
+        }
+    }
+
+    /// jzba3snd: tags alone are unsaved input (spec 用語, INV-5), so Esc asks
+    /// first; `n` keeps them and `y` drops them (INV-8).
+    #[test]
+    fn dispatch_esc_asks_before_dropping_typed_tags() {
+        let (_dir, git, _paths, db_path) = setup_repo();
+        let mut app = App::new(Vec::new());
+        for code in [KeyCode::Char('c'), KeyCode::Tab, KeyCode::Char('f')] {
+            dispatch_event(&mut app, key_event(code), &git, &db_path);
+        }
+        assert_eq!(
+            (&app.view, app.thread_form.tags.as_str()),
+            (&View::CreateThread, "f")
+        );
+
+        dispatch_event(&mut app, key_event(KeyCode::Esc), &git, &db_path);
+        assert!(
+            app.confirm_discard,
+            "Esc with only tags typed must ask first"
+        );
+        dispatch_event(&mut app, key_event(KeyCode::Char('n')), &git, &db_path);
+        assert_eq!(
+            (&app.view, app.thread_form.tags.as_str()),
+            (&View::CreateThread, "f")
+        );
+
+        dispatch_event(&mut app, key_event(KeyCode::Esc), &git, &db_path);
+        dispatch_event(&mut app, key_event(KeyCode::Char('y')), &git, &db_path);
+        assert_eq!(app.view, View::List);
+        assert!(app.thread_form.tags.is_empty());
+    }
+
+    /// 3abrwnz8: after creating a thread and going back with Esc, the list
+    /// selects the new thread, under the default sort and another one.
+    #[test]
+    fn created_thread_is_selected_back_in_the_list() {
+        for (sort, ascending) in [(SortColumn::Updated, false), (SortColumn::Title, true)] {
+            let (_dir, git, db_path, mut app) = list_app_with_two_threads();
+            app.sort_column = sort;
+            app.sort_ascending = ascending;
+            app.begin_create_thread();
+            app.thread_form.title = "Middle".into();
+            state::submit_create_thread(&mut app, &git).unwrap();
+            let View::ThreadDetail(id) = app.view.clone() else {
+                panic!("{sort:?}: not on the new thread: {:?}", app.view);
+            };
+            dispatch_event(&mut app, key_event(KeyCode::Esc), &git, &db_path);
+            assert_eq!(app.view, View::List, "{sort:?}");
+            assert_eq!(app.selected_thread_id(), Some(id), "{sort:?}");
         }
     }
 
