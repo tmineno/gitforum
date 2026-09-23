@@ -400,19 +400,14 @@ fn known() -> Vec<Known> {
         Known {
             inv: "INV-7",
             ticket: "uwqh1bld",
-            // The column headers, `[f]filter:` and `[esc/q]back` are placed
-            // by adding widths to a start column, and never clipped to the
-            // frame.
+            // `[f]filter:` and `[esc/q]back` are placed by adding widths to
+            // a start column, and never clipped to the frame. (The column
+            // headers follow the list's widths since TUI-LIST-COLUMNS.)
             covers: |s, _| {
                 areas(&s.after.rects)
                     .into_iter()
                     .filter(|(_, r)| !inside(s.screen.area, *r))
-                    .all(|(a, _)| {
-                        matches!(
-                            a,
-                            Area::ColumnHeader(_) | Area::FilterLabel | Area::HelpLine
-                        )
-                    })
+                    .all(|(a, _)| matches!(a, Area::FilterLabel | Area::HelpLine))
             },
             repro: || Case {
                 fixture: Fixture::Full,
