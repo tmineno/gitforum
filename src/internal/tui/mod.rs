@@ -2031,6 +2031,42 @@ mod tests {
     }
 
     #[test]
+    fn mouse_wheel_leaves_the_list_alone_while_the_filter_bar_is_open() {
+        let mut app = App::new(vec![
+            make_row("ISSUE-0001", "issue", "open", "Bug"),
+            make_row("ISSUE-0002", "issue", "open", "Crash"),
+            make_row("RFC-0001", "rfc", "draft", "Proposal"),
+        ]);
+        let dir = TempDir::new().unwrap();
+        let git = GitOps::new(dir.path().to_path_buf());
+        app.table_state.select(Some(1));
+        app.open_filter_bar();
+        let _ = render_to_string(&mut app, 80, 24);
+        let popup = app.ui_rects.filter_popup.unwrap();
+        let list = app.ui_rects.list_table.unwrap();
+        let bar = format!("{:?}", app.filter_bar);
+        // Over the popup, and over a list row outside it.
+        let outside = (list.x + 1, list.y + 2);
+        assert!(!input::rect_contains(popup, outside.0, outside.1));
+        let inside = (popup.x + popup.width / 2, popup.y + popup.height / 2);
+        for (column, row) in [inside, outside] {
+            for kind in [MouseEventKind::ScrollDown, MouseEventKind::ScrollUp] {
+                handle_mouse(&mut app, mouse_event(kind, column, row), &git, dir.path()).unwrap();
+                assert_eq!(
+                    app.table_state.selected(),
+                    Some(1),
+                    "{kind:?} at {column},{row}"
+                );
+                assert_eq!(
+                    format!("{:?}", app.filter_bar),
+                    bar,
+                    "{kind:?} at {column},{row}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn filter_multi_select_lifecycles() {
         let rows = vec![
             make_row("ISSUE-0001", "issue", "open", "Bug"),
