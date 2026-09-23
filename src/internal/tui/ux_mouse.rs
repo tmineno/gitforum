@@ -30,8 +30,6 @@ use super::{dispatch_event, App, FilterField, LinkFormField, NodeFormField, View
 
 /// Rows that the current code is known to violate: (row, ticket).
 const KNOWN_VIOLATIONS: &[(&str, &str)] = &[
-    // INV-11: a click on the discard confirmation reaches the form.
-    ("confirm-discard-click", "x33ch89q"),
     // INV-12: Esc hints outside the detail views are not clickable.
     ("back-label-filter-bar", "4jq8b3kj"),
     ("back-label-create-thread", "4jq8b3kj"),

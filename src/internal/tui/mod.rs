@@ -19,7 +19,9 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::Instant;
 
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -1052,6 +1054,18 @@ pub(crate) fn dispatch_event(
         Event::Mouse(mouse) => {
             // Dismiss info flash on any click
             app.info_flash = None;
+            // The discard confirmation is modal: a click or a wheel turn
+            // closes it, like a key other than y; no mouse event reaches
+            // the form underneath (INV-11).
+            if app.confirm_discard {
+                if matches!(
+                    mouse.kind,
+                    MouseEventKind::Down(_) | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                ) {
+                    app.confirm_discard = false;
+                }
+                return EventOutcome::Continue;
+            }
             // If an error flash is showing, dismiss it on any click
             if app.error_flash.is_some() {
                 app.error_flash = None;
