@@ -55,8 +55,9 @@ const SHARDS: u32 = 8;
 const MAX_OPS: usize = 40;
 
 /// Terminal sizes (spec: 1x1, narrower than the longest help line, 80x24,
-/// 200x60). Index 0 is what shrinking moves toward.
-const SIZES: [(u16, u16); 4] = [(80, 24), (1, 1), (40, 12), (200, 60)];
+/// 200x60, 60x20). Index 0 is what shrinking moves toward. 60x20 is where
+/// the list's columns stopped fitting and flickered (wy22s31p, INV-14).
+const SIZES: [(u16, u16); 5] = [(80, 24), (1, 1), (40, 12), (200, 60), (60, 20)];
 
 // ------------------------------------------------------------------
 //  Modes (spec "用語")
@@ -338,6 +339,15 @@ fn draw(terminal: &mut Terminal<TestBackend>, app: &mut App, harness: &Harness) 
     terminal.draw(|f| (harness.render)(f, app)).unwrap();
 }
 
+/// Draw, then draw once more with no event, as the event loop does every
+/// 100 ms. Returns the first screen; the terminal holds the second (INV-14).
+fn draw_twice(terminal: &mut Terminal<TestBackend>, app: &mut App, harness: &Harness) -> Buffer {
+    draw(terminal, app, harness);
+    let first = terminal.backend().buffer().clone();
+    draw(terminal, app, harness);
+    first
+}
+
 /// A violation the code is known to have today (spec "既知の違反の除外
 /// リスト"): the invariant, its ticket, which steps it covers, and the
 /// smallest case that shows it. `known_violations_still_occur` replays
@@ -516,7 +526,7 @@ fn run_case(
     let (w, h) = SIZES[case.size];
     let mut frame = Rect::new(0, 0, w, h);
     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
-    draw(&mut terminal, &mut app, harness);
+    let shown = draw_twice(&mut terminal, &mut app, harness);
     let visit = |app: &App| *tally.borrow_mut().entry(mode_of(app)).or_default() += 1;
     visit(&app);
     let first = Snapshot::of(&app);
@@ -527,6 +537,7 @@ fn run_case(
             event: None,
             outcome: None,
             screen: terminal.backend().buffer(),
+            first: &shown,
         },
         known,
         "the first screen",
@@ -557,18 +568,23 @@ fn run_case(
             event = Some(e);
         }
         let quit = outcome == Some(EventOutcome::Quit);
-        if !quit {
-            draw(&mut terminal, &mut app, harness);
+        let shown = if quit {
+            None
+        } else {
+            let shown = draw_twice(&mut terminal, &mut app, harness);
             visit(&app);
-        }
+            Some(shown)
+        };
         let after = Snapshot::of(&app);
+        let screen = terminal.backend().buffer();
         check(
             &Step {
                 before: &before,
                 after: &after,
                 event: event.as_ref(),
                 outcome: outcome.as_ref(),
-                screen: terminal.backend().buffer(),
+                screen,
+                first: shown.as_ref().unwrap_or(screen),
             },
             known,
             &format!("step {n} ({op:?})"),
@@ -838,4 +854,33 @@ fn inv3_stuck_view_is_reported() {
     };
     let report = run_once(open_first_thread(), harness).unwrap_err();
     assert!(report.contains("INV-3: still on ThreadDetail"), "{report}");
+}
+
+/// AT-2, INV-14: a renderer whose screen changes from one draw to the next
+/// with no input is reported.
+#[test]
+fn inv14_flickering_render_is_reported() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static DRAWS: AtomicU32 = AtomicU32::new(0);
+    fn flickering(f: &mut Frame, app: &mut App) {
+        render(f, app);
+        let mark = if DRAWS.fetch_add(1, Ordering::Relaxed).is_multiple_of(2) {
+            "+"
+        } else {
+            "x"
+        };
+        let bottom = f.area().bottom().saturating_sub(1);
+        f.buffer_mut()
+            .set_string(0, bottom, mark, ratatui::style::Style::default());
+    }
+    let harness = Harness {
+        render: flickering,
+        ..REAL
+    };
+    let report = run_once(open_first_thread(), harness).unwrap_err();
+    assert!(
+        report.contains("INV-14: drawn again with no input"),
+        "{report}"
+    );
+    assert!(run_once(open_first_thread(), REAL).is_ok());
 }

@@ -1,7 +1,8 @@
 //! Invariant checks for the TUI UX suite (doc/spec/TUI-UX-TESTING.md:
-//! INV-2, INV-4 to INV-8, INV-10, INV-11). Each check is a pure function of
-//! the state before and after one event and the screen after it, so the
-//! tests at the bottom can feed it hand-built violations (AT-2, AT-15).
+//! INV-2, INV-4 to INV-8, INV-10, INV-11, INV-14). Each check is a pure
+//! function of the state before and after one event and the screen after
+//! it (drawn twice for INV-14), so the tests at the bottom can feed it
+//! hand-built violations (AT-2, AT-15).
 //! INV-1 is a panic and INV-3 needs live input; both live in ux_invariants.
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
@@ -253,7 +254,12 @@ pub(super) struct Step<'a> {
     pub(super) after: &'a Snapshot,
     pub(super) event: Option<&'a Event>,
     pub(super) outcome: Option<&'a EventOutcome>,
+    /// The screen after a second draw with no event in between, as the event
+    /// loop draws every 100 ms; `after.rects` come from this draw.
     pub(super) screen: &'a Buffer,
+    /// The first draw after the event (INV-14 compares it with `screen`);
+    /// `screen` itself on a step that quit.
+    pub(super) first: &'a Buffer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -561,6 +567,35 @@ fn inv11(step: &Step) -> Option<Violation> {
     })
 }
 
+/// INV-14: drawing again with no input gives the same screen. The event
+/// loop redraws every 100 ms without input, so a difference is a flicker.
+fn inv14(step: &Step) -> Option<Violation> {
+    let (a, b) = (step.first, step.screen);
+    if a == b {
+        return None;
+    }
+    if a.area != b.area {
+        return Some(violation(
+            "INV-14",
+            format!(
+                "drawn again, the screen went from {:?} to {:?}",
+                a.area, b.area
+            ),
+        ));
+    }
+    let r = a.area;
+    let y =
+        (r.y..r.y + r.height).find(|&y| (r.x..r.x + r.width).any(|x| a[(x, y)] != b[(x, y)]))?;
+    let (was, now) = (
+        row_text(a, y, r.x, r.x + r.width),
+        row_text(b, y, r.x, r.x + r.width),
+    );
+    Some(violation(
+        "INV-14",
+        format!("drawn again with no input, row {y} changed: {was:?} -> {now:?}"),
+    ))
+}
+
 /// INV-5 for a step that quit: only Ctrl-C may drop unsaved input.
 fn inv5_quit(step: &Step) -> Option<Violation> {
     let b = step.before;
@@ -582,7 +617,7 @@ pub(super) fn check_step(step: &Step) -> Vec<Violation> {
     let checks: &[fn(&Step) -> Option<Violation>] = if step.outcome == Some(&EventOutcome::Quit) {
         &[inv4, inv5_quit]
     } else {
-        &[inv2, inv4, inv5, inv6, inv7, inv8, inv10, inv11]
+        &[inv2, inv4, inv5, inv6, inv7, inv8, inv10, inv11, inv14]
     };
     checks.iter().filter_map(|check| check(step)).collect()
 }
@@ -631,6 +666,7 @@ mod tests {
             event,
             outcome,
             screen: buf,
+            first: buf,
         })
         .into_iter()
         .map(|v| v.inv)
@@ -758,10 +794,29 @@ mod tests {
             event: None,
             outcome: None,
             screen: &buf,
+            first: &buf,
         });
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].inv, "INV-10");
         assert!(found[0].detail.contains("table M has no row"), "{found:?}");
+    }
+
+    #[test]
+    fn inv14_screen_changes_when_drawn_again() {
+        let s = list_ok();
+        let buf = screen(&[(0, " [q]quit"), (2, "ID  CREATED   UPDATED")]);
+        let again = screen(&[(0, " [q]quit"), (2, "ID  CREATE UPDATED")]);
+        let found = check_step(&Step {
+            before: &s,
+            after: &s,
+            event: None,
+            outcome: None,
+            screen: &again,
+            first: &buf,
+        });
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].inv, "INV-14");
+        assert!(found[0].detail.contains("row 2 changed"), "{found:?}");
     }
 
     #[test]
