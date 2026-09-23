@@ -1321,6 +1321,159 @@ mod tests {
         }
     }
 
+    /// TUI-LIST-COLUMNS AT-2: the spec's examples, plus a 10-character ID
+    /// (AT-4) and the narrowest widths (rule 5).
+    #[test]
+    fn list_column_widths_follow_the_spec_examples() {
+        use render::list_column_widths as widths;
+        let (status, created, updated) = (1, 3, 4);
+        let cases: [(u16, usize, u16, [Option<u16>; 6]); 10] = [
+            (
+                78,
+                updated,
+                8,
+                [Some(13), Some(11), Some(5), Some(12), Some(12), Some(20)],
+            ),
+            (
+                118,
+                status,
+                8,
+                [Some(13), Some(11), Some(5), Some(12), Some(12), Some(60)],
+            ),
+            (
+                58,
+                updated,
+                8,
+                [Some(8), Some(10), Some(5), None, Some(10), Some(21)],
+            ),
+            (
+                58,
+                created,
+                8,
+                [Some(8), Some(10), None, Some(10), Some(10), Some(16)],
+            ),
+            (
+                38,
+                updated,
+                8,
+                [Some(8), None, None, None, Some(10), Some(18)],
+            ),
+            (
+                38,
+                status,
+                8,
+                [Some(8), Some(10), None, None, None, Some(18)],
+            ),
+            (20, updated, 8, [Some(8), None, None, None, None, Some(11)]),
+            (
+                58,
+                updated,
+                10,
+                [Some(10), Some(10), Some(5), None, Some(10), Some(19)],
+            ),
+            (9, updated, 8, [Some(8), None, None, None, None, None]),
+            (5, updated, 8, [Some(5), None, None, None, None, None]),
+        ];
+        for (inner, sort, id_len, want) in cases {
+            assert_eq!(
+                widths(inner, sort, id_len),
+                want,
+                "W={inner} sort={sort} L={id_len}"
+            );
+        }
+    }
+
+    /// TUI-LIST-COLUMNS rules 3, 5 and 6 over every width: the columns never
+    /// take more than W, ID and TITLE are hidden last, and the sort column
+    /// is hidden only after the other three.
+    #[test]
+    fn list_column_widths_fit_every_width() {
+        use render::list_column_widths as widths;
+        for inner in 0..=200u16 {
+            for sort in 0..6 {
+                for id_len in [0, 8, 10, 13, 20] {
+                    let w = widths(inner, sort, id_len);
+                    let shown: Vec<u16> = w.iter().flatten().copied().collect();
+                    let total = shown.iter().sum::<u16>() + shown.len() as u16 - 1;
+                    let at = format!("W={inner} sort={sort} L={id_len}: {w:?}");
+                    assert!(total <= inner, "{at}");
+                    assert!(w[0].is_some(), "{at}");
+                    if w[5].is_none() {
+                        assert!(w[1..5].iter().all(Option::is_none), "{at}");
+                    }
+                    if (1..5).contains(&sort) && w[sort].is_none() {
+                        assert!(w[1..5].iter().all(Option::is_none), "{at}");
+                    }
+                    assert_eq!(widths(inner, sort, id_len), w, "{at}");
+                }
+            }
+        }
+    }
+
+    /// TUI-LIST-COLUMNS AT-1, AT-2, AT-4 and AT-5: the header row as drawn,
+    /// and a click on each shown header sorts by that column.
+    #[test]
+    fn list_headers_are_drawn_and_clicked_where_the_widths_put_them() {
+        let dir = TempDir::new().unwrap();
+        let git = GitOps::new(dir.path().to_path_buf());
+        let labels = ["ID", "STATUS", "VIS", "CREATED", "UPDATED", "TITLE"];
+        for (w, h, long_id) in [
+            (40, 12, false),
+            (60, 20, false),
+            (60, 20, true),
+            (80, 24, false),
+            (200, 60, false),
+        ] {
+            let first = if long_id { "ISSUE-0001" } else { "abcd1234" };
+            let mut app = App::new(vec![
+                make_row(first, "issue", "open", "Bug"),
+                make_row("efgh5678", "rfc", "draft", "Proposal"),
+            ]);
+            let screen = render_to_string(&mut app, w, h);
+            let rows: Vec<&str> = screen.lines().collect();
+            let sort = SORT_COLUMNS
+                .iter()
+                .position(|c| *c == app.sort_column)
+                .unwrap();
+            let widths = render::list_column_widths(w - 2, sort, if long_id { 10 } else { 8 });
+            let header: Vec<char> = rows[2].chars().collect();
+            let mut x = 1;
+            for (i, cw) in widths.iter().enumerate() {
+                let at = format!("{w}x{h} long_id={long_id} column {i}");
+                let rect = app.ui_rects.column_headers[i];
+                let Some(cw) = *cw else {
+                    assert_eq!(rect, None, "{at}");
+                    continue;
+                };
+                let rect = rect.unwrap_or_else(|| panic!("{at}: no click area"));
+                assert_eq!((rect.x, rect.y, rect.width), (x, 2, cw), "{at}");
+                let cell: String = header[usize::from(x)..usize::from(x + cw)].iter().collect();
+                assert!(
+                    cell.starts_with(labels[i]),
+                    "{at}: {cell:?} in {:?}",
+                    rows[2]
+                );
+                x += cw + 1;
+            }
+            if long_id {
+                assert!(screen.contains("│ISSUE-0001 "), "{screen}");
+            }
+            for (i, rect) in app.ui_rects.column_headers.into_iter().enumerate() {
+                let Some(rect) = rect else { continue };
+                app.sort_column = SORT_COLUMNS[(i + 1) % 6];
+                let click = MouseEventKind::Down(MouseButton::Left);
+                handle_mouse(
+                    &mut app,
+                    mouse_event(click, rect.x, rect.y),
+                    &git,
+                    dir.path(),
+                )
+                .unwrap();
+                assert_eq!(app.sort_column, SORT_COLUMNS[i], "{w}x{h} column {i}");
+            }
+        }
+    }
+
     #[test]
     fn list_view_shows_thread_count() {
         let rows = vec![

@@ -329,11 +329,26 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
     });
     f.render_widget(Paragraph::new(Line::from(help_text)), chunks[0]);
 
+    let table_area = chunks[1];
+    let sort = SORT_COLUMNS
+        .iter()
+        .position(|c| *c == app.sort_column)
+        .unwrap_or(0);
     // Collect rows eagerly so the immutable borrow of `app.threads` ends
     // before we need `&mut app.table_state` for render_stateful_widget.
-    let (rows, count) = {
+    let (rows, count, widths) = {
         let visible = app.visible_threads();
         let count = visible.len();
+        let id_len = visible
+            .iter()
+            .map(|t| display_thread_id(&t.id).chars().count())
+            .max()
+            .unwrap_or(0);
+        let widths = list_column_widths(
+            table_area.width.saturating_sub(2),
+            sort,
+            u16::try_from(id_len).unwrap_or(u16::MAX),
+        );
         let rows: Vec<Row> = visible
             .iter()
             .map(|t| {
@@ -351,7 +366,7 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
                 } else {
                     format!("[{}] {}", tags.join(","), t.title)
                 };
-                Row::new(vec![
+                let cells = [
                     Cell::from(display_thread_id(&t.id)),
                     Cell::from(t.status.clone())
                         .style(Style::default().fg(status_color(&t.status))),
@@ -359,85 +374,114 @@ pub(crate) fn render_list(f: &mut Frame, area: Rect, app: &mut App) {
                     Cell::from(short_datetime(&t.created_at)),
                     Cell::from(short_datetime(&t.updated_at)),
                     Cell::from(title_cell),
-                ])
+                ];
+                Row::new(shown_cells(cells, &widths))
             })
             .collect();
-        (rows, count)
+        (rows, count, widths)
     };
 
-    let widths = [
-        Constraint::Length(13),
-        Constraint::Length(11),
-        Constraint::Length(5),
-        Constraint::Length(12),
-        Constraint::Length(12),
-        Constraint::Min(20),
-    ];
     let labels = ["ID", "STATUS", "VIS", "CREATED", "UPDATED", "TITLE"];
     let indicator = if app.sort_ascending {
         " \u{25b2}"
     } else {
         " \u{25bc}"
     };
-    let header_cells: Vec<Cell> = SORT_COLUMNS
-        .iter()
-        .zip(labels.iter())
-        .map(|(col, label)| {
-            if *col == app.sort_column {
-                Cell::from(format!("{label}{indicator}"))
-            } else {
-                Cell::from(*label)
-            }
-        })
-        .collect();
-    let header = Row::new(header_cells).style(Style::default().add_modifier(Modifier::BOLD));
-    let table = Table::new(rows, widths)
-        .header(header)
-        .block(Block::default().borders(Borders::ALL).title(" git-forum "))
-        .row_highlight_style(
-            Style::default()
-                .bg(Color::Blue)
-                .add_modifier(Modifier::BOLD),
-        );
+    let header_cells: [Cell; 6] = std::array::from_fn(|i| {
+        if i == sort {
+            Cell::from(format!("{}{indicator}", labels[i]))
+        } else {
+            Cell::from(labels[i])
+        }
+    });
+    let header = Row::new(shown_cells(header_cells, &widths))
+        .style(Style::default().add_modifier(Modifier::BOLD));
+    let table = Table::new(
+        rows,
+        widths.iter().flatten().map(|w| Constraint::Length(*w)),
+    )
+    .column_spacing(1)
+    .header(header)
+    .block(Block::default().borders(Borders::ALL).title(" git-forum "))
+    .row_highlight_style(
+        Style::default()
+            .bg(Color::Blue)
+            .add_modifier(Modifier::BOLD),
+    );
 
-    // Track column header rects for click-to-sort.
-    // Table area has border (1px each side), header row is at area.y + 1.
-    let table_area = chunks[1];
-    let header_y = table_area.y + 1;
-    let mut col_x = table_area.x + 1; // +1 for left border
-    let inner_width = table_area.width.saturating_sub(2);
-    // Resolve constraints to actual widths
-    let resolved: Vec<u16> = {
-        let fixed_total: u16 = widths
-            .iter()
-            .filter_map(|c| match c {
-                Constraint::Length(l) => Some(*l),
-                _ => None,
-            })
-            .sum();
-        widths
-            .iter()
-            .map(|c| match c {
-                Constraint::Length(l) => *l,
-                Constraint::Min(_) => inner_width.saturating_sub(fixed_total),
-                _ => 0,
-            })
-            .collect()
-    };
-    for (i, w) in resolved.iter().enumerate() {
-        app.ui_rects.column_headers[i] = Some(Rect {
-            x: col_x,
-            y: header_y,
-            width: *w,
-            height: 1,
-        });
-        col_x += w;
+    // Click-to-sort areas: each shown column's header cell, from the same
+    // widths the table draws with (one column between cells), only when the
+    // header row is inside the border.
+    let mut col_x = table_area.x + 1;
+    for (i, w) in widths.iter().enumerate() {
+        app.ui_rects.column_headers[i] = match *w {
+            Some(w) if w > 0 && table_area.height >= 3 => {
+                let r = Rect::new(col_x, table_area.y + 1, w, 1);
+                col_x += w + 1;
+                Some(r)
+            }
+            _ => None,
+        };
     }
 
     app.ui_rects.list_table = Some(chunks[1]);
     f.render_stateful_widget(table, chunks[1], &mut app.table_state);
 
     f.render_widget(Paragraph::new(format!(" {count} threads")), chunks[2]);
+}
+
+/// Widths of the list's columns, in `SORT_COLUMNS` order, `None` for a
+/// hidden column (doc/spec/TUI-LIST-COLUMNS.md). `inner` is the width
+/// inside the border, `sort` the sort column's index and `id_len` the
+/// longest ID on screen. With the one column between cells, the widths add
+/// up to at most `inner`, so the table never has to choose between layouts.
+pub(super) fn list_column_widths(inner: u16, sort: usize, id_len: u16) -> [Option<u16>; 6] {
+    const FULL: [u16; 5] = [13, 11, 5, 12, 12];
+    const FULL_TITLE: u16 = 20;
+    const TITLE: u16 = 16;
+    // CREATED, VIS, UPDATED, STATUS; the sort column goes last.
+    const HIDE: [usize; 4] = [3, 2, 4, 1];
+    // Each shown column other than TITLE, with the column after it.
+    let used = |w: &[Option<u16>; 6]| -> u16 { w[..5].iter().flatten().map(|c| c + 1).sum() };
+
+    let mut widths = [None; 6];
+    if FULL.iter().map(|c| c + 1).sum::<u16>() + FULL_TITLE <= inner {
+        for (w, full) in widths.iter_mut().zip(FULL) {
+            *w = Some(full);
+        }
+    } else {
+        let compact = [id_len.clamp(8, 13), 10, 5, 10, 10];
+        for (w, c) in widths.iter_mut().zip(compact) {
+            *w = Some(c);
+        }
+        let order = HIDE
+            .iter()
+            .filter(|&&c| c != sort)
+            .chain(HIDE.iter().filter(|&&c| c == sort));
+        for &c in order {
+            if used(&widths) + TITLE <= inner {
+                break;
+            }
+            widths[c] = None;
+        }
+    }
+    let title = inner.saturating_sub(used(&widths));
+    if title > 0 {
+        widths[5] = Some(title);
+    } else {
+        // Only the ID fits.
+        widths[0] = widths[0].map(|w| w.min(inner));
+    }
+    widths
+}
+
+/// The cells of the columns `widths` shows.
+fn shown_cells<'a>(cells: [Cell<'a>; 6], widths: &[Option<u16>; 6]) -> Vec<Cell<'a>> {
+    cells
+        .into_iter()
+        .zip(widths)
+        .filter_map(|(cell, w)| w.map(|_| cell))
+        .collect()
 }
 
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
