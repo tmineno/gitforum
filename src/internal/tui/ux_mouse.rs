@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -752,12 +753,29 @@ fn compare(row: &Row, templates: &Templates) -> Option<String> {
 #[test]
 fn mouse_matches_keyboard() {
     let templates = Templates::build();
-    let mut failing: BTreeMap<&str, String> = BTreeMap::new();
-    for row in rows() {
-        if let Some(details) = compare(&row, &templates) {
-            failing.insert(row.name, details);
-        }
-    }
+    let rows = rows();
+    // Rows are independent: a few workers each take the next row.
+    let next = AtomicUsize::new(0);
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
+    let failing: BTreeMap<&str, String> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut found = Vec::new();
+                    while let Some(row) = rows.get(next.fetch_add(1, Ordering::Relaxed)) {
+                        if let Some(details) = compare(row, &templates) {
+                            found.push((row.name, details));
+                        }
+                    }
+                    found
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .collect()
+    });
 
     let known: BTreeMap<&str, &str> = KNOWN_VIOLATIONS.iter().copied().collect();
     let new: Vec<&&str> = failing.keys().filter(|n| !known.contains_key(*n)).collect();

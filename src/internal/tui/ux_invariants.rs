@@ -12,6 +12,7 @@
 //!
 //! Knobs: `PROPTEST_CASES` (default [`DEFAULT_CASES`]) and `TUI_UX_SEED`
 //! (a u64, or `random`; default [`DEFAULT_SEED`], so CI runs are repeatable).
+//! The cases are split over [`SHARDS`] runners on their own threads.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -23,7 +24,8 @@ use crossterm::event::{
 };
 use proptest::prelude::*;
 use proptest::test_runner::{
-    Config, FileFailurePersistence, RngAlgorithm, TestCaseResult, TestRng, TestRunner,
+    Config, FailurePersistence, FileFailurePersistence, PersistedSeed, RngAlgorithm, TestRng,
+    TestRunner,
 };
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -45,6 +47,10 @@ use super::{dispatch_event, App, EventOutcome, UiRects, View};
 const DEFAULT_CASES: u32 = 64;
 /// RNG seed when `TUI_UX_SEED` is unset.
 const DEFAULT_SEED: u64 = 0x7475_695f_7578; // "tui_ux"
+/// Proptest runners the cases are split over, each on its own thread with
+/// its own RNG. A fixed number, not the core count, so a seed gives the same
+/// cases and the same result on every machine.
+const SHARDS: u32 = 8;
 /// Longest generated op sequence after the prefix.
 const MAX_OPS: usize = 40;
 
@@ -587,20 +593,14 @@ fn run_case(
     escape_to_list(&mut app, &mut terminal, &git, &db_path, harness)
 }
 
-fn seed_rng() -> (TestRng, String) {
-    let seed = match std::env::var("TUI_UX_SEED") {
+fn seed() -> u64 {
+    match std::env::var("TUI_UX_SEED") {
         Ok(v) if v == "random" => rand_seed(),
         Ok(v) => v
             .parse::<u64>()
             .unwrap_or_else(|_| panic!("TUI_UX_SEED must be a u64 or `random`, got {v:?}")),
         Err(_) => DEFAULT_SEED,
-    };
-    let mut bytes = [0u8; 32];
-    bytes[..8].copy_from_slice(&seed.to_le_bytes());
-    (
-        TestRng::from_seed(RngAlgorithm::ChaCha, &bytes),
-        seed.to_string(),
-    )
+    }
 }
 
 fn rand_seed() -> u64 {
@@ -608,39 +608,135 @@ fn rand_seed() -> u64 {
     RandomState::new().hash_one(Instant::now())
 }
 
+/// Shard `shard`'s RNG: the seed, with the shard number in the next bytes.
+fn shard_rng(seed: u64, shard: u32) -> TestRng {
+    let mut bytes = [0u8; 32];
+    bytes[..8].copy_from_slice(&seed.to_le_bytes());
+    bytes[8..12].copy_from_slice(&shard.to_le_bytes());
+    TestRng::from_seed(RngAlgorithm::ChaCha, &bytes)
+}
+
+/// Saves failures to the regression file but replays none. Every shard
+/// saves what it finds; only shard 0 replays the file, so a saved case runs
+/// once per run instead of once per shard.
+#[derive(Debug, Clone, PartialEq)]
+struct SaveOnly(FileFailurePersistence);
+
+impl FailurePersistence for SaveOnly {
+    fn load_persisted_failures2(&self, _: Option<&'static str>) -> Vec<PersistedSeed> {
+        Vec::new()
+    }
+
+    fn save_persisted_failure2(
+        &mut self,
+        source_file: Option<&'static str>,
+        seed: PersistedSeed,
+        shrunken_value: &dyn std::fmt::Debug,
+    ) {
+        self.0
+            .save_persisted_failure2(source_file, seed, shrunken_value);
+    }
+
+    fn box_clone(&self) -> Box<dyn FailurePersistence> {
+        Box::new(self.clone())
+    }
+
+    fn eq(&self, other: &dyn FailurePersistence) -> bool {
+        other.as_any().downcast_ref::<Self>() == Some(self)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// One shard: a proptest runner over `cases` of the run's `total` cases.
+/// Returns its report and the modes it reached.
+fn run_shard(
+    shard: u32,
+    cases: u32,
+    total: u32,
+    seed: u64,
+    templates: &Templates,
+    known: &[Known],
+) -> (Result<(), String>, BTreeMap<Mode, u64>) {
+    let file = FileFailurePersistence::SourceParallel("proptest-regressions");
+    let persistence: Box<dyn FailurePersistence> = if shard == 0 {
+        Box::new(file)
+    } else {
+        Box::new(SaveOnly(file))
+    };
+    let defaults = Config::default();
+    // Proptest's automatic shrink limit is 4 x the runner's cases; give each
+    // shard the limit one runner over all the cases would have had.
+    let max_shrink_iters = if std::env::var_os("PROPTEST_MAX_SHRINK_ITERS").is_some() {
+        defaults.max_shrink_iters
+    } else {
+        total.saturating_mul(4)
+    };
+    let config = Config {
+        cases,
+        max_shrink_iters,
+        source_file: Some(file!()),
+        failure_persistence: Some(persistence),
+        ..defaults
+    };
+    let tally = RefCell::new(BTreeMap::new());
+    let result = TestRunner::new_with_rng(config, shard_rng(seed, shard))
+        .run(&case_strategy(), |case| {
+            run_case(&case, templates, &tally, known, &REAL).map_err(TestCaseError::fail)
+        })
+        .map_err(|e| e.to_string());
+    (result, tally.into_inner())
+}
+
 #[test]
 fn tui_ux_invariants() {
     let templates = Templates::build();
-    let mut config = Config {
-        source_file: Some(file!()),
-        failure_persistence: Some(Box::new(FileFailurePersistence::SourceParallel(
-            "proptest-regressions",
-        ))),
-        ..Config::default()
+    // PROPTEST_CASES, when set, is the total over all shards.
+    let cases = if std::env::var_os("PROPTEST_CASES").is_some() {
+        Config::default().cases
+    } else {
+        DEFAULT_CASES
     };
-    if std::env::var_os("PROPTEST_CASES").is_none() {
-        config.cases = DEFAULT_CASES;
-    }
-    let cases = config.cases;
-    let (rng, seed) = seed_rng();
-    let mut runner = TestRunner::new_with_rng(config, rng);
-
+    let seed = seed();
     let known = known();
-    let tally = RefCell::new(BTreeMap::new());
+
     let started = Instant::now();
-    let result = runner.run(&case_strategy(), |case| -> TestCaseResult {
-        run_case(&case, &templates, &tally, &known, &REAL).map_err(TestCaseError::fail)
+    let shards: Vec<_> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..SHARDS)
+            .map(|shard| {
+                let n = cases / SHARDS + u32::from(shard < cases % SHARDS);
+                let (templates, known) = (&templates, &known);
+                s.spawn(move || run_shard(shard, n, cases, seed, templates, known))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .collect()
     });
     let elapsed = started.elapsed();
-    if let Err(e) = result {
-        panic!("{e}\nreproduce with TUI_UX_SEED={seed} PROPTEST_CASES={cases}");
-    }
 
-    let tally = tally.into_inner();
+    let mut tally: BTreeMap<Mode, u64> = BTreeMap::new();
+    let mut failures = Vec::new();
+    for (shard, (result, reached)) in shards.into_iter().enumerate() {
+        for (mode, n) in reached {
+            *tally.entry(mode).or_default() += n;
+        }
+        if let Err(e) = result {
+            failures.push(format!("shard {shard}: {e}"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{}\nreproduce with TUI_UX_SEED={seed} PROPTEST_CASES={cases}",
+        failures.join("\n\n")
+    );
+
     eprintln!(
-        "tui_ux: seed={seed} cases={cases} elapsed={:.3}s per_case={:.2}ms modes={tally:?}",
+        "tui_ux: seed={seed} cases={cases} shards={SHARDS} elapsed={:.3}s modes={tally:?}",
         elapsed.as_secs_f64(),
-        elapsed.as_secs_f64() * 1000.0 / cases as f64,
     );
     // AT-3: a mode the run never reached is a mode nothing above checked.
     let missing: Vec<Mode> = ALL_MODES
