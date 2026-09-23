@@ -134,6 +134,11 @@ fn show_json_lists_evidence_rows() {
     let head = String::from_utf8(
         std::process::Command::new("git")
             .current_dir(repo.path())
+            // A git hook in a linked worktree exports absolute GIT_DIR /
+            // GIT_INDEX_FILE; without this the command reads that worktree.
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
             .args(["rev-parse", "HEAD"])
             .output()
             .unwrap()
