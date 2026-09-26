@@ -5,6 +5,7 @@ pub mod config;
 pub mod editor;
 pub mod error;
 pub mod evidence;
+mod git_batch;
 pub mod git_ops;
 pub mod help;
 pub mod id;

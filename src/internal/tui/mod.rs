@@ -33,7 +33,7 @@ use ratatui::Terminal;
 
 use super::error::{ForumError, ForumResult};
 use super::git_ops::GitOps;
-use super::snapshot::list::ThreadRow;
+use super::snapshot::list::{self as snapshot_list, ThreadRow};
 use super::snapshot::store::NodeWithBody;
 
 use input::{handle_key, handle_mouse};
@@ -292,6 +292,9 @@ pub struct App {
     /// `state::refresh_thread_list` and compared in `state::auto_refresh`
     /// against the current `for-each-ref` snapshot to detect ref churn.
     pub(crate) list_tip_shas: std::collections::HashMap<String, String>,
+    /// Rows of the last list read, reused for threads whose tip has not
+    /// changed (`doc/spec/LARGE-FORUM-READS.md`).
+    pub(crate) list_cache: snapshot_list::ListCache,
     /// Whether to render the main pane body as markdown.
     markdown_mode: bool,
     /// Whether mouse capture is temporarily disabled for text selection.
@@ -379,6 +382,7 @@ impl App {
             last_refresh: Instant::now(),
             thread_tip_sha: None,
             list_tip_shas: std::collections::HashMap::new(),
+            list_cache: snapshot_list::ListCache::default(),
             markdown_mode: false,
             mouse_capture_disabled: false,
             collapsed: HashSet::new(),
@@ -834,11 +838,13 @@ const AUTO_REFRESH_INTERVAL_MS: u128 = 2000;
 /// ForumError::Repo on snapshot/replay errors.
 /// Side effects: modifies terminal state; restores on exit.
 pub fn run(git: &GitOps, db_path: &Path, initial_thread_id: Option<&str>) -> ForumResult<()> {
-    let threads = load_threads(git)?;
+    let mut list_cache = snapshot_list::ListCache::default();
+    let (threads, _) = snapshot_list::list_threads_reusing(git, &mut list_cache)?;
     let initial_shas = state::snapshot_list_tip_shas(git)?;
 
     let mut app = App::new(threads);
     app.list_tip_shas = initial_shas;
+    app.list_cache = list_cache;
 
     // Restore persisted state (display settings first, then view navigation)
     let persisted = persist::load_state(db_path);
@@ -1548,6 +1554,29 @@ mod tests {
         // Second click (same position, quick) opens
         handle_mouse(&mut app, click, &git, &db_path).unwrap();
         assert_eq!(app.view, View::ThreadDetail(created_id));
+    }
+
+    /// The list's auto refresh, reading only the threads whose tip changed,
+    /// lists what `list_threads` lists (doc/spec/LARGE-FORUM-READS.md AT-5).
+    #[test]
+    fn auto_refresh_lists_what_list_threads_lists() {
+        let (_dir, git, _paths, _db_path) = setup_repo();
+        let first = make_snapshot_thread(&git, "rfc", "First", 0xc1);
+        make_snapshot_thread(&git, "issue", "Second", 0xc2);
+        let mut app = App::new(Vec::new());
+        app.threads = super::state::read_thread_list(&mut app, &git).unwrap();
+        app.list_tip_shas = snapshot_list::thread_tip_shas(&git).unwrap();
+        let listed = |git: &GitOps| format!("{:?}", snapshot_list::list_threads(git).unwrap());
+        assert_eq!(format!("{:?}", app.threads), listed(&git));
+
+        append_snapshot_node(&git, &first, NodeKind::Comment, "Added later");
+        auto_refresh(&mut app, &git).unwrap();
+        assert_eq!(format!("{:?}", app.threads), listed(&git));
+
+        make_snapshot_thread(&git, "issue", "Third", 0xc3);
+        auto_refresh(&mut app, &git).unwrap();
+        assert_eq!(app.threads.len(), 3);
+        assert_eq!(format!("{:?}", app.threads), listed(&git));
     }
 
     /// Once the wheel has scrolled the list, a click selects the thread

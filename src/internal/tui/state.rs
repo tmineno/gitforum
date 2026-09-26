@@ -196,9 +196,15 @@ pub(super) fn submit_create_node(app: &mut App, git: &GitOps, thread_id: &str) -
 /// Reload the snapshot-derived thread list and re-cache tip SHAs.
 /// Called after any TUI mutation that may have changed a ref.
 fn refresh_thread_list(app: &mut App, git: &GitOps) -> ForumResult<()> {
-    app.threads = snapshot_list::list_threads(git)?;
+    app.threads = read_thread_list(app, git)?;
     app.list_tip_shas = snapshot_list::thread_tip_shas(git)?;
     Ok(())
+}
+
+/// The thread list, reading only the threads whose tip changed since the
+/// last read (`doc/spec/LARGE-FORUM-READS.md`).
+pub(super) fn read_thread_list(app: &mut App, git: &GitOps) -> ForumResult<Vec<ThreadRow>> {
+    Ok(snapshot_list::list_threads_reusing(git, &mut app.list_cache)?.0)
 }
 
 pub(super) fn submit_create_link(
@@ -542,7 +548,7 @@ pub(super) fn auto_refresh(app: &mut App, git: &GitOps) -> ForumResult<()> {
         View::List => {
             let (changed, current_shas) = list_changed_since(git, &app.list_tip_shas)?;
             if changed {
-                let threads = snapshot_list::list_threads(git)?;
+                let threads = read_thread_list(app, git)?;
                 let sel = app.table_state.selected().unwrap_or(0);
                 app.threads = threads;
                 app.list_tip_shas = current_shas;

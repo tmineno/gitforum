@@ -361,12 +361,12 @@ pub fn read_snapshot(git: &GitOps, thread_id: &str) -> Result<ThreadDocument, Fo
 /// (`thread::replay_thread`) to seed `ThreadState` from a snapshot
 /// commit that is no longer the tip.
 pub fn read_snapshot_at(git: &GitOps, tip: &str) -> Result<ThreadDocument, ForumError> {
-    // `--full-tree` is required so paths are reported relative to the
-    // tree root rather than the caller's cwd. Without it, invoking
-    // git-forum from a subdirectory of the repo silently filters the
-    // listing and `paths.contains("thread.toml")` returns false.
-    let tree_listing = git.run(&["ls-tree", "-r", "--full-tree", "--name-only", tip])?;
-    let paths: Vec<&str> = tree_listing.lines().collect();
+    // Paths are relative to the tree root whatever the caller's cwd is
+    // (`list_tree_files` reads the tree itself, or runs `ls-tree
+    // --full-tree`); a listing filtered by a subdirectory would make
+    // `paths.contains("thread.toml")` false.
+    let files = git.list_tree_files(tip)?;
+    let paths: Vec<&str> = files.iter().map(String::as_str).collect();
 
     // Legacy pre-flight: an event.json blob at tip tree means this is
     // an unmigrated 1.x/2.x event chain. Reject before parsing.
