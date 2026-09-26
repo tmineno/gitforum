@@ -12,8 +12,8 @@ use crate::internal::snapshot::list as snapshot_list;
 use super::state::{
     apply_node_status_action, auto_link_candidates, link_relation_labels, link_target_kind_labels,
     link_target_kind_values, node_type_labels, node_type_values, open_node_detail,
-    open_thread_detail, submit_create_link, submit_create_node, submit_create_thread,
-    thread_lifecycle_labels, thread_lifecycle_values,
+    open_thread_detail, read_thread_list, submit_create_link, submit_create_node,
+    submit_create_thread, thread_lifecycle_labels, thread_lifecycle_values,
 };
 use super::{
     App, FilterField, LinkFormField, LinkOrigin, LinkTargetKind, NodeFormField, NodeStatusAction,
@@ -58,7 +58,7 @@ pub(super) fn handle_key(
                     KeyCode::Char('c') => app.begin_create_thread(),
                     KeyCode::Char('r') => {
                         // task `913c4s9v`: snapshot-walk refresh; no SQLite index.
-                        let threads = snapshot_list::list_threads(git)?;
+                        let threads = read_thread_list(app, git)?;
                         app.list_tip_shas = snapshot_list::thread_tip_shas(git)?;
                         let sel = app.table_state.selected().unwrap_or(0);
                         app.threads = threads;

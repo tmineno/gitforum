@@ -1,11 +1,11 @@
 //! `internal::snapshot::list` on forums of different sizes
-//! (`doc/spec/LARGE-FORUM-READS.md` AT-4).
+//! (`doc/spec/LARGE-FORUM-READS.md` AT-4, AT-5).
 
 mod support;
 
 use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::node::{NodeKind, NodeRecord, NodeStatus};
-use git_forum::internal::snapshot::list::list_threads;
+use git_forum::internal::snapshot::list::{list_threads, list_threads_reusing, ListCache};
 use git_forum::internal::snapshot::{write_snapshot, NodeWithBody, ThreadDocument};
 use git_forum::internal::thread::ThreadSnapshot;
 
@@ -69,4 +69,49 @@ fn list_threads_starts_as_many_git_processes_for_40_threads_as_for_10() {
     let (rows_40, spawned_40) = list_forum_of(40);
     assert_eq!((rows_10, rows_40), (10, 40));
     assert_eq!(spawned_10, spawned_40);
+}
+
+/// AT-5: with the cache, a refresh reads only the threads that changed —
+/// a node added, a thread created, a thread ref deleted — and lists what
+/// `list_threads` lists each time.
+#[test]
+fn list_threads_reusing_reads_only_the_threads_that_changed() {
+    let repo = support::repo::TestRepo::new();
+    let git = GitOps::new(repo.path().to_path_buf());
+    for i in 0..5 {
+        let id = format!("SCALE{i:03}");
+        write_snapshot(&git, &id, &thread(&id), "create").unwrap();
+    }
+    let listed = |git: &GitOps| format!("{:?}", list_threads(git).unwrap());
+    let mut cache = ListCache::default();
+
+    let (rows, read) = list_threads_reusing(&git, &mut cache).unwrap();
+    assert_eq!(read.len(), 5);
+    assert_eq!(format!("{rows:?}"), listed(&git));
+
+    let (rows, read) = list_threads_reusing(&git, &mut cache).unwrap();
+    assert!(read.is_empty(), "{read:?}");
+    assert_eq!(format!("{rows:?}"), listed(&git));
+
+    let mut changed = thread("SCALE002");
+    changed.nodes.pop();
+    changed.snapshot.status = "closed".into();
+    write_snapshot(&git, "SCALE002", &changed, "change").unwrap();
+    let (rows, read) = list_threads_reusing(&git, &mut cache).unwrap();
+    assert_eq!(read, ["SCALE002"]);
+    assert_eq!(format!("{rows:?}"), listed(&git));
+    assert!(rows
+        .iter()
+        .any(|r| r.id == "SCALE002" && r.status == "closed"));
+
+    write_snapshot(&git, "SCALE009", &thread("SCALE009"), "create").unwrap();
+    let (rows, read) = list_threads_reusing(&git, &mut cache).unwrap();
+    assert_eq!(read, ["SCALE009"]);
+    assert_eq!(format!("{rows:?}"), listed(&git));
+
+    git.delete_ref("refs/forum/threads/SCALE001").unwrap();
+    let (rows, read) = list_threads_reusing(&git, &mut cache).unwrap();
+    assert!(read.is_empty(), "{read:?}");
+    assert_eq!(format!("{rows:?}"), listed(&git));
+    assert!(rows.iter().all(|r| r.id != "SCALE001"));
 }

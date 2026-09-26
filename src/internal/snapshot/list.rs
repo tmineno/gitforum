@@ -78,25 +78,48 @@ pub fn category_lifecycle(category: &str) -> &'static str {
 /// Postcondition: the returned vec is sorted lexicographically by
 /// thread id.
 pub fn list_threads(git: &GitOps) -> ForumResult<Vec<ThreadRow>> {
+    Ok(list_threads_reusing(git, &mut ListCache::default())?.0)
+}
+
+/// Rows read by [`list_threads_reusing`], by thread id, with the tip and
+/// the namespace (published or not) each was read at.
+#[derive(Debug, Clone, Default)]
+pub struct ListCache {
+    rows: HashMap<String, (String, bool, ThreadRow)>,
+}
+
+/// [`list_threads`], reading only the threads whose tip or namespace
+/// differs from the one `cache` holds a row for
+/// (`doc/spec/LARGE-FORUM-READS.md`). A snapshot is fixed by its commit,
+/// so a row read at the same tip is still current.
+///
+/// - Preconditions: `cache` is empty or was filled by earlier calls on
+///   this repository.
+/// - Postconditions: the rows are what [`list_threads`] returns; the ids
+///   are the threads whose snapshot was read, in the order read. `cache`
+///   then holds a row for every listed thread and nothing else.
+/// - Failure modes: as [`list_threads`]; `cache` is left as it was.
+/// - Side effects: reads git objects (ADR-015).
+pub fn list_threads_reusing(
+    git: &GitOps,
+    cache: &mut ListCache,
+) -> ForumResult<(Vec<ThreadRow>, Vec<String>)> {
     let auth = git.list_refs_with_shas(THREADS_PREFIX)?;
     let published = git.list_refs_with_shas(PUBLISHED_PREFIX)?;
     let mut rows: Vec<ThreadRow> = Vec::with_capacity(auth.len() + published.len());
     let mut seen: HashSet<String> = HashSet::with_capacity(auth.len());
+    let mut next: HashMap<String, (String, bool, ThreadRow)> =
+        HashMap::with_capacity(rows.capacity());
+    let mut read: Vec<String> = Vec::new();
 
     for (refname, sha) in &auth {
         let Some(thread_id) = thread_id_from_ref(refname) else {
             continue;
         };
-        match read_snapshot_at(git, sha) {
-            Ok(doc) => {
-                seen.insert(thread_id.to_string());
-                rows.push(row_from_doc(thread_id, &doc, false));
-            }
-            Err(ForumError::LegacyEventChain)
-            | Err(ForumError::SnapshotMissing(_))
-            | Err(ForumError::SnapshotInvalid(_))
-            | Err(ForumError::SnapshotSchemaUnsupported(_)) => continue,
-            Err(e) => return Err(e),
+        if let Some(row) = row_at(git, cache, thread_id, sha, false, &mut read)? {
+            seen.insert(thread_id.to_string());
+            next.insert(thread_id.to_string(), (sha.clone(), false, row.clone()));
+            rows.push(row);
         }
     }
 
@@ -108,18 +131,42 @@ pub fn list_threads(git: &GitOps) -> ForumResult<Vec<ThreadRow>> {
             // Authoritative wins per RFC fls856j3 §5.1.
             continue;
         }
-        match read_snapshot_at(git, sha) {
-            Ok(doc) => rows.push(row_from_doc(thread_id, &doc, true)),
-            Err(ForumError::LegacyEventChain)
-            | Err(ForumError::SnapshotMissing(_))
-            | Err(ForumError::SnapshotInvalid(_))
-            | Err(ForumError::SnapshotSchemaUnsupported(_)) => continue,
-            Err(e) => return Err(e),
+        if let Some(row) = row_at(git, cache, thread_id, sha, true, &mut read)? {
+            next.insert(thread_id.to_string(), (sha.clone(), true, row.clone()));
+            rows.push(row);
         }
     }
 
     rows.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(rows)
+    cache.rows = next;
+    Ok((rows, read))
+}
+
+/// The row of `thread_id` at `sha`: `cache`'s when it was read at the same
+/// tip and namespace, otherwise read (and its id pushed to `read`). `None`
+/// for a snapshot that [`list_threads`] skips.
+fn row_at(
+    git: &GitOps,
+    cache: &ListCache,
+    thread_id: &str,
+    sha: &str,
+    from_published: bool,
+    read: &mut Vec<String>,
+) -> ForumResult<Option<ThreadRow>> {
+    if let Some((tip, published, row)) = cache.rows.get(thread_id) {
+        if tip == sha && *published == from_published {
+            return Ok(Some(row.clone()));
+        }
+    }
+    read.push(thread_id.to_string());
+    match read_snapshot_at(git, sha) {
+        Ok(doc) => Ok(Some(row_from_doc(thread_id, &doc, from_published))),
+        Err(ForumError::LegacyEventChain)
+        | Err(ForumError::SnapshotMissing(_))
+        | Err(ForumError::SnapshotInvalid(_))
+        | Err(ForumError::SnapshotSchemaUnsupported(_)) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// Read a single thread by id. Returns `None` when neither the
