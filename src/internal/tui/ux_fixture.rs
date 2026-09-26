@@ -1,7 +1,10 @@
 //! Fixture repositories for the TUI UX suites (doc/spec/TUI-UX-TESTING.md).
 //!
 //! Built once per test through the TUI's own snapshot writers with a
-//! StepClock, then copied for every case so cases never share state.
+//! StepClock, then copied for every case so cases never share state. The
+//! thread list of each template is read once too: reading it costs a
+//! `git` process per snapshot file, which made up most of the suites'
+//! run time.
 
 use std::path::{Path, PathBuf};
 
@@ -13,6 +16,8 @@ use crate::internal::config::RepoPaths;
 use crate::internal::git_ops::GitOps;
 use crate::internal::id::TEST_NONCE;
 use crate::internal::node::{NodeKind, NodeStatus};
+use crate::internal::refs::{PUBLISHED_PREFIX, THREADS_PREFIX};
+use crate::internal::snapshot::list::ThreadRow;
 use crate::internal::snapshot::{self, list as snapshot_list};
 
 use super::state::{snapshot_append_link, snapshot_append_node, snapshot_create_thread};
@@ -29,6 +34,8 @@ pub(super) enum Fixture {
 pub(super) struct Templates {
     full: (TempDir, GitOps, RepoPaths, PathBuf),
     empty: (TempDir, GitOps, RepoPaths, PathBuf),
+    full_listing: Listing,
+    empty_listing: Listing,
 }
 
 impl Templates {
@@ -36,7 +43,14 @@ impl Templates {
         let full = super::tests::setup_repo();
         build_full_fixture(&full.1);
         let empty = super::tests::setup_repo();
-        Self { full, empty }
+        let full_listing = Listing::read(&full.1);
+        let empty_listing = Listing::read(&empty.1);
+        Self {
+            full,
+            empty,
+            full_listing,
+            empty_listing,
+        }
     }
 
     pub(super) fn path(&self, fixture: Fixture) -> &Path {
@@ -45,6 +59,56 @@ impl Templates {
             Fixture::Empty => self.empty.0.path(),
         }
     }
+
+    /// The thread list of `fixture`, as `list_threads` reads it on a
+    /// fresh copy.
+    pub(super) fn listing(&self, fixture: Fixture) -> &Listing {
+        match fixture {
+            Fixture::Full => &self.full_listing,
+            Fixture::Empty => &self.empty_listing,
+        }
+    }
+}
+
+/// `list_threads` of a template, with the thread refs it was read at.
+#[derive(Clone)]
+pub(super) struct Listing {
+    tips: Vec<(String, String)>,
+    rows: Vec<ThreadRow>,
+}
+
+impl Listing {
+    fn read(git: &GitOps) -> Self {
+        Self {
+            tips: thread_tips(git),
+            rows: snapshot_list::list_threads(git).unwrap(),
+        }
+    }
+
+    /// The rows `list_threads` returns on a fresh copy of the template.
+    /// A copy has the template's refs and objects, so it lists the same.
+    pub(super) fn rows(&self) -> Vec<ThreadRow> {
+        self.rows.clone()
+    }
+
+    /// `list_threads` on a copy of the template. While every thread ref
+    /// still points where it did in the template, the rows are the
+    /// template's, since `list_threads` reads nothing but the snapshots
+    /// at those tips; otherwise the snapshots are read again.
+    pub(super) fn list_threads(&self, git: &GitOps) -> Vec<ThreadRow> {
+        if thread_tips(git) == self.tips {
+            self.rows()
+        } else {
+            snapshot_list::list_threads(git).unwrap()
+        }
+    }
+}
+
+/// Every ref `list_threads` reads, with its tip.
+fn thread_tips(git: &GitOps) -> Vec<(String, String)> {
+    let mut tips = git.list_refs_with_shas(THREADS_PREFIX).unwrap();
+    tips.extend(git.list_refs_with_shas(PUBLISHED_PREFIX).unwrap());
+    tips
 }
 
 /// Threads in every lifecycle and several statuses, every node kind with
@@ -208,4 +272,34 @@ pub(super) fn copy_tree(from: &Path, to: &Path) {
             std::fs::copy(entry.path(), &dest).unwrap();
         }
     }
+}
+
+/// The template's listing is what `list_threads` reads on a copy, both
+/// while the copy is unchanged and after a thread is created on it.
+#[test]
+fn listing_matches_list_threads_on_a_copy() {
+    let templates = Templates::build();
+    let dir = TempDir::new().unwrap();
+    copy_tree(templates.path(Fixture::Full), dir.path());
+    let git = GitOps::new(dir.path().to_path_buf());
+    let listing = templates.listing(Fixture::Full);
+    let read = |git: &GitOps| format!("{:?}", snapshot_list::list_threads(git).unwrap());
+    assert_eq!(format!("{:?}", listing.rows()), read(&git));
+    assert_eq!(format!("{:?}", listing.list_threads(&git)), read(&git));
+
+    let start = chrono::Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap();
+    let clock = StepClock::new(start, chrono::Duration::minutes(1));
+    snapshot_create_thread(
+        &git,
+        "Made on the copy",
+        None,
+        "execution",
+        &[],
+        ACTOR,
+        &clock,
+    )
+    .unwrap();
+    let after = listing.list_threads(&git);
+    assert!(after.iter().any(|t| t.title == "Made on the copy"));
+    assert_eq!(format!("{after:?}"), read(&git));
 }

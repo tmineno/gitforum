@@ -35,7 +35,6 @@ use tempfile::TempDir;
 
 use crate::internal::config::RepoPaths;
 use crate::internal::git_ops::GitOps;
-use crate::internal::snapshot::list as snapshot_list;
 
 use super::effects::RecordingEffects;
 use super::render::render;
@@ -456,7 +455,7 @@ fn run_case(
         .git_forum
         .join("index.db");
 
-    let mut rows = snapshot_list::list_threads(&git).unwrap();
+    let mut rows = templates.listing(case.fixture).rows();
     if case.fixture == Fixture::Full {
         rows.push(stale_row());
     }

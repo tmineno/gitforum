@@ -22,11 +22,10 @@ use tempfile::TempDir;
 
 use crate::internal::config::RepoPaths;
 use crate::internal::git_ops::GitOps;
-use crate::internal::snapshot::list as snapshot_list;
 
 use super::effects::RecordingEffects;
 use super::render::render;
-use super::ux_fixture::{copy_tree, stale_row, Fixture, Templates};
+use super::ux_fixture::{copy_tree, stale_row, Fixture, Listing, Templates};
 use super::{dispatch_event, App, FilterField, LinkFormField, NodeFormField, View};
 
 /// Rows that the current code is known to violate: (row, ticket).
@@ -39,6 +38,7 @@ struct Session {
     db_path: PathBuf,
     app: App,
     terminal: Terminal<TestBackend>,
+    listing: Listing,
 }
 
 impl Session {
@@ -49,7 +49,8 @@ impl Session {
         let db_path = RepoPaths::from_repo_root(dir.path())
             .git_forum
             .join("index.db");
-        let mut rows = snapshot_list::list_threads(&git).unwrap();
+        let listing = templates.listing(Fixture::Full).clone();
+        let mut rows = listing.rows();
         rows.push(stale_row());
         let mut app = App::new(rows);
         app.effects = Box::new(RecordingEffects::default());
@@ -60,6 +61,7 @@ impl Session {
             db_path,
             app,
             terminal,
+            listing,
         };
         s.draw();
         s
@@ -217,8 +219,9 @@ impl Session {
             }
             other => format!("{other:?}"),
         };
-        let mut titles: Vec<String> = snapshot_list::list_threads(&self.git)
-            .unwrap()
+        let mut titles: Vec<String> = self
+            .listing
+            .list_threads(&self.git)
             .into_iter()
             .map(|t| t.title)
             .collect();
