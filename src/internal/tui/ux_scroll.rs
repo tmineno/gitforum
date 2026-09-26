@@ -16,7 +16,6 @@ use tempfile::TempDir;
 
 use crate::internal::config::RepoPaths;
 use crate::internal::git_ops::GitOps;
-use crate::internal::snapshot::list as snapshot_list;
 
 use super::effects::RecordingEffects;
 use super::render::render;
@@ -61,7 +60,7 @@ impl Session {
         let db_path = RepoPaths::from_repo_root(dir.path())
             .git_forum
             .join("index.db");
-        let mut app = App::new(snapshot_list::list_threads(&git).unwrap());
+        let mut app = App::new(templates.listing(Fixture::Full).rows());
         app.effects = Box::new(RecordingEffects::default());
         let mut s = Self {
             _dir: dir,
