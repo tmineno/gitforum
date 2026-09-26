@@ -16,9 +16,14 @@ repos:
         types: [rust]
         pass_filenames: false
 
+      # cargo-nextest runs the tests of every test binary at once (about
+      # 2.5 s against 5 s for cargo test on the development machine, see
+      # doc/spec/TUI-UX-TESTING.md); cargo test is used where it is not
+      # installed. nextest does not run doc tests; the crate has none, and
+      # CI still runs cargo test.
       - id: cargo-test
-        name: cargo test
-        entry: cargo test
+        name: cargo test (nextest when installed)
+        entry: bash -c 'if cargo nextest --version > /dev/null 2>&1; then exec cargo nextest run; else exec cargo test; fi'
         language: system
         types: [rust]
         pass_filenames: false
