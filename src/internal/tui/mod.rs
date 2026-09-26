@@ -1550,6 +1550,81 @@ mod tests {
         assert_eq!(app.view, View::ThreadDetail(created_id));
     }
 
+    /// Once the wheel has scrolled the list, a click selects the thread
+    /// drawn under the pointer, not the one at that distance from the top
+    /// of the list.
+    #[test]
+    fn list_click_after_wheel_scroll_selects_the_row_under_the_pointer() {
+        let rows = (0..30)
+            .map(|i| {
+                make_row(
+                    &format!("t{i:07}"),
+                    "issue",
+                    "open",
+                    &format!("Thread {i:02}"),
+                )
+            })
+            .collect();
+        let mut app = App::new(rows);
+        let git = GitOps::new(std::path::PathBuf::from("/"));
+        let db_path = std::path::Path::new("/tmp/test.db");
+        let (w, h) = (80, 12);
+        let _ = render_to_string(&mut app, w, h);
+        let area = app.ui_rects.list_table.unwrap();
+        let wheel = mouse_event(MouseEventKind::ScrollDown, area.x + 2, area.y + 2);
+        for _ in 0..20 {
+            handle_mouse(&mut app, wheel, &git, db_path).unwrap();
+            let _ = render_to_string(&mut app, w, h);
+        }
+        assert!(app.table_state.offset() > 0, "the wheel did not scroll");
+
+        let screen = render_to_string(&mut app, w, h);
+        let row = area.y + 3;
+        let shown = screen.lines().nth(usize::from(row)).unwrap();
+        let click = mouse_event(MouseEventKind::Down(MouseButton::Left), area.x + 2, row);
+        handle_mouse(&mut app, click, &git, db_path).unwrap();
+        let id = app.selected_thread_id().unwrap();
+        assert!(shown.contains(&id), "clicked {shown:?}, selected {id}");
+    }
+
+    /// The same for the node table of the thread detail view.
+    #[test]
+    fn node_click_after_wheel_scroll_selects_the_row_under_the_pointer() {
+        let (_dir, git, _paths, db_path) = setup_repo();
+        let thread_id = make_snapshot_thread(&git, "rfc", "Many nodes", 0xb0);
+        for i in 0..20 {
+            append_snapshot_node(&git, &thread_id, NodeKind::Comment, &format!("Node {i:02}"));
+        }
+        let mut app = App::new(snapshot_list::list_threads(&git).unwrap());
+        open_thread_detail(&mut app, &git, &thread_id, None).unwrap();
+        let (w, h) = (80, 24);
+        let _ = render_to_string(&mut app, w, h);
+        let area = app.ui_rects.thread_nodes.unwrap();
+        let wheel = mouse_event(MouseEventKind::ScrollDown, area.x + 2, area.y + 2);
+        for _ in 0..20 {
+            handle_mouse(&mut app, wheel, &git, &db_path).unwrap();
+            let _ = render_to_string(&mut app, w, h);
+        }
+        assert!(
+            app.node_table_state.offset() > 0,
+            "the wheel did not scroll"
+        );
+
+        let screen = render_to_string(&mut app, w, h);
+        let row = area.y + 3;
+        let shown = screen.lines().nth(usize::from(row)).unwrap();
+        let click = mouse_event(MouseEventKind::Down(MouseButton::Left), area.x + 2, row);
+        handle_mouse(&mut app, click, &git, &db_path).unwrap();
+        // The narrow pane cuts the ID column short; the bodies are unique.
+        let id = app.selected_node_id().unwrap();
+        let node = app.thread_nodes.iter().find(|n| n.record.id == id).unwrap();
+        assert!(
+            shown.contains(&node.body),
+            "clicked {shown:?}, selected {:?}",
+            node.body
+        );
+    }
+
     #[test]
     fn click_column_header_sorts_list() {
         let mut row_a = make_row("ISSUE-0001", "issue", "open", "Alpha");
