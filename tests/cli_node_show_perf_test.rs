@@ -24,7 +24,7 @@ use git_forum::internal::git_ops::GitOps;
 use git_forum::internal::id_alloc;
 use git_forum::internal::init;
 use git_forum::internal::node::{NodeKind, NodeRecord, NodeStatus};
-use git_forum::internal::snapshot::{self, store::write_snapshot, NodeWithBody, ThreadDocument};
+use git_forum::internal::snapshot::{store::write_snapshot, NodeWithBody, ThreadDocument};
 use git_forum::internal::thread::{self, NodeIdIndex, ThreadSnapshot};
 
 const THREAD_COUNT: usize = 50;
@@ -38,12 +38,12 @@ fn setup() -> (support::repo::TestRepo, GitOps) {
     (repo, git)
 }
 
-fn make_thread(git: &GitOps, idx: usize) -> String {
+fn thread_doc(idx: usize) -> ThreadDocument {
     let id = format!("perf{idx:04x}");
     let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
-    let doc = ThreadDocument::new(ThreadSnapshot {
+    ThreadDocument::new(ThreadSnapshot {
         schema_version: ThreadSnapshot::SCHEMA_VERSION,
-        id: id.clone(),
+        id,
         title: format!("Test thread {idx}"),
         category: "rfc".into(),
         status: "draft".into(),
@@ -55,13 +55,10 @@ fn make_thread(git: &GitOps, idx: usize) -> String {
         branch: None,
         supersedes: vec![],
         visibility: Default::default(),
-    });
-    write_snapshot(git, &id, &doc, "create perf thread").unwrap();
-    id
+    })
 }
 
-fn append_node(git: &GitOps, thread_id: &str, body: &str, seq: usize) -> String {
-    let mut doc = snapshot::read_snapshot(git, thread_id).unwrap();
+fn push_node(doc: &mut ThreadDocument, body: &str, seq: usize) -> String {
     let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
     // Salt the alloc input so two nodes appended in the same second
     // do not collide when we batch-create the fixture.
@@ -83,23 +80,28 @@ fn append_node(git: &GitOps, thread_id: &str, body: &str, seq: usize) -> String 
     });
     doc.snapshot.updated_at = now;
     doc.snapshot.updated_by = "human/alice".into();
-    write_snapshot(git, thread_id, &doc, "append perf node").unwrap();
     id
 }
 
+/// Each thread is written once with its nodes. Appending them one at a
+/// time read and rewrote the snapshot for every node, and those `git`
+/// processes were most of this file's run time; the tests read only the
+/// tips, which are the same either way.
 fn build_fixture(git: &GitOps) -> Vec<(String, Vec<String>)> {
     let mut threads_with_nodes = Vec::with_capacity(THREAD_COUNT);
     for t in 0..THREAD_COUNT {
-        let thread_id = make_thread(git, t);
-        let mut nodes = Vec::with_capacity(NODES_PER_THREAD);
-        for n in 0..NODES_PER_THREAD {
-            nodes.push(append_node(
-                git,
-                &thread_id,
-                &format!("body t{t}-n{n}"),
-                t * NODES_PER_THREAD + n,
-            ));
-        }
+        let mut doc = thread_doc(t);
+        let nodes = (0..NODES_PER_THREAD)
+            .map(|n| {
+                push_node(
+                    &mut doc,
+                    &format!("body t{t}-n{n}"),
+                    t * NODES_PER_THREAD + n,
+                )
+            })
+            .collect();
+        let thread_id = doc.snapshot.id.clone();
+        write_snapshot(git, &thread_id, &doc, "create perf thread").unwrap();
         threads_with_nodes.push((thread_id, nodes));
     }
     threads_with_nodes
