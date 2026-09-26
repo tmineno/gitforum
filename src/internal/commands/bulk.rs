@@ -14,6 +14,7 @@ use crate::internal::error::ForumError;
 use crate::internal::git_ops::GitOps;
 use crate::internal::policy::{self, Policy};
 use crate::internal::refs;
+use crate::internal::snapshot;
 use crate::internal::thread;
 
 /// Args for `commands::bulk::run` — `state bulk` selector + transition.
@@ -82,15 +83,24 @@ pub struct BulkStateReport {
 
 /// Replay every thread (or every thread in `kind`/`branch` filter) and
 /// return the materialised states sorted by creation time.
+///
+/// The tips come from one `for-each-ref` per namespace, the authoritative
+/// ref winning over the published one as in `read_snapshot` (RFC
+/// `fls856j3` §5). Resolving each thread's ref on its own started a git
+/// process per thread (`doc/spec/LARGE-FORUM-READS.md`).
 pub fn list_thread_states(
     git: &GitOps,
     kind: Option<&'static str>,
     branch: Option<&str>,
 ) -> Result<Vec<thread::ThreadState>, ForumError> {
-    let all_ids = thread::list_thread_ids(git)?;
+    let tips = snapshot::list::thread_tip_shas(git)?;
+    let mut all_ids: Vec<&String> = tips.keys().collect();
+    all_ids.sort();
     let mut states = Vec::new();
-    for id in &all_ids {
-        match thread::replay_thread(git, id) {
+    for id in all_ids {
+        let replayed = snapshot::read_snapshot_at(git, &tips[id])
+            .map(thread::materialize_thread_state_from_snapshot);
+        match replayed {
             Ok(state) => {
                 if thread_matches_filters(&state, kind, branch, None) {
                     states.push(state);

@@ -121,6 +121,23 @@ fn run_counted(dir: &Path, args: &[&str]) -> (Output, usize) {
     (out, starts.lines().count())
 }
 
+/// AT-2: `ls` and `shortlog` start as many git processes for 40 threads as
+/// for 10.
+#[test]
+fn ls_and_shortlog_start_as_many_git_processes_for_40_threads_as_for_10() {
+    let small = forum_of(10);
+    let large = forum_of(40);
+    for args in [&["ls"][..], &["shortlog", "--since", "2026-01-01"][..]] {
+        let (_, starts_10) = run_counted(small.path(), args);
+        let (out_40, starts_40) = run_counted(large.path(), args);
+        assert_eq!(starts_10, starts_40, "git-forum {args:?}");
+        if args == ["ls"] {
+            let listed = String::from_utf8_lossy(&out_40.stdout);
+            assert!(listed.contains("Thread scale039"), "{listed}");
+        }
+    }
+}
+
 /// AT-3: `node show` starts as many git processes for 40 threads as for 10.
 #[test]
 fn node_show_starts_as_many_git_processes_for_40_threads_as_for_10() {
