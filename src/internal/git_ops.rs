@@ -1,11 +1,31 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use chrono::{DateTime, Utc};
 
 use super::config::CommitIdentity;
 use super::error::{ForumError, ForumResult};
+
+/// Environment variables that would point git at another repository.
+/// Every git process started here runs without them.
+const GIT_REPO_ENV: [&str; 5] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+];
+
+/// A `git` command without the [`GIT_REPO_ENV`] variables.
+fn git_command() -> Command {
+    let mut cmd = Command::new("git");
+    for var in GIT_REPO_ENV {
+        cmd.env_remove(var);
+    }
+    cmd
+}
 
 /// Thin subprocess wrapper for git plumbing commands.
 pub struct GitOps {
@@ -14,6 +34,8 @@ pub struct GitOps {
     commit_identity: Option<CommitIdentity>,
     /// Default actor ID from local config (set during init).
     default_actor: Option<String>,
+    /// git commands run through [`GitOps::command`].
+    spawned: AtomicUsize,
 }
 
 impl GitOps {
@@ -22,7 +44,29 @@ impl GitOps {
             root,
             commit_identity: None,
             default_actor: None,
+            spawned: AtomicUsize::new(0),
         }
+    }
+
+    /// The number of git processes this value has started.
+    ///
+    /// - Preconditions: none.
+    /// - Postconditions: counts every git command run by a method of this
+    ///   value, including one whose process then failed; `discover` runs
+    ///   before the value exists and is not counted.
+    /// - Failure modes: none.
+    /// - Side effects: none.
+    pub fn spawned_processes(&self) -> usize {
+        self.spawned.load(Ordering::Relaxed)
+    }
+
+    /// A `git` command in this repository, counted by
+    /// [`GitOps::spawned_processes`].
+    fn command(&self) -> Command {
+        self.spawned.fetch_add(1, Ordering::Relaxed);
+        let mut cmd = git_command();
+        cmd.current_dir(&self.root);
+        cmd
     }
 
     /// Set the commit identity used for forum commits.
@@ -42,13 +86,8 @@ impl GitOps {
 
     /// Discover the repository root from the current working directory.
     pub fn discover() -> ForumResult<Self> {
-        let output = Command::new("git")
+        let output = git_command()
             .args(["rev-parse", "--show-toplevel"])
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_OBJECT_DIRECTORY")
-            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
             .output()?;
         if !output.status.success() {
             return Err(ForumError::Repo("not inside a git repository".into()));
@@ -63,15 +102,7 @@ impl GitOps {
     /// In a worktree this returns the worktree-specific git dir
     /// (e.g. `/path/to/main/.git/worktrees/<name>`).
     pub fn git_dir(&self) -> ForumResult<PathBuf> {
-        let output = Command::new("git")
-            .args(["rev-parse", "--git-dir"])
-            .current_dir(&self.root)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_OBJECT_DIRECTORY")
-            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
-            .output()?;
+        let output = self.command().args(["rev-parse", "--git-dir"]).output()?;
         if !output.status.success() {
             return Err(ForumError::Repo("cannot resolve git directory".into()));
         }
@@ -91,15 +122,7 @@ impl GitOps {
 
     /// Run a git command and return trimmed stdout.
     pub fn run(&self, args: &[&str]) -> ForumResult<String> {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(&self.root)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_OBJECT_DIRECTORY")
-            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
-            .output()?;
+        let output = self.command().args(args).output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return Err(ForumError::Git(annotate_git_stderr(&stderr)));
@@ -111,14 +134,9 @@ impl GitOps {
 
     /// Run a git command with data piped to stdin.
     pub fn run_with_stdin(&self, args: &[&str], data: &[u8]) -> ForumResult<String> {
-        let mut child = Command::new("git")
+        let mut child = self
+            .command()
             .args(args)
-            .current_dir(&self.root)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_OBJECT_DIRECTORY")
-            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -175,14 +193,8 @@ impl GitOps {
         // If a commit identity is configured, set env vars on the command
         // directly instead of going through self.run().
         if let Some(ref id) = self.commit_identity {
-            let mut cmd = Command::new("git");
-            cmd.args(&arg_refs)
-                .current_dir(&self.root)
-                .env_remove("GIT_DIR")
-                .env_remove("GIT_WORK_TREE")
-                .env_remove("GIT_INDEX_FILE")
-                .env_remove("GIT_OBJECT_DIRECTORY")
-                .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES");
+            let mut cmd = self.command();
+            cmd.args(&arg_refs);
             if let Some(ref name) = id.name {
                 cmd.env("GIT_AUTHOR_NAME", name);
                 cmd.env("GIT_COMMITTER_NAME", name);
@@ -349,15 +361,7 @@ impl GitOps {
     /// trailing whitespace and any binary content.
     pub fn show_file_bytes(&self, commit_sha: &str, path: &str) -> ForumResult<Vec<u8>> {
         let spec = format!("{commit_sha}:{path}");
-        let output = Command::new("git")
-            .args(["cat-file", "-p", &spec])
-            .current_dir(&self.root)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_OBJECT_DIRECTORY")
-            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
-            .output()?;
+        let output = self.command().args(["cat-file", "-p", &spec]).output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return Err(ForumError::Git(stderr));
@@ -381,15 +385,7 @@ impl GitOps {
         args.extend_from_slice(extra_args);
         args.push(old_file);
         args.push(new_file);
-        let output = Command::new("git")
-            .args(&args)
-            .current_dir(&self.root)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_OBJECT_DIRECTORY")
-            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
-            .output()?;
+        let output = self.command().args(&args).output()?;
         let code = output.status.code().unwrap_or(2);
         if code >= 2 {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -477,5 +473,22 @@ mod git_error_annotation_tests {
         let stderr = "fatal: not a git repository";
         let out = annotate_git_stderr(stderr);
         assert_eq!(out, stderr);
+    }
+}
+
+#[cfg(test)]
+mod spawn_count_tests {
+    use super::GitOps;
+
+    #[test]
+    fn every_git_command_is_counted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let git = GitOps::new(dir.path().to_path_buf());
+        assert_eq!(git.spawned_processes(), 0);
+        git.run(&["--version"]).unwrap();
+        git.run(&["--version"]).unwrap();
+        // A failing command still started a process.
+        assert!(git.run(&["rev-parse", "--verify", "HEAD"]).is_err());
+        assert_eq!(git.spawned_processes(), 3);
     }
 }
