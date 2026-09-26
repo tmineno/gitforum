@@ -16,6 +16,7 @@ use crossterm::event::{
 };
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 use ratatui::Terminal;
 use tempfile::TempDir;
 
@@ -137,6 +138,32 @@ impl Session {
             self.key(KeyCode::Tab);
         }
         panic!("Tab never reached the wanted field");
+    }
+
+    /// Resize the terminal and redraw.
+    fn resize(&mut self, width: u16, height: u16) -> &mut Self {
+        self.terminal.backend_mut().resize(width, height);
+        self.draw();
+        self
+    }
+
+    /// Whether the cell at `at` is drawn in the selected-row highlight.
+    fn highlighted(&self, (column, row): (u16, u16)) -> bool {
+        self.terminal.backend().buffer()[(column, row)].bg == Color::Blue
+    }
+
+    /// Press `code` until `done` holds (at most 64 times).
+    fn press_until(&mut self, code: KeyCode, done: impl Fn(&Self) -> bool) -> &mut Self {
+        for _ in 0..64 {
+            if done(self) {
+                return self;
+            }
+            self.key(code);
+        }
+        panic!(
+            "{code:?} never reached the wanted state:\n{}",
+            self.screen()
+        );
     }
 
     /// Top-left cell of the first on-screen occurrence of `needle`.
@@ -317,6 +344,26 @@ fn rows() -> Vec<Row> {
                 s.keys(&[Char('j'), Char('j'), Enter]);
             },
         },
+        // A scrolled list: the click picks the row drawn under the
+        // pointer, so the keys move the highlight onto that screen row.
+        Row {
+            name: "list-row-click-scrolled",
+            setup: |s| {
+                let at = table_row(s.rect(|r| r.list_table), 0);
+                for _ in 0..30 {
+                    s.wheel_down(at);
+                }
+                assert!(s.app.table_state.offset() > 0, "the list did not scroll");
+            },
+            mouse: |s| {
+                let at = table_row(s.rect(|r| r.list_table), 2);
+                s.click(at);
+            },
+            keys: |s| {
+                let at = table_row(s.rect(|r| r.list_table), 2);
+                s.press_until(Char('k'), |s| s.highlighted(at));
+            },
+        },
         Row {
             name: "list-wheel-down",
             setup: no_setup,
@@ -403,6 +450,30 @@ fn rows() -> Vec<Row> {
             },
             keys: |s| {
                 s.keys(&[Char('j'), Char('j')]);
+            },
+        },
+        Row {
+            name: "thread-node-row-click-scrolled",
+            setup: |s| {
+                s.resize(80, 9);
+                open_thread(s);
+                let at = table_row(s.rect(|r| r.thread_nodes), 0);
+                for _ in 0..10 {
+                    s.wheel_down(at);
+                }
+                assert!(
+                    s.app.node_table_state.offset() > 0,
+                    "the nodes did not scroll:\n{}",
+                    s.screen()
+                );
+            },
+            mouse: |s| {
+                let at = table_row(s.rect(|r| r.thread_nodes), 1);
+                s.click(at);
+            },
+            keys: |s| {
+                let at = table_row(s.rect(|r| r.thread_nodes), 1);
+                s.press_until(Char('k'), |s| s.highlighted(at));
             },
         },
         Row {

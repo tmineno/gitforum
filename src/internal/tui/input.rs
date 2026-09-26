@@ -265,11 +265,15 @@ pub(super) fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
         && row < rect.y.saturating_add(rect.height)
 }
 
-pub(super) fn table_row_at(area: Rect, row: u16) -> Option<usize> {
+/// Map a click inside a bordered table with a header line to the index of
+/// the row drawn there. `offset` is the first row the last draw showed
+/// (`TableState::offset`), so a scrolled table maps to the row under the
+/// pointer.
+pub(super) fn table_row_at(area: Rect, row: u16, offset: usize) -> Option<usize> {
     if area.width < 2 || area.height < 3 || row < area.y + 2 || row >= area.y + area.height - 1 {
         return None;
     }
-    Some((row - area.y - 2) as usize)
+    Some(offset + (row - area.y - 2) as usize)
 }
 
 /// Map a click position inside a bordered list/dropdown to an item index.
@@ -338,7 +342,7 @@ pub(super) fn handle_mouse(
                     let n = app.visible_threads().len();
                     app.table_state.select(if n > 0 { Some(0) } else { None });
                 } else if let Some(area) = app.ui_rects.list_table {
-                    if let Some(index) = table_row_at(area, mouse.row) {
+                    if let Some(index) = table_row_at(area, mouse.row, app.table_state.offset()) {
                         let visible_len = app.visible_threads().len();
                         if index < visible_len {
                             app.table_state.select(Some(index));
@@ -406,7 +410,9 @@ pub(super) fn handle_mouse(
                     app.node_detail_text.clear();
                     app.node_detail_scroll = 0;
                 } else if let Some(area) = app.ui_rects.thread_nodes {
-                    if let Some(index) = table_row_at(area, mouse.row) {
+                    if let Some(index) =
+                        table_row_at(area, mouse.row, app.node_table_state.offset())
+                    {
                         // +1 for thread root row at index 0
                         if index < app.visible_tree_indices.len() + 1 {
                             app.node_table_state.select(Some(index));
