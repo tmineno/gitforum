@@ -2,11 +2,13 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use chrono::{DateTime, Utc};
 
 use super::config::CommitIdentity;
 use super::error::{ForumError, ForumResult};
+use super::git_batch::{self, BatchReader};
 
 /// Environment variables that would point git at another repository.
 /// Every git process started here runs without them.
@@ -36,6 +38,17 @@ pub struct GitOps {
     default_actor: Option<String>,
     /// git commands run through [`GitOps::command`].
     spawned: AtomicUsize,
+    /// The `git cat-file --batch` process reads go through (ADR-015).
+    batch: Mutex<BatchSlot>,
+}
+
+/// The batch process, started on the first read.
+#[derive(Default)]
+struct BatchSlot {
+    reader: Option<BatchReader>,
+    /// Starts that failed and processes that died. At 2 the slot is off
+    /// and every read goes the old way.
+    failures: u8,
 }
 
 impl GitOps {
@@ -45,6 +58,7 @@ impl GitOps {
             commit_identity: None,
             default_actor: None,
             spawned: AtomicUsize::new(0),
+            batch: Mutex::new(BatchSlot::default()),
         }
     }
 
@@ -67,6 +81,56 @@ impl GitOps {
         let mut cmd = git_command();
         cmd.current_dir(&self.root);
         cmd
+    }
+
+    /// Run `read` on the batch process, starting it if needed.
+    ///
+    /// `None` means the caller must read the old way: the object is missing
+    /// or of another kind (`read` answered `Ok(None)`), or the process is
+    /// unusable. A process that fails is dropped and started again on the
+    /// next attempt; after two failures the slot stays off.
+    fn with_batch<T>(
+        &self,
+        mut read: impl FnMut(&mut BatchReader) -> std::io::Result<Option<T>>,
+    ) -> Option<T> {
+        let mut slot = self.batch.lock().unwrap_or_else(PoisonError::into_inner);
+        while slot.failures < 2 {
+            if slot.reader.is_none() {
+                match BatchReader::start(self.command()) {
+                    Ok(reader) => slot.reader = Some(reader),
+                    Err(_) => {
+                        slot.failures += 1;
+                        continue;
+                    }
+                }
+            }
+            let reader = slot.reader.as_mut().expect("started above");
+            match read(reader) {
+                Ok(found) => return found,
+                Err(_) => {
+                    slot.reader = None;
+                    slot.failures += 1;
+                }
+            }
+        }
+        None
+    }
+
+    /// The content of the blob `<commit>:<path>`, through the batch process.
+    fn batch_blob(&self, spec: &str) -> Option<Vec<u8>> {
+        self.with_batch(|reader| {
+            Ok(reader
+                .read(spec)?
+                .filter(|object| object.kind == "blob")
+                .map(|object| object.data))
+        })
+    }
+
+    /// The process id of the batch process, if one is running.
+    #[cfg(test)]
+    fn batch_pid(&self) -> Option<u32> {
+        let slot = self.batch.lock().unwrap_or_else(PoisonError::into_inner);
+        slot.reader.as_ref().map(BatchReader::pid)
     }
 
     /// Set the commit identity used for forum commits.
@@ -352,21 +416,52 @@ impl GitOps {
     /// destructive for content that may legitimately end with a
     /// newline (Markdown bodies, etc.) — use [`show_file_bytes`] for
     /// byte-exact reads.
+    ///
+    /// Reads through the batch process (ADR-015); when it cannot answer,
+    /// runs `cat-file -p` as before, so results and errors are unchanged.
     pub fn show_file(&self, commit_sha: &str, path: &str) -> ForumResult<String> {
         let spec = format!("{commit_sha}:{path}");
+        if let Some(data) = self.batch_blob(&spec) {
+            return Ok(String::from_utf8_lossy(&data).trim_end().to_string());
+        }
         self.run(&["cat-file", "-p", &spec])
     }
 
     /// Read a file from a commit's tree as raw bytes, preserving
     /// trailing whitespace and any binary content.
+    ///
+    /// Reads through the batch process (ADR-015); when it cannot answer,
+    /// runs `cat-file -p` as before, so results and errors are unchanged.
     pub fn show_file_bytes(&self, commit_sha: &str, path: &str) -> ForumResult<Vec<u8>> {
         let spec = format!("{commit_sha}:{path}");
+        if let Some(data) = self.batch_blob(&spec) {
+            return Ok(data);
+        }
         let output = self.command().args(["cat-file", "-p", &spec]).output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return Err(ForumError::Git(stderr));
         }
         Ok(output.stdout)
+    }
+
+    /// Every file path in `commit`'s tree.
+    ///
+    /// - Preconditions: `commit` names a commit (or tree) in this repository.
+    /// - Postconditions: the paths `git ls-tree -r --full-tree --name-only
+    ///   <commit>` prints, in the same order, relative to the tree root
+    ///   whatever this value's root directory is. Names that `ls-tree`
+    ///   would quote (non-ASCII, control characters) come back unquoted.
+    /// - Failure modes: `ForumError::Git` from `ls-tree` when `commit` does
+    ///   not name a tree.
+    /// - Side effects: starts the batch process on first use (ADR-015);
+    ///   when it cannot answer, runs `ls-tree` as before.
+    pub fn list_tree_files(&self, commit: &str) -> ForumResult<Vec<String>> {
+        if let Some(files) = self.with_batch(|reader| git_batch::list_files(reader, commit)) {
+            return Ok(files);
+        }
+        let listing = self.run(&["ls-tree", "-r", "--full-tree", "--name-only", commit])?;
+        Ok(listing.lines().map(String::from).collect())
     }
 
     /// Run `git diff --no-index` between two files.
@@ -490,5 +585,51 @@ mod spawn_count_tests {
         // A failing command still started a process.
         assert!(git.run(&["rev-parse", "--verify", "HEAD"]).is_err());
         assert_eq!(git.spawned_processes(), 3);
+    }
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::GitOps;
+
+    /// A repository holding a tree with `a.txt`; returns the tree. Reads
+    /// take any tree-ish, so no commit (and no signing config) is needed.
+    fn repo_with_tree(dir: &std::path::Path) -> (GitOps, String) {
+        let git = GitOps::new(dir.to_path_buf());
+        git.run(&["init", "-q"]).unwrap();
+        let blob = git.hash_object(b"content\n").unwrap();
+        let tree = git.mktree_single("a.txt", &blob).unwrap();
+        (git, tree)
+    }
+
+    /// AT-8: dropping the `GitOps` ends its batch process.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn dropping_gitops_ends_the_batch_process() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (git, tree) = repo_with_tree(dir.path());
+        assert_eq!(git.batch_pid(), None);
+        assert_eq!(git.show_file(&tree, "a.txt").unwrap(), "content");
+        assert_eq!(git.list_tree_files(&tree).unwrap(), ["a.txt"]);
+        let pid = git.batch_pid().expect("the read started the batch process");
+        let proc_dir = std::path::PathBuf::from(format!("/proc/{pid}"));
+        assert!(proc_dir.exists());
+        drop(git);
+        assert!(!proc_dir.exists(), "batch process {pid} still exists");
+    }
+
+    /// A batch process that cannot start is tried twice, then reads go the
+    /// old way without trying again (spec Failure modes 1).
+    #[test]
+    fn a_batch_process_that_cannot_start_is_given_up_after_two_tries() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let git = GitOps::new(dir.path().join("missing"));
+        assert!(git.show_file("HEAD", "a.txt").is_err());
+        // Two failed starts, then `cat-file -p` the old way.
+        assert_eq!(git.spawned_processes(), 3);
+        assert!(git.show_file_bytes("HEAD", "a.txt").is_err());
+        assert!(git.list_tree_files("HEAD").is_err());
+        assert_eq!(git.spawned_processes(), 5);
+        assert_eq!(git.batch_pid(), None);
     }
 }

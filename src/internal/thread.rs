@@ -322,8 +322,8 @@ pub struct NodeIdIndex {
 
 impl NodeIdIndex {
     /// Walk every `refs/forum/threads/<id>` and record which node ids
-    /// live in its `nodes/` subtree. The per-thread cost is a single
-    /// `ls-tree --name-only` — no `cat-file` and no snapshot parse.
+    /// live in its `nodes/` subtree. Each thread's tree is listed through
+    /// the batch reader (ADR-015) — no file is read and no snapshot parsed.
     pub fn build(git: &GitOps) -> ForumResult<Self> {
         let mut by_id: HashMap<String, Vec<String>> = HashMap::new();
         for (refname, tip) in git.list_refs_with_shas(refs::THREADS_PREFIX)? {
@@ -331,15 +331,14 @@ impl NodeIdIndex {
                 continue;
             };
             // `nodes/` is optional in the SPEC-3.0 §4.2 layout; an
-            // empty thread has no subtree. `ls-tree` on an absent
-            // path either prints nothing or fails — both mean "no
-            // nodes here", so swallow errors and treat as empty.
-            let listing = git
-                .run(&["ls-tree", "--full-tree", "--name-only", &tip, "nodes/"])
-                .unwrap_or_default();
-            for line in listing.lines() {
+            // empty thread has no subtree. A tip that cannot be listed
+            // counts as "no nodes here", as before. Only files directly
+            // under `nodes/` are node files.
+            let files = git.list_tree_files(&tip).unwrap_or_default();
+            for line in &files {
                 if let Some(rest) = line.strip_prefix("nodes/") {
-                    if let Some(node_id) = rest.strip_suffix(".toml") {
+                    if let Some(node_id) = rest.strip_suffix(".toml").filter(|id| !id.contains('/'))
+                    {
                         by_id
                             .entry(node_id.to_string())
                             .or_default()

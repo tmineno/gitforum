@@ -39,10 +39,15 @@ Keep git as a subprocess, but read objects through one long-lived
 - **Tree parsing**: trees come back in git's binary format and are parsed
   here. The object name length (20 or 32 bytes) is taken from the hex
   object name in each reply, not assumed.
-- **Fallback**: when the batch process answers `missing`, that one read is
-  retried with a one-shot `cat-file -p`. Correctness therefore does not
-  depend on how a running `cat-file --batch` sees objects written after it
-  started.
+- **Fallback**: the batch process is only a speed-up.
+  - When it answers `missing`, or returns an object of a kind other than
+    the one asked for, that one read is redone the old way: a one-shot
+    `cat-file -p`, or `ls-tree` for a listing.
+  - When it cannot be started, or dies, it is restarted once. If that
+    fails too, the `GitOps` reads the old way from then on.
+  - Results and errors are therefore the same as before.
+  - Correctness does not depend on how a running `cat-file --batch` sees
+    objects written after it started.
 - **Counter**: every git process `GitOps` starts is counted
   (`spawned_processes`), so tests can assert process counts.
 - **Callers**: `list_thread_states` takes thread tips from `for-each-ref`
@@ -58,8 +63,9 @@ Keep git as a subprocess, but read objects through one long-lived
   can no longer be a plain value type.
 - git-forum parses git's binary tree format itself. This is a small, stable
   format, but it is code git used to run for us.
-- In a corrupt repository, the message for a missing object changes (the
-  kind of error stays `ForumError::Git`).
+- File names that `ls-tree` would quote (non-ASCII, control characters)
+  come back unquoted when read from the tree directly. git-forum's writers
+  never create such names.
 - Writes still start one process per plumbing step. That cost is per thread
   touched, not per thread in the forum.
 
